@@ -18,6 +18,7 @@ use nrf52840_hal::{
 }; // memory layout
 
 use panic_probe as _;
+pub mod qspi;
 
 // same panicking *behavior* as `panic-probe` but doesn't print a panic message
 // this prevents the panic message being printed *twice* when `defmt::panic` is invoked
@@ -53,7 +54,7 @@ pub struct Pins {
     /// from the 'VBAT' line
     pub vdiv: P0_29<Disconnected>,
 
-    // LS
+    // LS - NFC pin, limited functionality
     pub d02: P0_10<Disconnected>,
     /// HS
     pub d05: P1_08<Disconnected>,
@@ -86,6 +87,7 @@ pub struct Pins {
     pub miso: P0_15<Disconnected>,
 
     // QSPI Pins
+    // NOTE: Flash chip is a GD25Q16, a 2MiB flash
     pub qspi_d0: P0_17<Disconnected>,
     pub qspi_d1: P0_22<Disconnected>,
     pub qspi_d2: P0_23<Disconnected>,

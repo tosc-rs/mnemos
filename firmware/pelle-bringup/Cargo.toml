@@ -27,6 +27,8 @@ smart-leds = "0.3.0"
 smart-leds-trait = "0.2.1"
 usb-device = "0.2.8"
 usbd-serial = "0.1.1"
+byte-slab = "0.2.2"
+cassette = "0.2.3"
 
 [dependencies.cortex-m-rtic]
 version = "0.5.8"
