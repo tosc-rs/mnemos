@@ -30,6 +30,11 @@ usbd-serial = "0.1.1"
 byte-slab = "0.2.2"
 cassette = "0.2.3"
 
+
+[dependencies.sportty]
+path = "../../common/sportty"
+
+# TODO: Update to RTIC 1.0
 [dependencies.cortex-m-rtic]
 version = "0.5.8"
 default-features = false
