@@ -8,8 +8,7 @@ use pelle_bringup::{
     map_pins,
     qspi::{QspiPins, Qspi, FlashChunk, EraseLength},
 };
-use nrf52840_hal::{pac::Peripherals, gpio::Level, prelude::OutputPin};
-use groundhog::RollingTimer;
+use nrf52840_hal::{pac::Peripherals, gpio::Level};
 use byte_slab::{BSlab, ManagedArcSlab};
 
 static SLAB: BSlab<4, 256> = BSlab::new();
@@ -23,7 +22,6 @@ fn main() -> ! {
     let pins = map_pins(board.P0, board.P1);
 
     GlobalRollingTimer::init(board.TIMER0);
-    let timer = GlobalRollingTimer::new();
 
     let mut _led1 = pins.led1.into_push_pull_output(Level::Low);
     let mut _led2 = pins.led2.into_push_pull_output(Level::Low);

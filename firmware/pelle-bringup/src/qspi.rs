@@ -25,8 +25,6 @@ pub struct FlashChunk<'a, const CT: usize, const SZ: usize> {
 }
 
 use cassette::futures::poll_fn;
-use groundhog::RollingTimer;
-use groundhog_nrf52::GlobalRollingTimer;
 use nrf52840_hal::{
     gpio::{Disconnected, Pin, Port},
     pac::{P0, P1, QSPI},
@@ -114,7 +112,7 @@ impl Qspi {
             // read2io:   0xBB
             // read40:    0x6B x
             // read4io:   0xEB x
-            w.readoc().read4io();
+            w.readoc().read4o();
             // PP:        0x02
             // PP20:      0xA2
             // PP40:      0x32 x
