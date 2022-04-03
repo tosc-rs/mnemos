@@ -1,3 +1,9 @@
+/// Allocation types for the Anachro PC.
+///
+/// NOTE: This module makes STRONG assumptions that the allocator will be a singleton.
+/// This is currently fine, but it is not allowed to make multiple instances of the
+/// types within.
+
 use core::{
     alloc::Layout,
     cell::UnsafeCell,
@@ -42,7 +48,7 @@ impl AHeap {
     const BUSY_LOCKED: u8 = 2;
 
     /// Create a new, uninitialized AHeap
-    pub const fn new() -> Self {
+    const fn new() -> Self {
         Self {
             state: AtomicU8::new(Self::UNINIT),
             heap: UnsafeCell::new(MaybeUninit::uninit()),

@@ -321,6 +321,10 @@ fn read_status_regs(periph: &QSPI) -> [u8; 2] {
     [by_05, by_35]
 }
 
+// Note: I don't think I need this, since the `cinstrconf` allows you to send
+// a write enable before a given command. Leaving it here for now - likely possible
+// to cull later.
+#[allow(dead_code)]
 fn write_enable(periph: &QSPI) {
     // Clear the "is ready" flag
     periph.events_ready.reset();
