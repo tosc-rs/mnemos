@@ -48,10 +48,71 @@ pub fn setup_usb_uart(dev: AUsbDevice, ser: ASerialPort) -> Result<UsbUartParts,
 
 impl crate::traits::Serial for UsbUartSys {
     fn recv<'a>(&mut self, buf: &'a mut [u8]) -> Result<&'a mut [u8], ()> {
-        todo!()
+        match self.inc.split_read() {
+            Ok(sgr) => {
+                // Get the full amount available
+                let (buf_a, buf_b) = sgr.bufs();
+                let buflen = buf.len();
+
+                // How much of buffer A should we use? Cap to the smaller buffer
+                // size, and copy that to the destination
+                let use_a = buflen.min(buf_a.len());
+                buf[..use_a].copy_from_slice(&buf_a[..use_a]);
+
+                // Is there still space remaining in the outgoing buffer, and if so,
+                // is buffer B empty?
+                let used = if (use_a < buflen) && !buf_b.is_empty() {
+                    // Still room and contents in buffer B! Repeat the process,
+                    // appending the contents of buffer B to the remaining space
+                    // in the output buffer. Again, limit this to the shortest
+                    // length available
+                    let use_b = (buflen - use_a).min(buf_b.len());
+                    buf[use_a..][..use_b].copy_from_slice(&buf_b[..use_b]);
+
+                    // We used all of A and some/all of B
+                    use_a + use_b
+                } else {
+                    // We only used some/all of A, and none of B
+                    use_a
+                };
+
+                // Release the used portion of the buffers, and return the
+                // relevant slice
+                sgr.release(used);
+                Ok(&mut buf[..used])
+            }
+            Err(bbqueue::Error::InsufficientSize) => {
+                Ok(&mut [])
+            }
+            Err(_e) => {
+                defmt::panic!("ERROR: USB UART Recv!");
+            }
+        }
     }
 
     fn send<'a>(&mut self, buf: &'a [u8]) -> Result<(), &'a [u8]> {
-        todo!()
+        let mut remaining = buf;
+
+        while !remaining.is_empty() {
+            let rem_len = remaining.len();
+
+            match self.out.grant_max_remaining(rem_len) {
+                Ok(mut wgr) => {
+                    let to_use = wgr.len().min(rem_len);
+                    let (now, later) = remaining.split_at(to_use);
+                    wgr[..to_use].copy_from_slice(&now[..to_use]);
+                    wgr.commit(to_use);
+                    remaining = later;
+                },
+                Err(bbqueue::Error::InsufficientSize) => {
+                    return Err(remaining);
+                },
+                Err(_e) => {
+                    defmt::panic!("ERROR: USB UART Send!");
+                }
+            }
+        }
+
+        Ok(())
     }
 }
