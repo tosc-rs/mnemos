@@ -1,6 +1,6 @@
 use bbqueue::{BBBuffer, Consumer, Producer};
 use nrf52840_hal::usbd::{Usbd, UsbPeripheral};
-use usb_device::device::UsbDevice;
+use usb_device::{device::UsbDevice, UsbError};
 use usbd_serial::SerialPort;
 
 const USB_BUF_SZ: usize = 4096;
@@ -18,14 +18,44 @@ pub struct UsbUartIsr {
     inc: Producer<'static, USB_BUF_SZ>,
 }
 
+impl UsbUartIsr {
+    pub fn poll(&mut self) {
+        if self.dev.poll(&mut [&mut self.ser]) {
+            if let Ok(mut wgr) = self.inc.grant_max_remaining(128) {
+                match self.ser.read(&mut wgr) {
+                    Ok(sz) if sz > 0 => {
+                        wgr.commit(sz);
+                    },
+                    Ok(_) | Err(UsbError::WouldBlock) => {
+                        // Just silently drop the write grant
+                    }
+                    Err(_) => defmt::panic!("Usb Error Read!"),
+                }
+            }
+
+            if let Ok(rgr) = self.out.read() {
+                match self.ser.write(&rgr) {
+                    Ok(sz) if sz > 0 => {
+                        rgr.release(sz);
+                    },
+                    Ok(_) | Err(UsbError::WouldBlock) => {
+                        // Just silently drop the read grant
+                    }
+                    Err(_) => defmt::panic!("Usb Error Write!"),
+                }
+            }
+        }
+    }
+}
+
 pub struct UsbUartSys {
     out: Producer<'static, USB_BUF_SZ>,
     inc: Consumer<'static, USB_BUF_SZ>,
 }
 
 pub struct UsbUartParts {
-    isr: UsbUartIsr,
-    sys: UsbUartSys,
+    pub isr: UsbUartIsr,
+    pub sys: UsbUartSys,
 }
 
 pub fn setup_usb_uart(dev: AUsbDevice, ser: ASerialPort) -> Result<UsbUartParts, ()> {
