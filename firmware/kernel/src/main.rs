@@ -7,6 +7,7 @@ use kernel as _; // global logger + panicking-behavior + memory layout
 mod app {
     use cortex_m::singleton;
     use defmt::unwrap;
+    use groundhog_nrf52::GlobalRollingTimer;
     // use heapless::spsc::Queue;
     use nrf52840_hal::{
         clocks::{ExternalOscillator, Internal, LfOscStopped},
@@ -19,7 +20,10 @@ mod app {
     //     usbd::{UsbPeripheral, Usbd},
         Clocks,
     };
-    use kernel::monotonic::{ExtU32, MonoTimer};
+    use kernel::{
+        alloc::HEAP,
+        monotonic::{ExtU32, MonoTimer},
+    };
     // use nrf52_phm::uart::PhmUart;
     // use phm_icd::{ToMcu, ToPc};
     // use phm_worker::{
@@ -51,11 +55,17 @@ mod app {
         // Setup clocks early in the process. We need this for USB later
         let clocks = Clocks::new(device.CLOCK);
         let clocks = clocks.enable_ext_hfosc();
-        let clocks =
+        let _clocks =
             unwrap!(singleton!(: Clocks<ExternalOscillator, Internal, LfOscStopped> = clocks));
 
         // Configure the monotonic timer, currently using TIMER0, a 32-bit, 1MHz timer
         let mono = Monotonic::new(device.TIMER0);
+
+        // I am annoying, and prefer my own libraries.
+        GlobalRollingTimer::init(device.TIMER1);
+
+        // Setup the heap
+        HEAP.init().ok();
 
         (
             Shared {},

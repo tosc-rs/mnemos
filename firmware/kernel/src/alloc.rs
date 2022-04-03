@@ -11,6 +11,7 @@ use core::{
     ops::{Deref, DerefMut},
     ptr::NonNull,
     sync::atomic::{AtomicU8, Ordering},
+    mem::forget,
 };
 use heapless::mpmc::MpMcQueue;
 use linked_list_allocator::Heap;
@@ -195,6 +196,13 @@ impl<T> HeapBox<T> {
             layout: Layout::new::<T>(),
         }
     }
+
+    /// Leak the contents of this box, never to be recovered (probably)
+    pub fn leak(self) -> &'static mut T {
+        let mutref = unsafe { &mut *self.ptr };
+        forget(self);
+        mutref
+    }
 }
 
 impl<T> Drop for HeapBox<T> {
@@ -223,7 +231,7 @@ impl<T> Drop for HeapBox<T> {
 }
 
 /// A type representing a request to free a given allocation of memory.
-pub struct FreeBox {
+struct FreeBox {
     ptr: NonNull<u8>,
     layout: Layout,
 }

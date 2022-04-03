@@ -11,7 +11,7 @@ pub trait Serial {
 }
 
 pub struct Machine {
-    // pub serial: LeakBox<'static, dyn Serial>,
+    pub serial: &'static mut dyn Serial,
     // TODO: port router?
     // TODO: flash manager?
 }
