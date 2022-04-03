@@ -8,34 +8,23 @@ mod app {
     use cortex_m::singleton;
     use defmt::unwrap;
     use groundhog_nrf52::GlobalRollingTimer;
-    // use heapless::spsc::Queue;
     use nrf52840_hal::{
         clocks::{ExternalOscillator, Internal, LfOscStopped},
-    //     gpio::{p0::Parts as P0Parts, p1::Parts as P1Parts, Level},
         pac::TIMER0,
-        // pac::{SPIM2, TIMER0, TWIM0},
-    //     spim::{Frequency as SpimFreq, Pins as SpimPins, Spim, MODE_0},
-    //     twim::{Frequency as TwimFreq, Pins as TwimPins, Twim},
-    //     uarte::{Baudrate, Parity, Pins as UartPins, Uarte},
-    //     usbd::{UsbPeripheral, Usbd},
+        usbd::{UsbPeripheral, Usbd},
         Clocks,
     };
     use kernel::{
         alloc::HEAP,
         monotonic::{ExtU32, MonoTimer},
+        drivers::usb_serial::{UsbUartParts, setup_usb_uart, UsbUartIsr},
     };
-    // use nrf52_phm::uart::PhmUart;
-    // use phm_icd::{ToMcu, ToPc};
-    // use phm_worker::{
-    //     comms::{CommsLink, InterfaceComms, WorkerComms},
-    //     Worker,
-    // };
-    // use postcard::{to_vec_cobs, CobsAccumulator, FeedResult};
-    // use usb_device::{
-    //     class_prelude::UsbBusAllocator,
-    //     device::{UsbDevice, UsbDeviceBuilder, UsbVidPid},
-    // };
-    // use usbd_serial::{SerialPort, USB_CLASS_CDC};
+    use usb_device::{
+        class_prelude::UsbBusAllocator,
+        device::{UsbDeviceBuilder, UsbVidPid},
+    };
+    use usbd_serial::{SerialPort, USB_CLASS_CDC};
+    use groundhog::RollingTimer;
 
     #[monotonic(binds = TIMER0, default = true)]
     type Monotonic = MonoTimer<TIMER0>;
@@ -45,17 +34,18 @@ mod app {
 
     #[local]
     struct Local {
-        lol: ()
+        usb_isr: UsbUartIsr,
+        machine: kernel::traits::Machine,
     }
 
-    #[init(local = [])]
+    #[init]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
         let device = cx.device;
 
         // Setup clocks early in the process. We need this for USB later
         let clocks = Clocks::new(device.CLOCK);
         let clocks = clocks.enable_ext_hfosc();
-        let _clocks =
+        let clocks =
             unwrap!(singleton!(: Clocks<ExternalOscillator, Internal, LfOscStopped> = clocks));
 
         // Configure the monotonic timer, currently using TIMER0, a 32-bit, 1MHz timer
@@ -67,66 +57,92 @@ mod app {
         // Setup the heap
         HEAP.init().ok();
 
+        let (usb_dev, usb_serial) = {
+            let usb_bus = Usbd::new(UsbPeripheral::new(device.USBD, clocks));
+            let usb_bus = defmt::unwrap!(singleton!(:UsbBusAllocator<Usbd<UsbPeripheral>> = usb_bus));
+
+            let usb_serial = SerialPort::new(usb_bus);
+            let usb_dev = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x16c0, 0x27dd))
+                .manufacturer("OVAR Labs")
+                .product("Anachro Pellegrino")
+                // TODO: Use some kind of unique ID. This will probably require another singleton,
+                // as the storage must be static. Probably heapless::String -> singleton!()
+                .serial_number("ajm001")
+                .device_class(USB_CLASS_CDC)
+                .max_packet_size_0(64) // (makes control transfers 8x faster)
+                .build();
+
+            (usb_dev, usb_serial)
+        };
+
+        let mut hg = defmt::unwrap!(HEAP.try_lock());
+
+        let UsbUartParts { isr, sys } = defmt::unwrap!(setup_usb_uart(usb_dev, usb_serial));
+        let box_uart = defmt::unwrap!(hg.alloc_box(sys));
+        let leak_uart = box_uart.leak();
+        let to_uart: &'static mut dyn kernel::traits::Serial = leak_uart;
+
+        let machine = kernel::traits::Machine {
+            serial: to_uart,
+        };
+
+        usb_tick::spawn().ok();
+
         (
             Shared {},
             Local {
-                lol: (),
+                usb_isr: isr,
+                machine,
             },
             init::Monotonics(mono),
         )
     }
 
-    // #[task(local = [usb_serial, interface_comms, usb_dev, cobs_buf: CobsAccumulator<512> = CobsAccumulator::new()])]
-    // fn usb_tick(cx: usb_tick::Context) {
-    //     let usb_serial = cx.local.usb_serial;
-    //     let usb_dev = cx.local.usb_dev;
-    //     let cobs_buf = cx.local.cobs_buf;
-    //     let interface_comms = cx.local.interface_comms;
+    #[task(local = [usb_isr])]
+    fn usb_tick(cx: usb_tick::Context) {
+        cx.local.usb_isr.poll();
+        usb_tick::spawn_after(1.millis()).ok();
+    }
 
-    //     let mut buf = [0u8; 128];
-
-    //     usb_dev.poll(&mut [usb_serial]);
-
-    //     if let Some(out) = interface_comms.to_pc.dequeue() {
-    //         if let Ok(ser_msg) = to_vec_cobs::<_, 128>(&out) {
-    //             usb_serial.write(&ser_msg).ok();
-    //         } else {
-    //             defmt::panic!("Serialization error!");
-    //         }
-    //     }
-
-    //     match usb_serial.read(&mut buf) {
-    //         Ok(sz) if sz > 0 => {
-    //             let buf = &buf[..sz];
-    //             let mut window = &buf[..];
-
-    //             'cobs: while !window.is_empty() {
-    //                 window = match cobs_buf.feed::<phm_icd::ToMcu>(&window) {
-    //                     FeedResult::Consumed => break 'cobs,
-    //                     FeedResult::OverFull(new_wind) => new_wind,
-    //                     FeedResult::DeserError(new_wind) => new_wind,
-    //                     FeedResult::Success { data, remaining } => {
-    //                         defmt::println!("got: {:?}", data);
-    //                         interface_comms.to_mcu.enqueue(data).ok();
-    //                         remaining
-    //                     }
-    //                 };
-    //             }
-    //         }
-    //         Ok(_) | Err(usb_device::UsbError::WouldBlock) => {}
-    //         Err(_e) => defmt::panic!("Usb Error!"),
-    //     }
-
-    //     usb_tick::spawn_after(1.millis()).ok();
-    // }
-
-    #[idle(local = [])]
+    // TODO: I am currently polling the syscall interfaces in the idle function,
+    // since I don't have syscalls yet. In the future, the `machine` will be given
+    // to the SWI handler, and idle will basically just launch a program. I think.
+    // Maybe idle will use SWIs too.
+    #[idle(local = [machine])]
     fn idle(cx: idle::Context) -> ! {
         defmt::println!("Hello, world!");
-        // let worker = cx.local.worker;
+        let machine = cx.local.machine;
+        let mut buf = [0u8; 128];
+        let timer = GlobalRollingTimer::default();
+        let mut last_mem = timer.get_ticks();
 
         loop {
-            // unwrap!(worker.step().map_err(drop));
+            if timer.millis_since(last_mem) >= 1000 {
+                if let Some(hg) = HEAP.try_lock() {
+                    last_mem = timer.get_ticks();
+                    let used = hg.used_space();
+                    let free = hg.free_space();
+
+                    defmt::println!("used: {=usize}, free: {=usize}", used, free);
+                }
+            }
+            match machine.serial.recv(&mut buf) {
+                Ok(sli) => {
+                    let mut remain: &[u8] = sli;
+
+                    while !remain.is_empty() {
+                        match machine.serial.send(remain) {
+                            Ok(()) => {
+                                remain = &[];
+                            },
+                            Err(rem) => {
+                                remain = rem;
+                            },
+                        }
+                    }
+                },
+                Err(_) => todo!(),
+            }
         }
     }
 }
