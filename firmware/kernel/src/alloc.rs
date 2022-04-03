@@ -36,8 +36,8 @@ impl AHeap {
     /// The AHeap is initialized, and no `HeapGuard`s are active.
     const INIT_IDLE: u8 = 1;
 
-    /// The AHeap is "locked", and cannot be retrieved. In MOST cases
-    /// this also means the heap is initialized, except for the brief
+    /// The AHeap is "locked", and cannot currently be retrieved. In MOST cases
+    /// this also means the heap is initialized, except for the brief period of
     /// time while the heap is being initialized.
     const BUSY_LOCKED: u8 = 2;
 
@@ -135,21 +135,14 @@ impl FreeQueue {
             .write(new);
     }
 
-    /// Attempt to access the FreeQueue.
+    /// Obtain a reference the FreeQueue.
     ///
-    /// Returns access if the FreeQueue has been initialized, and an Error if
-    /// it has not yet been initialized.
-    fn try_get(&self) -> Result<&MpMcQueue<FreeBox, FREE_Q_LEN>, ()> {
-        let state = HEAP.state.load(Ordering::SeqCst);
-
-        if state == AHeap::UNINIT {
-            Err(())
-        } else {
-            // SAFETY: The MpMcQueue type is Sync, so mutual exclusion is not required
-            // If the HEAP type has been initialized, so has the FreeQueue singleton,
-            // so access is valid.
-            unsafe { Ok((*self.q.get()).assume_init_ref()) }
-        }
+    /// SAFETY: The free queue MUST have been previously initialized.
+    unsafe fn get_unchecked(&self) -> &MpMcQueue<FreeBox, FREE_Q_LEN> {
+        // SAFETY: The MpMcQueue type is Sync, so mutual exclusion is not required
+        // If the HEAP type has been initialized, so has the FreeQueue singleton,
+        // so access is valid.
+        (*self.q.get()).assume_init_ref()
     }
 }
 
@@ -212,7 +205,10 @@ impl<T> Drop for HeapBox<T> {
         } else {
             // If not, try to store the allocation into the free list, and it will be
             // reclaimed before the next alloc.
-            let free_q = defmt::unwrap!(FREE_Q.try_get());
+            //
+            // SAFETY: A HeapBox can only be created if the Heap, and by extension the
+            // FreeQueue, has been previously initialized
+            let free_q = unsafe { FREE_Q.get_unchecked() };
 
             // If the free list is completely full, for now, just panic.
             defmt::unwrap!(free_q.enqueue(free_box).map_err(drop), "Free list is full!");
@@ -249,9 +245,11 @@ impl HeapGuard {
     /// If space was available, the allocation will be returned. If not, an
     /// error will be returned
     pub fn alloc_box<T>(&mut self, data: T) -> Result<HeapBox<T>, ()> {
-        // First, grab the Free Queue. Access here only fails if the Queue
-        // was not initialized (should be impossible).
-        let free_q = FREE_Q.try_get()?;
+        // First, grab the Free Queue.
+        //
+        // SAFETY: A HeapGuard can only be created if the Heap, and by extension the
+        // FreeQueue, has been previously initialized
+        let free_q = unsafe { FREE_Q.get_unchecked() };
 
         // Then, free all pending memory in order to maximize space available.
         while let Some(FreeBox { ptr, layout }) = free_q.dequeue() {
@@ -295,6 +293,8 @@ impl HeapGuard {
 
 impl Drop for HeapGuard {
     fn drop(&mut self) {
+        // A HeapGuard represents exclusive access to the AHeap. Because of
+        // this, a regular store is okay.
         self.heap.state.store(AHeap::INIT_IDLE, Ordering::SeqCst);
     }
 }
@@ -316,7 +316,6 @@ impl HeapStorage {
         let addr = ptr as usize;
         (addr, Self::SIZE_BYTES)
     }
-
 
     /// Create a Heap object, using the storage contents as the heap memory range.
     ///
