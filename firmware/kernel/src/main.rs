@@ -19,7 +19,7 @@ mod app {
         alloc::HEAP,
         monotonic::{ExtU32, MonoTimer},
         drivers::usb_serial::{UsbUartParts, setup_usb_uart, UsbUartIsr},
-        traits::{syscall_clear, try_syscall, try_recv_syscall},
+        syscall::{syscall_clear, try_syscall, try_recv_syscall},
     };
     use usb_device::{
         class_prelude::UsbBusAllocator,
