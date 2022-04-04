@@ -11,14 +11,14 @@ mod app {
     use groundhog_nrf52::GlobalRollingTimer;
     use nrf52840_hal::{
         clocks::{ExternalOscillator, Internal, LfOscStopped},
-        pac::TIMER0,
+        pac::{TIMER0, USBD},
         usbd::{UsbPeripheral, Usbd},
         Clocks,
     };
     use kernel::{
         alloc::HEAP,
         monotonic::{ExtU32, MonoTimer},
-        drivers::usb_serial::{UsbUartParts, setup_usb_uart, UsbUartIsr},
+        drivers::usb_serial::{UsbUartParts, setup_usb_uart, UsbUartIsr, UsbEvents},
         syscall::{syscall_clear, try_syscall, try_recv_syscall},
     };
     use usb_device::{
@@ -63,6 +63,9 @@ mod app {
         syscall_clear();
 
         let (usb_dev, usb_serial) = {
+            // yolo
+            device.USBD.intenset.write(|w| unsafe { w.bits(0xFFFF_FFFF) });
+
             let usb_bus = Usbd::new(UsbPeripheral::new(device.USBD, clocks));
             let usb_bus = defmt::unwrap!(singleton!(:UsbBusAllocator<Usbd<UsbPeripheral>> = usb_bus));
 
@@ -91,8 +94,6 @@ mod app {
             serial: to_uart,
         };
 
-        usb_tick::spawn().ok();
-
         (
             Shared {},
             Local {
@@ -116,10 +117,11 @@ mod app {
         }
     }
 
-    #[task(local = [usb_isr])]
+    #[task(binds = USBD, local = [usb_isr])]
     fn usb_tick(cx: usb_tick::Context) {
+        let active_events = UsbEvents::get();
         cx.local.usb_isr.poll();
-        usb_tick::spawn_after(1.millis()).ok();
+        active_events.clear();
     }
 
     // TODO: I am currently polling the syscall interfaces in the idle function,

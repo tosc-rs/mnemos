@@ -46,6 +46,14 @@ default-features = false
 [dependencies.sportty]
 path = "../../common/sportty"
 
+[dependencies.serde]
+version = "1.0.136"
+default-features = false
+features = ["derive"]
+
+[dependencies.postcard]
+version = "0.7.3"
+
 [dev-dependencies]
 defmt-test = "0.3.0"
 

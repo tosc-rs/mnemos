@@ -1,7 +1,7 @@
 //! A USB-Serial driver for the nRF52840
 
 use bbqueue::{BBBuffer, Consumer, Producer};
-use nrf52840_hal::usbd::{Usbd, UsbPeripheral};
+use nrf52840_hal::{usbd::{Usbd, UsbPeripheral}, pac::USBD};
 use usb_device::{device::UsbDevice, UsbError};
 use usbd_serial::SerialPort;
 
@@ -24,6 +24,89 @@ pub struct UsbUartIsr {
     ser: ASerialPort,
     out: Consumer<'static, USB_BUF_SZ>,
     inc: Producer<'static, USB_BUF_SZ>,
+}
+
+pub struct UsbEvents {
+    events_usbreset: bool,
+    events_started: bool,
+    events_endepin: [bool; 8],
+    events_ep0datadone: bool,
+    events_endisoin: bool,
+    events_endepout: [bool; 8],
+    events_sof: bool,
+    events_usbevent: bool,
+    events_ep0setup: bool,
+    events_epdata: bool,
+}
+
+impl UsbEvents {
+    pub fn get() -> Self {
+        let usbd = unsafe { &*USBD::ptr() };
+
+        // These are arrays
+        let mut events_endepin = [false; 8];
+        let mut events_endepout = [false; 8];
+
+        events_endepin.iter_mut().zip(usbd.events_endepin.iter()).for_each(|(f, reg)| {
+            *f = reg.read().events_endepin().bit_is_set();
+        });
+        events_endepout.iter_mut().zip(usbd.events_endepout.iter()).for_each(|(f, reg)| {
+            *f = reg.read().events_endepout().bit_is_set();
+        });
+
+        Self {
+            events_usbreset: usbd.events_usbreset.read().events_usbreset().bit_is_set(),
+            events_started: usbd.events_started.read().events_started().bit_is_set(),
+            events_endepin,
+            events_ep0datadone: usbd.events_ep0datadone.read().events_ep0datadone().bit_is_set(),
+            events_endisoin: usbd.events_endisoin.read().events_endisoin().bit_is_set(),
+            events_endepout,
+            events_sof: usbd.events_sof.read().events_sof().bit_is_set(),
+            events_usbevent: usbd.events_usbevent.read().events_usbevent().bit_is_set(),
+            events_ep0setup: usbd.events_ep0setup.read().events_ep0setup().bit_is_set(),
+            events_epdata: usbd.events_epdata.read().events_epdata().bit_is_set(),
+        }
+    }
+
+    pub fn clear(self) {
+        let usbd = unsafe { &*USBD::ptr() };
+
+        if self.events_usbreset {
+            usbd.events_usbreset.reset();
+        }
+        if self.events_started {
+            usbd.events_started.reset();
+        }
+        if self.events_ep0datadone {
+            usbd.events_ep0datadone.reset();
+        }
+        if self.events_endisoin {
+            usbd.events_endisoin.reset();
+        }
+        if self.events_sof {
+            usbd.events_sof.reset();
+        }
+        if self.events_usbevent {
+            usbd.events_usbevent.reset();
+        }
+        if self.events_ep0setup {
+            usbd.events_ep0setup.reset();
+        }
+        if self.events_epdata {
+            usbd.events_epdata.reset();
+        }
+
+        for (flag, reg) in self.events_endepin.into_iter().zip(usbd.events_endepin.iter()) {
+            if flag {
+                reg.reset();
+            }
+        }
+        for (flag, reg) in self.events_endepout.into_iter().zip(usbd.events_endepout.iter()) {
+            if flag {
+                reg.reset();
+            }
+        }
+    }
 }
 
 impl UsbUartIsr {
