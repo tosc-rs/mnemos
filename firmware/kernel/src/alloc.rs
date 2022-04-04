@@ -17,10 +17,11 @@ use heapless::mpmc::MpMcQueue;
 use linked_list_allocator::Heap;
 
 pub static HEAP: AHeap = AHeap::new();
-
-// TODO: This should probably live in a specified linker section.
-static HEAP_BUF: HeapStorage = HeapStorage::new();
 static FREE_Q: FreeQueue = FreeQueue::new();
+
+// AHeap storage goes in a specific section
+#[link_section=".aheap.STORAGE"]
+static HEAP_BUF: HeapStorage = HeapStorage::new();
 
 // Size is roughly ptr + size + align, so about 3 words.
 const FREE_Q_LEN: usize = 128;

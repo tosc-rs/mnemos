@@ -5,6 +5,7 @@ use kernel as _; // global logger + panicking-behavior + memory layout
 
 #[rtic::app(device = nrf52840_hal::pac, dispatchers = [SWI0_EGU0])]
 mod app {
+
     use cortex_m::singleton;
     use defmt::unwrap;
     use groundhog_nrf52::GlobalRollingTimer;
@@ -18,6 +19,7 @@ mod app {
         alloc::HEAP,
         monotonic::{ExtU32, MonoTimer},
         drivers::usb_serial::{UsbUartParts, setup_usb_uart, UsbUartIsr},
+        traits::{syscall_clear, try_syscall, try_recv_syscall},
     };
     use usb_device::{
         class_prelude::UsbBusAllocator,
@@ -56,6 +58,9 @@ mod app {
 
         // Setup the heap
         HEAP.init().ok();
+
+        // Reset the syscall contents
+        syscall_clear();
 
         let (usb_dev, usb_serial) = {
             let usb_bus = Usbd::new(UsbPeripheral::new(device.USBD, clocks));
@@ -98,6 +103,19 @@ mod app {
         )
     }
 
+    #[task(binds = SVCall)]
+    fn svc(_cx: svc::Context) {
+        let hdlr = |inp: &[u8], out: &mut [u8]| {
+            defmt::println!("{=[u8]}", inp);
+            out[..5].copy_from_slice(b"hello");
+            5
+        };
+
+        if let Ok(()) = try_recv_syscall(hdlr) {
+            defmt::println!("Handled syscall!");
+        }
+    }
+
     #[task(local = [usb_isr])]
     fn usb_tick(cx: usb_tick::Context) {
         cx.local.usb_isr.poll();
@@ -124,6 +142,19 @@ mod app {
                     let free = hg.free_space();
 
                     defmt::println!("used: {=usize}, free: {=usize}", used, free);
+                    defmt::println!("Syscalling!");
+
+                    let input = [1, 2, 3];
+                    let mut output = [0u8; 64];
+
+                    match try_syscall(&input, &mut output) {
+                        Ok(out) => {
+                            defmt::println!("Syscall said: {=[u8]}", out);
+                        }
+                        Err(()) => {
+                            defmt::println!("Syscall error!");
+                        }
+                    }
                 }
             }
             match machine.serial.recv(&mut buf) {
