@@ -5,6 +5,7 @@ use core::{
     sync::atomic::{AtomicUsize, AtomicPtr, Ordering},
     ptr::null_mut, arch::asm,
 };
+use serde::{Serialize, Deserialize};
 
 // TODO: This is a little "woo" because I'm using usize and ptr, instead of a fixed
 // u32 size. That being said... It's fine for now.
@@ -112,3 +113,7 @@ where
     Ok(())
 }
 
+#[derive(Serialize, Deserialize)]
+pub enum SysCallRequest {
+
+}

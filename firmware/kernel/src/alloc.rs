@@ -11,7 +11,7 @@ use core::{
     ops::{Deref, DerefMut},
     ptr::NonNull,
     sync::atomic::{AtomicU8, Ordering},
-    mem::forget,
+    mem::{forget, size_of, align_of},
 };
 use heapless::mpmc::MpMcQueue;
 use linked_list_allocator::Heap;
@@ -210,12 +210,80 @@ impl<T> Drop for HeapBox<T> {
     fn drop(&mut self) {
         // Calculate the pointer, size, and layout of this allocation
         let free_box = unsafe { self.free_box() };
+        free_box.box_drop();
+    }
+}
 
+/// An Anachro Heap Array Type
+pub struct HeapArray<T> {
+    count: usize,
+    ptr: *mut T,
+}
+
+impl<T> Deref for HeapArray<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { core::slice::from_raw_parts(self.ptr, self.count) }
+    }
+}
+
+impl<T> DerefMut for HeapArray<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe { core::slice::from_raw_parts_mut(self.ptr, self.count) }
+    }
+}
+
+impl<T> HeapArray<T> {
+    /// Create a free_box, with location and layout information necessary
+    /// to free the box.
+    ///
+    /// SAFETY: This function creates aliasing pointers for the allocation. It
+    /// should ONLY be called in the destructor of the HeapBox when deallocation
+    /// is about to occur, and access to the Box will not be allowed again.
+    unsafe fn free_box(&mut self) -> FreeBox {
+        // SAFETY: If we allocated this item, it must have been small enough
+        // to properly construct a layout. Avoid Layout::array, as it only
+        // offers a checked method.
+        let layout = unsafe {
+            let array_size = size_of::<T>() * self.count;
+            Layout::from_size_align_unchecked(array_size, align_of::<T>())
+        };
+        FreeBox {
+            ptr: NonNull::new_unchecked(self.ptr.cast::<u8>()),
+            layout: Layout::new::<T>(),
+        }
+    }
+
+    /// Leak the contents of this box, never to be recovered (probably)
+    pub fn leak(self) -> &'static mut [T] {
+        let mutref = unsafe { core::slice::from_raw_parts_mut(self.ptr, self.count) };
+        forget(self);
+        mutref
+    }
+}
+
+impl<T> Drop for HeapArray<T> {
+    fn drop(&mut self) {
+        // Calculate the pointer, size, and layout of this allocation
+        let free_box = unsafe { self.free_box() };
+        free_box.box_drop();
+    }
+}
+
+/// A type representing a request to free a given allocation of memory.
+struct FreeBox {
+    ptr: NonNull<u8>,
+    layout: Layout,
+}
+
+impl FreeBox {
+    fn box_drop(self) {
         // Attempt to get exclusive access to the heap
         if let Some(mut h) = HEAP.try_lock() {
             // If we can access the heap directly, then immediately free this memory
             unsafe {
-                h.deref_mut().deallocate(free_box.ptr, free_box.layout);
+                h.deref_mut().deallocate(self.ptr, self.layout);
             }
         } else {
             // If not, try to store the allocation into the free list, and it will be
@@ -226,15 +294,9 @@ impl<T> Drop for HeapBox<T> {
             let free_q = unsafe { FREE_Q.get_unchecked() };
 
             // If the free list is completely full, for now, just panic.
-            defmt::unwrap!(free_q.enqueue(free_box).map_err(drop), "Free list is full!");
+            defmt::unwrap!(free_q.enqueue(self).map_err(drop), "Free list is full!");
         }
     }
-}
-
-/// A type representing a request to free a given allocation of memory.
-struct FreeBox {
-    ptr: NonNull<u8>,
-    layout: Layout,
 }
 
 /// A guard type that provides mutually exclusive access to the allocator as
@@ -255,11 +317,7 @@ impl HeapGuard {
         self.deref().used()
     }
 
-    /// Attempt to allocate a HeapBox using the allocator
-    ///
-    /// If space was available, the allocation will be returned. If not, an
-    /// error will be returned
-    pub fn alloc_box<T>(&mut self, data: T) -> Result<HeapBox<T>, ()> {
+    fn clean_allocs(&mut self) {
         // First, grab the Free Queue.
         //
         // SAFETY: A HeapGuard can only be created if the Heap, and by extension the
@@ -275,6 +333,15 @@ impl HeapGuard {
                 self.deref_mut().deallocate(ptr, layout);
             }
         }
+    }
+
+    /// Attempt to allocate a HeapBox using the allocator
+    ///
+    /// If space was available, the allocation will be returned. If not, an
+    /// error will be returned
+    pub fn alloc_box<T>(&mut self, data: T) -> Result<HeapBox<T>, ()> {
+        // Clean up any pending allocs
+        self.clean_allocs();
 
         // Then, attempt to allocate the requested T.
         let nnu8 = self.deref_mut().allocate_first_fit(Layout::new::<T>())?;
@@ -286,6 +353,33 @@ impl HeapGuard {
         }
 
         Ok(HeapBox { ptr })
+    }
+
+    /// Attempt to allocate a HeapArray using the allocator
+    ///
+    /// If space was available, the allocation will be returned. If not, an
+    /// error will be returned
+    pub fn alloc_box_array<T: Copy + ?Sized>(&mut self, data: T, count: usize) -> Result<HeapArray<T>, ()> {
+        // Clean up any pending allocs
+        self.clean_allocs();
+
+        // Then figure out the layout of the requested array. This call fails
+        // if the total size exceeds ISIZE_MAX, which is exceedingly unlikely
+        // (unless the caller calculated something wrong)
+        let layout = Layout::array::<T>(count).map_err(drop)?;
+
+        // Then, attempt to allocate the requested T.
+        let nnu8 = self.deref_mut().allocate_first_fit(layout)?;
+        let ptr = nnu8.as_ptr().cast::<T>();
+
+        // And initialize it with the contents given to us
+        unsafe {
+            for i in 0..count {
+                ptr.add(i).write(data);
+            }
+        }
+
+        Ok(HeapArray { ptr, count })
     }
 }
 

@@ -11,14 +11,14 @@ mod app {
     use groundhog_nrf52::GlobalRollingTimer;
     use nrf52840_hal::{
         clocks::{ExternalOscillator, Internal, LfOscStopped},
-        pac::{TIMER0, USBD},
+        pac::TIMER0,
         usbd::{UsbPeripheral, Usbd},
         Clocks,
     };
     use kernel::{
         alloc::HEAP,
-        monotonic::{ExtU32, MonoTimer},
-        drivers::usb_serial::{UsbUartParts, setup_usb_uart, UsbUartIsr, UsbEvents},
+        monotonic::{MonoTimer},
+        drivers::usb_serial::{UsbUartParts, setup_usb_uart, UsbUartIsr, enable_usb_interrupts},
         syscall::{syscall_clear, try_syscall, try_recv_syscall},
     };
     use usb_device::{
@@ -62,10 +62,10 @@ mod app {
         // Reset the syscall contents
         syscall_clear();
 
-        let (usb_dev, usb_serial) = {
-            // yolo
-            device.USBD.intenset.write(|w| unsafe { w.bits(0xFFFF_FFFF) });
+        // Before we give away the USB peripheral, enable the relevant interrupts
+        enable_usb_interrupts(&device.USBD);
 
+        let (usb_dev, usb_serial) = {
             let usb_bus = Usbd::new(UsbPeripheral::new(device.USBD, clocks));
             let usb_bus = defmt::unwrap!(singleton!(:UsbBusAllocator<Usbd<UsbPeripheral>> = usb_bus));
 
@@ -119,9 +119,7 @@ mod app {
 
     #[task(binds = USBD, local = [usb_isr])]
     fn usb_tick(cx: usb_tick::Context) {
-        let active_events = UsbEvents::get();
         cx.local.usb_isr.poll();
-        active_events.clear();
     }
 
     // TODO: I am currently polling the syscall interfaces in the idle function,
@@ -136,8 +134,12 @@ mod app {
         let timer = GlobalRollingTimer::default();
         let mut last_mem = timer.get_ticks();
 
+        machine.serial.register_port(1).unwrap();
+
         loop {
             if timer.millis_since(last_mem) >= 1000 {
+                machine.serial.process();
+
                 if let Some(hg) = HEAP.try_lock() {
                     last_mem = timer.get_ticks();
                     let used = hg.used_space();
@@ -159,12 +161,12 @@ mod app {
                     }
                 }
             }
-            match machine.serial.recv(&mut buf) {
+            match machine.serial.recv(0, &mut buf) {
                 Ok(sli) => {
                     let mut remain: &[u8] = sli;
 
                     while !remain.is_empty() {
-                        match machine.serial.send(remain) {
+                        match machine.serial.send(1, remain) {
                             Ok(()) => {
                                 remain = &[];
                             },

@@ -2,8 +2,13 @@
 
 use core::mem::size_of;
 
-use cobs::{CobsEncoder, decode};
+use cobs::{CobsEncoder, decode, decode_in_place};
 use postcard_cobs as cobs;
+
+pub fn max_encoding_length(len: usize) -> usize {
+    // message length + port bytes + sentinel byte
+    cobs::max_encoding_length(len + size_of::<Port>() + 1)
+}
 
 // Note: this sort of assumes this is some uN primative type. Thats fine for now.
 pub type Port = u16;
@@ -29,6 +34,37 @@ impl<'a> Message<'a> {
         *end = 0;
 
         Ok(&dest[..(used+1)])
+    }
+
+    pub fn decode_in_place(src: &'a mut [u8]) -> Result<Self, Error> {
+        let src_len = src.len();
+        let src = match src.last() {
+            Some(0) => &mut src[..src_len - 1],
+            Some(_) => src,
+            None => return Err(Error::InsufficientSpace),
+        };
+
+        let used = decode_in_place(src).map_err(|_| Error::DecodingError)?;
+
+
+        if (used < size_of::<Port>()) || used > src_len {
+            return Err(Error::DecodingError);
+        }
+
+        let relevant = &src[..used];
+
+        let mut pbuf = [0u8; size_of::<Port>()];
+
+        let (pbytes, dbytes) = relevant.split_at(size_of::<Port>());
+
+        pbuf.copy_from_slice(pbytes);
+
+        let port = Port::from_le_bytes(pbuf);
+
+        Ok(Self {
+            port,
+            data: dbytes,
+        })
     }
 
     pub fn decode_to<'b>(src: &'b [u8], dst_buf: &'a mut [u8]) -> Result<Self, Error> {

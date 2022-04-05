@@ -1,5 +1,8 @@
+use std::io::ErrorKind;
 use std::time::Duration;
 use std::thread::sleep;
+
+use sportty::Message;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut dport = None;
@@ -30,6 +33,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "Error: failed to create port")?;
 
     let mut port_id = 0u16;
+    let mut buf = [0u8; 128];
+    let mut carry = Vec::new();
+
     loop {
         sleep(Duration::from_millis(500));
         let mut data = [0u8; 16];
@@ -38,6 +44,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let msg = sportty::Message { port: port_id, data: &data };
         let used = msg.encode_to(&mut buf).map_err(drop).unwrap();
         port.write_all(used)?;
-        port_id = port_id.wrapping_add(1);
+        port_id = (port_id + 1) % 4;
+
+        let used = match port.read(&mut buf) {
+            Err(e) if e.kind() == ErrorKind::WouldBlock => continue,
+            Err(e) if e.kind() == ErrorKind::TimedOut => continue,
+            Ok(0) => continue,
+            Ok(used) => used,
+            Err(e) => panic!("{:?}", e),
+        };
+        carry.extend_from_slice(&buf[..used]);
+
+        if let Some(pos) = carry.iter().position(|b| *b == 0) {
+            let new_chunk = carry.split_off(pos + 1);
+            if let Ok(msg) = Message::decode_in_place(&mut carry) {
+                println!("Got message: {} - {:?}", msg.port, msg.data);
+            } else {
+                println!("Bad decode!");
+            }
+            carry = new_chunk;
+        }
     }
 }
