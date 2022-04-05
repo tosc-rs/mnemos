@@ -33,7 +33,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "Error: failed to create port")?;
 
     let mut port_id = 0u16;
-    let mut buf = [0u8; 128];
     let mut carry = Vec::new();
 
     port.set_timeout(Duration::from_millis(10)).ok();

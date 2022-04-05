@@ -1,12 +1,11 @@
 #![no_main]
 #![no_std]
 
-use kernel as _; // global logger + panicking-behavior + memory layout
-
 #[rtic::app(device = nrf52840_hal::pac, dispatchers = [SWI0_EGU0])]
 mod app {
 
-    use cortex_m::singleton;
+    use core::sync::atomic::Ordering;
+    use cortex_m::{singleton, register::{psp, control}};
     use defmt::unwrap;
     use groundhog_nrf52::GlobalRollingTimer;
     use nrf52840_hal::{
@@ -108,6 +107,12 @@ mod app {
     fn svc(cx: svc::Context) {
         let machine = cx.local.machine;
 
+        let mut buf = [0u8; 64];
+        buf.copy_from_slice(&[0xACu8; 64]);
+        let bufaddr = buf.as_ptr() as u32;
+        defmt::println!("SVC: New variable lives at: 0x{=u32:08X}", bufaddr);
+        defmt::println!("SVC: Contents: {=[u8]}", buf);
+
         if let Ok(()) = try_recv_syscall(|req| {
             machine.handle_syscall(req)
         }) {
@@ -125,12 +130,74 @@ mod app {
     // to the SWI handler, and idle will basically just launch a program. I think.
     // Maybe idle will use SWIs too.
     #[idle]
-    fn idle(cx: idle::Context) -> ! {
+    fn idle(_cx: idle::Context) -> ! {
         defmt::println!("Hello, world!");
+
+        let timer = GlobalRollingTimer::default();
+        let start = timer.get_ticks();
+
+        // Wait, to allow RTT to attach
+        while timer.millis_since(start) < 100 { }
+
+        defmt::println!("⚠️ ENTERING USERSPACE ⚠️");
+        // Begin VERY CURSED userspace setup code
+        //
+        // TODO/UNSAFETY:
+        // This is likely all kinds of UB, and should be replaced with
+        // a divergent assembly function that:
+        //
+        // * Takes the new "userspace entry point" as an argument
+        // * Takes the new PSP start address as an argument
+        // * Sets the PSP
+        // * Enables npriv and psp in the control register
+        // * Calls the userspace entry point
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
+
+        // Try to set usermode! TODO! Should probably critical section!
+        // but also don't use any stack variables!
+        unsafe {
+            extern "C" {
+                static _app_stack_start: u32;
+            }
+            let stack_start = &_app_stack_start as *const u32 as u32;
+            defmt::println!("Setting PSP to: 0x{=u32:08X}", stack_start);
+            psp::write(stack_start);
+
+            // Note: This is where the really cursed stuff happens. We simultaneously:
+            // * Switch the stack pointer to use the newly-minted PSP instead of the
+            //     default/exception mode MSP
+            // * Disables privilege mode for thread mode (e.g. `idle`)
+            //
+            // This makes the compiler sad. See note above for how to fix this the
+            // "right" way (spoiler: use ASM)
+            let mut cur_ctl = control::read();
+            cur_ctl.set_npriv(control::Npriv::Unprivileged);
+            cur_ctl.set_spsel(control::Spsel::Psp);
+            control::write(cur_ctl);
+        }
+
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
+
+        // So, moving the stack pointer is all kinds of cursed, and I should probably
+        // be using inline asm or something to do the above. Instead, immediately
+        // jump into another inline(never) function, and hope this wards off all of the
+        // UB goblins for now until I feel like learning ASM.
+        crate::userspace::entry();
+        // End VERY CURSED userspace setup code
+    }
+}
+
+mod userspace {
+    use groundhog::RollingTimer;
+    use groundhog_nrf52::GlobalRollingTimer;
+    use kernel::{self as _, syscall::{SysCallRequest, try_syscall, SysCallSuccess}, alloc::HEAP};
+
+    #[inline(never)]
+    pub fn entry() -> ! {
         let timer = GlobalRollingTimer::default();
         let mut last_mem = timer.get_ticks();
 
-        // First, open Port 1
+        // First, open Port 1 (we will write to it)
         let req = SysCallRequest::SerialOpenPort { port: 1 };
         defmt::unwrap!(try_syscall(req));
 
@@ -154,6 +221,7 @@ mod app {
                     Ok(succ) => {
                         if let SysCallSuccess::DataReceived { dest_buf } = succ {
                             let dest = unsafe { dest_buf.to_slice_mut() };
+
                             if dest.len() > 0 {
                                 defmt::println!("Sending port 1!");
                                 let req2 = SysCallRequest::SerialSend {
@@ -178,7 +246,6 @@ mod app {
                         defmt::panic!("syscall failed!");
                     }
                 }
-
             }
         }
     }
