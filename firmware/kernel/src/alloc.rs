@@ -170,6 +170,8 @@ pub struct HeapBox<T> {
     ptr: *mut T,
 }
 
+unsafe impl<T> Send for HeapBox<T> { }
+
 impl<T> Deref for HeapBox<T> {
     type Target = T;
 
@@ -220,6 +222,8 @@ pub struct HeapArray<T> {
     ptr: *mut T,
 }
 
+unsafe impl<T> Send for HeapArray<T> { }
+
 impl<T> Deref for HeapArray<T> {
     type Target = [T];
 
@@ -245,13 +249,13 @@ impl<T> HeapArray<T> {
         // SAFETY: If we allocated this item, it must have been small enough
         // to properly construct a layout. Avoid Layout::array, as it only
         // offers a checked method.
-        let layout = unsafe {
+        let layout = {
             let array_size = size_of::<T>() * self.count;
             Layout::from_size_align_unchecked(array_size, align_of::<T>())
         };
         FreeBox {
             ptr: NonNull::new_unchecked(self.ptr.cast::<u8>()),
-            layout: Layout::new::<T>(),
+            layout,
         }
     }
 

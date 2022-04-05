@@ -36,15 +36,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut buf = [0u8; 128];
     let mut carry = Vec::new();
 
+    port.set_timeout(Duration::from_millis(10)).ok();
+
     loop {
-        sleep(Duration::from_millis(500));
+        sleep(Duration::from_millis(333));
         let mut data = [0u8; 16];
         let mut buf = [0u8; 256];
         data.iter_mut().enumerate().for_each(|(i, b)| *b = (i as u8));
         let msg = sportty::Message { port: port_id, data: &data };
         let used = msg.encode_to(&mut buf).map_err(drop).unwrap();
         port.write_all(used)?;
-        port_id = (port_id + 1) % 4;
+        // port_id = (port_id + 1) % 4;
 
         let used = match port.read(&mut buf) {
             Err(e) if e.kind() == ErrorKind::WouldBlock => continue,

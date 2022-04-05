@@ -76,7 +76,13 @@ impl UsbUartIsr {
 pub struct UsbUartSys {
     out: Producer<'static, USB_BUF_SZ>,
     inc: Consumer<'static, USB_BUF_SZ>,
+    // TODO: There's probably a smarter way to handle this without having
+    // a bigass accumulator struct in here. Either limit max size, or use
+    // a smarter stream decoder which can emit partial data on the fly
     acc: Accumulator<1024>,
+
+    // Also, we might want to "coverge" older messages into fewer allocs,
+    // to avoid small chunks filling up the queue
     ports: LinearMap<u16, Deque<HeapArray<u8>, 16>, 8>,
 }
 
@@ -124,6 +130,8 @@ impl crate::traits::Serial for UsbUartSys {
 
         self.ports.insert(port, Deque::new()).map_err(drop)?;
 
+        defmt::println!("Registered port {=u16}!", port);
+
         Ok(())
     }
 
@@ -141,7 +149,7 @@ impl crate::traits::Serial for UsbUartSys {
 
     fn process(&mut self) {
         // Process all incoming message and dispatch to queues
-        while let Ok(rgr) = self.inc.read() {
+        'outer: while let Ok(rgr) = self.inc.read() {
             let mut window = rgr.deref();
             let rec_len = rgr.len();
 
@@ -152,7 +160,7 @@ impl crate::traits::Serial for UsbUartSys {
                     Ok(Some(mut msg)) => {
                         match Message::decode_in_place(msg.msg.as_mut_slice()) {
                             Ok(smsg) => {
-                                defmt::println!("Decoded port {=u16} - msg: {=[u8]}", smsg.port, smsg.data);
+                                // defmt::println!("Decoded port {=u16} - msg: {=[u8]}", smsg.port, smsg.data);
 
                                 // If this is port 0, then (try to) also loopback!
                                 if smsg.port == 0 {
@@ -174,7 +182,7 @@ impl crate::traits::Serial for UsbUartSys {
                                         dq.push_back(habox).ok()
                                     }).is_none();
 
-                                if failed {
+                                if failed && self.ports.contains_key(&smsg.port) {
                                     defmt::println!("Failed to receive message for serial port {=u16}. Discarding.", smsg.port);
                                 }
                             },
@@ -183,9 +191,13 @@ impl crate::traits::Serial for UsbUartSys {
                         window = msg.remainder;
                     },
                     Ok(None) => {},
-                    Err(_) => {
-                        defmt::println!("Decode error!");
+                    Err(AccError::NoRoomNoRem) => {
+                        rgr.release(rec_len);
+                        continue 'outer;
                     },
+                    Err(AccError::NoRoomWithRem(rem)) => {
+                        window = rem;
+                    }
                 }
             }
 
@@ -241,6 +253,7 @@ impl crate::traits::Serial for UsbUartSys {
     fn send<'a>(&mut self, port: u16, buf: &'a [u8]) -> Result<(), &'a [u8]> {
         // Check if port is mapped
         if !self.ports.contains_key(&port) {
+            defmt::println!("Unregistered port: {=u16}", port);
             return Err(buf);
         }
 
@@ -279,7 +292,7 @@ impl crate::traits::Serial for UsbUartSys {
                     //     one for sentinel), which is always positive due to check
                     //     above, OR
                     // * The remaining data length
-                    let to_use = (wgr.len() - 3).min(remaining.len());
+                    let to_use = (wgr.len() - 4).min(remaining.len());
                     let (now, later) = remaining.split_at(to_use);
 
                     // Setup and encode the message
@@ -292,7 +305,9 @@ impl crate::traits::Serial for UsbUartSys {
                             defmt::println!("Encoding failure!");
                             defmt::println!("remaining len: {=usize}", remaining.len());
                             defmt::println!("wgr len: {=usize}", wgr.len());
+                            defmt::println!("now len: {=usize}", now.len());
                             defmt::println!("remaining: {=[u8]}", remaining);
+                            defmt::println!("now: {=[u8]}", now);
                             defmt::panic!();
                         },
                     };
@@ -418,10 +433,6 @@ struct AccMsg<const N: usize> {
 }
 
 impl<const N: usize> AccMsg<N> {
-    fn as_slice(&self) -> &[u8] {
-        &self.buf[..self.len]
-    }
-
     fn as_mut_slice(&mut self) -> &mut [u8] {
         &mut self.buf[..self.len]
     }

@@ -19,7 +19,7 @@ mod app {
         alloc::HEAP,
         monotonic::{MonoTimer},
         drivers::usb_serial::{UsbUartParts, setup_usb_uart, UsbUartIsr, enable_usb_interrupts},
-        syscall::{syscall_clear, try_syscall, try_recv_syscall},
+        syscall::{syscall_clear, try_syscall, try_recv_syscall, SysCallRequest, SysCallSuccess},
     };
     use usb_device::{
         class_prelude::UsbBusAllocator,
@@ -104,20 +104,18 @@ mod app {
         )
     }
 
-    #[task(binds = SVCall)]
-    fn svc(_cx: svc::Context) {
-        let hdlr = |inp: &[u8], out: &mut [u8]| {
-            defmt::println!("{=[u8]}", inp);
-            out[..5].copy_from_slice(b"hello");
-            5
-        };
+    #[task(binds = SVCall, local = [machine], priority = 1)]
+    fn svc(cx: svc::Context) {
+        let machine = cx.local.machine;
 
-        if let Ok(()) = try_recv_syscall(hdlr) {
-            defmt::println!("Handled syscall!");
+        if let Ok(()) = try_recv_syscall(|req| {
+            machine.handle_syscall(req)
+        }) {
+            // defmt::println!("Handled syscall!");
         }
     }
 
-    #[task(binds = USBD, local = [usb_isr])]
+    #[task(binds = USBD, local = [usb_isr], priority = 2)]
     fn usb_tick(cx: usb_tick::Context) {
         cx.local.usb_isr.poll();
     }
@@ -126,57 +124,61 @@ mod app {
     // since I don't have syscalls yet. In the future, the `machine` will be given
     // to the SWI handler, and idle will basically just launch a program. I think.
     // Maybe idle will use SWIs too.
-    #[idle(local = [machine])]
+    #[idle]
     fn idle(cx: idle::Context) -> ! {
         defmt::println!("Hello, world!");
-        let machine = cx.local.machine;
-        let mut buf = [0u8; 128];
         let timer = GlobalRollingTimer::default();
         let mut last_mem = timer.get_ticks();
 
-        machine.serial.register_port(1).unwrap();
+        // First, open Port 1
+        let req = SysCallRequest::SerialOpenPort { port: 1 };
+        defmt::unwrap!(try_syscall(req));
+
+        let mut buf = [0u8; 128];
 
         loop {
             if timer.millis_since(last_mem) >= 1000 {
-                machine.serial.process();
-
                 if let Some(hg) = HEAP.try_lock() {
                     last_mem = timer.get_ticks();
                     let used = hg.used_space();
                     let free = hg.free_space();
-
                     defmt::println!("used: {=usize}, free: {=usize}", used, free);
                     defmt::println!("Syscalling!");
+                }
 
-                    let input = [1, 2, 3];
-                    let mut output = [0u8; 64];
-
-                    match try_syscall(&input, &mut output) {
-                        Ok(out) => {
-                            defmt::println!("Syscall said: {=[u8]}", out);
+                let req = SysCallRequest::SerialReceive {
+                    port: 0,
+                    dest_buf: buf.as_mut().into(),
+                };
+                match try_syscall(req) {
+                    Ok(succ) => {
+                        if let SysCallSuccess::DataReceived { dest_buf } = succ {
+                            let dest = unsafe { dest_buf.to_slice_mut() };
+                            if dest.len() > 0 {
+                                defmt::println!("Sending port 1!");
+                                let req2 = SysCallRequest::SerialSend {
+                                    port: 1,
+                                    src_buf: (&*dest).into(),
+                                };
+                                match try_syscall(req2) {
+                                    Ok(SysCallSuccess::DataSent { remainder }) => {
+                                        defmt::assert!(remainder.is_none());
+                                    },
+                                    Ok(_) => defmt::panic!(),
+                                    Err(_) => {
+                                        defmt::println!("Port0 -> Port1 send failed!")
+                                    }
+                                }
+                            }
+                        } else {
+                            defmt::panic!("What?");
                         }
-                        Err(()) => {
-                            defmt::println!("Syscall error!");
-                        }
+                    }
+                    Err(()) => {
+                        defmt::panic!("syscall failed!");
                     }
                 }
-            }
-            match machine.serial.recv(0, &mut buf) {
-                Ok(sli) => {
-                    let mut remain: &[u8] = sli;
 
-                    while !remain.is_empty() {
-                        match machine.serial.send(1, remain) {
-                            Ok(()) => {
-                                remain = &[];
-                            },
-                            Err(rem) => {
-                                remain = rem;
-                            },
-                        }
-                    }
-                },
-                Err(_) => todo!(),
             }
         }
     }
