@@ -18,7 +18,7 @@ mod app {
         alloc::HEAP,
         monotonic::{MonoTimer},
         drivers::usb_serial::{UsbUartParts, setup_usb_uart, UsbUartIsr, enable_usb_interrupts},
-        syscall::{syscall_clear, try_syscall, try_recv_syscall, SysCallRequest, SysCallSuccess},
+        syscall::{syscall_clear, try_recv_syscall},
     };
     use usb_device::{
         class_prelude::UsbBusAllocator,
@@ -107,12 +107,6 @@ mod app {
     fn svc(cx: svc::Context) {
         let machine = cx.local.machine;
 
-        let mut buf = [0u8; 64];
-        buf.copy_from_slice(&[0xACu8; 64]);
-        let bufaddr = buf.as_ptr() as u32;
-        defmt::println!("SVC: New variable lives at: 0x{=u32:08X}", bufaddr);
-        defmt::println!("SVC: Contents: {=[u8]}", buf);
-
         if let Ok(()) = try_recv_syscall(|req| {
             machine.handle_syscall(req)
         }) {
@@ -139,7 +133,7 @@ mod app {
         // Wait, to allow RTT to attach
         while timer.millis_since(start) < 100 { }
 
-        defmt::println!("⚠️ ENTERING USERSPACE ⚠️");
+        defmt::println!("!!! - ENTERING USERSPACE - !!!");
         // Begin VERY CURSED userspace setup code
         //
         // TODO/UNSAFETY:
