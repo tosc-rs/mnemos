@@ -190,6 +190,7 @@ mod userspace {
     pub fn entry() -> ! {
         let timer = GlobalRollingTimer::default();
         let mut last_mem = timer.get_ticks();
+        let mut last_sys = timer.get_ticks();
 
         // First, open Port 1 (we will write to it)
         let req = SysCallRequest::SerialOpenPort { port: 1 };
@@ -204,8 +205,11 @@ mod userspace {
                     let used = hg.used_space();
                     let free = hg.free_space();
                     defmt::println!("used: {=usize}, free: {=usize}", used, free);
-                    defmt::println!("Syscalling!");
                 }
+            }
+
+            if timer.millis_since(last_sys) >= 10 {
+                last_sys = timer.get_ticks();
 
                 let req = SysCallRequest::SerialReceive {
                     port: 0,
@@ -224,7 +228,9 @@ mod userspace {
                                 };
                                 match try_syscall(req2) {
                                     Ok(SysCallSuccess::DataSent { remainder }) => {
-                                        defmt::assert!(remainder.is_none());
+                                        if remainder.is_some() {
+                                            defmt::println!("oops remainder");
+                                        }
                                     },
                                     Ok(_) => defmt::panic!(),
                                     Err(_) => {

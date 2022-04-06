@@ -163,6 +163,7 @@ impl crate::traits::Serial for UsbUartSys {
                                 // defmt::println!("Decoded port {=u16} - msg: {=[u8]}", smsg.port, smsg.data);
 
                                 // If this is port 0, then (try to) also loopback!
+                                // #[cfg(feature = "auto-loopback")]
                                 if smsg.port == 0 {
                                     self.send(0, &smsg.data).ok();
                                 }

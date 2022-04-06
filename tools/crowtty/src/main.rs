@@ -43,6 +43,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         workers: HashMap::new(),
     };
 
+    // NOTE: You can connect to these ports using the following ncat/netcat/nc commands:
+    // ```
+    // # connect to port N - stdio
+    // stty -icanon -echo && ncat 127.0.0.1 $PORT
+    // ```
     for i in [0, 1].into_iter() {
         let (inp_send, inp_recv) = channel();
         let (out_send, out_recv) = channel();
@@ -123,13 +128,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     loop {
-        // let mut data = [0u8; 16];
         let mut buf = [0u8; 256];
-        // data.iter_mut().enumerate().for_each(|(i, b)| *b = (i as u8));
-        // let msg = sportty::Message { port: port_id, data: &data };
-        // let used = msg.encode_to(&mut buf).map_err(drop).unwrap();
-        // port.write_all(used)?;
-        // port_id = (port_id + 1) % 4;
 
         for (port_idx, hdl) in manager.workers.iter_mut() {
             if let Ok(msg) = hdl.inp.try_recv() {
