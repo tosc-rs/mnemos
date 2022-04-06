@@ -5,6 +5,27 @@
 #[no_mangle]
 pub static __ENTRY_POINT: fn() -> ! = hello;
 
+// This does not help with the "used" things
+use userspace as _;
+
+// Having these here makes the code compile, even as "duplicate symbols!"
+//
+// #[link_section=".bridge.syscall_in.ptr"]
+// #[no_mangle]
+// pub static SYSCALL_IN_PTR: AtomicPtr<u8> = AtomicPtr::new(null_mut());
+//
+// #[link_section=".bridge.syscall_in.len"]
+// #[no_mangle]
+// pub static SYSCALL_IN_LEN: AtomicUsize = AtomicUsize::new(0);
+//
+// #[link_section=".bridge.syscall_out.ptr"]
+// #[no_mangle]
+// pub static SYSCALL_OUT_PTR: AtomicPtr<u8> = AtomicPtr::new(null_mut());
+//
+// #[link_section=".bridge.syscall_out.len"]
+// #[no_mangle]
+// pub static SYSCALL_OUT_LEN: AtomicUsize = AtomicUsize::new(0);
+
 static CONTENT: AtomicU32 = AtomicU32::new(0xACACACAC);
 
 fn hello() -> ! {
@@ -18,7 +39,8 @@ fn hello() -> ! {
 }
 
 use core::panic::PanicInfo;
-use core::sync::atomic::{self, Ordering, AtomicU32};
+use core::ptr::null_mut;
+use core::sync::atomic::{self, Ordering, AtomicU32, AtomicPtr, AtomicUsize};
 
 #[inline(never)]
 #[panic_handler]

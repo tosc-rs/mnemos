@@ -93,7 +93,7 @@ SECTIONS
   PROVIDE(_stack_start = __eapp + _stack_size);
 
   /* ## Sections in APP */
-  .bridge (NOLOAD) : ALIGN(4)
+  .bridge : ALIGN(4)
   {
     __sbridge = .;
     /* Initial Stack Pointer (SP) value */
@@ -102,13 +102,16 @@ SECTIONS
     *(.bridge.syscall_out.ptr .bridge.syscall_out.ptr.*);
     *(.bridge.syscall_out.len .bridge.syscall_out.len.*);
 
-    KEEP(*(.bridge .bridge.*));
+    KEEP(*(.bridge.syscall_in.ptr .bridge.syscall_in.ptr.*));
+    KEEP(*(.bridge.syscall_in.len .bridge.syscall_in.len.*));
+    KEEP(*(.bridge.syscall_out.ptr .bridge.syscall_out.ptr.*));
+    KEEP(*(.bridge.syscall_out.len .bridge.syscall_out.len.*));
 
     __start_app_ram = .;
   } > APP
 
   /* ### Vector table */
-  .anachro_table (ORIGIN(APP) + 16) :
+  .anachro_table __start_app_ram :
   {
     __satable = .;
     /* Headers for the header gods! */
