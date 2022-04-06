@@ -35,6 +35,9 @@ heapless = "0.7.10"
 embedded-hal = "0.2.6"
 nb = "1.0.0"
 
+[dependencies.common]
+path = "../common"
+
 [dependencies.bbqueue]
 version = "0.5.1"
 features = ["defmt"]

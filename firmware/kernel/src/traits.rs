@@ -1,4 +1,6 @@
-use crate::syscall::{SysCallRequest, SysCallSuccess};
+use common::{SysCallRequest, SysCallSuccess};
+use groundhog_nrf52::GlobalRollingTimer;
+use groundhog::RollingTimer;
 
 pub trait Serial: Send {
     fn register_port(&mut self, port: u16) -> Result<(), ()>;
@@ -46,6 +48,12 @@ impl Machine {
                 self.serial.register_port(port)?;
                 Ok(SysCallSuccess::PortOpened)
             },
+            SysCallRequest::SleepMicros { us } => {
+                let timer = GlobalRollingTimer::default();
+                let start = timer.get_ticks();
+                while timer.micros_since(start) <= us { }
+                Ok(SysCallSuccess::SleptMicros { us })
+            }
         }
     }
 }

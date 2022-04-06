@@ -50,7 +50,7 @@ SECTIONS
 /* The stack is of the full descending type. */
 /* You may want to use this variable to locate the call stack and static
    variables in different memory regions. Below is shown the default value */
-_app_stack_start = ORIGIN(ARAM) + LENGTH(ARAM);
+_app_stack_start = ORIGIN(APP) + LENGTH(APP);
 
 /* You can use this symbol to customize the location of the .text section */
 /* If omitted the .text section will be placed right after the .vector_table

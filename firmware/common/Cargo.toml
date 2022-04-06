@@ -1,5 +1,5 @@
 [package]
-name = "userspace"
+name = "common"
 version = "0.1.0"
 edition = "2021"
 
@@ -7,5 +7,10 @@ edition = "2021"
 
 [dependencies]
 
-[dependencies.common]
-path = "../common"
+[dependencies.serde]
+version = "1.0.136"
+default-features = false
+features = ["derive"]
+
+[dependencies.postcard]
+version = "0.7.3"

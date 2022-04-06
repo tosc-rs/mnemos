@@ -1,24 +1,23 @@
 #![no_std]
 
-use core::{sync::atomic::{AtomicPtr, AtomicUsize}, ptr::null_mut};
+pub use common;
 
-#[link_section=".bridge.syscall_in.ptr"]
+// The user must provide a `no_mangle` entrypoint.
+extern "Rust" {
+    fn entry() -> !;
+}
+
+#[link_section = ".anachro_table.entry_point"]
 #[no_mangle]
 #[used]
-pub static SYSCALL_IN_PTR: AtomicPtr<u8> = AtomicPtr::new(null_mut());
+pub static __ENTRY_POINT: unsafe fn() -> ! = entry;
 
-#[link_section=".bridge.syscall_in.len"]
-#[no_mangle]
-#[used]
-pub static SYSCALL_IN_LEN: AtomicUsize = AtomicUsize::new(0);
+use core::panic::PanicInfo;
+use core::sync::atomic::{self, Ordering};
 
-#[link_section=".bridge.syscall_out.ptr"]
-#[no_mangle]
-#[used]
-pub static SYSCALL_OUT_PTR: AtomicPtr<u8> = AtomicPtr::new(null_mut());
-
-#[link_section=".bridge.syscall_out.len"]
-#[no_mangle]
-#[used]
-pub static SYSCALL_OUT_LEN: AtomicUsize = AtomicUsize::new(0);
-
+#[panic_handler]
+fn panic(_info: &PanicInfo) -> ! {
+    loop {
+        atomic::compiler_fence(Ordering::SeqCst);
+    }
+}

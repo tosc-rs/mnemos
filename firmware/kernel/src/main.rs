@@ -3,7 +3,6 @@
 
 #[rtic::app(device = nrf52840_hal::pac, dispatchers = [SWI0_EGU0])]
 mod app {
-
     use core::sync::atomic::Ordering;
     use cortex_m::{singleton, register::{psp, control}};
     use defmt::unwrap;
@@ -182,70 +181,35 @@ mod app {
 }
 
 mod userspace {
-    use groundhog::RollingTimer;
-    use groundhog_nrf52::GlobalRollingTimer;
-    use kernel::{self as _, syscall::{SysCallRequest, try_syscall, SysCallSuccess}, alloc::HEAP};
+    use kernel::{self as _, alloc::HEAP};
+    use common::porcelain::{serial, time};
 
     #[inline(never)]
     pub fn entry() -> ! {
-        let timer = GlobalRollingTimer::default();
-        let mut last_mem = timer.get_ticks();
-        let mut last_sys = timer.get_ticks();
-
         // First, open Port 1 (we will write to it)
-        let req = SysCallRequest::SerialOpenPort { port: 1 };
-        defmt::unwrap!(try_syscall(req));
+        defmt::unwrap!(serial::open_port(1));
 
         let mut buf = [0u8; 128];
 
         loop {
-            if timer.millis_since(last_mem) >= 1000 {
-                if let Some(hg) = HEAP.try_lock() {
-                    last_mem = timer.get_ticks();
-                    let used = hg.used_space();
-                    let free = hg.free_space();
-                    defmt::println!("used: {=usize}, free: {=usize}", used, free);
+            for _ in 0..100 {
+                if let Ok(data) = serial::read_port(0, &mut buf) {
+                    match serial::write_port(1, data) {
+                        Ok(None) => {},
+                        Ok(Some(_)) => defmt::println!("Remainder?"),
+                        Err(()) => defmt::println!("Error writing port 1!"),
+                    }
+                } else {
+                    defmt::println!("Read port 0 failed!");
                 }
+
+                time::sleep_micros(10_000).ok();
             }
 
-            if timer.millis_since(last_sys) >= 10 {
-                last_sys = timer.get_ticks();
-
-                let req = SysCallRequest::SerialReceive {
-                    port: 0,
-                    dest_buf: buf.as_mut().into(),
-                };
-                match try_syscall(req) {
-                    Ok(succ) => {
-                        if let SysCallSuccess::DataReceived { dest_buf } = succ {
-                            let dest = unsafe { dest_buf.to_slice_mut() };
-
-                            if dest.len() > 0 {
-                                defmt::println!("Sending port 1!");
-                                let req2 = SysCallRequest::SerialSend {
-                                    port: 1,
-                                    src_buf: (&*dest).into(),
-                                };
-                                match try_syscall(req2) {
-                                    Ok(SysCallSuccess::DataSent { remainder }) => {
-                                        if remainder.is_some() {
-                                            defmt::println!("oops remainder");
-                                        }
-                                    },
-                                    Ok(_) => defmt::panic!(),
-                                    Err(_) => {
-                                        defmt::println!("Port0 -> Port1 send failed!")
-                                    }
-                                }
-                            }
-                        } else {
-                            defmt::panic!("What?");
-                        }
-                    }
-                    Err(()) => {
-                        defmt::panic!("syscall failed!");
-                    }
-                }
+            if let Some(hg) = HEAP.try_lock() {
+                let used = hg.used_space();
+                let free = hg.free_space();
+                defmt::println!("used: {=usize}, free: {=usize}", used, free);
             }
         }
     }
