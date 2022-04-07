@@ -69,7 +69,7 @@ pub extern "C" fn serial_read_port(port: u16, slice: *mut SliceMut) -> StatusCod
     }
     let slice_mut = unsafe { &mut *slice };
 
-    if slice_mut.is_nonnull_nonzero() {
+    if !slice_mut.is_nonnull_nonzero() {
         return StatusCode::STATUS_BAD;
     }
 
@@ -100,7 +100,7 @@ pub extern "C" fn serial_read_write(port: u16, slice: *mut Slice) -> StatusCode 
     }
     let slice = unsafe { &mut *slice };
 
-    if slice.is_nonnull_nonzero() {
+    if !slice.is_nonnull_nonzero() {
         return StatusCode::STATUS_BAD;
     }
 
