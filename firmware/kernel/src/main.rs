@@ -1,9 +1,11 @@
 #![no_main]
 #![no_std]
 
+static DEFAULT_IMAGE: &[u8] = include_bytes!("../appbins/p1echo.bin");
+
 #[rtic::app(device = nrf52840_hal::pac, dispatchers = [SWI0_EGU0])]
 mod app {
-    use core::sync::atomic::Ordering;
+    use core::sync::atomic::{Ordering, AtomicU32};
     use cortex_m::{singleton, register::{psp, control}};
     use defmt::unwrap;
     use groundhog_nrf52::GlobalRollingTimer;
@@ -18,6 +20,7 @@ mod app {
         monotonic::{MonoTimer},
         drivers::usb_serial::{UsbUartParts, setup_usb_uart, UsbUartIsr, enable_usb_interrupts},
         syscall::{syscall_clear, try_recv_syscall},
+        loader::validate_header,
     };
     use usb_device::{
         class_prelude::UsbBusAllocator,
@@ -25,6 +28,7 @@ mod app {
     };
     use usbd_serial::{SerialPort, USB_CLASS_CDC};
     use groundhog::RollingTimer;
+    use super::{DEFAULT_IMAGE, letsago};
 
     #[monotonic(binds = TIMER0, default = true)]
     type Monotonic = MonoTimer<TIMER0>;
@@ -133,84 +137,47 @@ mod app {
         while timer.millis_since(start) < 100 { }
 
         defmt::println!("!!! - ENTERING USERSPACE - !!!");
-        // Begin VERY CURSED userspace setup code
-        //
-        // TODO/UNSAFETY:
-        // This is likely all kinds of UB, and should be replaced with
-        // a divergent assembly function that:
-        //
-        // * Takes the new "userspace entry point" as an argument
-        // * Takes the new PSP start address as an argument
-        // * Sets the PSP
-        // * Enables npriv and psp in the control register
-        // * Calls the userspace entry point
+
+        let rh = validate_header(DEFAULT_IMAGE).unwrap();
+        let pws = rh.oc_flash_setup(DEFAULT_IMAGE);
+
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
 
-        // Try to set usermode! TODO! Should probably critical section!
-        // but also don't use any stack variables!
         unsafe {
-            extern "C" {
-                static _app_stack_start: u32;
-            }
-            let stack_start = &_app_stack_start as *const u32 as u32;
-            defmt::println!("Setting PSP to: 0x{=u32:08X}", stack_start);
-            psp::write(stack_start);
-
-            // Note: This is where the really cursed stuff happens. We simultaneously:
-            // * Switch the stack pointer to use the newly-minted PSP instead of the
-            //     default/exception mode MSP
-            // * Disables privilege mode for thread mode (e.g. `idle`)
-            //
-            // This makes the compiler sad. See note above for how to fix this the
-            // "right" way (spoiler: use ASM)
-            let mut cur_ctl = control::read();
-            cur_ctl.set_npriv(control::Npriv::Unprivileged);
-            cur_ctl.set_spsel(control::Spsel::Psp);
-            control::write(cur_ctl);
+            letsago(pws.stack_start, pws.entry_point);
         }
-
-        core::sync::atomic::compiler_fence(Ordering::SeqCst);
-
-        // So, moving the stack pointer is all kinds of cursed, and I should probably
-        // be using inline asm or something to do the above. Instead, immediately
-        // jump into another inline(never) function, and hope this wards off all of the
-        // UB goblins for now until I feel like learning ASM.
-        crate::userspace::entry();
-        // End VERY CURSED userspace setup code
     }
 }
 
-mod userspace {
-    use kernel::{self as _, alloc::HEAP};
-    use common::porcelain::{serial, time};
+use core::arch::asm;
+use cortex_m::register::{control, psp};
 
-    #[inline(never)]
-    pub fn entry() -> ! {
-        // First, open Port 1 (we will write to it)
-        defmt::unwrap!(serial::open_port(1));
+#[inline(always)]
+unsafe fn letsago(sp: u32, entry: u32) -> ! {
+    // Do the not-so-dangerous stuff in Rust.
 
-        let mut buf = [0u8; 128];
+    // Calculate the desired CONTROL register value.
+    let mut cur_ctl = control::read();
+    cur_ctl.set_npriv(control::Npriv::Unprivileged);
+    cur_ctl.set_spsel(control::Spsel::Psp);
+    let cur_ctl = cur_ctl.bits();
 
-        loop {
-            for _ in 0..100 {
-                if let Ok(data) = serial::read_port(0, &mut buf) {
-                    match serial::write_port(1, data) {
-                        Ok(None) => {},
-                        Ok(Some(_)) => defmt::println!("Remainder?"),
-                        Err(()) => defmt::println!("Error writing port 1!"),
-                    }
-                } else {
-                    defmt::println!("Read port 0 failed!");
-                }
+    // Write the PSP. Note: This won't take effect until after we write control.
+    psp::write(sp);
 
-                time::sleep_micros(10_000).ok();
-            }
+    // Here's where the spooky stuff happens.
+    asm!(
+        // Write the CONTROL register, disabling privilege and enabling the PSP
+        "msr CONTROL, {}",
 
-            if let Some(hg) = HEAP.try_lock() {
-                let used = hg.used_space();
-                let free = hg.free_space();
-                defmt::println!("used: {=usize}, free: {=usize}", used, free);
-            }
-        }
-    }
+        // Writing the CONTROL register means we need to emit an isb instruction
+        "isb",
+
+        // Branch directly to the loaded program. No coming back.
+        "bx {}",
+        in(reg) cur_ctl,
+        in(reg) entry,
+        options(noreturn, nomem, nostack),
+    );
+
 }
