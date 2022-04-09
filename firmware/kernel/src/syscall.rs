@@ -3,7 +3,7 @@
 
 use core::sync::atomic::Ordering;
 use common::{SYSCALL_IN_PTR, SYSCALL_IN_LEN, SYSCALL_OUT_PTR, SYSCALL_OUT_LEN};
-use common::{SysCallRequest, SysCallSuccess};
+use common::syscall::{request::SysCallRequest, success::SysCallSuccess};
 
 // TODO: This is really only a "kernel" thing...
 // DON'T call this in the svc handler! Userspace should clean up after

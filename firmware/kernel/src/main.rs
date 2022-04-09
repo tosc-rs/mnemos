@@ -5,8 +5,8 @@ static DEFAULT_IMAGE: &[u8] = include_bytes!("../appbins/p1echo.bin");
 
 #[rtic::app(device = nrf52840_hal::pac, dispatchers = [SWI0_EGU0])]
 mod app {
-    use core::sync::atomic::{Ordering, AtomicU32};
-    use cortex_m::{singleton, register::{psp, control}};
+    use core::sync::atomic::Ordering;
+    use cortex_m::singleton;
     use defmt::unwrap;
     use groundhog_nrf52::GlobalRollingTimer;
     use nrf52840_hal::{

@@ -1,13 +1,28 @@
-use crate::{SysCallRequest, SysCallSuccess, try_syscall};
+use crate::syscall::{
+    request::SysCallRequest,
+    success::SysCallSuccess,
+    try_syscall,
+};
 
 pub mod serial {
-
     use super::*;
+    use crate::syscall::request::SerialRequest;
+    use crate::syscall::success::SerialSuccess;
+
+    fn success_filter(succ: SysCallSuccess) -> Result<SerialSuccess, ()> {
+        if let SysCallSuccess::Serial(s) = succ {
+            Ok(s)
+        } else {
+            Err(())
+        }
+    }
 
     pub fn open_port(port: u16) -> Result<(), ()> {
-        let req = SysCallRequest::SerialOpenPort { port };
+        let req = SysCallRequest::Serial(SerialRequest::SerialOpenPort { port });
 
-        if let SysCallSuccess::PortOpened = try_syscall(req)? {
+        let res = success_filter(try_syscall(req)?)?;
+
+        if let SerialSuccess::PortOpened = res {
             Ok(())
         } else {
             Err(())
@@ -15,14 +30,14 @@ pub mod serial {
     }
 
     pub fn read_port(port: u16, data: &mut [u8]) -> Result<&mut [u8], ()> {
-        let req = SysCallRequest::SerialReceive {
+        let req = SysCallRequest::Serial(SerialRequest::SerialReceive {
             port,
             dest_buf: data.as_mut().into(),
-        };
+        });
 
-        let resp = try_syscall(req)?;
+        let resp = success_filter(try_syscall(req)?)?;
 
-        if let SysCallSuccess::DataReceived { dest_buf } = resp {
+        if let SerialSuccess::DataReceived { dest_buf } = resp {
             let dblen = dest_buf.len as usize;
 
             if dblen <= data.len() {
@@ -37,15 +52,15 @@ pub mod serial {
     }
 
     pub fn write_port(port: u16, data: &[u8]) -> Result<Option<&[u8]>, ()> {
-        let req = SysCallRequest::SerialSend {
+        let req = SysCallRequest::Serial(SerialRequest::SerialSend {
             port,
             src_buf: data.into(),
-        };
+        });
 
-        let resp = try_syscall(req)?;
+        let resp = success_filter(try_syscall(req)?)?;
 
         match resp {
-            SysCallSuccess::DataSent { remainder: Some(rem) } => {
+            SerialSuccess::DataSent { remainder: Some(rem) } => {
                 let remlen = rem.len as usize;
                 let datlen = data.len();
 
@@ -56,7 +71,7 @@ pub mod serial {
                     Err(())
                 }
             }
-            SysCallSuccess::DataSent { remainder: None } => {
+            SerialSuccess::DataSent { remainder: None } => {
                 Ok(None)
             }
             _ => Err(()),
@@ -65,15 +80,23 @@ pub mod serial {
 }
 
 pub mod time {
+    use crate::syscall::{success::TimeSuccess, request::TimeRequest};
+
     use super::*;
 
-    pub fn sleep_micros(us: u32) -> Result<u32, ()> {
-        let req = SysCallRequest::SleepMicros { us };
-        let resp = try_syscall(req)?;
-        if let SysCallSuccess::SleptMicros { us } = resp {
-            Ok(us)
+    fn success_filter(succ: SysCallSuccess) -> Result<TimeSuccess, ()> {
+        if let SysCallSuccess::Time(s) = succ {
+            Ok(s)
         } else {
             Err(())
         }
+    }
+
+    pub fn sleep_micros(us: u32) -> Result<u32, ()> {
+        let req = SysCallRequest::Time(TimeRequest::SleepMicros { us });
+        let resp = success_filter(try_syscall(req)?)?;
+
+        let TimeSuccess::SleptMicros { us } = resp;
+        Ok(us)
     }
 }

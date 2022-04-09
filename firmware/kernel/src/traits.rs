@@ -1,6 +1,13 @@
-use common::{SysCallRequest, SysCallSuccess};
-use groundhog_nrf52::GlobalRollingTimer;
+use common::{
+    syscall::request::SysCallRequest,
+    syscall::success::{SysCallSuccess, TimeSuccess},
+    syscall::{
+        request::{SerialRequest, TimeRequest},
+        success::SerialSuccess,
+    },
+};
 use groundhog::RollingTimer;
+use groundhog_nrf52::GlobalRollingTimer;
 
 pub trait Serial: Send {
     fn register_port(&mut self, port: u16) -> Result<(), ()>;
@@ -26,33 +33,50 @@ pub struct Machine {
 }
 
 impl Machine {
-    pub fn handle_syscall<'a>(&mut self, req: SysCallRequest<'a>) -> Result<SysCallSuccess<'a>, ()> {
+    pub fn handle_syscall<'a>(
+        &mut self,
+        req: SysCallRequest<'a>,
+    ) -> Result<SysCallSuccess<'a>, ()> {
         match req {
-            SysCallRequest::SerialReceive { port, dest_buf } => {
+            SysCallRequest::Serial(SerialRequest::SerialReceive { port, dest_buf }) => {
                 let dest_buf = unsafe { dest_buf.to_slice_mut() };
                 let used = self.serial.recv(port, dest_buf)?;
-                Ok(SysCallSuccess::DataReceived { dest_buf: used.into() })
-            },
-            SysCallRequest::SerialSend { port, src_buf } => {
+                Ok(SysCallSuccess::Serial(SerialSuccess::DataReceived {
+                    dest_buf: used.into(),
+                }))
+            }
+            SysCallRequest::Serial(SerialRequest::SerialSend { port, src_buf }) => {
                 let src_buf = unsafe { src_buf.to_slice() };
                 match self.serial.send(port, src_buf) {
-                    Ok(()) => {
-                        Ok(SysCallSuccess::DataSent { remainder: None })
-                    }
-                    Err(rem) => {
-                        Ok(SysCallSuccess::DataSent { remainder: Some(rem.into()) })
-                    },
+                    Ok(()) => Ok(SysCallSuccess::Serial(SerialSuccess::DataSent {
+                        remainder: None,
+                    })),
+                    Err(rem) => Ok(SysCallSuccess::Serial(SerialSuccess::DataSent {
+                        remainder: Some(rem.into()),
+                    })),
                 }
-            },
-            SysCallRequest::SerialOpenPort { port } => {
+            }
+            SysCallRequest::Serial(SerialRequest::SerialOpenPort { port }) => {
                 self.serial.register_port(port)?;
-                Ok(SysCallSuccess::PortOpened)
-            },
-            SysCallRequest::SleepMicros { us } => {
+                Ok(SysCallSuccess::Serial(SerialSuccess::PortOpened))
+            }
+            SysCallRequest::Time(TimeRequest::SleepMicros { us }) => {
                 let timer = GlobalRollingTimer::default();
-                let start = timer.get_ticks();
-                while timer.micros_since(start) <= us { }
-                Ok(SysCallSuccess::SleptMicros { us })
+                let mut ttl_us = us;
+                let orig_start = timer.get_ticks();
+
+                // Just in case the user asks for something REALLY close to a rollover (e.g. u32::MAX),
+                // don't delay for more than half of the range of the timer.
+                while ttl_us != 0 {
+                    let start = timer.get_ticks();
+                    let to_wait = ttl_us.min(u32::MAX / 2);
+                    while timer.micros_since(start) <= to_wait {}
+                    ttl_us = ttl_us.saturating_sub(to_wait)
+                }
+
+                Ok(SysCallSuccess::Time(TimeSuccess::SleptMicros {
+                    us: timer.micros_since(orig_start).min(us),
+                }))
             }
         }
     }
