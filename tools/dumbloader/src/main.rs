@@ -1,4 +1,25 @@
-use std::{net::TcpStream, io::{Read, Write}, thread::sleep, time::Duration};
+use std::{net::TcpStream, io::{Read, Write, ErrorKind}, thread::sleep, time::Duration};
+use serde::{Serialize, Deserialize};
+use postcard::{CobsAccumulator, FeedResult};
+
+
+#[derive(Serialize, Deserialize)]
+enum Request {
+    Send {
+        offset: u32,
+    },
+    Done,
+}
+
+#[derive(Serialize, Deserialize)]
+enum Response {
+    Buffer {
+        start: u32,
+        data: Vec<u8>,
+    },
+    Done(u32),
+    Retry,
+}
 
 fn main() {
     let mut args = std::env::args();
@@ -19,10 +40,66 @@ fn main() {
         contents.push(0xFF);
     }
 
-    for ch in contents.chunks_exact(64) {
-        conn.write_all(ch).unwrap();
-        conn.flush().unwrap();
-        sleep(Duration::from_millis(250));
+    let mut acc = CobsAccumulator::<256>::new();
+    let mut rdbuf = [0u8; 256];
+
+    conn.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+
+    'outer: loop {
+        match conn.read(&mut rdbuf) {
+            Ok(len) if len > 0 => {
+                let mut window = &rdbuf[..len];
+                while !window.is_empty() {
+                    match acc.feed::<Request>(window) {
+                        FeedResult::Consumed => {
+                            window = &[];
+                        },
+                        FeedResult::OverFull(rem) => {
+                            window = rem;
+                            let data = postcard::to_stdvec_cobs(&Response::Retry).unwrap();
+                            conn.write_all(&data).unwrap();
+                        },
+                        FeedResult::DeserError(rem) => {
+                            window = rem;
+                            let data = postcard::to_stdvec_cobs(&Response::Retry).unwrap();
+                            conn.write_all(&data).unwrap();
+                        },
+                        FeedResult::Success { data, remaining } => {
+                            window = remaining;
+                            match data {
+                                Request::Send { offset } => {
+                                    let off_usize = offset as usize;
+                                    if off_usize < contents.len() {
+                                        println!("Sending 0x{:08X}", offset);
+                                        let mut data = Vec::new();
+                                        data.extend_from_slice(&contents[off_usize..][..256]);
+                                        let data = postcard::to_stdvec_cobs(&Response::Buffer {
+                                            start: offset,
+                                            data,
+                                        }).unwrap();
+                                        conn.write_all(&data).unwrap();
+                                    } else {
+                                        let data = postcard::to_stdvec_cobs(&Response::Done(contents.len() as u32)).unwrap();
+                                        conn.write_all(&data).unwrap();
+                                    }
+                                },
+                                Request::Done => break 'outer,
+                            }
+
+                        },
+                    }
+                }
+            },
+            Ok(_) => {
+                let data = postcard::to_stdvec_cobs(&Response::Retry).unwrap();
+                conn.write_all(&data).unwrap();
+            }
+            Err(e) if e.kind() == ErrorKind::WouldBlock => {
+                let data = postcard::to_stdvec_cobs(&Response::Retry).unwrap();
+                conn.write_all(&data).unwrap();
+            }
+            Err(_) => todo!(),
+        }
     }
 
     println!("Done.");

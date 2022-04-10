@@ -17,6 +17,8 @@ version = "0.1.0"
 dependencies = [
  "heapless",
  "menu",
+ "postcard",
+ "serde",
  "userspace",
 ]
 

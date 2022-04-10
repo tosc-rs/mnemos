@@ -4,11 +4,19 @@ use core::ops::Deref;
 
 use bbqueue::{BBBuffer, Consumer, Producer};
 use nrf52840_hal::{usbd::{Usbd, UsbPeripheral}, pac::USBD};
-use sportty::{Message, max_encoding_length};
+// use sportty::{Message, max_encoding_length};
 use usb_device::{device::UsbDevice, UsbError};
 use usbd_serial::SerialPort;
-use heapless::{LinearMap, Deque};
+use heapless::{LinearMap, Deque, Vec};
 use crate::alloc::{HeapArray, HEAP};
+use postcard::{CobsAccumulator, FeedResult};
+use serde::{Serialize, Deserialize};
+
+#[derive(Serialize, Deserialize)]
+pub struct Chunk {
+    port: u16,
+    buf: Vec<u8, 128>,
+}
 
 const USB_BUF_SZ: usize = 4096;
 static UART_INC: BBBuffer<USB_BUF_SZ> = BBBuffer::new();
@@ -79,7 +87,7 @@ pub struct UsbUartSys {
     // TODO: There's probably a smarter way to handle this without having
     // a bigass accumulator struct in here. Either limit max size, or use
     // a smarter stream decoder which can emit partial data on the fly
-    acc: Accumulator<1024>,
+    acc: CobsAccumulator<256>,
 
     // Also, we might want to "coverge" older messages into fewer allocs,
     // to avoid small chunks filling up the queue
@@ -115,7 +123,7 @@ pub fn setup_usb_uart(dev: AUsbDevice, ser: ASerialPort) -> Result<UsbUartParts,
         sys: UsbUartSys {
             out: out_prod,
             inc: inc_cons,
-            acc: Accumulator::new(),
+            acc: CobsAccumulator::new(),
             ports,
         }
     })
@@ -156,49 +164,40 @@ impl crate::traits::Serial for UsbUartSys {
             //////////////////////
             // No early returns here! We need to release the grant!
             while !window.is_empty() {
-                match self.acc.feed(window) {
-                    Ok(Some(mut msg)) => {
-                        match Message::decode_in_place(msg.msg.as_mut_slice()) {
-                            Ok(smsg) => {
-                                // defmt::println!("Decoded port {=u16} - msg: {=[u8]}", smsg.port, smsg.data);
-
-                                // If this is port 0, then (try to) also loopback!
-                                // #[cfg(feature = "auto-loopback")]
-                                if smsg.port == 0 {
-                                    self.send(0, &smsg.data).ok();
-                                }
-
-                                // TODO: Replace this with `map()` and Results so we can actually
-                                // tell which part went wrong
-                                let failed = self.ports
-                                    .get_mut(&smsg.port)
-                                    .and_then(|dq| {
-                                        // Keep the heap locked for as short as possible!
-                                        let mut hp = HEAP.try_lock()?;
-                                        let habox = hp.alloc_box_array(0u8, smsg.data.len()).ok()?;
-                                        Some((dq, habox))
-                                    })
-                                    .and_then(|(dq, mut habox)| {
-                                        habox.copy_from_slice(&smsg.data);
-                                        dq.push_back(habox).ok()
-                                    }).is_none();
-
-                                if failed && self.ports.contains_key(&smsg.port) {
-                                    defmt::println!("Failed to receive message for serial port {=u16}. Discarding.", smsg.port);
-                                }
-                            },
-                            Err(_) => defmt::println!("Sportty error!"),
-                        }
-                        window = msg.remainder;
+                match self.acc.feed::<Chunk>(window) {
+                    FeedResult::Consumed => {
+                        window = &[];
                     },
-                    Ok(None) => {},
-                    Err(AccError::NoRoomNoRem) => {
-                        rgr.release(rec_len);
-                        continue 'outer;
-                    },
-                    Err(AccError::NoRoomWithRem(rem)) => {
+                    FeedResult::OverFull(rem) => {
+                        defmt::println!("Overfull error!");
                         window = rem;
-                    }
+                    },
+                    FeedResult::DeserError(rem) => {
+                        defmt::println!("Chunk deser error!");
+                        window = rem;
+                    },
+                    FeedResult::Success { data, remaining } => {
+                        window = remaining;
+
+                        // TODO: Replace this with `map()` and Results so we can actually
+                        // tell which part went wrong
+                        let failed = self.ports
+                            .get_mut(&data.port)
+                            .and_then(|dq| {
+                                // Keep the heap locked for as short as possible!
+                                let mut hp = HEAP.try_lock()?;
+                                let habox = hp.alloc_box_array(0u8, data.buf.len()).ok()?;
+                                Some((dq, habox))
+                            })
+                            .and_then(|(dq, mut habox)| {
+                                habox.copy_from_slice(&data.buf);
+                                dq.push_back(habox).ok()
+                            }).is_none();
+
+                        if failed && self.ports.contains_key(&data.port) {
+                            defmt::println!("Failed to receive message for serial port {=u16}. Discarding.", data.port);
+                        }
+                    },
                 }
             }
 
@@ -257,79 +256,22 @@ impl crate::traits::Serial for UsbUartSys {
             defmt::println!("Unregistered port: {=u16}", port);
             return Err(buf);
         }
-
-        let mut remaining = buf;
-
-        // We loop here, as the bbqueue may be in a "wraparound" situation,
-        // where there is only a little space available at the "tail" of the
-        // ring buffer, but there is space available at the front. This will
-        // generally only execute once (no wraparound) or twice (some wraparound),
-        // unless the driver clears some more space while we are processing.
-        while !remaining.is_empty() {
-            let rem_len = max_encoding_length(remaining.len());
-
-            // Attempt to get a write grant to send to the driver...
-            match self.out.grant_max_remaining(rem_len) {
-                // Can we write the port and AT LEAST one byte of data
-                // and a null terminator?
-                Ok(wgr) if wgr.len() <= (2 + 1 + 1) => {
-                    return Err(remaining);
-                }
-
-                // We have exhausted the available size in the outgoing buffer.
-                // Give the user the remaining, unsent part, so they can try again
-                // later.
-                Err(bbqueue::Error::InsufficientSize) => {
-                    return Err(remaining);
-                },
-
-                // We got some (or all) necessary space.
-                // Copy the relevant data, and slide the window over.
-                // (If this was "all", then `remaining` will be empty)
+        let mut used = 0;
+        for ch in buf.chunks(128) {
+            let mut dunk = Vec::new();
+            dunk.extend_from_slice(ch).ok();
+            let msg = Chunk { port, buf: dunk };
+            match self.out.grant_exact(256) {
                 Ok(mut wgr) => {
-                    // We should take the lesser of:
-                    //
-                    // * The grant length, minus three overhead bytes (two for port,
-                    //     one for sentinel), which is always positive due to check
-                    //     above, OR
-                    // * The remaining data length
-                    let to_use = (wgr.len() - 4).min(remaining.len());
-                    let (now, later) = remaining.split_at(to_use);
-
-                    // Setup and encode the message
-                    let msg = Message { port, data: now };
-
-                    // This SHOULD never fail, make it an assert for now to catch dumb errors
-                    let used = match msg.encode_to(&mut wgr) {
-                        Ok(used) => used.len(),
-                        Err(_) => {
-                            defmt::println!("Encoding failure!");
-                            defmt::println!("remaining len: {=usize}", remaining.len());
-                            defmt::println!("wgr len: {=usize}", wgr.len());
-                            defmt::println!("now len: {=usize}", now.len());
-                            defmt::println!("remaining: {=[u8]}", remaining);
-                            defmt::println!("now: {=[u8]}", now);
-                            defmt::panic!();
-                        },
-                    };
-
-                    // Commit the ENCODED number of bytes, and store the remaining
-                    // UNENCODED bytes
-                    wgr.commit(used);
-                    remaining = later;
+                    let enc_used = postcard::to_slice_cobs(&msg, &mut wgr).unwrap().len();
+                    wgr.commit(enc_used);
+                    used += ch.len();
                 },
-
-                // This error case generally represents some kind of logic error
-                // such as retaining a grant (our problem), or an internal fault
-                // of bbqueue. Either way, this is not likely to be a recoverable
-                // error. Until we have better fault recovery logic in place,
-                // just panic and get it over with.
-                Err(_e) => {
-                    defmt::panic!("ERROR: USB UART Send!");
-                }
+                Err(_) => {
+                    return Err(&buf[..used]);
+                },
             }
         }
-
         // This means that we reached `remaining.is_empty()`, and all
         // data has been successfully sent.
         Ok(())
@@ -368,73 +310,73 @@ pub fn enable_usb_interrupts(usbd: &USBD) {
 
 
 
-struct Accumulator<const N: usize> {
-    buf: [u8; N],
-    idx: usize,
-}
+// struct Accumulator<const N: usize> {
+//     buf: [u8; N],
+//     idx: usize,
+// }
 
-enum AccError<'a> {
-    NoRoomNoRem,
-    NoRoomWithRem(&'a [u8]),
-}
+// enum AccError<'a> {
+//     NoRoomNoRem,
+//     NoRoomWithRem(&'a [u8]),
+// }
 
-impl<const N: usize> Accumulator<N> {
-    fn new() -> Self {
-        Self {
-            buf: [0u8; N],
-            idx: 0,
-        }
-    }
-    fn feed<'a>(&mut self, buf: &'a [u8]) -> Result<Option<AccSuccess<'a, N>>, AccError<'a>> {
-        match buf.iter().position(|b| *b == 0) {
-            Some(n) if (self.idx + n) <= N => {
-                let (now, later) = buf.split_at(n + 1);
-                self.buf[self.idx..][..now.len()].copy_from_slice(now);
-                let mut msg = AccMsg {
-                    buf: [0u8; N],
-                    len: self.idx + now.len(),
-                };
-                msg.buf[..msg.len].copy_from_slice(&self.buf[..msg.len]);
-                self.idx = 0;
-                Ok(Some(AccSuccess {
-                    remainder: later,
-                    msg,
-                }))
-            },
-            Some(n) if n < buf.len() => {
-                self.idx = 0;
-                Err(AccError::NoRoomWithRem(&buf[(n + 1)..]))
-            },
-            Some(_) => {
-                self.idx = 0;
-                Err(AccError::NoRoomNoRem)
-            }
-            None if (self.idx + buf.len()) <= N => {
-                self.buf[self.idx..][..buf.len()].copy_from_slice(buf);
-                self.idx += buf.len();
-                Ok(None)
-            },
-            None => {
-                // No room, and no zero. Truncate the current buf.
-                self.idx = 0;
-                Err(AccError::NoRoomNoRem)
-            },
-        }
-    }
-}
+// impl<const N: usize> Accumulator<N> {
+//     fn new() -> Self {
+//         Self {
+//             buf: [0u8; N],
+//             idx: 0,
+//         }
+//     }
+//     fn feed<'a>(&mut self, buf: &'a [u8]) -> Result<Option<AccSuccess<'a, N>>, AccError<'a>> {
+//         match buf.iter().position(|b| *b == 0) {
+//             Some(n) if (self.idx + n) <= N => {
+//                 let (now, later) = buf.split_at(n + 1);
+//                 self.buf[self.idx..][..now.len()].copy_from_slice(now);
+//                 let mut msg = AccMsg {
+//                     buf: [0u8; N],
+//                     len: self.idx + now.len(),
+//                 };
+//                 msg.buf[..msg.len].copy_from_slice(&self.buf[..msg.len]);
+//                 self.idx = 0;
+//                 Ok(Some(AccSuccess {
+//                     remainder: later,
+//                     msg,
+//                 }))
+//             },
+//             Some(n) if n < buf.len() => {
+//                 self.idx = 0;
+//                 Err(AccError::NoRoomWithRem(&buf[(n + 1)..]))
+//             },
+//             Some(_) => {
+//                 self.idx = 0;
+//                 Err(AccError::NoRoomNoRem)
+//             }
+//             None if (self.idx + buf.len()) <= N => {
+//                 self.buf[self.idx..][..buf.len()].copy_from_slice(buf);
+//                 self.idx += buf.len();
+//                 Ok(None)
+//             },
+//             None => {
+//                 // No room, and no zero. Truncate the current buf.
+//                 self.idx = 0;
+//                 Err(AccError::NoRoomNoRem)
+//             },
+//         }
+//     }
+// }
 
-struct AccSuccess<'a, const N: usize> {
-    remainder: &'a [u8],
-    msg: AccMsg<N>,
-}
+// struct AccSuccess<'a, const N: usize> {
+//     remainder: &'a [u8],
+//     msg: AccMsg<N>,
+// }
 
-struct AccMsg<const N: usize> {
-    buf: [u8; N],
-    len: usize,
-}
+// struct AccMsg<const N: usize> {
+//     buf: [u8; N],
+//     len: usize,
+// }
 
-impl<const N: usize> AccMsg<N> {
-    fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.buf[..self.len]
-    }
-}
+// impl<const N: usize> AccMsg<N> {
+//     fn as_mut_slice(&mut self) -> &mut [u8] {
+//         &mut self.buf[..self.len]
+//     }
+// }

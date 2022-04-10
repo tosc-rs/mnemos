@@ -1,10 +1,12 @@
 #![no_std]
 #![no_main]
 
-use heapless::String;
+use heapless::{String, Vec};
 use userspace::common::{porcelain::{serial, time, block_storage}, syscall::BlockKind};
 use core::fmt::Write;
 use menu::{Menu, Item, Runner, Parameter};
+use postcard::{CobsAccumulator, FeedResult};
+use serde::{Serialize, Deserialize};
 
 const ROOT_MENU: Menu<Context> = Menu {
     label: "root",
@@ -194,12 +196,19 @@ fn upload<'a>(_menu: &Menu<Context>, item: &Item<Context>, args: &[&str], contex
     }
 
     writeln!(context, "Listening to port 1 for data...").unwrap();
-    context.uploading = Some(Uploader {
+
+    let mut upl = Uploader {
         block: idx,
         abuf: AlignBuf { byte: [0u8; 256] },
         cur_offset: 0,
         ttl_offset: 0,
-    });
+        acc: CobsAccumulator::new(),
+        is_done: false,
+    };
+
+    upl.send_request();
+
+    context.uploading = Some(upl);
 }
 
 #[repr(align(4))]
@@ -212,27 +221,54 @@ struct Uploader {
     abuf: AlignBuf,
     cur_offset: usize,
     ttl_offset: usize,
+    acc: CobsAccumulator<512>,
+    is_done: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+enum Request {
+    Send {
+        offset: u32,
+    },
+    Done,
+}
+
+#[derive(Serialize, Deserialize)]
+enum Response {
+    Buffer {
+        start: u32,
+        data: Vec<u8, 256>,
+    },
+    Done(u32),
+    Retry,
 }
 
 impl Uploader {
     fn process(&mut self) {
         let mut upl_buf = [0u8; 64];
+
+
         loop {
             match serial::read_port(1, &mut upl_buf) {
                 Ok(buf) if buf.len() > 0 => {
                     let mut window = &buf[..];
                     while !window.is_empty() {
-                        let remain = &mut self.abuf.byte[self.cur_offset..];
-                        let to_use = window.len().min(remain.len());
-                        let (now, later) = window.split_at(to_use);
-                        remain[..to_use].copy_from_slice(now);
-                        self.cur_offset += to_use;
-                        window = later;
-
-                        if self.cur_offset == 256 {
-                            block_storage::block_write(self.block, self.ttl_offset as u32, &self.abuf.byte).unwrap();
-                            self.cur_offset = 0;
-                            self.ttl_offset += 256;
+                        match self.acc.feed::<Response>(window) {
+                            FeedResult::Consumed => {
+                                window = &[];
+                            },
+                            FeedResult::OverFull(rem) => {
+                                window = rem;
+                                self.send_request();
+                            }
+                            FeedResult::DeserError(rem) => {
+                                window = rem;
+                                self.send_request();
+                            },
+                            FeedResult::Success { data, remaining } => {
+                                self.handle_msg(&data);
+                                window = remaining;
+                            },
                         }
                     }
                 }
@@ -240,6 +276,38 @@ impl Uploader {
                 Err(_) => return,
             }
         }
+    }
+
+    fn handle_msg(&mut self, resp: &Response) {
+        match resp {
+            Response::Buffer { start, data } => {
+                if (*start != self.ttl_offset as u32) || (data.len() != 256) {
+                    self.send_request();
+                    return
+                }
+                // todo: don't actually do writes, just lie.
+                self.ttl_offset += 256;
+            },
+            Response::Done(amt) => {
+                if self.ttl_offset as u32 == *amt {
+                    let mut out_buf = [0u8; 32];
+                    let req = Request::Done;
+                    let used = postcard::to_slice_cobs(&req, &mut out_buf).unwrap();
+                    serial::write_port(1, &used[..]).unwrap();
+                    self.is_done = true;
+                }
+            },
+            Response::Retry => {
+                self.send_request();
+            },
+        }
+    }
+
+    fn send_request(&mut self) {
+        let mut out_buf = [0u8; 32];
+        let req = Request::Send { offset: self.ttl_offset as u32 };
+        let used = postcard::to_slice_cobs(&req, &mut out_buf).unwrap();
+        serial::write_port(1, &used[..]).unwrap();
     }
 }
 

@@ -4,8 +4,13 @@ use std::net::TcpListener;
 use std::sync::mpsc::{Sender, Receiver, channel};
 use std::time::{Duration, Instant};
 use std::thread::{sleep, spawn, JoinHandle};
+use serde::{Serialize, Deserialize};
 
-use sportty::Message;
+#[derive(Serialize, Deserialize)]
+pub struct Chunk {
+    port: u16,
+    buf: Vec<u8>,
+}
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut dport = None;
@@ -132,10 +137,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         for (port_idx, hdl) in manager.workers.iter_mut() {
             if let Ok(msg) = hdl.inp.try_recv() {
-                let smsg = sportty::Message { port: *port_idx, data: &msg };
-                let used = smsg.encode_to(&mut buf).map_err(drop).unwrap();
-                println!("Sending {} bytes to port {}", msg.len(), port_idx);
-                port.write_all(used)?;
+                let mlen = msg.len();
+                assert!(mlen <= 128);
+                let cmsg = Chunk { port: *port_idx, buf: msg };
+                let smsg = postcard::to_stdvec_cobs(&cmsg).unwrap();
+                println!("Sending {} bytes to port {}", mlen, port_idx);
+                port.write_all(&smsg)?;
             }
         }
 
@@ -150,14 +157,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         while let Some(pos) = carry.iter().position(|b| *b == 0) {
             let new_chunk = carry.split_off(pos + 1);
-            if let Ok(msg) = Message::decode_in_place(&mut carry) {
+            if let Ok((msg, _)) = postcard::take_from_bytes_cobs::<Chunk>(&mut carry) {
                 if let Some(hdl) = manager.workers.get_mut(&msg.port) {
-                    println!("Got {} bytes from port {}", msg.data.len(), msg.port);
-                    hdl.out.send(msg.data.to_vec()).ok();
+                    println!("Got {} bytes from port {}", msg.buf.len(), msg.port);
+                    hdl.out.send(msg.buf.to_vec()).ok();
                 }
             } else {
                 println!("Bad decode!");
             }
+            // if let Ok(msg) = Message::decode_in_place(&mut carry) {
+
+            // } else {
+            //     println!("Bad decode!");
+            // }
             carry = new_chunk;
         }
 
