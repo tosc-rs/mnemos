@@ -14,3 +14,11 @@ features = ["derive"]
 
 [dependencies.postcard]
 version = "0.7.3"
+
+[dependencies.defmt]
+version = "0.3"
+optional = true
+
+[features]
+use-defmt = ["defmt"]
+default = []

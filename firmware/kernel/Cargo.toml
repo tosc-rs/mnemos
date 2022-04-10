@@ -31,12 +31,16 @@ usb-device = "0.2.8"
 usbd-serial = "0.1.1"
 byte-slab = "0.2.2"
 cassette = "0.2.3"
-heapless = "0.7.10"
 embedded-hal = "0.2.6"
 nb = "1.0.0"
 
+[dependencies.heapless]
+version = "0.7.10"
+features = ["defmt-impl"]
+
 [dependencies.common]
 path = "../common"
+features = ["use-defmt"]
 
 [dependencies.bbqueue]
 version = "0.5.1"

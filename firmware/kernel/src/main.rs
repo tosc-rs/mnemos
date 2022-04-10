@@ -153,7 +153,7 @@ mod app {
         let start = timer.get_ticks();
 
         // Wait, to allow RTT to attach
-        while timer.millis_since(start) < 100 { }
+        while timer.millis_since(start) < 1000 { }
 
         defmt::println!("!!! - ENTERING USERSPACE - !!!");
 

@@ -34,14 +34,26 @@ impl Gd25q16 {
 
         let mut was_bad = false;
 
-        let bt: BlockTable = from_bytes_cobs(data.data.as_mut_slice()).unwrap_or_else(|_| {
+
+        let bt = if let Some(pos) = data.data.iter().position(|b| *b == 0) {
+            let bt: BlockTable = from_bytes_cobs(&mut data.data[..pos]).unwrap_or_else(|_| {
+                defmt::println!("Failed deserialization!");
+                was_bad = true;
+                const NEW_BLOCK: Block = Block::new();
+                BlockTable {
+                    magic: 0xB10C_0000,
+                    blocks: [NEW_BLOCK; 15],
+                }
+            });
+            bt
+        } else {
             was_bad = true;
             const NEW_BLOCK: Block = Block::new();
             BlockTable {
                 magic: 0xB10C_0000,
                 blocks: [NEW_BLOCK; 15],
             }
-        });
+        };
 
         let mut bd = Self {
             status: [BlockStatus::Idle; 15],
@@ -50,6 +62,7 @@ impl Gd25q16 {
         };
 
         if bd.table.magic != 0xB10C_0000 {
+            defmt::println!("Failed magic check!");
             was_bad = true;
             bd.table.magic = 0xB10C_0000;
             bd.table.blocks.iter_mut().for_each(|b| *b = Block::new());
@@ -60,8 +73,11 @@ impl Gd25q16 {
             let used = to_slice_cobs(&bd.table, data.data.as_mut_slice()).map_err(drop)?.len();
             // Round up to the next word
             let used = ((used + 3) / 4) * 4;
+            defmt::println!("Writing: {=[u8]}", &data.data[..used]);
             bd.write(15, 0, &data.data[..used])?;
         };
+
+        defmt::println!("Gd25q16::{:#?}", bd.table);
 
         Ok(bd)
     }
@@ -161,7 +177,7 @@ impl Gd25q16 {
 
         let fut = self.qspi.write(FlashChunk {
             addr: dest_addr as usize,
-            data: ManagedArcSlab::<0, 0>::Borrowed(data),
+            data: ManagedArcSlab::<2, 0>::Borrowed(data),
         });
         pin_mut!(fut);
         let cas_fut = Cassette::new(fut);
@@ -234,13 +250,13 @@ fn slice_is_aligned(sli: &[u8]) -> Result<(), ()> {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, defmt::Format)]
 pub struct BlockTable {
     magic: u32,
     blocks: [Block; 15],
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, defmt::Format)]
 pub struct Block {
     name: String<128>,
     len: u32,

@@ -4,6 +4,7 @@ use crate::syscall::{request::SysCallRequest, success::SysCallSuccess};
 
 
 #[derive(Serialize, Deserialize, Eq, PartialEq, Copy, Clone)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
 pub enum BlockKind {
     Unused,
     Storage,
