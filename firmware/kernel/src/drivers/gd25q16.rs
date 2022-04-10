@@ -192,16 +192,28 @@ impl Gd25q16 {
         if len > (64 * 1024) {
             return Err(());
         }
-        let name: String<128> = String::from_str(name).map_err(drop)?;
-        let mut data = HEAP.try_lock().ok_or(())?.alloc_box(WordAlign { data: [0u8; 4096] })?;
+        // Should we actually update the table?
+        let no_writes = *status == BlockStatus::OpenNoWrites;
+        let name_match = bloc.name.as_str() == name;
+        let len_match = bloc.len == len;
+        let kind_match = bloc.kind == kind;
 
         *status = BlockStatus::Idle;
-        *bloc = Block { name, len, kind };
 
-        let used = to_slice_cobs(&self.table, data.data.as_mut_slice()).map_err(drop)?.len();
-        // Round up to the next word
-        let used = ((used + 3) / 4) * 4;
-        self.write(15, 0, &data.data[..used])?;
+        if !(no_writes && name_match && len_match && kind_match) {
+            defmt::println!("Block {=u32} changed! updating...", block);
+            let mut data = HEAP.try_lock().ok_or(())?.alloc_box(WordAlign { data: [0u8; 4096] })?;
+
+            let name = String::from_str(name).map_err(drop)?;
+            *bloc = Block { name, len, kind };
+
+            let used = to_slice_cobs(&self.table, data.data.as_mut_slice()).map_err(drop)?.len();
+            // Round up to the next word
+            let used = ((used + 3) / 4) * 4;
+            self.write(15, 0, &data.data[..used])?;
+        } else {
+            defmt::println!("Closed block {=u32} without changes.", block);
+        }
 
         Ok(())
     }

@@ -1,7 +1,7 @@
 #![no_main]
 #![no_std]
 
-static DEFAULT_IMAGE: &[u8] = include_bytes!("../appbins/p1echo.bin");
+static DEFAULT_IMAGE: &[u8] = include_bytes!("../appbins/app-loader.bin");
 
 #[rtic::app(device = nrf52840_hal::pac, dispatchers = [SWI0_EGU0])]
 mod app {

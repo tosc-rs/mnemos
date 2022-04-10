@@ -72,7 +72,12 @@ fn addr_in_range(addr: u32) -> Result<(), ()> {
     let good = (addr >= RawHeader::START_ADDR) && (addr < RawHeader::END_ADDR);
     let good = good && ((addr % 4) == 0);
 
-    if good { Ok(()) } else { Err(()) }
+    if good {
+        Ok(())
+    } else {
+        defmt::println!("Not in range: 0x{=u32:08X}", addr);
+        Err(())
+    }
 }
 
 impl From<AlignHdrBuf> for RawHeader {
@@ -85,6 +90,7 @@ impl From<AlignHdrBuf> for RawHeader {
 
 pub fn validate_header(bytes: &[u8]) -> Result<RawHeader, ()> {
     if bytes.len() < AlignHdrBuf::SIZE {
+        defmt::println!("Too short!");
         return Err(());
     }
 
@@ -120,18 +126,21 @@ pub fn validate_header(bytes: &[u8]) -> Result<RawHeader, ()> {
     addr_in_range(hdr.stack_start)?;
 
     let good_entry = (hdr.entry_point >= RawHeader::START_ADDR) && (hdr.entry_point < RawHeader::END_ADDR);
-    let good_entry = good_entry && ((hdr.entry_point % 4) == 1);
+    let good_entry = good_entry && ((hdr.entry_point % 2) == 1);
     if !good_entry {
+        defmt::println!("Bad entry!");
         return Err(());
     }
 
     defmt::println!("Passed range check!");
 
     if hdr.edata < hdr.sdata {
+        defmt::println!("Data check fail!");
         return Err(());
     }
 
     if hdr.ebss < hdr.sbss {
+        defmt::println!("BSS check fail!");
         return Err(());
     }
 

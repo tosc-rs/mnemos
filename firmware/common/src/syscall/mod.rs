@@ -3,7 +3,7 @@ use serde::{Serialize, Deserialize};
 use crate::syscall::{request::SysCallRequest, success::SysCallSuccess};
 
 
-#[derive(Serialize, Deserialize, Eq, PartialEq, Copy, Clone)]
+#[derive(Serialize, Deserialize, Eq, PartialEq, Copy, Clone, Debug)]
 #[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
 pub enum BlockKind {
     Unused,
@@ -104,7 +104,7 @@ pub mod success {
         pub name: Option<SysCallSlice<'a>>,
     }
 
-    #[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq)]
+    #[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
     pub enum BlockStatus {
         Idle,
         OpenNoWrites,
