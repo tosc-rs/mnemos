@@ -100,3 +100,45 @@ pub mod time {
         Ok(us)
     }
 }
+
+pub mod block_storage {
+    use super::*;
+    use crate::syscall::{
+        request::BlockRequest,
+        success::{BlockSuccess, StoreInfo, BlockInfo},
+    };
+
+    pub fn success_filter(succ: SysCallSuccess) -> Result<BlockSuccess, ()> {
+        if let SysCallSuccess::BlockStore(bsr) = succ {
+            Ok(bsr)
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn store_info() -> Result<StoreInfo, ()> {
+        let req = SysCallRequest::BlockStore(BlockRequest::StoreInfo);
+        let resp = success_filter(try_syscall(req)?)?;
+
+        if let BlockSuccess::StoreInfo(si) = resp {
+            Ok(si)
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn block_info<'a>(block: u32, name_buf: &'a mut [u8]) -> Result<BlockInfo<'a>, ()> {
+        let req = SysCallRequest::BlockStore(BlockRequest::BlockInfo {
+            block_idx: block,
+            name_buf: name_buf.into()
+        });
+        let resp = success_filter(try_syscall(req)?)?;
+
+        if let BlockSuccess::BlockInfo(bi) = resp {
+            Ok(bi)
+        } else {
+            Err(())
+        }
+    }
+
+}

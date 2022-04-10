@@ -292,21 +292,30 @@ impl BlockStorage for Gd25q16 {
         64 * 1024
     }
 
-    fn block_info<'a>(&'a self, block: u32) -> Result<BlockInfo<'a>, ()> {
+    fn block_info<'a>(&self, block: u32, name_buf: &'a mut [u8]) -> Result<BlockInfo<'a>, ()> {
         let block = block as usize;
         let binfo = self.table.blocks.get(block).ok_or(())?;
         let status = *self.status.get(block).ok_or(())?;
+
+        let name = if binfo.kind != BlockKind::Unused {
+            let name_bytes = binfo.name.as_bytes();
+            let name_len = name_bytes.len();
+
+            if name_buf.len() < name_len {
+                return Err(());
+            }
+            name_buf[..name_len].copy_from_slice(name_bytes);
+            Some(name_buf[..name_len].into())
+        } else {
+            None
+        };
 
         Ok(BlockInfo {
             length: binfo.len,
             capacity: self.block_size(),
             kind: binfo.kind,
             status,
-            name: if binfo.kind != BlockKind::Unused {
-                Some(binfo.name.as_bytes().into())
-            } else {
-                None
-            },
+            name,
         })
     }
 

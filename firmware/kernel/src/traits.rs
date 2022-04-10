@@ -1,6 +1,6 @@
 use common::{
     syscall::request::SysCallRequest,
-    syscall::{success::{SysCallSuccess, TimeSuccess, BlockSuccess, BlockInfo}, request::BlockRequest},
+    syscall::{success::{SysCallSuccess, TimeSuccess, BlockSuccess, BlockInfo, StoreInfo}, request::BlockRequest},
     syscall::{
         request::{SerialRequest, TimeRequest},
         success::SerialSuccess,
@@ -28,7 +28,7 @@ pub trait Serial: Send {
 pub trait BlockStorage: Send {
     fn block_count(&self) -> u32;
     fn block_size(&self) -> u32;
-    fn block_info<'a>(&'a self, block: u32) -> Result<BlockInfo<'a>, ()>;
+    fn block_info<'a>(&self, block: u32, name_buf: &'a mut [u8]) -> Result<BlockInfo<'a>, ()>;
     fn block_open(&mut self, block: u32) -> Result<(), ()>;
     fn block_write(&mut self, block: u32, offset: u32, data: &[u8]) -> Result<(), ()>;
     fn block_read<'a>(&mut self, block: u32, offset: u32, data: &'a mut [u8]) -> Result<&'a mut [u8], ()>;
@@ -122,10 +122,10 @@ impl Machine {
         // Match early to provide the "null" storage info if we have none.
         let sto: &mut dyn BlockStorage = match (self.block_storage.as_mut(), &req) {
             (None, BlockRequest::StoreInfo) => {
-                return Ok(BlockSuccess::StoreInfo {
+                return Ok(BlockSuccess::StoreInfo(StoreInfo {
                     blocks: 0,
                     capacity: 0,
-                });
+                }));
             },
             (None, _) => return Err(()),
             (Some(sto), _) => *sto,
@@ -133,13 +133,14 @@ impl Machine {
 
         match req {
             BlockRequest::StoreInfo => {
-                Ok(BlockSuccess::StoreInfo {
+                Ok(BlockSuccess::StoreInfo(StoreInfo {
                     blocks: sto.block_count(),
                     capacity: sto.block_size(),
-                })
+                }))
             },
-            BlockRequest::BlockInfo { block_idx } => {
-                let info = sto.block_info(block_idx)?;
+            BlockRequest::BlockInfo { block_idx, name_buf } => {
+                let name_buf = unsafe { name_buf.to_slice_mut() };
+                let info = sto.block_info(block_idx, name_buf)?;
                 Ok(BlockSuccess::BlockInfo(info))
             },
             BlockRequest::BlockOpen { block_idx } => {

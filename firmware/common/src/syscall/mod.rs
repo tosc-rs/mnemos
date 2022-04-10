@@ -42,6 +42,7 @@ pub mod request {
         StoreInfo,
         BlockInfo {
             block_idx: u32,
+            name_buf: SysCallSliceMut<'a>
         },
         BlockOpen {
             block_idx: u32,
@@ -111,11 +112,14 @@ pub mod success {
     }
 
     #[derive(Serialize, Deserialize)]
+    pub struct StoreInfo{
+        pub blocks: u32,
+        pub capacity: u32,
+    }
+
+    #[derive(Serialize, Deserialize)]
     pub enum BlockSuccess<'a> {
-        StoreInfo {
-            blocks: u32,
-            capacity: u32,
-        },
+        StoreInfo(StoreInfo),
         BlockInfo(BlockInfo<'a>),
         BlockOpened,
         BlockRead {
