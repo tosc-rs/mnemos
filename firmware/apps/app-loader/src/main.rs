@@ -40,10 +40,6 @@ const ROOT_MENU: Menu<Context> = Menu {
                         parameter_name: "idx",
                         help: Some("The block index to upload"),
                     },
-                    // Parameter::Mandatory {
-                    //     parameter_name: "kind",
-                    //     help: Some("The block kind (after upload). 'program' or 'storage'")
-                    // },
                 ],
             },
             command: "upload",
@@ -57,6 +53,23 @@ const ROOT_MENU: Menu<Context> = Menu {
             command: "ustat",
             help: Some("Uploading information"),
         },
+        &Item {
+            item_type: menu::ItemType::Callback {
+                function: upl_complete,
+                parameters: &[
+                    Parameter::Mandatory {
+                        parameter_name: "kind",
+                        help: Some("The block kind (after upload). 'program' or 'storage'")
+                    },
+                    Parameter::Mandatory {
+                        parameter_name: "name",
+                        help: Some("The block kind (after upload). 'program' or 'storage'")
+                    },
+                ],
+            },
+            command: "ucomplete",
+            help: Some("Complete Upload"),
+        }
     ],
     entry: None,
     exit: None,
@@ -73,11 +86,45 @@ impl core::fmt::Write for Context {
     }
 }
 
+fn upl_complete<'a>(_menu: &Menu<Context>, item: &Item<Context>, args: &[&str], context: &mut Context) {
+    if let Some(upl) = context.uploading.as_ref() {
+        if !upl.is_done {
+            writeln!(context.buf, "Not done!").unwrap();
+            return;
+        }
+
+        let kind = match menu::argument_finder(item, args, "kind") {
+            Ok(Some("storage")) => BlockKind::Storage,
+            Ok(Some("program")) => BlockKind::Program,
+            _ => {
+                writeln!(context, "Error: Invalid kind!").unwrap();
+                return;
+            }
+        };
+
+        let name = match menu::argument_finder(item, args, "name") {
+            Ok(Some(name)) => {
+                name
+            },
+            _ => {
+                writeln!(context, "Error: Invalid name!").unwrap();
+                return;
+            }
+        };
+
+        block_storage::block_close(upl.block, name, upl.ttl_offset as u32, kind).unwrap();
+        writeln!(context, "Closed successfully!").unwrap();
+        context.uploading = None;
+    } else {
+        writeln!(context, "Not uploading!").unwrap();
+    }
+}
+
 fn upl_stat<'a>(_menu: &Menu<Context>, _item: &Item<Context>, _args: &[&str], context: &mut Context) {
     if let Some(upl) = context.uploading.as_ref() {
         writeln!(context.buf, "Uploading:    Block {}", upl.block).unwrap();
         writeln!(context.buf, "Disk Written: {}", upl.ttl_offset).unwrap();
-        writeln!(context.buf, "Unritten:     {}", upl.cur_offset).unwrap();
+        writeln!(context.buf, "Done:         {}", upl.is_done).unwrap();
     } else {
         writeln!(context, "Not uploading!").unwrap();
     }
@@ -154,14 +201,7 @@ fn upload<'a>(_menu: &Menu<Context>, item: &Item<Context>, args: &[&str], contex
         return;
     }
 
-    // let kind = match menu::argument_finder(item, args, "kind") {
-    //     Ok(Some("storage")) => BlockKind::Storage,
-    //     Ok(Some("program")) => BlockKind::Program,
-    //     _ => {
-    //         writeln!(context, "Error: Invalid kind!").unwrap();
-    //         return;
-    //     }
-    // };
+
 
     match block_storage::block_open(idx) {
         Ok(()) => {
@@ -200,7 +240,6 @@ fn upload<'a>(_menu: &Menu<Context>, item: &Item<Context>, args: &[&str], contex
     let mut upl = Uploader {
         block: idx,
         abuf: AlignBuf { byte: [0u8; 256] },
-        cur_offset: 0,
         ttl_offset: 0,
         acc: CobsAccumulator::new(),
         is_done: false,
@@ -219,7 +258,6 @@ struct AlignBuf {
 struct Uploader {
     block: u32,
     abuf: AlignBuf,
-    cur_offset: usize,
     ttl_offset: usize,
     acc: CobsAccumulator<512>,
     is_done: bool,
@@ -285,7 +323,8 @@ impl Uploader {
                     self.send_request();
                     return
                 }
-                // todo: don't actually do writes, just lie.
+                self.abuf.byte.copy_from_slice(&data);
+                block_storage::block_write(self.block, self.ttl_offset as u32, &self.abuf.byte).unwrap();
                 self.ttl_offset += 256;
             },
             Response::Done(amt) => {
