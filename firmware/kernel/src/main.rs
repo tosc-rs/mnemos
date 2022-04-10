@@ -85,12 +85,8 @@ mod app {
             (usb_dev, usb_serial)
         };
 
-        let mut hg = defmt::unwrap!(HEAP.try_lock());
 
         let UsbUartParts { isr, sys } = defmt::unwrap!(setup_usb_uart(usb_dev, usb_serial));
-        let box_uart = defmt::unwrap!(hg.alloc_box(sys));
-        let leak_uart = box_uart.leak();
-        let to_uart: &'static mut dyn kernel::traits::Serial = leak_uart;
 
         let pins = kernel::map_pins(device.P0, device.P1);
         let qsp = kernel::qspi::QspiPins {
@@ -103,6 +99,13 @@ mod app {
         };
         let qspi = kernel::qspi::Qspi::new(device.QSPI, qsp);
         let block = defmt::unwrap!(kernel::drivers::gd25q16::Gd25q16::new(qspi));
+
+        let mut hg = defmt::unwrap!(HEAP.try_lock());
+
+        let box_uart = defmt::unwrap!(hg.alloc_box(sys));
+        let leak_uart = box_uart.leak();
+        let to_uart: &'static mut dyn kernel::traits::Serial = leak_uart;
+
         let box_block = defmt::unwrap!(hg.alloc_box(block));
         let leak_block = box_block.leak();
         let to_block: &'static mut dyn kernel::traits::BlockStorage = leak_block;
