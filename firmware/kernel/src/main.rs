@@ -17,7 +17,7 @@ mod app {
     };
     use kernel::{
         alloc::HEAP,
-        monotonic::{MonoTimer},
+        monotonic::MonoTimer,
         drivers::usb_serial::{UsbUartParts, setup_usb_uart, UsbUartIsr, enable_usb_interrupts},
         syscall::{syscall_clear, try_recv_syscall},
         loader::validate_header,

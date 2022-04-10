@@ -3,6 +3,12 @@ use serde::{Serialize, Deserialize};
 use crate::syscall::{request::SysCallRequest, success::SysCallSuccess};
 
 
+#[derive(Serialize, Deserialize)]
+pub enum BlockKind {
+    Storage,
+    Program,
+}
+
 pub mod request {
     use super::*;
     use crate::syscall::slice::{SysCallSlice, SysCallSliceMut};
@@ -30,9 +36,35 @@ pub mod request {
     }
 
     #[derive(Serialize, Deserialize)]
+    pub enum BlockRequest<'a> {
+        StoreInfo,
+        BlockInfo {
+            block: u32,
+            dest_buf: SysCallSliceMut<'a>,
+        },
+        BlockOpen {
+            idx: u32,
+        },
+        BlockRead {
+            offset: u32,
+            dest_buf: SysCallSliceMut<'a>,
+        },
+        BlockWrite {
+            offset: u32,
+            src_buf: SysCallSlice<'a>,
+        },
+        BlockClose {
+            name: SysCallSlice<'a>,
+            len: u32,
+            kind: BlockKind,
+        }
+    }
+
+    #[derive(Serialize, Deserialize)]
     pub enum SysCallRequest<'a> {
         Serial(SerialRequest<'a>),
         Time(TimeRequest),
+        BlockStore(BlockRequest<'a>),
     }
 }
 
@@ -59,9 +91,30 @@ pub mod success {
     }
 
     #[derive(Serialize, Deserialize)]
+    pub enum BlockSuccess<'a> {
+        StoreInfo {
+            blocks: u32,
+            capacity: u32,
+        },
+        BlockInfo {
+            length: u32,
+            capacity: u32,
+            kind: BlockKind,
+            name: Option<SysCallSlice<'a>>,
+        },
+        BlockOpened,
+        BlockRead {
+            dest_buf: SysCallSliceMut<'a>,
+        },
+        BlockWritten,
+        BlockClosed,
+    }
+
+    #[derive(Serialize, Deserialize)]
     pub enum SysCallSuccess<'a> {
         Serial(SerialSuccess<'a>),
         Time(TimeSuccess),
+        BlockStore(BlockSuccess<'a>),
     }
 }
 
@@ -143,8 +196,6 @@ pub mod slice {
     }
 
 }
-
-
 
 pub fn try_syscall<'a>(req: SysCallRequest<'a>) -> Result<SysCallSuccess<'a>, ()> {
     let mut inp_buf = [0u8; 128];
