@@ -1,6 +1,6 @@
 use common::{
     syscall::request::SysCallRequest,
-    syscall::success::{SysCallSuccess, TimeSuccess},
+    syscall::{success::{SysCallSuccess, TimeSuccess, BlockSuccess, BlockInfo}, request::BlockRequest},
     syscall::{
         request::{SerialRequest, TimeRequest},
         success::SerialSuccess,
@@ -24,10 +24,17 @@ pub trait Serial: Send {
     fn send<'a>(&mut self, port: u16, buf: &'a [u8]) -> Result<(), &'a [u8]>;
 }
 
+pub trait BlockStorage: Send {
+    fn block_count(&self) -> u32;
+    fn block_size(&self) -> u32;
+    fn block_info<'a>(&'a self, block: u32) -> Result<BlockInfo<'a>, ()>;
+}
+
 // pub trait SendSerial: Serial + Send {}
 
 pub struct Machine {
     pub serial: &'static mut dyn Serial,
+    pub block_storage: Option<&'static mut dyn BlockStorage>,
     // TODO: port router?
     // TODO: flash manager?
 }
@@ -77,6 +84,46 @@ impl Machine {
                 Ok(SysCallSuccess::Time(TimeSuccess::SleptMicros {
                     us: timer.micros_since(orig_start).min(us),
                 }))
+            }
+            SysCallRequest::BlockStore(bsr) => {
+                let resp = self.handle_block_request(bsr)?;
+                Ok(SysCallSuccess::BlockStore(resp))
+            },
+        }
+    }
+
+    pub fn handle_block_request<'a>(
+        &mut self,
+        req: BlockRequest<'a>,
+    ) -> Result<BlockSuccess<'a>, ()> {
+        // Match early to provide the "null" storage info if we have none.
+        let sto: &mut dyn BlockStorage = match (self.block_storage.as_mut(), &req) {
+            (None, BlockRequest::StoreInfo) => {
+                return Ok(BlockSuccess::StoreInfo {
+                    blocks: 0,
+                    capacity: 0,
+                });
+            },
+            (None, _) => return Err(()),
+            (Some(sto), _) => *sto,
+        };
+
+        match req {
+            BlockRequest::StoreInfo => {
+                Ok(BlockSuccess::StoreInfo {
+                    blocks: sto.block_count(),
+                    capacity: sto.block_size(),
+                })
+            },
+            // BlockRequest::BlockInfo { block_idx, dest_buf } => todo!(),
+            // BlockRequest::BlockOpen { block_idx } => todo!(),
+            // BlockRequest::BlockRead { block_idx, offset, dest_buf } => todo!(),
+            // BlockRequest::BlockWrite { block_idx, offset, src_buf } => todo!(),
+            // BlockRequest::BlockClose { block_idx, name, len, kind } => todo!(),
+            _ => {
+                // TODO: All this stuff ^^
+                defmt::println!("Oops, unsupported block command, my bad.");
+                Err(())
             }
         }
     }

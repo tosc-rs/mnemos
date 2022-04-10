@@ -14,10 +14,6 @@ use core::{sync::atomic::Ordering, task::Poll, ops::Deref};
 pub use byte_slab::ManagedArcSlab;
 
 pub const QSPI_MAPPED_BASE_ADDRESS: usize = 0x12000000;
-pub const QSPI_LOCAL_FIRMWARE_SLOT_1: usize = 4 * 1024 * 1024;
-pub const QSPI_MAPPED_FIRMWARE_SLOT_1: usize = QSPI_MAPPED_BASE_ADDRESS + QSPI_LOCAL_FIRMWARE_SLOT_1;
-pub const QSPI_LOCAL_FIRMWARE_SLOT_2: usize = 5 * 1024 * 1024;
-pub const QSPI_MAPPED_FIRMWARE_SLOT_2: usize = QSPI_MAPPED_BASE_ADDRESS + QSPI_LOCAL_FIRMWARE_SLOT_2;
 
 pub struct FlashChunk<'a, const CT: usize, const SZ: usize> {
     pub addr: usize,
@@ -126,7 +122,7 @@ impl Qspi {
         periph.ifconfig1.write(|w| {
             // One 16-mhz cycle delay. As far as I can tell, we don't
             // even need this?
-            unsafe { w.sckdelay().bits(255) };
+            unsafe { w.sckdelay().bits(1) };
             w.dpmen().exit();
             w.spimode().mode0();
             // SPI freqency of 32mhz / (SCKFREQ + 1)

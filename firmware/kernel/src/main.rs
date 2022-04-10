@@ -92,8 +92,24 @@ mod app {
         let leak_uart = box_uart.leak();
         let to_uart: &'static mut dyn kernel::traits::Serial = leak_uart;
 
+        let pins = kernel::map_pins(device.P0, device.P1);
+        let qsp = kernel::qspi::QspiPins {
+            qspi_copi_io0: pins.qspi_d0.degrade(),
+            qspi_cipo_io1: pins.qspi_d1.degrade(),
+            qspi_io2: pins.qspi_d2.degrade(),
+            qspi_io3: pins.qspi_d3.degrade(),
+            qspi_csn: pins.qspi_csn.degrade(),
+            qspi_sck: pins.qspi_sck.degrade(),
+        };
+        let qspi = kernel::qspi::Qspi::new(device.QSPI, qsp);
+        let block = defmt::unwrap!(kernel::drivers::gd25q16::Gd25q16::new(qspi));
+        let box_block = defmt::unwrap!(hg.alloc_box(block));
+        let leak_block = box_block.leak();
+        let to_block: &'static mut dyn kernel::traits::BlockStorage = leak_block;
+
         let machine = kernel::traits::Machine {
             serial: to_uart,
+            block_storage: Some(to_block),
         };
 
         (

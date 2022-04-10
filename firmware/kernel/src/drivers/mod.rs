@@ -3,3 +3,4 @@
 // of crate with a defined interface.
 
 pub mod usb_serial;
+pub mod gd25q16;

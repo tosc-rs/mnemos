@@ -3,8 +3,9 @@ use serde::{Serialize, Deserialize};
 use crate::syscall::{request::SysCallRequest, success::SysCallSuccess};
 
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Eq, PartialEq, Copy, Clone)]
 pub enum BlockKind {
+    Unused,
     Storage,
     Program,
 }
@@ -39,21 +40,24 @@ pub mod request {
     pub enum BlockRequest<'a> {
         StoreInfo,
         BlockInfo {
-            block: u32,
+            block_idx: u32,
             dest_buf: SysCallSliceMut<'a>,
         },
         BlockOpen {
-            idx: u32,
+            block_idx: u32,
         },
         BlockRead {
+            block_idx: u32,
             offset: u32,
             dest_buf: SysCallSliceMut<'a>,
         },
         BlockWrite {
+            block_idx: u32,
             offset: u32,
             src_buf: SysCallSlice<'a>,
         },
         BlockClose {
+            block_idx: u32,
             name: SysCallSlice<'a>,
             len: u32,
             kind: BlockKind,
@@ -91,17 +95,20 @@ pub mod success {
     }
 
     #[derive(Serialize, Deserialize)]
+    pub struct BlockInfo<'a>{
+        pub length: u32,
+        pub capacity: u32,
+        pub kind: BlockKind,
+        pub name: Option<SysCallSlice<'a>>,
+    }
+
+    #[derive(Serialize, Deserialize)]
     pub enum BlockSuccess<'a> {
         StoreInfo {
             blocks: u32,
             capacity: u32,
         },
-        BlockInfo {
-            length: u32,
-            capacity: u32,
-            kind: BlockKind,
-            name: Option<SysCallSlice<'a>>,
-        },
+        BlockInfo(BlockInfo<'a>),
         BlockOpened,
         BlockRead {
             dest_buf: SysCallSliceMut<'a>,
