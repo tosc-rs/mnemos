@@ -4,6 +4,7 @@ use common::{
     syscall::{
         request::{SerialRequest, TimeRequest},
         success::SerialSuccess,
+        BlockKind,
     },
 };
 use groundhog::RollingTimer;
@@ -28,6 +29,10 @@ pub trait BlockStorage: Send {
     fn block_count(&self) -> u32;
     fn block_size(&self) -> u32;
     fn block_info<'a>(&'a self, block: u32) -> Result<BlockInfo<'a>, ()>;
+    fn block_open(&mut self, block: u32) -> Result<(), ()>;
+    fn block_write(&mut self, block: u32, offset: u32, data: &[u8]) -> Result<(), ()>;
+    fn block_read<'a>(&mut self, block: u32, offset: u32, data: &'a mut [u8]) -> Result<&'a mut [u8], ()>;
+    fn block_close(&mut self, block: u32, name: &str, len: u32, kind: BlockKind) -> Result<(), ()>;
 }
 
 pub struct Machine {
@@ -37,7 +42,7 @@ pub struct Machine {
 
 impl Machine {
     pub fn handle_syscall<'a>(
-        &mut self,
+        &'a mut self,
         req: SysCallRequest<'a>,
     ) -> Result<SysCallSuccess<'a>, ()> {
         match req {
@@ -111,7 +116,7 @@ impl Machine {
     }
 
     pub fn handle_block_request<'a>(
-        &mut self,
+        &'a mut self,
         req: BlockRequest<'a>,
     ) -> Result<BlockSuccess<'a>, ()> {
         // Match early to provide the "null" storage info if we have none.
@@ -133,16 +138,29 @@ impl Machine {
                     capacity: sto.block_size(),
                 })
             },
-            // BlockRequest::BlockInfo { block_idx, dest_buf } => todo!(),
-            // BlockRequest::BlockOpen { block_idx } => todo!(),
-            // BlockRequest::BlockRead { block_idx, offset, dest_buf } => todo!(),
-            // BlockRequest::BlockWrite { block_idx, offset, src_buf } => todo!(),
-            // BlockRequest::BlockClose { block_idx, name, len, kind } => todo!(),
-            _ => {
-                // TODO: All this stuff ^^
-                defmt::println!("Oops, unsupported block command, my bad.");
-                Err(())
-            }
+            BlockRequest::BlockInfo { block_idx } => {
+                let info = sto.block_info(block_idx)?;
+                Ok(BlockSuccess::BlockInfo(info))
+            },
+            BlockRequest::BlockOpen { block_idx } => {
+                sto.block_open(block_idx)?;
+                Ok(BlockSuccess::BlockOpened)
+            },
+            BlockRequest::BlockWrite { block_idx, offset, src_buf } => {
+                sto.block_write(block_idx, offset, unsafe { src_buf.to_slice() })?;
+                Ok(BlockSuccess::BlockWritten)
+            },
+            BlockRequest::BlockRead { block_idx, offset, dest_buf } => {
+                let buf = unsafe { dest_buf.to_slice_mut() };
+                let dest = sto.block_read(block_idx, offset, buf)?;
+                Ok(BlockSuccess::BlockRead { dest_buf: dest.into() })
+            },
+            BlockRequest::BlockClose { block_idx, name, len, kind } => {
+                let name_bytes = unsafe { name.to_slice() };
+                let name = core::str::from_utf8(name_bytes).map_err(drop)?;
+                sto.block_close(block_idx, name, len, kind)?;
+                Ok(BlockSuccess::BlockClosed)
+            },
         }
     }
 }

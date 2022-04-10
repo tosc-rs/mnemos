@@ -41,7 +41,6 @@ pub mod request {
         StoreInfo,
         BlockInfo {
             block_idx: u32,
-            dest_buf: SysCallSliceMut<'a>,
         },
         BlockOpen {
             block_idx: u32,
@@ -99,7 +98,15 @@ pub mod success {
         pub length: u32,
         pub capacity: u32,
         pub kind: BlockKind,
+        pub status: BlockStatus,
         pub name: Option<SysCallSlice<'a>>,
+    }
+
+    #[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq)]
+    pub enum BlockStatus {
+        Idle,
+        OpenNoWrites,
+        OpenWritten,
     }
 
     #[derive(Serialize, Deserialize)]
