@@ -37,7 +37,6 @@ SECTIONS
 
   .bridge (NOLOAD) : ALIGN(4)
   {
-    /* Initial Stack Pointer (SP) value */
     *(.bridge.syscall_in.ptr .bridge.syscall_in.ptr.*);
     *(.bridge.syscall_in.len .bridge.syscall_in.len.*);
     *(.bridge.syscall_out.ptr .bridge.syscall_out.ptr.*);
@@ -51,6 +50,8 @@ SECTIONS
 /* You may want to use this variable to locate the call stack and static
    variables in different memory regions. Below is shown the default value */
 _app_stack_start = ORIGIN(APP) + LENGTH(APP);
+_app_start = ORIGIN(APP);
+_app_len = LENGTH(APP);
 
 /* You can use this symbol to customize the location of the .text section */
 /* If omitted the .text section will be placed right after the .vector_table

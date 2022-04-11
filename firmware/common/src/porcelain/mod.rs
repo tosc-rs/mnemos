@@ -107,6 +107,35 @@ pub mod time {
     }
 }
 
+pub mod system {
+    use crate::syscall::{success::SystemSuccess, request::SystemRequest};
+
+    use super::*;
+
+    fn success_filter(succ: SysCallSuccess) -> Result<SystemSuccess, ()> {
+        if let SysCallSuccess::System(s) = succ {
+            Ok(s)
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn set_boot_block(block: u32) -> Result<(), ()> {
+        let req = SysCallRequest::System(SystemRequest::SetBootBlock { block });
+        let resp = success_filter(try_syscall(req)?)?;
+        let SystemSuccess::BootBlockSet = resp;
+        Ok(())
+    }
+
+    pub fn reset() -> Result<(), ()> {
+        let req = SysCallRequest::System(SystemRequest::Reset);
+        let _resp = success_filter(try_syscall(req)?)?;
+
+        // We'll never get here...
+        Ok(())
+    }
+}
+
 pub mod block_storage {
     use super::*;
     use crate::syscall::{

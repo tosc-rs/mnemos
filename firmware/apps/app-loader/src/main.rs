@@ -2,7 +2,7 @@
 #![no_main]
 
 use heapless::{String, Vec};
-use userspace::common::{porcelain::{serial, time, block_storage}, syscall::BlockKind};
+use userspace::common::{porcelain::{serial, time, block_storage, system}, syscall::BlockKind};
 use core::fmt::Write;
 use menu::{Menu, Item, Runner, Parameter};
 use postcard::{CobsAccumulator, FeedResult};
@@ -47,6 +47,19 @@ const ROOT_MENU: Menu<Context> = Menu {
         },
         &Item {
             item_type: menu::ItemType::Callback {
+                function: boot,
+                parameters: &[
+                    Parameter::Mandatory {
+                        parameter_name: "idx",
+                        help: Some("The block index to boot from"),
+                    },
+                ],
+            },
+            command: "boot",
+            help: Some("Boot from a given block"),
+        },
+        &Item {
+            item_type: menu::ItemType::Callback {
                 function: upl_stat,
                 parameters: &[],
             },
@@ -84,6 +97,36 @@ impl core::fmt::Write for Context {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         self.buf.write_str(s)
     }
+}
+
+fn boot<'a>(_menu: &Menu<Context>, item: &Item<Context>, args: &[&str], context: &mut Context) {
+    if let Some(upl) = context.uploading.as_ref() {
+        writeln!(&mut context.buf, "Error: Already uploading to {}!", upl.block).unwrap();
+        return;
+    }
+
+    let idx = if let Ok(Some(parm)) = menu::argument_finder(item, args, "idx") {
+        if let Ok(idx) = str::parse::<u32>(parm) {
+            idx
+        } else {
+            writeln!(context, "Error: Failed to parse {} as an index!", parm).unwrap();
+            return;
+        }
+    } else {
+        writeln!(context, "Error: Missing argument!").unwrap();
+        return;
+    };
+
+    let store_info = block_storage::store_info().unwrap();
+
+    if idx >= store_info.blocks {
+        writeln!(context, "Error: Invalid block index!").unwrap();
+        return;
+    }
+
+    // Sure, whatever
+    system::set_boot_block(idx).unwrap();
+    system::reset().unwrap();
 }
 
 fn upl_complete<'a>(_menu: &Menu<Context>, item: &Item<Context>, args: &[&str], context: &mut Context) {
@@ -200,8 +243,6 @@ fn upload<'a>(_menu: &Menu<Context>, item: &Item<Context>, args: &[&str], contex
         writeln!(context, "Error: Invalid block index!").unwrap();
         return;
     }
-
-
 
     match block_storage::block_open(idx) {
         Ok(()) => {

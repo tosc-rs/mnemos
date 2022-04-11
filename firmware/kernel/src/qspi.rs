@@ -175,6 +175,23 @@ impl Qspi {
         })
     }
 
+    pub async unsafe fn read_spicy(&mut self, start: usize, dest: *mut u8, len: usize) -> Result<(), Error> {
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
+
+        self.periph.read.dst.write(|w| unsafe { w.bits(dest as u32) });
+        self.periph.read.src.write(|w| unsafe { w.bits(start as u32)});
+        self.periph.read.cnt.write(|w| unsafe { w.bits(len as u32)});
+
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
+        self.periph.events_ready.reset();
+        self.periph.tasks_readstart.write(|w| w.tasks_readstart().set_bit());
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
+        self.wait_done().await;
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
+
+        Ok(())
+    }
+
     pub async fn read(&mut self, start: usize, dest: &mut [u8]) -> Result<(), Error> {
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
 

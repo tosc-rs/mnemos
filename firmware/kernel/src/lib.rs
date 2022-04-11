@@ -1,6 +1,8 @@
 #![no_main]
 #![no_std]
 
+use core::{cell::UnsafeCell, mem::MaybeUninit};
+
 use defmt_rtt as _; // global logger
 
 use nrf52840_hal::{
@@ -163,3 +165,41 @@ pub fn map_pins(p0: P0, p1: P1) -> Pins {
         tp1: p0.p0_09,
     }
 }
+
+#[link_section = ".uninit.magic_boot"]
+pub static MAGIC_BOOT: MagicBoot = MagicBoot { tag: UnsafeCell::new(MaybeUninit::uninit()) };
+
+pub struct MagicBoot {
+    tag: UnsafeCell<MaybeUninit<u32>>,
+}
+
+impl MagicBoot {
+    const UPPER_MAGIC: u32 = 0xB007_6000;
+    const MAGIC_MASK: u32 = 0xFFFF_FF00;
+
+    pub fn read_clear(&self) -> Option<u32> {
+        let tag = unsafe {
+            let val = self.tag.get().read_volatile();
+            self.tag.get().write_volatile(MaybeUninit::new(0));
+            val.assume_init()
+        };
+
+        if (tag & Self::MAGIC_MASK) == Self::UPPER_MAGIC {
+            Some(tag & !Self::MAGIC_MASK)
+        } else {
+            None
+        }
+    }
+
+    pub fn set(&self, block: u32) {
+        if block > 255 {
+            return;
+        }
+        let val = Self::UPPER_MAGIC | (block & !Self::MAGIC_MASK);
+        unsafe {
+            self.tag.get().write_volatile(MaybeUninit::new(val));
+        }
+    }
+}
+
+unsafe impl Sync for MagicBoot { }

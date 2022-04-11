@@ -16,6 +16,14 @@ pub mod request {
     use crate::syscall::slice::{SysCallSlice, SysCallSliceMut};
 
     #[derive(Serialize, Deserialize)]
+    pub enum SystemRequest {
+        SetBootBlock {
+            block: u32
+        },
+        Reset,
+    }
+
+    #[derive(Serialize, Deserialize)]
     pub enum SerialRequest<'a> {
         SerialOpenPort {
             port: u16,
@@ -70,12 +78,18 @@ pub mod request {
         Serial(SerialRequest<'a>),
         Time(TimeRequest),
         BlockStore(BlockRequest<'a>),
+        System(SystemRequest),
     }
 }
 
 pub mod success {
     use super::*;
     use crate::syscall::slice::{SysCallSlice, SysCallSliceMut};
+
+    #[derive(Serialize, Deserialize)]
+    pub enum SystemSuccess {
+        BootBlockSet,
+    }
 
     #[derive(Serialize, Deserialize)]
     pub enum SerialSuccess<'a> {
@@ -134,6 +148,7 @@ pub mod success {
         Serial(SerialSuccess<'a>),
         Time(TimeSuccess),
         BlockStore(BlockSuccess<'a>),
+        System(SystemSuccess),
     }
 }
 

@@ -30,6 +30,30 @@ impl RawHeader {
     const START_ADDR: u32 = 0x2000_0000;
     const END_ADDR: u32 = Self::START_ADDR + (128 * 1024);
 
+    // TODO: This is probably bad.
+    pub fn ram_ram_setup(&self) -> PartingWords {
+        // Copy .rodata from the image to the actual .data range (if any)
+        let data_size = (self.edata - self.sdata) as usize;
+        if data_size > 0 {
+            let ro_offset = (self.srodata - Self::START_ADDR) as usize;
+            let data_ptr = self.sdata as usize as *const u8 as *mut u8;
+            unsafe {
+                let start = Self::START_ADDR as usize as *const u8;
+                data_ptr.copy_from_nonoverlapping(start.add(ro_offset), data_size);
+            }
+        }
+
+        let bss_size = (self.ebss - self.sbss) as usize;
+        if bss_size > 0 {
+            let bss_ptr = self.sbss as usize as *const u8 as *mut u8;
+            unsafe {
+                bss_ptr.write_bytes(0, bss_size);
+            }
+        }
+
+        PartingWords { stack_start: self.stack_start, entry_point: self.entry_point }
+    }
+
     pub fn oc_flash_setup(&self, app: &[u8]) -> PartingWords {
         // Copy text - not inclusive of rodata
         let txt_ptr = Self::START_ADDR as usize as *const u8 as *mut u8;

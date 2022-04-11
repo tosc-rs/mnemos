@@ -21,6 +21,7 @@ mod app {
         drivers::usb_serial::{UsbUartParts, setup_usb_uart, UsbUartIsr, enable_usb_interrupts},
         syscall::{syscall_clear, try_recv_syscall},
         loader::validate_header,
+        traits::BlockStorage,
     };
     use usb_device::{
         class_prelude::UsbBusAllocator,
@@ -40,6 +41,7 @@ mod app {
     struct Local {
         usb_isr: UsbUartIsr,
         machine: kernel::traits::Machine,
+        prog_loaded: Option<(*const u8, usize)>,
     }
 
     #[init]
@@ -98,7 +100,34 @@ mod app {
             qspi_sck: pins.qspi_sck.degrade(),
         };
         let qspi = kernel::qspi::Qspi::new(device.QSPI, qsp);
-        let block = defmt::unwrap!(kernel::drivers::gd25q16::Gd25q16::new(qspi));
+        let mut block = defmt::unwrap!(kernel::drivers::gd25q16::Gd25q16::new(qspi));
+
+
+        // let prog_loaded = unsafe {
+        //     defmt::println!("WARNING! HARDCODED LOAD OF BLOCK 1!");
+        //     extern "C" {
+        //         static _app_start: u32;
+        //         static _app_len: u32;
+        //     }
+        //     let app_start = (&_app_start) as *const u32 as *const u8 as *mut u8;
+        //     let app_len = (&_app_len) as *const u32 as usize;
+        //     block.block_load_to(1, app_start, app_len).ok()
+        // };
+
+        let prog_loaded = if let Some(blk) = kernel::MAGIC_BOOT.read_clear() {
+            unsafe {
+                extern "C" {
+                    static _app_start: u32;
+                    static _app_len: u32;
+                }
+                defmt::println!("Told to boot block {=u32}!", blk);
+                let app_start = (&_app_start) as *const u32 as *const u8 as *mut u8;
+                let app_len = (&_app_len) as *const u32 as usize;
+                block.block_load_to(blk, app_start, app_len).ok()
+            }
+        } else {
+            None
+        };
 
         let mut hg = defmt::unwrap!(HEAP.try_lock());
 
@@ -120,6 +149,7 @@ mod app {
             Local {
                 usb_isr: isr,
                 machine,
+                prog_loaded,
             },
             init::Monotonics(mono),
         )
@@ -145,8 +175,8 @@ mod app {
     // since I don't have syscalls yet. In the future, the `machine` will be given
     // to the SWI handler, and idle will basically just launch a program. I think.
     // Maybe idle will use SWIs too.
-    #[idle]
-    fn idle(_cx: idle::Context) -> ! {
+    #[idle(local = [prog_loaded])]
+    fn idle(cx: idle::Context) -> ! {
         defmt::println!("Hello, world!");
 
         let timer = GlobalRollingTimer::default();
@@ -156,9 +186,24 @@ mod app {
         while timer.millis_since(start) < 1000 { }
 
         defmt::println!("!!! - ENTERING USERSPACE - !!!");
+        let loaded = *cx.local.prog_loaded;
 
-        let rh = validate_header(DEFAULT_IMAGE).unwrap();
-        let pws = rh.oc_flash_setup(DEFAULT_IMAGE);
+        let pws = if let Some((ptr, len)) = loaded {
+            {
+                // Slice MUST be dropped before we run ram_ram_setup
+                let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+                validate_header(slice)
+            }.map(|rh| {
+                rh.ram_ram_setup()
+            }).ok()
+        } else {
+            None
+        };
+
+        let pws = pws.unwrap_or_else(|| {
+            let rh = validate_header(DEFAULT_IMAGE).unwrap();
+            rh.oc_flash_setup(DEFAULT_IMAGE)
+        });
 
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
 
@@ -168,7 +213,7 @@ mod app {
     }
 }
 
-use core::arch::asm;
+use core::{arch::asm, cell::UnsafeCell, mem::MaybeUninit};
 use cortex_m::register::{control, psp};
 
 #[inline(always)]

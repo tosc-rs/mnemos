@@ -1,6 +1,6 @@
 use common::{
     syscall::request::SysCallRequest,
-    syscall::{success::{SysCallSuccess, TimeSuccess, BlockSuccess, BlockInfo, StoreInfo}, request::BlockRequest},
+    syscall::{success::{SysCallSuccess, TimeSuccess, BlockSuccess, BlockInfo, StoreInfo, SystemSuccess}, request::{BlockRequest, SystemRequest}},
     syscall::{
         request::{SerialRequest, TimeRequest},
         success::SerialSuccess,
@@ -33,6 +33,7 @@ pub trait BlockStorage: Send {
     fn block_write(&mut self, block: u32, offset: u32, data: &[u8]) -> Result<(), ()>;
     fn block_read<'a>(&mut self, block: u32, offset: u32, data: &'a mut [u8]) -> Result<&'a mut [u8], ()>;
     fn block_close(&mut self, block: u32, name: &str, len: u32, kind: BlockKind) -> Result<(), ()>;
+    unsafe fn block_load_to(&mut self, block: u32, dest: *mut u8, max_len: usize) -> Result<(*const u8, usize), ()>;
 }
 
 pub struct Machine {
@@ -57,6 +58,29 @@ impl Machine {
             SysCallRequest::BlockStore(bsr) => {
                 let resp = self.handle_block_request(bsr)?;
                 Ok(SysCallSuccess::BlockStore(resp))
+            },
+            SysCallRequest::System(sr) => {
+                let resp = self.handle_system_request(sr)?;
+                Ok(SysCallSuccess::System(resp))
+            }
+        }
+    }
+
+    pub fn handle_system_request(
+        &mut self,
+        req: SystemRequest,
+    ) -> Result<SystemSuccess, ()> {
+        match req {
+            SystemRequest::SetBootBlock { block } => {
+                crate::MAGIC_BOOT.set(block);
+                Ok(SystemSuccess::BootBlockSet)
+            },
+            SystemRequest::Reset => {
+                defmt::println!("Rebooting!");
+                let timer = GlobalRollingTimer::default();
+                let start = timer.get_ticks();
+                while timer.millis_since(start) <= 1000 { }
+                nrf52840_hal::pac::SCB::sys_reset();
             },
         }
     }

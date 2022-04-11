@@ -1,4 +1,4 @@
-use core::str::FromStr;
+use core::{str::FromStr, sync::atomic::{compiler_fence, Ordering}};
 
 use byte_slab::ManagedArcSlab;
 use cassette::{Cassette, pin_mut};
@@ -76,8 +76,6 @@ impl Gd25q16 {
             defmt::println!("Writing: {=[u8]}", &data.data[..used]);
             bd.write(15, 0, &data.data[..used])?;
         };
-
-        defmt::println!("Gd25q16::{:#?}", bd.table);
 
         Ok(bd)
     }
@@ -366,5 +364,26 @@ impl BlockStorage for Gd25q16 {
 
     fn block_close(&mut self, block: u32, name: &str, len: u32, kind: BlockKind) -> Result<(), ()> {
         self.close(block, name, len, kind)
+    }
+
+    unsafe fn block_load_to(&mut self, block: u32, dest: *mut u8, max_len: usize) -> Result<(*const u8, usize), ()> {
+        let block_usize = block as usize;
+        let bloc = self.table.blocks.get(block as usize).ok_or(())?;
+        match bloc.kind {
+            BlockKind::Program => {},
+            _ => return Err(()),
+        }
+        if bloc.len as usize > max_len {
+            return Err(());
+        }
+        let start = block_usize * 64 * 1024;
+        let fut = self.qspi.read_spicy(start, dest, bloc.len as usize);
+        pin_mut!(fut);
+        let cas = Cassette::new(fut);
+        cas.block_on().map_err(drop)?;
+
+        compiler_fence(Ordering::SeqCst);
+
+        Ok((dest as *const u8, bloc.len as usize))
     }
 }
