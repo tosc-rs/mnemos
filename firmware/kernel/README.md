@@ -1,259 +1,53 @@
-# `app-template`
+# MnemnOS Kernel
 
-> Quickly set up a [`probe-run`] + [`defmt`] + [`flip-link`] embedded project
+This is the kernel for the MnemnOS general purpose operating system.
 
-[`probe-run`]: https://crates.io/crates/probe-run
-[`defmt`]: https://github.com/knurling-rs/defmt
-[`flip-link`]: https://github.com/knurling-rs/flip-link
+At the moment, the [Adafruit Feather nRF52840 Express] is the only supported kernel hardware platform. Support for other targets and architectures is planned.
 
-## Dependencies
+[Adafruit Feather nRF52840 Express]: https://www.adafruit.com/product/4062
 
-#### 1. `flip-link`:
+The kernel is built on top of [RTIC](https://rtic.rs), a concurrency framework for Rust.
 
-```console
-$ cargo install flip-link
-```
+## Theory
 
-#### 2. `probe-run`:
+The kernel is still in early and active development, however here are a couple of design choices that have been made:
 
-``` console
-$ # make sure to install v0.2.0 or later
-$ cargo install probe-run
-```
+### User Isolation
 
-#### 3. [`cargo-generate`]:
+Currently, the kernel runs with its own stack, using the Cortex-M MSP (Main Stack Pointer). Additionally, it runs in priviledged mode, while userspace runs in unpriviledged mode. The userspace has its own separate stack, using the Cortex-M PSP (Process Stack Pointer).
 
-``` console
-$ cargo install cargo-generate
-```
+Support for Cortex-M Memory Protection Units (MPUs) for additional isolaton is planned, but not currently implemented.
 
-[`cargo-generate`]: https://crates.io/crates/cargo-generate
+As the userspace is in unpriviledged, it is limited to interacting with kernel through the `SVCall` interrupt, which triggers a system call.
 
-> *Note:* You can also just clone this repository instead of using `cargo-generate`, but this involves additional manual adjustments.
+### System Calls
 
-## Setup
+In order to interact with the kernel, the userspace application makes system calls, which trigger an interrupt which the kernel responds to.
 
-#### 1. Initialize the project template
+Before making a system call, the userspace prepares two things:
 
-``` console
-$ cargo generate \
-    --git https://github.com/knurling-rs/app-template \
-    --branch main \
-    --name my-app
-```
+* An "input slice", a pointer and length pair, which can together be considered as a Rust `&[u8]`. The contents of this slice is the requested system call action.
+* An "output slice", a pointer and length pair, which can together be considered as a Rust `&mut [u8]`. Initially this contains nothing, and the length represents the maximum output contents. The kernel will fill the contents of this slice with the result of the requested system call, and the length of the output slice will be reduced to the used output area.
 
-If you look into your new `my-app` folder, you'll find that there are a few `TODO`s in the files marking the properties you need to set.
+As Rust does not have a stable ABI, MnemnOS instead relies on serialized data. MnemnOS uses the [`postcard`] crate (built on top of Serde) to define the message format for system calls.
 
-Let's walk through them together now.
+Put together, the process of making a system call is generally:
 
-#### 2. Set `probe-run` chip
+1. The userspace prepares the request, and serializes it to the input slice
+2. The userspace prepares a destination buffer, to be used as the output slice
+3. The userspace triggers an SVCall interrupt
+4. The kernel receives the SVCall interrupt
+5. The kernel deserializes the input slice, and performs the requested action
+6. The kernel prepares a response, and serializes it to the output slice
+7. The kernel returns control to userspace
+8. The userspace deserializes the contents of the output slice
 
-Pick a chip from `probe-run --list-chips` and enter it into `.cargo/config.toml`.
+More information on the details of the system call protocol can be found in the [`common` folder README].
 
-If, for example, you have a nRF52840 Development Kit from one of [our workshops], replace `{{chip}}` with `nRF52840_xxAA`.
+[`postcard`]: https://docs.rs/postcard/latest/postcard/
+[Serde]: https://serde.rs/
+[`common` folder README]: ../common/README.md
 
-[our workshops]: https://github.com/ferrous-systems/embedded-trainings-2020
+### Program Loading
 
-``` diff
- # .cargo/config.toml
- [target.'cfg(all(target_arch = "arm", target_os = "none"))']
--runner = "probe-run --chip {{chip}}"
-+runner = "probe-run --chip nRF52840_xxAA"
-```
-
-#### 3. Adjust the compilation target
-
-In `.cargo/config.toml`, pick the right compilation target for your board.
-
-``` diff
- # .cargo/config.toml
- [build]
--target = "thumbv6m-none-eabi"    # Cortex-M0 and Cortex-M0+
--# target = "thumbv7m-none-eabi"    # Cortex-M3
--# target = "thumbv7em-none-eabi"   # Cortex-M4 and Cortex-M7 (no FPU)
--# target = "thumbv7em-none-eabihf" # Cortex-M4F and Cortex-M7F (with FPU)
-+target = "thumbv7em-none-eabihf" # Cortex-M4F (with FPU)
-```
-
-Add the target with `rustup`.
-
-``` console
-$ rustup target add thumbv7em-none-eabihf
-```
-
-#### 4. Add a HAL as a dependency
-
-In `Cargo.toml`, list the Hardware Abstraction Layer (HAL) for your board as a dependency.
-
-For the nRF52840 you'll want to use the [`nrf52840-hal`].
-
-[`nrf52840-hal`]: https://crates.io/crates/nrf52840-hal
-
-``` diff
- # Cargo.toml
- [dependencies]
--# some-hal = "1.2.3"
-+nrf52840-hal = "0.14.0"
-```
-
-#### 5. Import your HAL
-
-Now that you have selected a HAL, fix the HAL import in `src/lib.rs`
-
-``` diff
- // my-app/src/lib.rs
--// use some_hal as _; // memory layout
-+use nrf52840_hal as _; // memory layout
-```
-
-#### (6. Get a linker script)
-
-Some HAL crates require that you manually copy over a file called `memory.x` from the HAL to the root of your project. For nrf52840-hal, this is done automatically so no action is needed. For other HAL crates, you can get it from your local Cargo folder, the default location is under:
-
-```
-~/.cargo/registry/src/
-```
-
-Not all HALs provide a `memory.x` file, you may need to write it yourself. Check the documentation for the HAL you are using.
-
-
-#### 7. Run!
-
-You are now all set to `cargo-run` your first `defmt`-powered application!
-There are some examples in the `src/bin` directory.
-
-Start by `cargo run`-ning `my-app/src/bin/hello.rs`:
-
-``` console
-$ # `rb` is an alias for `run --bin`
-$ cargo rb hello
-    Finished dev [optimized + debuginfo] target(s) in 0.03s
-flashing program ..
-DONE
-resetting device
-0.000000 INFO Hello, world!
-(..)
-
-$ echo $?
-0
-```
-
-If you're running out of memory (`flip-link` bails with an overflow error), you can decrease the size of the device memory buffer by setting the `DEFMT_RTT_BUFFER_SIZE` environment variable. The default value is 1024 bytes, and powers of two should be used for optimal performance:
-
-``` console
-$ DEFMT_RTT_BUFFER_SIZE=64 cargo rb hello
-```
-
-#### (8. Set `rust-analyzer.linkedProjects`)
-
-If you are using [rust-analyzer] with VS Code for IDE-like features you can add following configuration to your `.vscode/settings.json` to make it work transparently across workspaces. Find the details of this option in the [RA docs].
-
-```json
-{
-    "rust-analyzer.linkedProjects": [
-        "Cargo.toml",
-        "firmware/Cargo.toml",
-    ]
-}
-```
-
-[RA docs]: https://rust-analyzer.github.io/manual.html#configuration
-[rust-analyzer]: https://rust-analyzer.github.io/
-
-## Running tests
-
-The template comes configured for running unit tests and integration tests on the target.
-
-Unit tests reside in the library crate and can test private API; the initial set of unit tests are in `src/lib.rs`.
-`cargo test --lib` will run those unit tests.
-
-``` console
-$ cargo test --lib
-(1/1) running `it_works`...
-└─ app::unit_tests::__defmt_test_entry @ src/lib.rs:33
-all tests passed!
-└─ app::unit_tests::__defmt_test_entry @ src/lib.rs:28
-```
-
-Integration tests reside in the `tests` directory; the initial set of integration tests are in `tests/integration.rs`.
-`cargo test --test integration` will run those integration tests.
-Note that the argument of the `--test` flag must match the name of the test file in the `tests` directory.
-
-``` console
-$ cargo test --test integration
-(1/1) running `it_works`...
-└─ integration::tests::__defmt_test_entry @ tests/integration.rs:13
-all tests passed!
-└─ integration::tests::__defmt_test_entry @ tests/integration.rs:8
-```
-
-Note that to add a new test file to the `tests` directory you also need to add a new `[[test]]` section to `Cargo.toml`.
-
-## Trying out the git version of defmt
-
-This template is configured to use the latest crates.io release (the "stable" release) of the `defmt` framework.
-To use the git version (the "development" version) of `defmt` follow these steps:
-
-1. Install the *git* version of `probe-run`
-
-``` console
-$ cargo install --git https://github.com/knurling-rs/probe-run --branch main
-```
-
-2. Check which defmt version `probe-run` supports
-
-``` console
-$ probe-run --version
-0.2.0 (aa585f2 2021-02-22)
-supported defmt version: 60c6447f8ecbc4ff023378ba6905bcd0de1e679f
-```
-
-In the example output, the supported version is `60c6447f8ecbc4ff023378ba6905bcd0de1e679f`
-
-3. Switch defmt dependencies to git: uncomment the last part of the root `Cargo.toml` and enter the hash reported by `probe-run --version`:
-
-``` diff
--# [patch.crates-io]
--# defmt = { git = "https://github.com/knurling-rs/defmt", rev = "use defmt version reported by `probe-run --version`" }
--# defmt-rtt = { git = "https://github.com/knurling-rs/defmt", rev = "use defmt version reported by `probe-run --version`" }
--# defmt-test = { git = "https://github.com/knurling-rs/defmt", rev = "use defmt version reported by `probe-run --version`" }
--# panic-probe = { git = "https://github.com/knurling-rs/defmt", rev = "use defmt version reported by `probe-run --version`" }
-+[patch.crates-io]
-+defmt = { git = "https://github.com/knurling-rs/defmt", rev = "60c6447f8ecbc4ff023378ba6905bcd0de1e679f" }
-+defmt-rtt = { git = "https://github.com/knurling-rs/defmt", rev = "60c6447f8ecbc4ff023378ba6905bcd0de1e679f" }
-+defmt-test = { git = "https://github.com/knurling-rs/defmt", rev = "60c6447f8ecbc4ff023378ba6905bcd0de1e679f" }
-+panic-probe = { git = "https://github.com/knurling-rs/defmt", rev = "60c6447f8ecbc4ff023378ba6905bcd0de1e679f" }
-```
-
-You are now using the git version of `defmt`!
-
-**NOTE** there may have been breaking changes between the crates.io version and the git version; you'll need to fix those in the source code.
-
-## Support
-
-`app-template` is part of the [Knurling] project, [Ferrous Systems]' effort at
-improving tooling used to develop for embedded systems.
-
-If you think that our work is useful, consider sponsoring it via [GitHub
-Sponsors].
-
-## License
-
-Licensed under either of
-
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or
-  http://www.apache.org/licenses/LICENSE-2.0)
-
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
-
-at your option.
-
-### Contribution
-
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in the work by you, as defined in the Apache-2.0 license, shall be
-licensed as above, without any additional terms or conditions.
-
-[Knurling]: https://knurling.ferrous-systems.com
-[Ferrous Systems]: https://ferrous-systems.com/
-[GitHub Sponsors]: https://github.com/sponsors/knurling-rs
+At the moment, user applications are loaded to RAM, and executed from RAM. Applications declare their stack size, which is prepared by the operating system.
