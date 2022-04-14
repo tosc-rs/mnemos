@@ -1,3 +1,3 @@
-# MnemnOS Dumbloader
+# MnemOS Dumbloader
 
 > TODO

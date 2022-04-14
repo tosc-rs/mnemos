@@ -1,6 +1,6 @@
-# MnemnOS Kernel
+# MnemOS Kernel
 
-This is the kernel for the MnemnOS general purpose operating system.
+This is the kernel for the MnemOS general purpose operating system.
 
 At the moment, the [Adafruit Feather nRF52840 Express] is the only supported kernel hardware platform. Support for other targets and architectures is planned.
 
@@ -29,7 +29,7 @@ Before making a system call, the userspace prepares two things:
 * An "input slice", a pointer and length pair, which can together be considered as a Rust `&[u8]`. The contents of this slice is the requested system call action.
 * An "output slice", a pointer and length pair, which can together be considered as a Rust `&mut [u8]`. Initially this contains nothing, and the length represents the maximum output contents. The kernel will fill the contents of this slice with the result of the requested system call, and the length of the output slice will be reduced to the used output area.
 
-As Rust does not have a stable ABI, MnemnOS instead relies on serialized data. MnemnOS uses the [`postcard`] crate (built on top of Serde) to define the message format for system calls.
+As Rust does not have a stable ABI, MnemOS instead relies on serialized data. MnemOS uses the [`postcard`] crate (built on top of Serde) to define the message format for system calls.
 
 Put together, the process of making a system call is generally:
 

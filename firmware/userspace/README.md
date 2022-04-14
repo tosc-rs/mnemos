@@ -1,4 +1,4 @@
-# MnemnOS Userspace Library
+# MnemOS Userspace Library
 
 This Rust library (or crate) serves as the primary interface for userspace applications to the services provided by the kernel.
 

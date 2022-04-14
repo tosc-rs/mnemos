@@ -1,3 +1,3 @@
-# The MnemnOS App Loader
+# The MnemOS App Loader
 
 > TODO
