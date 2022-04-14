@@ -1,10 +1,20 @@
 [package]
+name = "mnemos"
+version = "0.0.1"
+description = "A tiny embedded operating system kernel"
+repository = "https://github.com/jamesmunns/pellegrino"
 authors = ["James Munns <james@onevariable.com>"]
-name = "kernel"
 edition = "2021"
-version = "0.1.0"
+readme = "./README.md"
+
+categories = [
+    "embedded",
+    "no-std",
+]
+license = "MIT OR Apache-2.0"
 
 [lib]
+name = "kernel"
 harness = false
 
 # needed for each integration test
@@ -39,6 +49,8 @@ version = "0.7.10"
 features = ["defmt-impl"]
 
 [dependencies.common]
+package = "mnemos-common"
+version = "0.0.1"
 path = "../common"
 features = ["use-defmt"]
 
@@ -49,9 +61,6 @@ features = ["defmt"]
 [dependencies.linked_list_allocator]
 version = "0.9.1"
 default-features = false
-
-[dependencies.sportty]
-path = "../../common/sportty"
 
 [dependencies.serde]
 version = "1.0.136"
