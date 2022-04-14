@@ -16,6 +16,16 @@ The userspace is where applications run. Applications are provided a standard in
 
 At the moment, MnemOS is not a multitasking operating system, so only one application (and the kernel) can run at any given time.
 
+## Where does the name come from/how do I pronounce it?
+
+"MnemOS" is named after [Mnemosyne](https://en.wikipedia.org/wiki/Mnemosyne), the greek goddess of memory, and the mother of the 9 muses. Since one of the primary responsibilities of an OS is to manage memory, I figured it made sense.
+
+In IPA/Greek, it would be [`mnɛːmos`](https://en.wikipedia.org/wiki/Help:IPA/Greek).
+
+To listen to someone pronounce "Mnemosyne", you can listen to [this youtube clip](https://www.youtube.com/watch?v=xliDJCBxHAo&t=939s), and pretend he isn't saying the back half of the name.
+
+If you pronounce it wrong, I won't be upset.
+
 ## How do I use a MnemOS based computer?
 
 When you first power on the computer, the kernel will start, and initialize any hardware components.
