@@ -8,4 +8,5 @@ edition = "2021"
 [dependencies]
 
 [dependencies.common]
+package = "mnemos-common"
 path = "../common"

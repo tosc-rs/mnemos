@@ -4,6 +4,43 @@ This Rust library (or crate) serves as the primary interface for userspace appli
 
 It contains a couple of important things:
 
+## An `entry` function declaration (not definition!)
+
+The crate provides a declaration of an entry point function that looks like this:
+
+```rust
+extern "Rust" {
+    fn entry() -> !;
+}
+```
+
+When creating an application for MnemOS, your binary project will need to define an entry point with the same name. A minimal application looks something like this:
+
+```rust
+// Your application will generally be no_std, MnemOS does not currently provide
+// a version of the standard library
+#![no_std]
+
+// Your application will generally need the no_main attribute (similar to
+// embedded rust programs) - as we do not use Rust's built-in main function,
+// and instead use `entry() -> !`
+#![no_main]
+
+/// Even if you use no system calls, you should probably include the
+/// userspace library as shown here, to ensure the panic handler (and
+/// other necessary components) are linked in.
+use userspace as _;
+
+/// The entry point function MUST:
+///
+/// * Be declared with the #[no_mangle] attribute
+/// * Must never return
+#[no_mangle]
+fn entry() -> ! {
+    // ...
+}
+```
+
 ## Linker Scripts
 
 The userspace contains two linkerscripts:

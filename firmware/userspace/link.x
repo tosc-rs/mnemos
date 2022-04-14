@@ -84,6 +84,10 @@ INCLUDE stack.x
 
 /* # Entry point = reset vector */
 EXTERN(__ENTRY_POINT);
+EXTERN(SYSCALL_IN_PTR);
+EXTERN(SYSCALL_IN_LEN);
+EXTERN(SYSCALL_OUT_PTR);
+EXTERN(SYSCALL_OUT_LEN);
 
 /* # Sections */
 SECTIONS
