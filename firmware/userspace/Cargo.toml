@@ -1,12 +1,24 @@
 [package]
-name = "userspace"
-version = "0.1.0"
+name = "mnemos-userspace"
+version = "0.0.1"
+description = "A tiny embedded operating system userspace library"
+repository = "https://github.com/jamesmunns/pellegrino"
+authors = ["James Munns <james@onevariable.com>"]
 edition = "2021"
+readme = "./README.md"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+categories = [
+    "embedded",
+    "no-std",
+]
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "userspace"
 
 [dependencies]
 
 [dependencies.common]
 package = "mnemos-common"
+version = "0.0.1"
 path = "../common"
