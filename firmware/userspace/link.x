@@ -82,25 +82,26 @@ MEMORY
 
 INCLUDE stack.x
 
-/* # Entry point = reset vector */
+/* Entry point                          */
 EXTERN(__ENTRY_POINT);
+
+/* "Bridge" statics - used for syscalls */
 EXTERN(SYSCALL_IN_PTR);
 EXTERN(SYSCALL_IN_LEN);
 EXTERN(SYSCALL_OUT_PTR);
 EXTERN(SYSCALL_OUT_LEN);
 
-/* # Sections */
+/* Sections                             */
 SECTIONS
 {
-  /* Default to a 16K stack size */
+  /* Default to a 16K stack size        */
   PROVIDE(_stack_size = 0x4000);
   PROVIDE(_stack_start = __eapp + _stack_size);
 
-  /* ## Sections in APP */
+  /* Sections in APP                    */
   .bridge : ALIGN(4)
   {
     __sbridge = .;
-    /* Initial Stack Pointer (SP) value */
     *(.bridge.syscall_in.ptr .bridge.syscall_in.ptr.*);
     *(.bridge.syscall_in.len .bridge.syscall_in.len.*);
     *(.bridge.syscall_out.ptr .bridge.syscall_out.ptr.*);
@@ -114,7 +115,7 @@ SECTIONS
     __start_app_ram = .;
   } > APP
 
-  /* ### Vector table */
+  /* Application Header             */
   .anachro_table __start_app_ram :
   {
     __satable = .;
@@ -129,12 +130,12 @@ SECTIONS
     LONG(__ebss);         /* End of .bss section. The runtime will zero up to here                */
     LONG(_stack_start);   /* Stack start location. The PSP will be placed here                    */
 
-    /* Reset vector */
-    KEEP(*(.anachro_table.entry_point)); /* this is the `__ENTRY_POINT` symbol */
+    /* this is the `__ENTRY_POINT` symbol */
+    KEEP(*(.anachro_table.entry_point));
     __ENTRY_POINT = .;
   } > APP
 
-  /* ### .text */
+  /* .text */
   .text :
   {
     . = ALIGN(4);
@@ -144,7 +145,7 @@ SECTIONS
     __etext = .;
   } > APP
 
-  /* ### .rodata */
+  /* .rodata */
   .rodata : ALIGN(4)
   {
     . = ALIGN(4);
@@ -158,8 +159,8 @@ SECTIONS
     __erodata = .;
   } > APP
 
-  /* ## Sections in ARAM */
-  /* ### .data */
+  /* Sections in ARAM */
+  /* .data */
   .data : ALIGN(4)
   {
     . = ALIGN(4);
@@ -175,7 +176,7 @@ SECTIONS
   . = ALIGN(4);
   __edata = .;
 
-  /* ### .bss */
+  /* .bss */
   .bss (NOLOAD) : ALIGN(4)
   {
     . = ALIGN(4);
@@ -245,9 +246,9 @@ Set _stext to an address smaller than 'ORIGIN(APP) + LENGTH(APP)'");
 
 /* # Other checks */
 
-ASSERT(__sbridge == ORIGIN(APP), "WHAT");
-ASSERT(__satable == ORIGIN(APP) + 16, "NO BRIDGE");
-ASSERT(__stext == ORIGIN(APP) + 16 + 32, "__stext wrong!");
+ASSERT(__sbridge == ORIGIN(APP), "The bridge is not at the front of the APP section?");
+ASSERT(__satable == ORIGIN(APP) + 16, "The bridge section seems to be missing...");
+ASSERT(__stext == ORIGIN(APP) + 16 + 32, "__stext should start just after the bridge...");
 ASSERT(_stack_start <= (ORIGIN(APP) + LENGTH(APP)), "
 ERROR(anachro-lnk): Application + Stack too big! Consider reducing stack size.");
 

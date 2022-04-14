@@ -1,3 +1,4 @@
+#![doc = include_str!("../README.md")]
 #![no_std]
 
 /// Common between the Kernel and Userspace
