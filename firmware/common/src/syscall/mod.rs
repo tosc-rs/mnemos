@@ -1,4 +1,7 @@
-use core::{sync::atomic::Ordering, ptr::null_mut, marker::PhantomData, arch::asm};
+#[cfg(all(target_arch = "arm", target_os = "none"))]
+use core::{sync::atomic::Ordering, ptr::null_mut, arch::asm};
+
+use core::marker::PhantomData;
 use serde::{Serialize, Deserialize};
 use crate::syscall::{request::SysCallRequest, success::SysCallSuccess};
 
@@ -11,6 +14,7 @@ pub enum BlockKind {
     Program,
 }
 
+/// Types used in syscall requests - from userspace to kernel
 pub mod request {
     use super::*;
     use crate::syscall::slice::{SysCallSlice, SysCallSliceMut};
@@ -82,6 +86,7 @@ pub mod request {
     }
 }
 
+/// Types used in syscall responses - from kernel to userspace
 pub mod success {
     use super::*;
     use crate::syscall::slice::{SysCallSlice, SysCallSliceMut};
@@ -152,18 +157,46 @@ pub mod success {
     }
 }
 
+/// Special types to encode slices across the system call boundary
+///
+/// These types are **not** typically expected to be used directly,
+/// instead consider using the [porcelain functions][crate::porcelain]
+/// available instead, which avoid the need for low level interaction.
+///
+/// ## Safety Note
+///
+/// Using Serde on fields with unsafe side effects is
+/// likely a Bad Idea^TM. I'm guessing you could create arbitrary
+/// slice references safely, triggering UB.
+///
+/// At the moment - **don't do that**. Or if you do, don't expect stability
+/// or safety.
+///
+/// The "correct" answer is likely to have public and private types,
+/// where the userspace public types DON'T implement serde and private
+/// ones that do.
+///
+/// For now: YOLO. User beware if you try to do something 'clever'.
 pub mod slice {
     use super::*;
 
-    // TODO: using Serde on fields with unsafe side effects is
-    // likely a Bad Idea^TM. I'm guessing you could create arbitrary
-    // slice references safely, triggering UB.
-    //
-    // The "correct" answer is likely to have public and private types,
-    // where the userspace public types DON'T implement serde and private
-    // ones that do.
-    //
-    // For now: yolo.
+    /// An Immutable System Call Slice
+    ///
+    /// This represents an immutable slice of bytes, e.g. `&[u8]`, across
+    /// a system call boundary.
+    ///
+    /// This type is typically created by calling `.into()` on a slice.
+    ///
+    /// The lifetime of the original slice is maintained by the lifetime
+    /// parameter `'a`.
+    ///
+    /// ## Example
+    ///
+    /// ```rust
+    /// # use common::syscall::slice::SysCallSlice;
+    /// let sli: &[u8] = &[0, 1, 2, 3];
+    /// let scs: SysCallSlice<'_> = sli.into();
+    /// ```
     #[derive(Serialize, Deserialize)]
     pub struct SysCallSlice<'a> {
         pub(crate) ptr: u32,
@@ -172,31 +205,15 @@ pub mod slice {
     }
 
     impl<'a> SysCallSlice<'a> {
+        /// Consumes the `SysCallSlice`, returning it to a `&[u8]`.
+        ///
+        /// ## SAFETY
+        ///
+        /// This function should only be called on a `SysCallSlice` that was obtained
+        /// either from the kernel, or that was converted from a slice.
         pub unsafe fn to_slice(self) -> &'a [u8] {
             core::slice::from_raw_parts(self.ptr as *const u8, self.len as usize)
         }
-    }
-
-    impl<'a> SysCallSliceMut<'a> {
-        pub unsafe fn to_slice_mut(self) -> &'a mut [u8] {
-            core::slice::from_raw_parts_mut(self.ptr as *const u8 as *mut u8, self.len as usize)
-        }
-    }
-
-    // TODO: using Serde on fields with unsafe side effects is
-    // likely a Bad Idea^TM. I'm guessing you could create arbitrary
-    // slice references safely, triggering UB.
-    //
-    // The "correct" answer is likely to have public and private types,
-    // where the userspace public types DON'T implement serde and private
-    // ones that do.
-    //
-    // For now: yolo.
-    #[derive(Serialize, Deserialize)]
-    pub struct SysCallSliceMut<'a> {
-        pub(crate) ptr: u32,
-        pub(crate) len: u32,
-        _pdlt: PhantomData<&'a mut [u8]>,
     }
 
     impl<'a> From<&'a [u8]> for SysCallSlice<'a> {
@@ -206,6 +223,46 @@ pub mod slice {
                 len: sli.len() as u32,
                 _pdlt: PhantomData,
             }
+        }
+    }
+
+    /// A Mutable System Call Slice
+    ///
+    /// This represents a mutable slice of bytes, e.g. `&mut [u8]`, across
+    /// a system call boundary.
+    ///
+    /// This type is typically created by calling `.into()` on a mutable slice.
+    ///
+    /// The lifetime of the original slice is maintained by the lifetime
+    /// parameter `'a`.
+    ///
+    /// Additionally, a `SysCallSliceMut` can be converted into a `SysCallSlice`,
+    /// though the reverse is not possible.
+    ///
+    /// ## Example
+    ///
+    /// ```rust
+    /// # use common::syscall::slice::{SysCallSliceMut, SysCallSlice};
+    /// let sli: &mut [u8] = &mut [0, 1, 2, 3];
+    /// let scs: SysCallSliceMut<'_> = sli.into();
+    /// let scs: SysCallSlice<'_> = scs.into();
+    /// ```
+    #[derive(Serialize, Deserialize)]
+    pub struct SysCallSliceMut<'a> {
+        pub(crate) ptr: u32,
+        pub(crate) len: u32,
+        _pdlt: PhantomData<&'a mut [u8]>,
+    }
+
+    impl<'a> SysCallSliceMut<'a> {
+        /// Consumes the `SysCallSliceMut`, returning it to a `&mut [u8]`.
+        ///
+        /// ## SAFETY
+        ///
+        /// This function should only be called on a `SysCallSliceMut` that was obtained
+        /// either from the kernel, or that was converted from a slice.
+        pub unsafe fn to_slice_mut(self) -> &'a mut [u8] {
+            core::slice::from_raw_parts_mut(self.ptr as *const u8 as *mut u8, self.len as usize)
         }
     }
 
@@ -231,6 +288,20 @@ pub mod slice {
 
 }
 
+/// Perform a failable system call
+///
+/// Take a system call request, and return a result containing either
+/// a successful response, or an indeterminite error.
+///
+/// At the moment, this is limited to requests and responses with a maximum
+/// serialized size of 128 bytes. This function handles the serialization
+/// and deserialization of the request and response automatically.
+///
+/// (At least) 256 bytes of stack will be used to hold the serialized request
+/// and response parameters
+///
+/// This function is typically only used for creating relevant
+/// [porcelain functions][crate::porcelain]. Consider using those instead.
 pub fn try_syscall<'a>(req: SysCallRequest<'a>) -> Result<SysCallSuccess<'a>, ()> {
     let mut inp_buf = [0u8; 128];
     let mut out_buf = [0u8; 128];
@@ -240,7 +311,16 @@ pub fn try_syscall<'a>(req: SysCallRequest<'a>) -> Result<SysCallSuccess<'a>, ()
     Ok(result)
 }
 
-// TODO: This is a userspace (and idle?) thing...
+/// Perform a "raw" syscall, with a given input and output buffer.
+///
+/// The `input` buffer must contain a valid serialized request prior to calling
+/// this function. The `output` buffer must contain sufficient space for the
+/// serialized response.
+///
+/// This function places the slice into the correct location (currently an
+/// AtomicPtr/AtomicUsize pair), and triggers a Cortex M `SVCall 0` instruction,
+/// which prompts the kernel handler to run.
+#[cfg(all(target_arch = "arm", target_os = "none"))]
 fn raw_syscall<'i, 'o>(input: &'i [u8], output: &'o mut [u8]) -> Result<&'o mut [u8], ()> {
     let in_ptr = input.as_ptr() as *mut u8;
 
@@ -283,4 +363,10 @@ fn raw_syscall<'i, 'o>(input: &'i [u8], output: &'o mut [u8]) -> Result<&'o mut 
     } else {
         Ok(&mut output[..new_out_len])
     }
+}
+
+// Shim for testing
+#[cfg(not(all(target_arch = "arm", target_os = "none")))]
+fn raw_syscall<'i, 'o>(_input: &'i [u8], _output: &'o mut [u8]) -> Result<&'o mut [u8], ()> {
+    unimplemented!("Testing shim!")
 }
