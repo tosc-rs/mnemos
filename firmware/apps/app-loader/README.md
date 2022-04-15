@@ -25,3 +25,5 @@ The following commands are provided by the app-loader:
 ## Uploading
 
 At the moment, the only tool provided to act as an "upload server" to pair with the "upload client" provided by the app loader is the [`dumbloader` tool](../../../tools/dumbloader/README.md). See that readme for more information on how to use it.
+
+A video of this process can be [seen here on twitter](https://twitter.com/bitshiftmask/status/1513318406065381387).
