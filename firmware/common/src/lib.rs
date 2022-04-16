@@ -7,7 +7,7 @@ pub mod porcelain;
 pub mod syscall;
 
 // NOTE: These symbols are only public so the kernel doesn't have to
-// redefine them. Don't touch.
+// redefine them. Don't touch. These will eventually go away.
 
 #[link_section=".bridge.syscall_in.ptr"]
 #[no_mangle]

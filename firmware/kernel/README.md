@@ -16,4 +16,4 @@ For more information about the kernel, refer to:
 
 [Kernel Chapter of the MnemOS book]: https://mnemos.jamesmunns.com/components/kernel.html
 [Kernel API documentation]: https://docs.rs/mnemos/latest/kernel/
-[Flashing the Kernel](https://mnemos.jamesmunns.com/dev-guide/flash-kernel.html)
+[Flashing the Kernel]: https://mnemos.jamesmunns.com/dev-guide/flash-kernel.html

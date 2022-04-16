@@ -1,3 +1,27 @@
+//! System Call Types and low level methods
+//!
+//! These system call types act as the "wire format" between the kernel
+//! and userspace.
+//!
+//! These types and functions are NOT generally used outside of creating
+//! [`porcelain`](crate::porcelain) functions, or within the kernel itself.
+//!
+//! Consider using the [`porcelain`](crate::porcelain) functions directly
+//! instead when making userspace system calls.
+//!
+//! ## WARNING!
+//!
+//! Care must be taken when modifying these types! Non-additive changes,
+//! including ANY field reordering **MUST** be considered a breaking change!
+//!
+//! I have chosen NOT to mark these enums as `#[non_exhaustive]` as
+//! Serde will already fail deserialization on an unknown enum variant.
+//!
+//! Breakages of downstream code causing non-exhaustive enum matching errors
+//! due to added enum variants are NOT considered a "breaking change" at the
+//! moment. If this is important to you, pin the exact `common` crate version
+//! you plan to support, or open an issue to discuss changing this policy.
+
 #[cfg(all(target_arch = "arm", target_os = "none"))]
 use core::{sync::atomic::Ordering, ptr::null_mut, arch::asm};
 
@@ -5,7 +29,9 @@ use core::marker::PhantomData;
 use serde::{Serialize, Deserialize};
 use crate::syscall::{request::SysCallRequest, success::SysCallSuccess};
 
-
+/// The kind of a given block
+///
+/// This lives outside of the Request/Success blocks as it used by both.
 #[derive(Serialize, Deserialize, Eq, PartialEq, Copy, Clone, Debug)]
 #[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
 pub enum BlockKind {
@@ -19,6 +45,17 @@ pub mod request {
     use super::*;
     use crate::syscall::slice::{SysCallSlice, SysCallSliceMut};
 
+    /// The top level SysCallRequest type. This is the type expected by the
+    /// kernel when triggering a syscall.
+    #[derive(Serialize, Deserialize)]
+    pub enum SysCallRequest<'a> {
+        Serial(SerialRequest<'a>),
+        Time(TimeRequest),
+        BlockStore(BlockRequest<'a>),
+        System(SystemRequest),
+    }
+
+    /// Requests associated with system control.
     #[derive(Serialize, Deserialize)]
     pub enum SystemRequest {
         SetBootBlock {
@@ -27,6 +64,7 @@ pub mod request {
         Reset,
     }
 
+    /// Requests associated with Virtual Serial Port operations.
     #[derive(Serialize, Deserialize)]
     pub enum SerialRequest<'a> {
         SerialOpenPort {
@@ -42,6 +80,7 @@ pub mod request {
         },
     }
 
+    /// Requests associated with time.
     #[derive(Serialize, Deserialize)]
     pub enum TimeRequest {
         SleepMicros {
@@ -49,6 +88,7 @@ pub mod request {
         }
     }
 
+    /// Requests associated with the Block Storage device.
     #[derive(Serialize, Deserialize)]
     pub enum BlockRequest<'a> {
         StoreInfo,
@@ -76,14 +116,6 @@ pub mod request {
             kind: BlockKind,
         }
     }
-
-    #[derive(Serialize, Deserialize)]
-    pub enum SysCallRequest<'a> {
-        Serial(SerialRequest<'a>),
-        Time(TimeRequest),
-        BlockStore(BlockRequest<'a>),
-        System(SystemRequest),
-    }
 }
 
 /// Types used in syscall responses - from kernel to userspace
@@ -91,11 +123,23 @@ pub mod success {
     use super::*;
     use crate::syscall::slice::{SysCallSlice, SysCallSliceMut};
 
+    /// The top level SysCallRequest type. This is the type expected by the
+    /// userspace when obtaining the result of a successful system call.
+    #[derive(Serialize, Deserialize)]
+    pub enum SysCallSuccess<'a> {
+        Serial(SerialSuccess<'a>),
+        Time(TimeSuccess),
+        BlockStore(BlockSuccess<'a>),
+        System(SystemSuccess),
+    }
+
+    /// Success type for System level requests
     #[derive(Serialize, Deserialize)]
     pub enum SystemSuccess {
         BootBlockSet,
     }
 
+    /// Success type for Virtual Serial Port requests
     #[derive(Serialize, Deserialize)]
     pub enum SerialSuccess<'a> {
         PortOpened,
@@ -107,6 +151,7 @@ pub mod success {
         },
     }
 
+    /// Success type for time related requests
     #[derive(Serialize, Deserialize)]
     pub enum TimeSuccess {
         SleptMicros {
@@ -114,6 +159,7 @@ pub mod success {
         },
     }
 
+    /// Information about a single Block Storage Device block
     #[derive(Serialize, Deserialize)]
     pub struct BlockInfo<'a>{
         pub length: u32,
@@ -123,6 +169,7 @@ pub mod success {
         pub name: Option<SysCallSlice<'a>>,
     }
 
+    /// The current status of a given Block Storage Device block
     #[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
     pub enum BlockStatus {
         Idle,
@@ -130,12 +177,14 @@ pub mod success {
         OpenWritten,
     }
 
+    /// Information about a Block Storage Device
     #[derive(Serialize, Deserialize)]
-    pub struct StoreInfo{
+    pub struct StoreInfo {
         pub blocks: u32,
         pub capacity: u32,
     }
 
+    /// Success type for Block Storage Device related requests
     #[derive(Serialize, Deserialize)]
     pub enum BlockSuccess<'a> {
         StoreInfo(StoreInfo),
@@ -146,14 +195,6 @@ pub mod success {
         },
         BlockWritten,
         BlockClosed,
-    }
-
-    #[derive(Serialize, Deserialize)]
-    pub enum SysCallSuccess<'a> {
-        Serial(SerialSuccess<'a>),
-        Time(TimeSuccess),
-        BlockStore(BlockSuccess<'a>),
-        System(SystemSuccess),
     }
 }
 
@@ -365,7 +406,7 @@ fn raw_syscall<'i, 'o>(input: &'i [u8], output: &'o mut [u8]) -> Result<&'o mut 
     }
 }
 
-// Shim for testing
+// Shim for testing/host builds
 #[cfg(not(all(target_arch = "arm", target_os = "none")))]
 fn raw_syscall<'i, 'o>(_input: &'i [u8], _output: &'o mut [u8]) -> Result<&'o mut [u8], ()> {
     unimplemented!("Testing shim!")

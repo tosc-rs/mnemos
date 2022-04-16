@@ -1,3 +1,5 @@
+//! Higher Level System Call Functionality
+
 // TODO: To be honest, these are a bit more "plumbing" than "porcelain".
 //
 // The "real" porcelain should feel more like the stdlib, these are more
@@ -10,6 +12,7 @@ use crate::syscall::{
     try_syscall,
 };
 
+/// Capabilities related to Virtual Serial Ports
 pub mod serial {
     use super::*;
     use crate::syscall::request::SerialRequest;
@@ -23,6 +26,9 @@ pub mod serial {
         }
     }
 
+    /// Open a given virtual serial port
+    ///
+    /// It is not ever necessary to open Port 0, which is opened by default.
     pub fn open_port(port: u16) -> Result<(), ()> {
         let req = SysCallRequest::Serial(SerialRequest::SerialOpenPort { port });
 
@@ -35,6 +41,9 @@ pub mod serial {
         }
     }
 
+    /// Attempt to read data from a virtual serial port
+    ///
+    /// On success, the portion read into the `data` buffer is returned.
     pub fn read_port(port: u16, data: &mut [u8]) -> Result<&mut [u8], ()> {
         let req = SysCallRequest::Serial(SerialRequest::SerialReceive {
             port,
@@ -57,6 +66,10 @@ pub mod serial {
         }
     }
 
+    /// Attempt to write data to a virtual serial port
+    ///
+    /// On success, the unsent "remainder" portion, if any, is returned. If all
+    /// data was sent, `Ok(None)` is returned.
     pub fn write_port(port: u16, data: &[u8]) -> Result<Option<&[u8]>, ()> {
         let req = SysCallRequest::Serial(SerialRequest::SerialSend {
             port,
@@ -85,6 +98,7 @@ pub mod serial {
     }
 }
 
+/// Capabilities related to time
 pub mod time {
     use crate::syscall::{success::TimeSuccess, request::TimeRequest};
 
@@ -107,6 +121,7 @@ pub mod time {
     }
 }
 
+/// Capabilities related to system control
 pub mod system {
     use crate::syscall::{success::SystemSuccess, request::SystemRequest};
 
@@ -120,6 +135,9 @@ pub mod system {
         }
     }
 
+    /// Set a given block index of the block storage device to be booted from
+    ///
+    /// The block must be non-empty, and contain a valid User Application image.
     pub fn set_boot_block(block: u32) -> Result<(), ()> {
         let req = SysCallRequest::System(SystemRequest::SetBootBlock { block });
         let resp = success_filter(try_syscall(req)?)?;
@@ -127,6 +145,10 @@ pub mod system {
         Ok(())
     }
 
+    /// Immediately reboot the system
+    ///
+    /// If a block index has been set with `set_boot_block()`, then that image
+    /// will be booted into on the next boot.
     pub fn reset() -> Result<(), ()> {
         let req = SysCallRequest::System(SystemRequest::Reset);
         let _resp = success_filter(try_syscall(req)?)?;
@@ -136,6 +158,8 @@ pub mod system {
     }
 }
 
+/// Capabilities related to the Block Storage Device, currently
+/// the external QSPI flash.
 pub mod block_storage {
     use super::*;
     use crate::syscall::{
@@ -150,15 +174,25 @@ pub mod block_storage {
     // end user.
     //
     // Something to think about, at least.
+    /// A type containing information about a single block of a Block Storage Device.
     pub struct BlockInfoStr<'a>{
+        /// The used length (in bytes) of the given block
         pub length: u32,
+
+        /// The capacity (in bytes) of the given block
         pub capacity: u32,
+
+        /// The "kind" of the given block
         pub kind: BlockKind,
+
+        /// The current status of the given block
         pub status: BlockStatus,
+
+        /// The file name of the given block, if any
         pub name: Option<&'a str>,
     }
 
-    pub fn success_filter(succ: SysCallSuccess) -> Result<BlockSuccess, ()> {
+    fn success_filter(succ: SysCallSuccess) -> Result<BlockSuccess, ()> {
         if let SysCallSuccess::BlockStore(bsr) = succ {
             Ok(bsr)
         } else {
@@ -166,6 +200,7 @@ pub mod block_storage {
         }
     }
 
+    /// Obtain information about the Block Storage Device.
     pub fn store_info() -> Result<StoreInfo, ()> {
         let req = SysCallRequest::BlockStore(BlockRequest::StoreInfo);
         let resp = success_filter(try_syscall(req)?)?;
@@ -177,6 +212,7 @@ pub mod block_storage {
         }
     }
 
+    /// Obtain information about a given block index on the Block Storage Device.
     pub fn block_info<'a>(block: u32, name_buf: &'a mut [u8]) -> Result<BlockInfoStr<'a>, ()> {
         let req = SysCallRequest::BlockStore(BlockRequest::BlockInfo {
             block_idx: block,
@@ -202,6 +238,7 @@ pub mod block_storage {
         }
     }
 
+    /// Open a block for reading or writing.
     pub fn block_open(block: u32) -> Result<(), ()> {
         let req = SysCallRequest::BlockStore(BlockRequest::BlockOpen { block_idx: block });
         let resp = success_filter(try_syscall(req)?)?;
@@ -213,6 +250,13 @@ pub mod block_storage {
         }
     }
 
+    /// Read the contents of a given block, starting at a given offset.
+    ///
+    /// The offset is the number of bytes from the start of the block.
+    /// The offset must be 4-byte aligned. The `dest_buf` must be four
+    /// byte aligned.
+    ///
+    /// On success, the portion of data read from the block is returned.
     pub fn block_read<'a>(
         block: u32,
         offset: u32,
@@ -232,6 +276,15 @@ pub mod block_storage {
         }
     }
 
+    /// Write the contents to a given block, starting at a given byte offset.
+    ///
+    /// The offset is the number of bytes from the start of the block.
+    /// The offset must be 4-byte aligned. The `bytes` buf must be four
+    /// byte aligned.
+    ///
+    /// If this is the first write to a given block after opening, the entire
+    /// block will be erased. Partial writes/rewrites are not currently
+    /// supported. Subsequent reads will reflect the erased status.
     pub fn block_write(block: u32, offset: u32, bytes: &[u8]) -> Result<(), ()> {
         let req = SysCallRequest::BlockStore(BlockRequest::BlockWrite {
             block_idx: block,
@@ -247,6 +300,10 @@ pub mod block_storage {
         }
     }
 
+    /// Close the given block, and update its metadata.
+    ///
+    /// The name may be any UTF-8 string, but must be less than 128 bytes in size,
+    /// e.g. `name.as_bytes().len() <= 128`.
     pub fn block_close(block: u32, name: &str, len: u32, kind: BlockKind) -> Result<(), ()> {
         let req = SysCallRequest::BlockStore(BlockRequest::BlockClose {
             block_idx: block,

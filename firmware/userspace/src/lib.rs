@@ -4,7 +4,7 @@
 /// Common between the Kernel and Userspace
 pub use common;
 
-// The user must provide a `no_mangle` entrypoint.
+/// The user must provide a `no_mangle` entrypoint.
 extern "Rust" {
     fn entry() -> !;
 }
