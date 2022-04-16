@@ -14,6 +14,13 @@ In order to develop the MnemOS Kernel or Userspace applications, you will DEFINI
     * The [cargo-binutils](https://github.com/rust-embedded/cargo-binutils) package
     * The Arm GNU Toolchain, either from [Arm's main website](https://developer.arm.com/tools-and-software/open-source-software/developer-tools/gnu-toolchain), or your system's package manager
     * A "multiarch" build of the GNU toolchain, typically provided by your system's package manager
+* An installation of `git`, or a tool that is compatible with `git`.
+
+You'll also need to check out the source repository of the MnemOS project.
+
+```git
+git clone https://github.com/jamesmunns/pellegrino
+```
 
 ## Practically Required Tools
 

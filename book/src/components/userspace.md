@@ -2,7 +2,9 @@
 
 This Rust library (or crate) serves as the primary interface for userspace applications to the services provided by the kernel.
 
-It contains a couple of important things:
+For more information on how to use the `userspace` library, including a complete step-by-step guide to create an application, see the [Building User Applications](./../dev-guide/build-apps.md) chapter of the Developers Guide.
+
+The Userspace Library contains a couple of important things:
 
 ## An `entry` function declaration (not definition!)
 
@@ -14,7 +16,7 @@ extern "Rust" {
 }
 ```
 
-When creating an application for MnemOS, your binary project will need to define an entry point with the same name. A minimal application looks something like this:
+When creating an application for MnemOS, your binary project will need to declare/define an entry point with the same name. A minimal application looks something like this:
 
 ```rust
 // Your application will generally be no_std, MnemOS does not currently provide
@@ -43,7 +45,7 @@ fn entry() -> ! {
 
 ## Linker Scripts
 
-The userspace contains two linkerscripts:
+The userspace contains two linker scripts:
 
 `link.x` - the main linker script, which tells the compiler and linker how to properly lay out your application so that it can be loaded by the kernel. You typically should not ever modify this file, and it will be copied automatically into the build directory via the included `build.rs` script.
 
@@ -69,7 +71,7 @@ Again, if you are familiar with embedded rust, this is similar to the `device.x`
 
 The other main component of the `userspace` crate are the types and functions necessary to interact with the kernel.
 
-To view the documentation for the provided interfaces and types, from the `userspace` folder, you can run:
+To view the documentation for the provided interfaces and types, you can view the [userspace documentation](https://docs.rs/mnemos-userspace/latest/userspace/) on docs.rs, or from the `userspace` folder, you can run:
 
 ```shell
 cargo doc --open

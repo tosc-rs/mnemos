@@ -34,11 +34,11 @@ Put together, the process of making a system call is generally:
 7. The kernel returns control to userspace
 8. The userspace deserializes the contents of the output slice
 
-More information on the details of the system call protocol can be found in the [`common` folder README].
+More information on the details of the system call protocol can be found in the [`common` chapter] of this book.
 
 [`postcard`]: https://docs.rs/postcard/latest/postcard/
 [Serde]: https://serde.rs/
-[`common` folder README]: https://github.com/jamesmunns/pellegrino/blob/main/firmware/common/README.md
+[`common` chapter]: https://github.com/jamesmunns/pellegrino/blob/main/firmware/common/README.md
 
 ### Program Loading
 
