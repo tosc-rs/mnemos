@@ -1,4 +1,4 @@
-use std::{net::TcpStream, io::{Read, Write, ErrorKind}, thread::sleep, time::Duration};
+use std::{net::TcpStream, io::{Read, Write, ErrorKind}, time::Duration};
 use serde::{Serialize, Deserialize};
 use postcard::{CobsAccumulator, FeedResult};
 

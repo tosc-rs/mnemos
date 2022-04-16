@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
 use std::net::TcpListener;
 use std::sync::mpsc::{Sender, Receiver, channel};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::thread::{sleep, spawn, JoinHandle};
 use serde::{Serialize, Deserialize};
 
@@ -126,7 +126,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let handle = WorkerHandle {
             out: out_send,
             inp: inp_recv,
-            thread_hdl,
+            _thread_hdl: thread_hdl,
         };
 
         manager.workers.insert(i, handle);
@@ -184,7 +184,7 @@ struct TcpManager {
 struct WorkerHandle {
     out: Sender<Vec<u8>>,
     inp: Receiver<Vec<u8>>,
-    thread_hdl: JoinHandle<()>,
+    _thread_hdl: JoinHandle<()>,
 }
 
 struct TcpWorker {
