@@ -38,7 +38,7 @@ More information on the details of the system call protocol can be found in the 
 
 [`postcard`]: https://docs.rs/postcard/latest/postcard/
 [Serde]: https://serde.rs/
-[`common` folder README]: ../common/README.md
+[`common` folder README]: https://github.com/jamesmunns/pellegrino/blob/main/firmware/common/README.md
 
 ### Program Loading
 
