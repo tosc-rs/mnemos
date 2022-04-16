@@ -1,6 +1,6 @@
 [package]
 name = "mnemos"
-version = "0.0.1"
+version = "0.1.0"
 description = "A tiny embedded operating system kernel"
 repository = "https://github.com/jamesmunns/pellegrino"
 authors = ["James Munns <james@onevariable.com>"]
@@ -50,7 +50,7 @@ features = ["defmt-impl"]
 
 [dependencies.common]
 package = "mnemos-common"
-version = "0.0.1"
+version = "0.1.0"
 path = "../common"
 features = ["use-defmt"]
 
