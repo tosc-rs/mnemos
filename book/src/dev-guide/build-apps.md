@@ -113,11 +113,11 @@ In your `Cargo.toml`:
 ```toml
 # Using crates.io - Check the version is correct!
 [dependencies]
-mnemos-userspace = "0.0.1"
+mnemos-userspace = "0.1.0"
 
 # OR - using git (don't do both!)
 [dependencies.mnemos-userspace]
-version = "0.0.1"
+version = "0.1.0"
 git = "https://github.com/jamesmunns/pellegrino"
 rev = "main"
 ```

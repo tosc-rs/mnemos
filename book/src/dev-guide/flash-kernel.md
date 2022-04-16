@@ -35,8 +35,8 @@ After building the kernel, you should see roughly the following output:
 ```
 cargo run --release
 ...
-   Compiling mnemos-common v0.0.1 (/home/james/hardware-v6/pellegrino/firmware/common)
-   Compiling mnemos v0.0.1 (/home/james/hardware-v6/pellegrino/firmware/kernel)
+   Compiling mnemos-common v0.1.0 (/home/james/hardware-v6/pellegrino/firmware/common)
+   Compiling mnemos v0.1.0 (/home/james/hardware-v6/pellegrino/firmware/kernel)
     Finished release [optimized + debuginfo] target(s) in 3.71s
      Running `probe-run --chip nRF52840_xxAA target/thumbv7em-none-eabihf/release/mnemos`
 (HOST) INFO  flashing program (20 pages / 80.00 KiB)
