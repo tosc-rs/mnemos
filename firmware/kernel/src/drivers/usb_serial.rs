@@ -157,7 +157,7 @@ impl crate::traits::Serial for UsbUartSys {
 
     fn process(&mut self) {
         // Process all incoming message and dispatch to queues
-        'outer: while let Ok(rgr) = self.inc.read() {
+        while let Ok(rgr) = self.inc.read() {
             let mut window = rgr.deref();
             let rec_len = rgr.len();
 

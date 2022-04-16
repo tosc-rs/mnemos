@@ -125,6 +125,8 @@ fn boot<'a>(_menu: &Menu<Context>, item: &Item<Context>, args: &[&str], context:
     }
 
     // Sure, whatever
+    serial::write_port(0, b"\n\rBooting...\r\n").unwrap();
+    time::sleep_micros(500_000).unwrap();
     system::set_boot_block(idx).unwrap();
     system::reset().unwrap();
 }

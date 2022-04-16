@@ -17,9 +17,9 @@ version = "0.1.0"
 dependencies = [
  "heapless",
  "menu",
+ "mnemos-userspace",
  "postcard",
  "serde",
- "userspace",
 ]
 
 [[package]]
@@ -75,14 +75,6 @@ name = "cfg-if"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
-
-[[package]]
-name = "common"
-version = "0.1.0"
-dependencies = [
- "postcard",
- "serde",
-]
 
 [[package]]
 name = "cortex-m"
@@ -167,6 +159,21 @@ name = "menu"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b03d7f798bfe97329ad6df937951142eec93886b37d87010502dd25e8cc75fd5"
+
+[[package]]
+name = "mnemos-common"
+version = "0.0.1"
+dependencies = [
+ "postcard",
+ "serde",
+]
+
+[[package]]
+name = "mnemos-userspace"
+version = "0.0.1"
+dependencies = [
+ "mnemos-common",
+]
 
 [[package]]
 name = "nb"
@@ -337,13 +344,6 @@ name = "unicode-xid"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8ccb82d61f80a663efe1f787a51b16b5a51e3314d6ac365b08639f52387b33f3"
-
-[[package]]
-name = "userspace"
-version = "0.1.0"
-dependencies = [
- "common",
-]
 
 [[package]]
 name = "vcell"

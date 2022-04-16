@@ -213,7 +213,7 @@ mod app {
     }
 }
 
-use core::{arch::asm, cell::UnsafeCell, mem::MaybeUninit};
+use core::arch::asm;
 use cortex_m::register::{control, psp};
 
 #[inline(always)]
