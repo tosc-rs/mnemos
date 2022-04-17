@@ -119,7 +119,7 @@ mnemos-userspace = "0.1.0"
 [dependencies.mnemos-userspace]
 version = "0.1.0"
 git = "https://github.com/jamesmunns/pellegrino"
-rev = "main"
+branch = "main"
 ```
 
 ### Update your `main.rs`
