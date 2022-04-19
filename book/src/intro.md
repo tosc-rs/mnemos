@@ -34,7 +34,7 @@ If that appeals to you, I invite you to try it out. I am more than happy to expl
 
 In IPA/Greek, it would be [`mnɛːmos`](https://en.wikipedia.org/wiki/Help:IPA/Greek). Roughly transcribed, it sounds like "mneh-moss".
 
-To listen to someone pronounce "Mnemosyne", you can listen to [this youtube clip](https://www.youtube.com/watch?v=xliDJCBxHAo&t=939s), and pretend he isn't saying the back half of the name.
+To listen to someone pronounce "Mnemosyne", you can listen to [this youtube clip](https://youtu.be/xliDJCBxHAo?t=99), and pretend he isn't saying the back half of the name.
 
 If you pronounce it wrong, I won't be upset.
 
