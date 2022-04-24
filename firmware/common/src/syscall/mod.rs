@@ -63,7 +63,9 @@ pub mod request {
         InputFloating,
         InputPullUp,
         InputPullDown,
-        OutputPushPull,
+        OutputPushPull {
+            is_high: bool
+        },
     }
 
     #[derive(Serialize, Deserialize)]
@@ -423,8 +425,8 @@ pub mod slice {
 /// This function is typically only used for creating relevant
 /// [porcelain functions][crate::porcelain]. Consider using those instead.
 pub fn try_syscall<'a>(req: SysCallRequest<'a>) -> Result<SysCallSuccess<'a>, ()> {
-    let mut inp_buf = [0u8; 128];
-    let mut out_buf = [0u8; 128];
+    let mut inp_buf = [0u8; 64];
+    let mut out_buf = [0u8; 64];
     let iused = postcard::to_slice(&req, &mut inp_buf).map_err(drop)?;
     let oused = raw_syscall(iused, &mut out_buf)?;
     let result = postcard::from_bytes(oused).map_err(drop)?;

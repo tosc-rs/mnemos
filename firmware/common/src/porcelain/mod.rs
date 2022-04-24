@@ -12,6 +12,53 @@ use crate::syscall::{
     try_syscall,
 };
 
+pub mod gpio {
+    use super::*;
+    use crate::syscall::request::{GpioRequest, GpioMode};
+    use crate::syscall::success::GpioSuccess;
+
+    fn success_filter(succ: SysCallSuccess) -> Result<GpioSuccess, ()> {
+        if let SysCallSuccess::Gpio(s) = succ {
+            Ok(s)
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn set_mode(pin: u8, mode: GpioMode) -> Result<(), ()> {
+        let req = SysCallRequest::Gpio(GpioRequest::SetMode { pin, mode });
+        let res = success_filter(try_syscall(req)?)?;
+
+        if let GpioSuccess::ModeSet = res {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn write_output(pin: u8, is_high: bool) -> Result<(), ()> {
+        let req = SysCallRequest::Gpio(GpioRequest::WriteOutput { pin, is_high });
+        let res = success_filter(try_syscall(req)?)?;
+
+        if let GpioSuccess::OutputWritten = res {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn read_input(pin: u8) -> Result<bool, ()> {
+        let req = SysCallRequest::Gpio(GpioRequest::ReadInput { pin });
+        let res = success_filter(try_syscall(req)?)?;
+
+        if let GpioSuccess::ReadInput { is_high } = res {
+            Ok(is_high)
+        } else {
+            Err(())
+        }
+    }
+}
+
 /// Capabilities related to Virtual Serial Ports
 pub mod serial {
     use super::*;

@@ -359,6 +359,14 @@ impl HeapGuard {
         Ok(HeapBox { ptr })
     }
 
+    pub fn leak_send<T>(&mut self, inp: T) -> Result<&'static mut T, ()>
+    where
+        T: Send + Sized + 'static,
+    {
+        let boxed = self.alloc_box(inp)?;
+        Ok(boxed.leak())
+    }
+
     /// Attempt to allocate a HeapArray using the allocator
     ///
     /// If space was available, the allocation will be returned. If not, an

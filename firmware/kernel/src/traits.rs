@@ -10,6 +10,10 @@ use common::{
 use groundhog::RollingTimer;
 use groundhog_nrf52::GlobalRollingTimer;
 
+pub trait OutputPin: Send {
+    fn set_pin(&mut self, is_high: bool);
+}
+
 pub trait GpioPin: Send {
     fn set_mode(&mut self, mode: GpioMode) -> Result<(), ()>;
     fn read_pin(&mut self) -> Result<bool, ()>;
@@ -252,8 +256,4 @@ impl Machine {
             },
         }
     }
-
-
-
-
 }

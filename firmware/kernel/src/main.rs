@@ -1,7 +1,7 @@
 #![no_main]
 #![no_std]
 
-static DEFAULT_IMAGE: &[u8] = include_bytes!("../appbins/app-loader.bin");
+static DEFAULT_IMAGE: &[u8] = include_bytes!("../appbins/blinker.bin");
 
 #[rtic::app(device = nrf52840_hal::pac, dispatchers = [SWI0_EGU0])]
 mod app {
@@ -13,15 +13,15 @@ mod app {
         clocks::{ExternalOscillator, Internal, LfOscStopped},
         pac::TIMER0,
         usbd::{UsbPeripheral, Usbd},
-        Clocks,
+        Clocks, gpio::Level,
     };
     use kernel::{
         alloc::HEAP,
         monotonic::MonoTimer,
-        drivers::usb_serial::{UsbUartParts, setup_usb_uart, UsbUartIsr, enable_usb_interrupts},
+        drivers::{usb_serial::{UsbUartParts, setup_usb_uart, UsbUartIsr, enable_usb_interrupts}, nrf52_pin::MPin},
         syscall::{syscall_clear, try_recv_syscall},
         loader::validate_header,
-        traits::BlockStorage,
+        traits::{BlockStorage, GpioPin},
     };
     use usb_device::{
         class_prelude::UsbBusAllocator,
@@ -53,6 +53,10 @@ mod app {
         let clocks = clocks.enable_ext_hfosc();
         let clocks =
             unwrap!(singleton!(: Clocks<ExternalOscillator, Internal, LfOscStopped> = clocks));
+
+        // Enable instruction caches for MAXIMUM SPEED
+        device.NVMC.icachecnf.write(|w| w.cacheen().set_bit());
+        cortex_m::asm::isb();
 
         // Configure the monotonic timer, currently using TIMER0, a 32-bit, 1MHz timer
         let mono = Monotonic::new(device.TIMER0);
@@ -102,18 +106,6 @@ mod app {
         let qspi = kernel::qspi::Qspi::new(device.QSPI, qsp);
         let mut block = defmt::unwrap!(kernel::drivers::gd25q16::Gd25q16::new(qspi));
 
-
-        // let prog_loaded = unsafe {
-        //     defmt::println!("WARNING! HARDCODED LOAD OF BLOCK 1!");
-        //     extern "C" {
-        //         static _app_start: u32;
-        //         static _app_len: u32;
-        //     }
-        //     let app_start = (&_app_start) as *const u32 as *const u8 as *mut u8;
-        //     let app_len = (&_app_len) as *const u32 as usize;
-        //     block.block_load_to(1, app_start, app_len).ok()
-        // };
-
         let prog_loaded = if let Some(blk) = kernel::MAGIC_BOOT.read_clear() {
             unsafe {
                 extern "C" {
@@ -131,19 +123,68 @@ mod app {
 
         let mut hg = defmt::unwrap!(HEAP.try_lock());
 
-        let box_uart = defmt::unwrap!(hg.alloc_box(sys));
-        let leak_uart = box_uart.leak();
-        let to_uart: &'static mut dyn kernel::traits::Serial = leak_uart;
+        let to_uart: &'static mut dyn kernel::traits::Serial = defmt::unwrap!(hg.leak_send(sys));
+        let to_block: &'static mut dyn kernel::traits::BlockStorage = defmt::unwrap!(hg.leak_send(block));
 
-        let box_block = defmt::unwrap!(hg.alloc_box(block));
-        let leak_block = box_block.leak();
-        let to_block: &'static mut dyn kernel::traits::BlockStorage = leak_block;
+        //
+        // Map GPIO pins
+        //
+
+        // LEDs
+        let led1 = defmt::unwrap!(hg.leak_send(MPin::new(pins.led1.degrade())));
+        let led2 = defmt::unwrap!(hg.leak_send(MPin::new(pins.led2.degrade())));
+
+        // IRQ/AUX pins
+        let d05 = defmt::unwrap!(hg.leak_send(MPin::new(pins.d05.degrade())));
+        let d06 = defmt::unwrap!(hg.leak_send(MPin::new(pins.d06.degrade())));
+        let scl = defmt::unwrap!(hg.leak_send(MPin::new(pins.scl.degrade())));
+        let sda = defmt::unwrap!(hg.leak_send(MPin::new(pins.sda.degrade())));
+
+        let array_gpios: [&'static mut dyn GpioPin; 6] = [
+            led1,
+            led2,
+            d05,
+            d06,
+            scl,
+            sda,
+        ];
+        let leak_gpios = defmt::unwrap!(hg.leak_send(array_gpios));
+
+        // Chip Selects
+        let d09 = defmt::unwrap!(hg.leak_send(pins.d09.degrade().into_push_pull_output(Level::High)));
+        let d10 = defmt::unwrap!(hg.leak_send(pins.d10.degrade().into_push_pull_output(Level::High)));
+        let d11 = defmt::unwrap!(hg.leak_send(pins.d11.degrade().into_push_pull_output(Level::High)));
+        let d12 = defmt::unwrap!(hg.leak_send(pins.d12.degrade().into_push_pull_output(Level::High)));
+        let d13 = defmt::unwrap!(hg.leak_send(pins.d13.degrade().into_push_pull_output(Level::High)));
+
+        let csn_pins: [&'static mut dyn kernel::traits::OutputPin; 5] = [
+            d09,
+            d10,
+            d11,
+            d12,
+            d13,
+        ];
+        let leak_csns = defmt::unwrap!(hg.leak_send(csn_pins));
+
+        let spi = kernel::drivers::nrf52_spim_blocking::Spim::new(
+            device.SPIM3,
+            kernel::drivers::nrf52_spim_blocking::Pins {
+                sck: pins.sclk.into_push_pull_output(Level::Low).degrade(),
+                mosi: Some(pins.mosi.into_push_pull_output(Level::Low).degrade()),
+                miso: Some(pins.miso.into_floating_input().degrade()),
+            },
+            nrf52840_hal::spim::Frequency::M1,
+            embedded_hal::spi::MODE_0,
+            0x00,
+            leak_csns,
+        );
+        let spi: &'static mut dyn kernel::traits::Spi = defmt::unwrap!(hg.leak_send(spi));
 
         let machine = kernel::traits::Machine {
             serial: to_uart,
             block_storage: Some(to_block),
-            spi: None, // TODO!
-            gpios: &mut [],
+            spi: Some(spi),
+            gpios: leak_gpios.as_mut_slice(),
         };
 
         (
