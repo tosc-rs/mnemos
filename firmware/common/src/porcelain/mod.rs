@@ -59,6 +59,68 @@ pub mod gpio {
     }
 }
 
+pub mod spi {
+    use super::*;
+    use crate::syscall::request::SpiRequest;
+    use crate::syscall::success::SpiSuccess;
+
+    fn success_filter(succ: SysCallSuccess) -> Result<SpiSuccess, ()> {
+        if let SysCallSuccess::Spi(s) = succ {
+            Ok(s)
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn send(csn: u8, data_out: &[u8], speed_khz: u32) -> Result<(), ()> {
+        let req = SysCallRequest::Spi(SpiRequest::Send { csn, data_out: data_out.into(), speed_khz });
+
+        let res = success_filter(try_syscall(req)?)?;
+
+        if let SpiSuccess::SendSuccess = res {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn transfer<'a>(csn: u8, data_out: &'a [u8], data_in: &'a mut [u8], speed_khz: u32) -> Result<&'a mut [u8], ()> {
+        let req = SysCallRequest::Spi(SpiRequest::Transfer {
+            csn,
+            data_out: data_out.into(),
+            data_in: data_in.into(),
+            speed_khz,
+        });
+
+        let res = success_filter(try_syscall(req)?)?;
+
+        if let SpiSuccess::Transfer { data_in } = res {
+            let data_in = unsafe { data_in.to_slice_mut() };
+            Ok(data_in)
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn read<'a>(csn: u8, data_in: &'a mut [u8], speed_khz: u32, dummy_byte: u8) -> Result<&'a mut [u8], ()> {
+        let req = SysCallRequest::Spi(SpiRequest::Read {
+            csn,
+            dummy_byte,
+            data_in: data_in.into(),
+            speed_khz,
+        });
+
+        let res = success_filter(try_syscall(req)?)?;
+
+        if let SpiSuccess::Read { data_in } = res {
+            let data_in = unsafe { data_in.to_slice_mut() };
+            Ok(data_in)
+        } else {
+            Err(())
+        }
+    }
+}
+
 /// Capabilities related to Virtual Serial Ports
 pub mod serial {
     use super::*;
