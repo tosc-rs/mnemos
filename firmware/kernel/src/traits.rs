@@ -1,6 +1,6 @@
 use common::{
     syscall::request::SysCallRequest,
-    syscall::{success::{SysCallSuccess, TimeSuccess, BlockSuccess, BlockInfo, StoreInfo, SystemSuccess}, request::{BlockRequest, SystemRequest}},
+    syscall::{success::{SysCallSuccess, TimeSuccess, BlockSuccess, BlockInfo, StoreInfo, SystemSuccess, SpiSuccess, GpioSuccess}, request::{BlockRequest, SystemRequest, GpioMode, SpiRequest, GpioRequest}},
     syscall::{
         request::{SerialRequest, TimeRequest},
         success::SerialSuccess,
@@ -9,6 +9,18 @@ use common::{
 };
 use groundhog::RollingTimer;
 use groundhog_nrf52::GlobalRollingTimer;
+
+pub trait GpioPin: Send {
+    fn set_mode(&mut self, mode: GpioMode) -> Result<(), ()>;
+    fn read_pin(&mut self) -> Result<bool, ()>;
+    fn set_pin(&mut self, is_high: bool) -> Result<(), ()>;
+}
+
+pub trait Spi: Send {
+    fn send<'a>(&mut self, csn: u8, speed_khz: u32, data_out: &'a [u8]) -> Result<(), ()>;
+    fn transfer<'a>(&mut self, csn: u8, speed_khz: u32, data_out: &'a [u8], data_in: &'a mut [u8]) -> Result<&'a mut [u8], ()>;
+    fn read<'a>(&mut self, csn: u8, speed_khz: u32, dummy_char: u8, data_in: &'a mut [u8]) -> Result<&'a mut [u8], ()>;
+}
 
 pub trait Serial: Send {
     fn register_port(&mut self, port: u16) -> Result<(), ()>;
@@ -39,6 +51,8 @@ pub trait BlockStorage: Send {
 pub struct Machine {
     pub serial: &'static mut dyn Serial,
     pub block_storage: Option<&'static mut dyn BlockStorage>,
+    pub spi: Option<&'static mut dyn Spi>,
+    pub gpios: &'static mut [&'static mut dyn GpioPin],
 }
 
 impl Machine {
@@ -62,6 +76,56 @@ impl Machine {
             SysCallRequest::System(sr) => {
                 let resp = self.handle_system_request(sr)?;
                 Ok(SysCallSuccess::System(resp))
+            }
+            SysCallRequest::Spi(sr) => {
+                let resp = self.handle_spi_request(sr)?;
+                Ok(SysCallSuccess::Spi(resp))
+            }
+            SysCallRequest::Gpio(gr) => {
+                let resp = self.handle_gpio_request(gr)?;
+                Ok(SysCallSuccess::Gpio(resp))
+            }
+        }
+    }
+
+    fn handle_spi_request<'a>(&mut self, sr: SpiRequest<'a>) -> Result<SpiSuccess<'a>, ()> {
+        let spi = self.spi.as_mut().ok_or(())?;
+
+        match sr {
+            SpiRequest::Send { csn, data_out, speed_khz } => {
+                let buf = unsafe { data_out.to_slice() };
+                spi.send(csn, speed_khz, buf)?;
+                Ok(SpiSuccess::SendSuccess)
+            }
+            SpiRequest::Transfer { csn, data_out, data_in, speed_khz } => {
+                let buf_in = unsafe { data_in.to_slice_mut() };
+                let buf_out = unsafe { data_out.to_slice() };
+                let buf_in = spi.transfer(csn, speed_khz, buf_out, buf_in)?;
+                Ok(SpiSuccess::Transfer { data_in: buf_in.into() })
+            }
+            SpiRequest::Read { csn, dummy_byte, data_in, speed_khz } => {
+                let buf_in = unsafe { data_in.to_slice_mut() };
+                let buf_in = spi.read(csn, speed_khz, dummy_byte, buf_in)?;
+                Ok(SpiSuccess::Read { data_in: buf_in.into() })
+            }
+        }
+    }
+
+    fn handle_gpio_request(&mut self, gr: GpioRequest) -> Result<GpioSuccess, ()> {
+        let pin: usize = gr.pin().into();
+        let gpio = self.gpios.get_mut(pin).ok_or(())?;
+
+        match gr {
+            GpioRequest::SetMode { mode, .. } => {
+                gpio.set_mode(mode)?;
+                Ok(GpioSuccess::ModeSet)
+            }
+            GpioRequest::ReadInput { .. } => {
+                gpio.read_pin().map(|is_high| GpioSuccess::ReadInput { is_high })
+            }
+            GpioRequest::WriteOutput { is_high, .. } => {
+                gpio.set_pin(is_high)?;
+                Ok(GpioSuccess::OutputWritten)
             }
         }
     }
@@ -188,4 +252,8 @@ impl Machine {
             },
         }
     }
+
+
+
+
 }

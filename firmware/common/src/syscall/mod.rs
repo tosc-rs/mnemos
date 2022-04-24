@@ -53,6 +53,63 @@ pub mod request {
         Time(TimeRequest),
         BlockStore(BlockRequest<'a>),
         System(SystemRequest),
+        Spi(SpiRequest<'a>),
+        Gpio(GpioRequest),
+    }
+
+    #[derive(Serialize, Deserialize)]
+    pub enum GpioMode {
+        Disabled,
+        InputFloating,
+        InputPullUp,
+        InputPullDown,
+        OutputPushPull,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    pub enum GpioRequest {
+        SetMode {
+            pin: u8,
+            mode: GpioMode,
+        },
+        ReadInput {
+            pin: u8,
+        },
+        WriteOutput {
+            pin: u8,
+            is_high: bool,
+        }
+    }
+
+    impl GpioRequest {
+        pub fn pin(&self) -> u8 {
+            match self {
+                GpioRequest::SetMode { pin, .. } => *pin,
+                GpioRequest::ReadInput { pin } => *pin,
+                GpioRequest::WriteOutput { pin, .. } => *pin,
+            }
+        }
+    }
+
+    #[derive(Serialize, Deserialize)]
+    pub enum SpiRequest<'a> {
+        Send {
+            csn: u8,
+            data_out: SysCallSlice<'a>,
+            speed_khz: u32,
+        },
+        Transfer {
+            csn: u8,
+            data_out: SysCallSlice<'a>,
+            data_in: SysCallSliceMut<'a>,
+            speed_khz: u32,
+        },
+        Read {
+            csn: u8,
+            dummy_byte: u8,
+            data_in: SysCallSliceMut<'a>,
+            speed_khz: u32,
+        },
     }
 
     /// Requests associated with system control.
@@ -131,6 +188,28 @@ pub mod success {
         Time(TimeSuccess),
         BlockStore(BlockSuccess<'a>),
         System(SystemSuccess),
+        Spi(SpiSuccess<'a>),
+        Gpio(GpioSuccess),
+    }
+
+    #[derive(Serialize, Deserialize)]
+    pub enum SpiSuccess<'a> {
+        SendSuccess,
+        Transfer {
+            data_in: SysCallSliceMut<'a>,
+        },
+        Read {
+            data_in: SysCallSliceMut<'a>,
+        },
+    }
+
+    #[derive(Serialize, Deserialize)]
+    pub enum GpioSuccess {
+        ModeSet,
+        ReadInput {
+            is_high: bool,
+        },
+        OutputWritten,
     }
 
     /// Success type for System level requests

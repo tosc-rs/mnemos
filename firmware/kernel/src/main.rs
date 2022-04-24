@@ -142,6 +142,8 @@ mod app {
         let machine = kernel::traits::Machine {
             serial: to_uart,
             block_storage: Some(to_block),
+            spi: None, // TODO!
+            gpios: &mut [],
         };
 
         (
