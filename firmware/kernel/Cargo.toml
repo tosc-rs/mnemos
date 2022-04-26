@@ -47,6 +47,9 @@ micromath = "2.0.0"
 cordic = "0.1.5"
 fixed = "1"
 
+cmsis-dsp-sys = { git = "https://github.com/jacobrosenthal/cmsis-dsp-sys", branch = "master" }
+idsp = "0.7.1"
+
 [dependencies.heapless]
 version = "0.7.10"
 features = ["defmt-impl"]

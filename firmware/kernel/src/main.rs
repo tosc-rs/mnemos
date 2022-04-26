@@ -3,6 +3,8 @@
 
 static DEFAULT_IMAGE: &[u8] = include_bytes!("../appbins/blinker.bin");
 
+use cmsis_dsp_sys as _;
+
 const SINE_TABLE: [i16; 256] = [
     0, 804, 1608, 2410, 3212, 4011, 4808, 5602, 6393, 7179, 7962, 8739, 9512, 10278, 11039, 11793,
     12539, 13279, 14010, 14732, 15446, 16151, 16846, 17530, 18204, 18868, 19519, 20159, 20787,
@@ -350,10 +352,42 @@ mod app {
             // Turn this into 100 stereo i16 samples
             for (i, dat) in idata.chunks_exact_mut(2).enumerate() {
                 use micromath::F32Ext;
-                // let blerp: f32 = (2.0 * core::f32::consts::PI * freq) / 44100.0;
-                const blerp: f32 = (2.0 * core::f32::consts::PI * 441.0) / 44100.0;
-                let value = (i as f32) * blerp;
+                let value = (i as f32) * (2.0 * core::f32::consts::PI * 441.0) / 44100.0;
                 let ival = (value.sin() * (i16::MAX as f32)) as i16;
+                dat.iter_mut().for_each(|i| *i = ival);
+            }
+        }
+
+        // idsp
+        #[cfg(IDSP)]
+        {
+            use idsp::cossin;
+
+            let samp_per_cyc: f32 = 44100.0 / freq; // 141.7
+            let fincr = 256.0 / samp_per_cyc; // 1.81
+            let incr: i32 = (((1 << 24) as f32) * fincr) as i32;
+
+            // generate the next 256 samples...
+            let mut cur_offset = 0i32;
+
+            // Generate 100 samples of a 441hz sine wave.
+            // Turn this into 100 stereo i16 samples
+            for (i, dat) in idata.chunks_exact_mut(2).enumerate() {
+                let (_cos, sin) = cossin(cur_offset);
+                dat.iter_mut().for_each(|i| *i = (sin >> 16) as i16);
+
+                cur_offset = cur_offset.wrapping_add(incr);
+            }
+        }
+
+        // cmdsp
+        #[cfg(CMDSP)]
+        {
+            // Generate 100 samples of a 441hz sine wave.
+            // Turn this into 100 stereo i16 samples
+            for (i, dat) in idata.chunks_exact_mut(2).enumerate() {
+                let value = (i as f32) * (2.0 * core::f32::consts::PI * 441.0) / 44100.0;
+                let ival = (crate::armsin(value) * (i16::MAX as f32)) as i16;
                 dat.iter_mut().for_each(|i| *i = ival);
             }
         }
@@ -461,4 +495,11 @@ unsafe fn letsago(sp: u32, entry: u32) -> ! {
         options(noreturn, nomem, nostack),
     );
 
+}
+
+fn armsin(v: f32) -> f32 {
+    extern "C" {
+        fn arm_sin_f32(i: f32) -> f32;
+    }
+    unsafe { arm_sin_f32(v) }
 }
