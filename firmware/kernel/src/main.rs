@@ -67,6 +67,7 @@ mod app {
         usb_isr: UsbUartIsr,
         machine: kernel::traits::Machine,
         rng: nrf52840_hal::Rng,
+        spi: kernel::drivers::nrf52_spim_nonblocking::Spim,
         // prog_loaded: Option<(*const u8, usize)>,
     }
 
@@ -196,9 +197,9 @@ mod app {
         ];
         let leak_csns = defmt::unwrap!(hg.leak_send(csn_pins));
 
-        let spi = kernel::drivers::nrf52_spim_blocking::Spim::new(
+        let spi = kernel::drivers::nrf52_spim_nonblocking::Spim::new(
             device.SPIM3,
-            kernel::drivers::nrf52_spim_blocking::Pins {
+            kernel::drivers::nrf52_spim_nonblocking::Pins {
                 sck: pins.sclk.into_push_pull_output(Level::Low).degrade(),
                 mosi: Some(pins.mosi.into_push_pull_output(Level::Low).degrade()),
                 miso: Some(pins.miso.into_floating_input().degrade()),
@@ -208,12 +209,13 @@ mod app {
             0x00,
             leak_csns,
         );
-        let spi: &'static mut dyn kernel::traits::Spi = defmt::unwrap!(hg.leak_send(spi));
+        // let spi: &'static mut dyn kernel::traits::Spi = defmt::unwrap!(hg.leak_send(spi));
 
         let machine = kernel::traits::Machine {
             serial: to_uart,
             block_storage: Some(to_block),
-            spi: Some(spi),
+            // spi: Some(spi),
+            spi: None,
             gpios: leak_gpios.as_mut_slice(),
         };
 
@@ -223,6 +225,7 @@ mod app {
                 usb_isr: isr,
                 machine,
                 rng,
+                spi,
                 // prog_loaded,
             },
             init::Monotonics(mono),
@@ -250,7 +253,7 @@ mod app {
     // to the SWI handler, and idle will basically just launch a program. I think.
     // Maybe idle will use SWIs too.
     // #[idle(local = [prog_loaded])]
-    #[idle(local = [machine, rng])]
+    #[idle(local = [machine, rng, spi])]
     fn idle(cx: idle::Context) -> ! {
         use common::syscall::request::GpioMode;
 
@@ -274,7 +277,8 @@ mod app {
         let dreq = &mut machine.gpios[IRQ_DREQ];
         dreq.set_mode(GpioMode::InputFloating).unwrap();
 
-        let spi = machine.spi.as_mut().unwrap();
+        // let spi = machine.spi.as_mut().unwrap();
+        let spi = cx.local.spi;
 
         // SCI command goes:
         // Operation: 1 byte
@@ -307,7 +311,8 @@ mod app {
             0x98,
             0x00,
         ]);
-        spi.send(CSN_XCS, 1_000, &buf_out).unwrap();
+        // spi.send(CSN_XCS, 1_000, &buf_out).unwrap();
+        todo!();
 
         // Wait "a couple hundred cycles", I dunno, 5ms?
         let delay = timer.get_ticks();
@@ -333,7 +338,8 @@ mod app {
             0x24,
             0x24,
         ]);
-        spi.send(CSN_XCS, 1_000, &buf_out).unwrap();
+        // spi.send(CSN_XCS, 1_000, &buf_out).unwrap();
+        todo!();
 
         // Wait "a couple hundred cycles", I dunno, 5ms?
         let delay = timer.get_ticks();
@@ -441,7 +447,8 @@ mod app {
             0x04, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61, 0xff, 0xff, 0xff, 0xff,
         ]);
 
-        spi.send(CSN_XDCS, 8_000, &header).unwrap();
+        // spi.send(CSN_XDCS, 8_000, &header).unwrap();
+        todo!();
 
         let mut forever = idata.iter().cycle();
 
@@ -459,7 +466,8 @@ mod app {
                 }
             }
 
-            spi.send(CSN_XDCS, 8_000, &small_buf).unwrap();
+            // spi.send(CSN_XDCS, 8_000, &small_buf).unwrap();
+            todo!();
         }
     }
 }

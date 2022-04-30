@@ -3,15 +3,34 @@ use nrf52840_hal::{
     spim::Frequency,
 };
 
+use crate::alloc::HeapArray;
 use crate::traits::{Spi, OutputPin};
+use heapless::Deque;
+
+enum State {
+    Idle,
+
+    // The data is at the front of vdq.
+    Transferring,
+}
 
 struct SpimInner {
     periph: SPIM3,
 }
 
+struct InProgress {
+    // TODO: This probably needs to be some kind of async completion type...
+    data: HeapArray<u8>,
+    start_offset: usize,
+    speed_khz: u32,
+    csn: u8,
+}
+
 pub struct Spim {
     spi: SpimInner,
+    vdq: Deque<InProgress, 8>,
     csns: &'static mut [&'static mut dyn OutputPin],
+    state: State,
 }
 
 impl Spim {
@@ -23,37 +42,127 @@ impl Spim {
         orc: u8,
         csns: &'static mut [&'static mut dyn OutputPin],
     ) -> Self {
+
+        // Enable certain interrupts
+        spim.intenset.modify(|_r, w| {
+            w.stopped().set_bit();
+            w.end().set_bit();
+            w
+        });
+
         Self {
             spi: SpimInner::new(spim, pins, frequency, mode, orc),
+            vdq: Deque::new(),
             csns,
+            state: State::Idle,
         }
     }
 }
 
-impl Spi for Spim {
-    fn send<'a>(&mut self, csn: u8, speed_khz: u32, data_out: &'a [u8]) -> Result<(), ()> {
-        let Self { spi, csns } = self;
-        let cs = csns.get_mut(csn as usize).ok_or(())?;
-        spi.change_speed(speed_khz)?;
-        spi.write(*cs, data_out).map_err(drop)
+impl Spim {
+    pub fn send(&mut self, csn: u8, speed_khz: u32, data_out: HeapArray<u8>) -> Result<(), HeapArray<u8>> {
+        // Does this CS exist?
+        if (csn as usize) >= self.csns.len() {
+            return Err(data_out);
+        }
+
+        self.vdq
+            .push_back(InProgress { data: data_out, start_offset: 0, speed_khz, csn })
+            .map_err(|ip| ip.data)?;
+
+        match self.state {
+            State::Idle => self.start_send(),
+            State::Transferring { .. } => {},
+        }
+
+        Ok(())
     }
 
-    fn transfer<'a>(&mut self, csn: u8, speed_khz: u32, data_out: &'a [u8], data_in: &'a mut [u8]) -> Result<&'a mut [u8], ()> {
-        let Self { spi, csns } = self;
-        let cs = csns.get_mut(csn as usize).ok_or(())?;
-        spi.change_speed(speed_khz)?;
-        spi.transfer_split_even(*cs, data_out, data_in).map_err(drop)?;
-        Ok(data_in)
+    fn start_send(&mut self) {
+        let data = match self.vdq.pop_front() {
+            Some(d) => d,
+            None => return,
+        };
+
+        self.spi.change_speed(data.speed_khz).unwrap();
+        self.csns.get_mut(data.csn as usize).unwrap().set_pin(false);
+
+        let rx_data = DmaSlice::null();
+        let tx_data = if data.data.len() > data.start_offset {
+            let sl = &data.data[data.start_offset..];
+            DmaSlice {
+                ptr: sl.as_ptr() as u32,
+                len: sl.len() as u32,
+            }
+        } else {
+            return;
+        };
+
+        unsafe {
+            self.spi.do_spi_dma_transfer_start(tx_data, rx_data);
+        }
+
+        // NOTE: We keep the data in the queue, so that the space is reserved, and the
+        // consumer can't re-fill it between the start of send and end of send.
+        //
+        // This should be impossible, since we just freed at least one space here.
+        self.vdq.push_front(data).map_err(drop).unwrap();
+        self.state = State::Transferring;
     }
 
-    fn read<'a>(&mut self, csn: u8, speed_khz: u32, dummy_char: u8, data_in: &'a mut [u8]) -> Result<&'a mut [u8], ()> {
-        let Self { spi, csns } = self;
-        let cs = csns.get_mut(csn as usize).ok_or(())?;
-        spi.change_speed(speed_khz)?;
-        spi.change_orc(dummy_char);
-        spi.transfer_split_uneven(*cs, &[], data_in).map_err(drop)?;
-        Ok(data_in)
+    // This should probably be called any time a "stopped" or "end" event occurs. Could be the
+    // natural end, or some kind of trigger.
+    pub fn end_send(&mut self) {
+        let mut state = State::Idle;
+        core::mem::swap(&mut self.state, &mut state);
+
+        let mut wip = match state {
+            State::Idle => return,
+            State::Transferring => match self.vdq.pop_front() {
+                Some(wip) => wip,
+                None => return,
+            },
+        };
+
+        match self.spi.do_spi_dma_transfer_end() {
+            Ok((tx_len, _rx_len)) => {
+                self.csns.get_mut(wip.csn as usize).unwrap().set_pin(true);
+
+                let txul = tx_len as usize;
+                if (txul + wip.start_offset) == wip.data.len() {
+                    // We are done! Yay! Start the next item
+                    self.start_send();
+                } else {
+                    // Uh oh! We stopped early. Assume that was for a reason, and don't autostart.
+                    wip.start_offset += txul;
+
+                    // This should be unpossible
+                    // TODO: A vecdeque is probably the wrong structure here. We probably ACTUALLY
+                    // want a vecdeque for EACH chip select, and do some sort of priority or round
+                    // robining of this resource. For now... don't.
+                    self.vdq.push_front(wip).map_err(drop).unwrap();
+                }
+            },
+            Err(e) => panic!("{:?}", e),
+        }
     }
+
+    // fn transfer<'a>(&mut self, csn: u8, speed_khz: u32, data_out: &'a [u8], data_in: &'a mut [u8]) -> Result<&'a mut [u8], ()> {
+    //     let Self { spi, csns, .. } = self;
+    //     let cs = csns.get_mut(csn as usize).ok_or(())?;
+    //     spi.change_speed(speed_khz)?;
+    //     spi.transfer_split_even(*cs, data_out, data_in).map_err(drop)?;
+    //     Ok(data_in)
+    // }
+
+    // fn read<'a>(&mut self, csn: u8, speed_khz: u32, dummy_char: u8, data_in: &'a mut [u8]) -> Result<&'a mut [u8], ()> {
+    //     let Self { spi, csns, .. } = self;
+    //     let cs = csns.get_mut(csn as usize).ok_or(())?;
+    //     spi.change_speed(speed_khz)?;
+    //     spi.change_orc(dummy_char);
+    //     spi.transfer_split_uneven(*cs, &[], data_in).map_err(drop)?;
+    //     Ok(data_in)
+    // }
 }
 
 use core::iter::repeat_with;
@@ -176,8 +285,31 @@ impl SpimInner
         }
     }
 
-    /// Internal helper function to setup and execute SPIM DMA transfer.
     fn do_spi_dma_transfer(&mut self, tx: DmaSlice, rx: DmaSlice) -> Result<(), Error> {
+        let tx_len = tx.len;
+        let rx_len = rx.len;
+
+        unsafe { self.do_spi_dma_transfer_start(tx, rx) };
+
+        loop {
+            match self.do_spi_dma_transfer_end() {
+                Ok((tx_done, rx_done)) => {
+                    break if (tx_done != tx_len) {
+                        Err(Error::Transmit)
+                    } else if (rx_done != rx_len) {
+                        Err(Error::Receive)
+                    } else {
+                        Ok(())
+                    }
+                },
+                Err(Error::NotDone) => continue,
+                Err(e) => break Err(e),
+            }
+        }
+    }
+
+    /// Internal helper function to setup and execute SPIM DMA transfer.
+    unsafe fn do_spi_dma_transfer_start(&mut self, tx: DmaSlice, rx: DmaSlice) {
         // Conservative compiler fence to prevent optimizations that do not
         // take in to account actions by DMA. The fence has been placed here,
         // before any DMA action has started.
@@ -212,28 +344,37 @@ impl SpimInner
         // take in to account actions by DMA. The fence has been placed here,
         // after all possible DMA actions have completed.
         compiler_fence(SeqCst);
+    }
 
+    fn do_spi_dma_transfer_end(&mut self) -> Result<(u32, u32), Error> {
         // Wait for END event.
         //
         // This event is triggered once both transmitting and receiving are
         // done.
-        while self.periph.events_end.read().bits() == 0 {}
+        let is_ended = self.periph.events_end.read().bits() != 0;
+        let is_stopped = self.periph.events_stopped.read().bits() != 0;
+        if !(is_ended || is_stopped) {
+            return Err(Error::NotDone);
+        }
 
-        // Reset the event, otherwise it will always read `1` from now on.
-        self.periph.events_end.write(|w| w);
+        // Reset the events, otherwise it will always read `1` from now on.
+        if is_ended {
+            self.periph.events_end.write(|w| w);
+        }
+        if is_stopped {
+            self.periph.events_stopped.write(|w| w);
+        }
 
         // Conservative compiler fence to prevent optimizations that do not
         // take in to account actions by DMA. The fence has been placed here,
         // after all possible DMA actions have completed.
         compiler_fence(SeqCst);
 
-        if self.periph.txd.amount.read().bits() != tx.len {
-            return Err(Error::Transmit);
-        }
-        if self.periph.rxd.amount.read().bits() != rx.len {
-            return Err(Error::Receive);
-        }
-        Ok(())
+        let tx_done = self.periph.txd.amount.read().bits();
+        let rx_done = self.periph.rxd.amount.read().bits();
+
+
+        Ok((tx_done, rx_done))
     }
 
     /// Read and write from a SPI slave, using separate read and write buffers.
@@ -396,5 +537,6 @@ pub enum Error {
     DMABufferNotInDataMemory,
     Transmit,
     Receive,
+    NotDone,
 }
 
