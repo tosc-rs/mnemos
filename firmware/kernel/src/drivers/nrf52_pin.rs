@@ -19,6 +19,10 @@ impl MPin {
         Self::Disabled(pin)
     }
 
+    pub fn new_input_floating(pin: Pin<Input<Floating>>) -> Self {
+        MPin::InputFloating(pin)
+    }
+
     pub fn into_disabled(&mut self) {
         let mut tmp = MPin::Invalid;
         core::mem::swap(self, &mut tmp);

@@ -36,9 +36,11 @@ mod app {
     use groundhog_nrf52::GlobalRollingTimer;
     use nrf52840_hal::{
         clocks::{ExternalOscillator, Internal, LfOscStopped},
-        pac::TIMER0,
+        pac::{TIMER0, GPIOTE},
         usbd::{UsbPeripheral, Usbd},
         Clocks, gpio::Level,
+        prelude::Ppi,
+        ppi::ConfigurablePpi,
     };
     use kernel::{
         alloc::HEAP,
@@ -60,14 +62,16 @@ mod app {
     type Monotonic = MonoTimer<TIMER0>;
 
     #[shared]
-    struct Shared {}
+    struct Shared {
+        spi: kernel::drivers::nrf52_spim_nonblocking::Spim,
+    }
 
     #[local]
     struct Local {
         usb_isr: UsbUartIsr,
         machine: kernel::traits::Machine,
         rng: nrf52840_hal::Rng,
-        spi: kernel::drivers::nrf52_spim_nonblocking::Spim,
+        ppi0: nrf52840_hal::ppi::Ppi0,
         // prog_loaded: Option<(*const u8, usize)>,
     }
 
@@ -164,7 +168,22 @@ mod app {
         let led2 = defmt::unwrap!(hg.leak_send(MPin::new(pins.led2.degrade())));
 
         // IRQ/AUX pins
-        let d05 = defmt::unwrap!(hg.leak_send(MPin::new(pins.d05.degrade())));
+        let d05_pre = pins.d05.degrade().into_floating_input();
+
+        // Enable hi-to-low interrupts
+        let gpiote = nrf52840_hal::gpiote::Gpiote::new(device.GPIOTE);
+        let ch0 = gpiote.channel0();
+        let ch_ev = ch0.input_pin(&d05_pre);
+        ch_ev.hi_to_lo();
+
+        let ppi = nrf52840_hal::ppi::Parts::new(device.PPI);
+        let mut ppi0 = ppi.ppi0;
+
+        ppi0.set_event_endpoint(ch0.event());
+        ppi0.set_task_endpoint(&device.SPIM3.tasks_stop);
+        ppi0.disable();
+
+        let d05 = defmt::unwrap!(hg.leak_send(MPin::new_input_floating(d05_pre)));
         // let d06 = defmt::unwrap!(hg.leak_send(MPin::new(pins.d06.degrade())));
         let scl = defmt::unwrap!(hg.leak_send(MPin::new(pins.scl.degrade())));
         let sda = defmt::unwrap!(hg.leak_send(MPin::new(pins.sda.degrade())));
@@ -220,12 +239,14 @@ mod app {
         };
 
         (
-            Shared {},
+            Shared {
+                spi,
+            },
             Local {
                 usb_isr: isr,
                 machine,
                 rng,
-                spi,
+                ppi0,
                 // prog_loaded,
             },
             init::Monotonics(mono),
@@ -243,7 +264,24 @@ mod app {
     //     }
     // }
 
-    #[task(binds = USBD, local = [usb_isr], priority = 2)]
+    #[task(binds = SPIM3, shared = [spi], priority = 2)]
+    fn spim3(mut cx: spim3::Context) {
+        // TODO: NOT this
+        let gpiote = unsafe {
+            &*GPIOTE::ptr()
+        };
+
+        // Clear channel 0 events (which probably stopped our SPI device)
+        gpiote.events_in[0].write(|w| w);
+
+        // defmt::println!("[INT]: SPIM3");
+
+        cx.shared.spi.lock(|spi| {
+            spi.end_send();
+        })
+    }
+
+    #[task(binds = USBD, local = [usb_isr], priority = 3)]
     fn usb_tick(cx: usb_tick::Context) {
         cx.local.usb_isr.poll();
     }
@@ -253,8 +291,8 @@ mod app {
     // to the SWI handler, and idle will basically just launch a program. I think.
     // Maybe idle will use SWIs too.
     // #[idle(local = [prog_loaded])]
-    #[idle(local = [machine, rng, spi])]
-    fn idle(cx: idle::Context) -> ! {
+    #[idle(local = [machine, rng, ppi0], shared = [spi])]
+    fn idle(mut cx: idle::Context) -> ! {
         use common::syscall::request::GpioMode;
 
         // let freq = cx.local.rng.random_u8();
@@ -278,7 +316,6 @@ mod app {
         dreq.set_mode(GpioMode::InputFloating).unwrap();
 
         // let spi = machine.spi.as_mut().unwrap();
-        let spi = cx.local.spi;
 
         // SCI command goes:
         // Operation: 1 byte
@@ -305,14 +342,14 @@ mod app {
         //   XTALIx3.5 (Mult)
         //   XTALIx1.5 (Max boost)
         //   Freq = 0 (12.288MHz)
+        let mut buf_out = HEAP.try_lock().unwrap().alloc_box_array(0u8, 4).unwrap();
         buf_out.copy_from_slice(&[
             0x02, // Write
             0x03, // CLOCKF
             0x98,
             0x00,
         ]);
-        // spi.send(CSN_XCS, 1_000, &buf_out).unwrap();
-        todo!();
+        cx.shared.spi.lock(|spi| spi.send(CSN_XCS, 1_000, buf_out).map_err(drop).unwrap());
 
         // Wait "a couple hundred cycles", I dunno, 5ms?
         let delay = timer.get_ticks();
@@ -332,73 +369,24 @@ mod app {
 
         // Probably skip the others, but probably set volume to like 0x2424,
         // which means -18.0dB in each ear.
+        let mut buf_out = HEAP.try_lock().unwrap().alloc_box_array(0u8, 4).unwrap();
         buf_out.copy_from_slice(&[
             0x02, // Write
             0x0B, // CLOCKF
             0x24,
             0x24,
         ]);
-        // spi.send(CSN_XCS, 1_000, &buf_out).unwrap();
-        todo!();
+        cx.shared.spi.lock(|spi| spi.send(CSN_XCS, 1_000, buf_out).map_err(drop).unwrap());
 
         // Wait "a couple hundred cycles", I dunno, 5ms?
         let delay = timer.get_ticks();
         while timer.millis_since(delay) < 5 { }
         let mut idata = [0i16; 200];
 
-
-
         defmt::println!("Generating data...");
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
         let t0 = timer.get_ticks();
 
-        #[cfg(FLOAT)]
-        {
-            // Generate 100 samples of a 441hz sine wave.
-            // Turn this into 100 stereo i16 samples
-            for (i, dat) in idata.chunks_exact_mut(2).enumerate() {
-                use micromath::F32Ext;
-                let value = (i as f32) * (2.0 * core::f32::consts::PI * 441.0) / 44100.0;
-                let ival = (value.sin() * (i16::MAX as f32)) as i16;
-                dat.iter_mut().for_each(|i| *i = ival);
-            }
-        }
-
-        // idsp
-        #[cfg(IDSP)]
-        {
-            use idsp::cossin;
-
-            let samp_per_cyc: f32 = 44100.0 / freq; // 141.7
-            let fincr = 256.0 / samp_per_cyc; // 1.81
-            let incr: i32 = (((1 << 24) as f32) * fincr) as i32;
-
-            // generate the next 256 samples...
-            let mut cur_offset = 0i32;
-
-            // Generate 100 samples of a 441hz sine wave.
-            // Turn this into 100 stereo i16 samples
-            for (i, dat) in idata.chunks_exact_mut(2).enumerate() {
-                let (_cos, sin) = cossin(cur_offset);
-                dat.iter_mut().for_each(|i| *i = (sin >> 16) as i16);
-
-                cur_offset = cur_offset.wrapping_add(incr);
-            }
-        }
-
-        // cmdsp
-        #[cfg(CMDSP)]
-        {
-            // Generate 100 samples of a 441hz sine wave.
-            // Turn this into 100 stereo i16 samples
-            for (i, dat) in idata.chunks_exact_mut(2).enumerate() {
-                let value = (i as f32) * (2.0 * core::f32::consts::PI * 441.0) / 44100.0;
-                let ival = (crate::armsin(value) * (i16::MAX as f32)) as i16;
-                dat.iter_mut().for_each(|i| *i = ival);
-            }
-        }
-
-        // #[cfg(NOPE)]
         {
             use crate::SINE_TABLE;
 
@@ -440,35 +428,58 @@ mod app {
         // 0100 10 00 00 00 01 00 02 00 44 ac 00 00 10 b1 02 00 |........D.......|
         // 0200 04 00 10 00 64 61 74 61 ff ff ff ff             |....data....|
 
-        let mut header: [u8; 44] = [0u8; 44];
+        let mut header = HEAP.try_lock().unwrap().alloc_box_array(0u8, 44).unwrap();
         header.copy_from_slice(&[
             0x52, 0x49, 0x46, 0x46, 0xff, 0xff, 0xff, 0xff, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74, 0x20,
             0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x44, 0xac, 0x00, 0x00, 0x10, 0xb1, 0x02, 0x00,
             0x04, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61, 0xff, 0xff, 0xff, 0xff,
         ]);
+        cx.shared.spi.lock(|spi| spi.send(CSN_XDCS, 8_000, header).map_err(drop).unwrap());
 
-        // spi.send(CSN_XDCS, 8_000, &header).unwrap();
-        todo!();
-
+        cx.local.ppi0.enable();
         let mut forever = idata.iter().cycle();
+        let mut already_calcd = None;
+        let mut iters = 0;
+        while iters < 100 {
 
-        let mut small_buf = [0u8; 32];
-        loop {
-            small_buf.chunks_exact_mut(2).for_each(|ch| {
-                ch.copy_from_slice(&forever.next().unwrap().to_le_bytes());
-            });
+            let small_buf = match already_calcd.take() {
+                Some(sb) => sb,
+                None => {
+                    let mut small_buf = HEAP.try_lock().unwrap().alloc_box_array(0u8, 2048).unwrap();
+                    small_buf.chunks_exact_mut(2).for_each(|ch| {
+                        ch.copy_from_slice(&forever.next().unwrap().to_le_bytes());
+                    });
+                    small_buf
+                }
+            };
+
 
             // Wait for DREQ to go high
-            loop {
-                match dreq.read_pin() {
-                    Ok(true) => break,
-                    _ => {}
-                }
-            }
+            // loop {
+            //     match dreq.read_pin() {
+            //         Ok(true) => break,
+            //         _ => {}
+            //     }
+            // }
 
-            // spi.send(CSN_XDCS, 8_000, &small_buf).unwrap();
-            todo!();
+            // TODO: this will be bad, but okay.
+            cx.shared.spi.lock(|spi| {
+                already_calcd = match spi.send(CSN_XDCS, 8_000, small_buf) {
+                    Ok(()) => {
+                        iters += 1;
+                        None
+                    },
+                    Err(e) => Some(e),
+                };
+            });
+
+            // cx.shared.spi.lock(|spi| {
+            //     spi.start_send();
+            // });
         }
+        let start = timer.get_ticks();
+        while timer.millis_since(start) <= 1000 { }
+        kernel::exit();
     }
 }
 

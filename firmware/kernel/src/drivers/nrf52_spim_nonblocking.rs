@@ -78,14 +78,23 @@ impl Spim {
         Ok(())
     }
 
-    fn start_send(&mut self) {
+    pub fn start_send(&mut self) {
+        match self.state {
+            State::Idle => {},
+            State::Transferring => return,
+        }
+
         let data = match self.vdq.pop_front() {
             Some(d) => d,
             None => return,
         };
 
+        defmt::println!("[SPI] START {=u8}", data.csn);
+
         self.spi.change_speed(data.speed_khz).unwrap();
         self.csns.get_mut(data.csn as usize).unwrap().set_pin(false);
+
+        compiler_fence(Ordering::SeqCst);
 
         let rx_data = DmaSlice::null();
         let tx_data = if data.data.len() > data.start_offset {
@@ -117,10 +126,16 @@ impl Spim {
         core::mem::swap(&mut self.state, &mut state);
 
         let mut wip = match state {
-            State::Idle => return,
+            State::Idle => {
+                self.spi.clear_events();
+                return
+            },
             State::Transferring => match self.vdq.pop_front() {
                 Some(wip) => wip,
-                None => return,
+                None => {
+                    self.spi.clear_events();
+                    return
+                },
             },
         };
 
@@ -128,11 +143,15 @@ impl Spim {
             Ok((tx_len, _rx_len)) => {
                 self.csns.get_mut(wip.csn as usize).unwrap().set_pin(true);
 
+                compiler_fence(Ordering::SeqCst);
+
                 let txul = tx_len as usize;
                 if (txul + wip.start_offset) == wip.data.len() {
                     // We are done! Yay! Start the next item
+                    defmt::println!("[SPI] STOP");
                     self.start_send();
                 } else {
+                    defmt::println!("[SPI] PAUSE {=usize}", txul);
                     // Uh oh! We stopped early. Assume that was for a reason, and don't autostart.
                     wip.start_offset += txul;
 
@@ -166,6 +185,7 @@ impl Spim {
 }
 
 use core::iter::repeat_with;
+use core::sync::atomic::Ordering;
 use core::sync::atomic::{compiler_fence, Ordering::SeqCst};
 
 pub use embedded_hal::spi::{Mode, Phase, Polarity, MODE_0, MODE_1, MODE_2, MODE_3};
@@ -346,16 +366,9 @@ impl SpimInner
         compiler_fence(SeqCst);
     }
 
-    fn do_spi_dma_transfer_end(&mut self) -> Result<(u32, u32), Error> {
-        // Wait for END event.
-        //
-        // This event is triggered once both transmitting and receiving are
-        // done.
+    fn clear_events(&mut self) -> (bool, bool) {
         let is_ended = self.periph.events_end.read().bits() != 0;
         let is_stopped = self.periph.events_stopped.read().bits() != 0;
-        if !(is_ended || is_stopped) {
-            return Err(Error::NotDone);
-        }
 
         // Reset the events, otherwise it will always read `1` from now on.
         if is_ended {
@@ -363,6 +376,19 @@ impl SpimInner
         }
         if is_stopped {
             self.periph.events_stopped.write(|w| w);
+        }
+
+        (is_ended, is_stopped)
+    }
+
+    fn do_spi_dma_transfer_end(&mut self) -> Result<(u32, u32), Error> {
+        // Wait for END event.
+        //
+        // This event is triggered once both transmitting and receiving are
+        // done.
+        let (is_ended, is_stopped) = self.clear_events();
+        if !(is_ended || is_stopped) {
+            return Err(Error::NotDone);
         }
 
         // Conservative compiler fence to prevent optimizations that do not
