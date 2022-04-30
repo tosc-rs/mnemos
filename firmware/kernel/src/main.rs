@@ -324,8 +324,28 @@ mod app {
         // Address: 1 byte
         // Data: 2 bytes
 
-        let mut buf_out = [0u8; 4];
-        let mut buf_in = [0u8; 4];
+        // Wait for DREQ to go high
+        loop {
+            match dreq.read_pin() {
+                Ok(true) => break,
+                Ok(false) => {},
+                Err(()) => panic!(),
+            }
+        }
+
+        // SOFT RESET
+        let mut buf_out = HEAP.try_lock().unwrap().alloc_box_array(0u8, 4).unwrap();
+        buf_out.copy_from_slice(&[
+            0x02, // Write
+            0x00, // MODE
+            0x48,
+            0x04,
+        ]);
+        cx.shared.spi.lock(|spi| spi.send(CSN_XCS, 1_000, buf_out).map_err(drop).unwrap());
+
+        // Wait "a couple hundred cycles", I dunno, 5ms?
+        let delay = timer.get_ticks();
+        while timer.millis_since(delay) < 5 { }
 
         // Wait for DREQ to go high
         loop {
@@ -372,7 +392,7 @@ mod app {
         let mut buf_out = HEAP.try_lock().unwrap().alloc_box_array(0u8, 4).unwrap();
         buf_out.copy_from_slice(&[
             0x02, // Write
-            0x0B, // CLOCKF
+            0x0B, // VOLUME
             0x24,
             0x24,
         ]);
@@ -440,7 +460,7 @@ mod app {
         let mut forever = idata.iter().cycle();
         let mut already_calcd = None;
         let mut iters = 0;
-        while iters < 100 {
+        while iters < 1000 {
 
             let small_buf = match already_calcd.take() {
                 Some(sb) => sb,
@@ -455,12 +475,12 @@ mod app {
 
 
             // Wait for DREQ to go high
-            // loop {
-            //     match dreq.read_pin() {
-            //         Ok(true) => break,
-            //         _ => {}
-            //     }
-            // }
+            loop {
+                match dreq.read_pin() {
+                    Ok(true) => break,
+                    _ => {}
+                }
+            }
 
             // TODO: this will be bad, but okay.
             cx.shared.spi.lock(|spi| {
@@ -469,9 +489,15 @@ mod app {
                         iters += 1;
                         None
                     },
-                    Err(e) => Some(e),
+                    Err(e) => {
+                        spi.start_send();
+                        Some(e)
+                    },
                 };
             });
+
+            let start = timer.get_ticks();
+            while timer.millis_since(start) <= 1 { }
 
             // cx.shared.spi.lock(|spi| {
             //     spi.start_send();
