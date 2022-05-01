@@ -3,15 +3,14 @@
 /// NOTE: This module makes STRONG assumptions that the allocator will be a singleton.
 /// This is currently fine, but it is not allowed to make multiple instances of the
 /// types within.
-
 use core::{
     alloc::Layout,
     cell::UnsafeCell,
     mem::MaybeUninit,
+    mem::{align_of, forget, size_of},
     ops::{Deref, DerefMut},
     ptr::NonNull,
     sync::atomic::{AtomicU8, Ordering},
-    mem::{forget, size_of, align_of},
 };
 use heapless::mpmc::MpMcQueue;
 use linked_list_allocator::Heap;
@@ -20,7 +19,7 @@ pub static HEAP: AHeap = AHeap::new();
 static FREE_Q: FreeQueue = FreeQueue::new();
 
 // AHeap storage goes in a specific section
-#[link_section=".aheap.STORAGE"]
+#[link_section = ".aheap.STORAGE"]
 static HEAP_BUF: HeapStorage = HeapStorage::new();
 
 // Size is roughly ptr + size + align, so about 3 words.
@@ -198,7 +197,7 @@ pub struct HeapBox<T> {
     ptr: *mut T,
 }
 
-unsafe impl<T> Send for HeapBox<T> { }
+unsafe impl<T> Send for HeapBox<T> {}
 
 impl<T> Deref for HeapBox<T> {
     type Target = T;
@@ -216,9 +215,7 @@ impl<T> DerefMut for HeapBox<T> {
 
 impl<T> HeapBox<T> {
     pub unsafe fn from_leaked(ptr: *mut T) -> Self {
-        Self {
-            ptr,
-        }
+        Self { ptr }
     }
 
     /// Create a free_box, with location and layout information necessary
@@ -259,7 +256,7 @@ pub struct HeapArray<T> {
     ptr: *mut T,
 }
 
-unsafe impl<T> Send for HeapArray<T> { }
+unsafe impl<T> Send for HeapArray<T> {}
 
 impl<T> Deref for HeapArray<T> {
     type Target = [T];
@@ -277,10 +274,7 @@ impl<T> DerefMut for HeapArray<T> {
 
 impl<T> HeapArray<T> {
     pub unsafe fn from_leaked(ptr: *mut T, count: usize) -> Self {
-        Self {
-            ptr,
-            count,
-        }
+        Self { ptr, count }
     }
 
     /// Create a free_box, with location and layout information necessary
@@ -417,7 +411,11 @@ impl HeapGuard {
     ///
     /// If space was available, the allocation will be returned. If not, an
     /// error will be returned
-    pub fn alloc_box_array<T: Copy + ?Sized>(&mut self, data: T, count: usize) -> Result<HeapArray<T>, ()> {
+    pub fn alloc_box_array<T: Copy + ?Sized>(
+        &mut self,
+        data: T,
+        count: usize,
+    ) -> Result<HeapArray<T>, ()> {
         // Clean up any pending allocs
         self.clean_allocs();
 

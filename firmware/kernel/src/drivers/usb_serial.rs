@@ -3,14 +3,17 @@
 use core::ops::Deref;
 
 use bbqueue::{BBBuffer, Consumer, Producer};
-use nrf52840_hal::{usbd::{Usbd, UsbPeripheral}, pac::USBD};
+use nrf52840_hal::{
+    pac::USBD,
+    usbd::{UsbPeripheral, Usbd},
+};
 // use sportty::{Message, max_encoding_length};
+use crate::alloc::{HeapArray, HeapGuard};
+use heapless::{Deque, LinearMap, Vec};
+use postcard::{CobsAccumulator, FeedResult};
+use serde::{Deserialize, Serialize};
 use usb_device::{device::UsbDevice, UsbError};
 use usbd_serial::SerialPort;
-use heapless::{LinearMap, Deque, Vec};
-use crate::alloc::{HeapArray, HeapGuard};
-use postcard::{CobsAccumulator, FeedResult};
-use serde::{Serialize, Deserialize};
 
 #[derive(Serialize, Deserialize)]
 pub struct Chunk {
@@ -52,7 +55,7 @@ impl UsbUartIsr {
                 // ... and there is room to send it, then send it.
                 Ok(sz) if sz > 0 => {
                     rgr.release(sz);
-                },
+                }
                 // ... and there is no room to send it, then just bail.
                 Ok(_) | Err(UsbError::WouldBlock) => {
                     // Just silently drop the read grant
@@ -68,7 +71,7 @@ impl UsbUartIsr {
                 // ... and there is data to be read, then take it.
                 Ok(sz) if sz > 0 => {
                     wgr.commit(sz);
-                },
+                }
                 // ... and there is no data to be read, then just bail.
                 Ok(_) | Err(UsbError::WouldBlock) => {
                     // Just silently drop the write grant
@@ -125,7 +128,7 @@ pub fn setup_usb_uart(dev: AUsbDevice, ser: ASerialPort) -> Result<UsbUartParts,
             inc: inc_cons,
             acc: CobsAccumulator::new(),
             ports,
-        }
+        },
     })
 }
 
@@ -167,21 +170,22 @@ impl crate::traits::Serial for UsbUartSys {
                 match self.acc.feed::<Chunk>(window) {
                     FeedResult::Consumed => {
                         window = &[];
-                    },
+                    }
                     FeedResult::OverFull(rem) => {
                         defmt::println!("Overfull error!");
                         window = rem;
-                    },
+                    }
                     FeedResult::DeserError(rem) => {
                         defmt::println!("Chunk deser error!");
                         window = rem;
-                    },
+                    }
                     FeedResult::Success { data, remaining } => {
                         window = remaining;
 
                         // TODO: Replace this with `map()` and Results so we can actually
                         // tell which part went wrong
-                        let failed = self.ports
+                        let failed = self
+                            .ports
                             .get_mut(&data.port)
                             .and_then(|dq| {
                                 let habox = heap.alloc_box_array(0u8, data.buf.len()).ok()?;
@@ -190,12 +194,16 @@ impl crate::traits::Serial for UsbUartSys {
                             .and_then(|(dq, mut habox)| {
                                 habox.copy_from_slice(&data.buf);
                                 dq.push_back(habox).ok()
-                            }).is_none();
+                            })
+                            .is_none();
 
                         if failed && self.ports.contains_key(&data.port) {
-                            defmt::println!("Failed to receive message for serial port {=u16}. Discarding.", data.port);
+                            defmt::println!(
+                                "Failed to receive message for serial port {=u16}. Discarding.",
+                                data.port
+                            );
                         }
-                    },
+                    }
                 }
             }
 
@@ -205,7 +213,12 @@ impl crate::traits::Serial for UsbUartSys {
         }
     }
 
-    fn recv<'a>(&mut self, heap: &mut HeapGuard, port: u16, buf: &'a mut [u8]) -> Result<&'a mut [u8], ()> {
+    fn recv<'a>(
+        &mut self,
+        heap: &mut HeapGuard,
+        port: u16,
+        buf: &'a mut [u8],
+    ) -> Result<&'a mut [u8], ()> {
         self.process(heap);
 
         let deq = self.ports.get_mut(&port).ok_or(())?;
@@ -263,10 +276,10 @@ impl crate::traits::Serial for UsbUartSys {
                     let enc_used = postcard::to_slice_cobs(&msg, &mut wgr).unwrap().len();
                     wgr.commit(enc_used);
                     used += ch.len();
-                },
+                }
                 Err(_) => {
                     return Err(&buf[..used]);
-                },
+                }
             }
         }
         // This means that we reached `remaining.is_empty()`, and all
@@ -304,8 +317,6 @@ pub fn enable_usb_interrupts(usbd: &USBD) {
         w
     });
 }
-
-
 
 // struct Accumulator<const N: usize> {
 //     buf: [u8; N],

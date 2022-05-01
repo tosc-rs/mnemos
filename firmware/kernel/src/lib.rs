@@ -20,14 +20,14 @@ use nrf52840_hal::{
 }; // memory layout
 
 use panic_probe as _;
-pub mod qspi;
-pub mod traits;
 pub mod alloc;
-pub mod monotonic;
 pub mod drivers;
-pub mod syscall;
-pub mod loader;
 pub mod future_box;
+pub mod loader;
+pub mod monotonic;
+pub mod qspi;
+pub mod syscall;
+pub mod traits;
 
 // same panicking *behavior* as `panic-probe` but doesn't print a panic message
 // this prevents the panic message being printed *twice* when `defmt::panic` is invoked
@@ -168,7 +168,9 @@ pub fn map_pins(p0: P0, p1: P1) -> Pins {
 }
 
 #[link_section = ".uninit.magic_boot"]
-pub static MAGIC_BOOT: MagicBoot = MagicBoot { tag: UnsafeCell::new(MaybeUninit::uninit()) };
+pub static MAGIC_BOOT: MagicBoot = MagicBoot {
+    tag: UnsafeCell::new(MaybeUninit::uninit()),
+};
 
 pub struct MagicBoot {
     tag: UnsafeCell<MaybeUninit<u32>>,
@@ -203,4 +205,4 @@ impl MagicBoot {
     }
 }
 
-unsafe impl Sync for MagicBoot { }
+unsafe impl Sync for MagicBoot {}

@@ -1,7 +1,11 @@
 // TODO: This will probably need to move into the Common library,
 // or at least some version of it.
 
-use core::{sync::atomic::{AtomicU8, AtomicBool, Ordering, AtomicPtr}, ops::{Deref, DerefMut}, ptr::null_mut};
+use core::{
+    ops::{Deref, DerefMut},
+    ptr::null_mut,
+    sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, Ordering},
+};
 
 use crate::alloc::{HeapBox, HeapGuard};
 
@@ -90,10 +94,7 @@ pub struct FutureBoxExHdl<T> {
     payload: *mut T,
 }
 
-unsafe impl<T> Send for FutureBoxExHdl<T>
-where
-    T: Send
-{}
+unsafe impl<T> Send for FutureBoxExHdl<T> where T: Send {}
 
 pub enum Source {
     Kernel,
@@ -102,7 +103,7 @@ pub enum Source {
 
 impl<T> FutureBoxExHdl<T>
 where
-    T: Send + Sized + 'static
+    T: Send + Sized + 'static,
 {
     pub fn new_exclusive(heap: &mut HeapGuard, payload: T, source: Source) -> Result<Self, T> {
         let res_fb = heap.leak_send(FutureBox {
@@ -131,7 +132,9 @@ impl<T> FutureBoxExHdl<T> {
             fb: self.fb,
             awaiting: status::INVALID,
         };
-        unsafe { (*self.fb).refcnt.fetch_add(1, Ordering::SeqCst); }
+        unsafe {
+            (*self.fb).refcnt.fetch_add(1, Ordering::SeqCst);
+        }
         ret
     }
 
@@ -140,7 +143,9 @@ impl<T> FutureBoxExHdl<T> {
             fb: self.fb,
             awaiting: status::KERNEL_ACCESS,
         };
-        unsafe { (*self.fb).refcnt.fetch_add(1, Ordering::SeqCst); }
+        unsafe {
+            (*self.fb).refcnt.fetch_add(1, Ordering::SeqCst);
+        }
         ret
     }
 
@@ -204,18 +209,14 @@ impl<T> Deref for FutureBoxExHdl<T> {
 
     fn deref(&self) -> &Self::Target {
         // SAFETY: We have exclusive access for as long as this handle exists
-        unsafe {
-            &*self.payload
-        }
+        unsafe { &*self.payload }
     }
 }
 
 impl<T> DerefMut for FutureBoxExHdl<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         // SAFETY: We have exclusive access for as long as this handle exists
-        unsafe {
-            &mut *self.payload
-        }
+        unsafe { &mut *self.payload }
     }
 }
 
@@ -252,10 +253,7 @@ impl<T> Drop for FutureBoxPendHdl<T> {
     }
 }
 
-unsafe impl<T> Send for FutureBoxPendHdl<T>
-where
-    T: Send
-{}
+unsafe impl<T> Send for FutureBoxPendHdl<T> where T: Send {}
 
 impl<T> FutureBoxPendHdl<T> {
     pub fn is_complete(&self) -> Result<bool, ()> {
@@ -269,7 +267,9 @@ impl<T> FutureBoxPendHdl<T> {
 
     pub fn try_upgrade(&self) -> Result<Option<FutureBoxExHdl<T>>, ()> {
         let fb = unsafe { &*self.fb };
-        let was_ex = fb.ex_taken.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);
+        let was_ex = fb
+            .ex_taken
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst);
         match was_ex {
             Ok(_) => {
                 // We have exclusive access, see if we are in the right mode

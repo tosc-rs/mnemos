@@ -51,7 +51,10 @@ impl RawHeader {
             }
         }
 
-        PartingWords { stack_start: self.stack_start, entry_point: self.entry_point }
+        PartingWords {
+            stack_start: self.stack_start,
+            entry_point: self.entry_point,
+        }
     }
 
     pub fn oc_flash_setup(&self, app: &[u8]) -> PartingWords {
@@ -79,7 +82,10 @@ impl RawHeader {
             }
         }
 
-        PartingWords { stack_start: self.stack_start, entry_point: self.entry_point }
+        PartingWords {
+            stack_start: self.stack_start,
+            entry_point: self.entry_point,
+        }
     }
 }
 
@@ -106,9 +112,7 @@ fn addr_in_range(addr: u32) -> Result<(), ()> {
 
 impl From<AlignHdrBuf> for RawHeader {
     fn from(ahb: AlignHdrBuf) -> Self {
-        unsafe {
-            core::mem::transmute(ahb)
-        }
+        unsafe { core::mem::transmute(ahb) }
     }
 }
 
@@ -149,7 +153,8 @@ pub fn validate_header(bytes: &[u8]) -> Result<RawHeader, ()> {
     addr_in_range(hdr.ebss)?;
     addr_in_range(hdr.stack_start)?;
 
-    let good_entry = (hdr.entry_point >= RawHeader::START_ADDR) && (hdr.entry_point < RawHeader::END_ADDR);
+    let good_entry =
+        (hdr.entry_point >= RawHeader::START_ADDR) && (hdr.entry_point < RawHeader::END_ADDR);
     let good_entry = good_entry && ((hdr.entry_point % 2) == 1);
     if !good_entry {
         defmt::println!("Bad entry!");

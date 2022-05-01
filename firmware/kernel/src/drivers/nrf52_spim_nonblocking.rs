@@ -1,10 +1,7 @@
-use nrf52840_hal::{
-    pac::SPIM3,
-    spim::Frequency,
-};
+use nrf52840_hal::{pac::SPIM3, spim::Frequency};
 
 use crate::alloc::{HeapArray, HeapGuard};
-use crate::future_box::{FutureBoxPendHdl, FutureBoxExHdl, Source};
+use crate::future_box::{FutureBoxExHdl, FutureBoxPendHdl, Source};
 use crate::traits::OutputPin;
 use heapless::{Deque, Vec};
 
@@ -41,7 +38,6 @@ impl Spim {
         orc: u8,
         csns: &'static mut [&'static mut dyn OutputPin],
     ) -> Self {
-
         // Enable certain interrupts
         spim.intenset.modify(|_r, w| {
             w.stopped().set_bit();
@@ -65,13 +61,23 @@ pub struct SendTransaction {
     pub speed_khz: u32,
 }
 
-pub fn new_send_fut(heap: &mut HeapGuard, csn: u8, speed_khz: u32, count: usize) -> Result<FutureBoxExHdl<SendTransaction>, ()> {
+pub fn new_send_fut(
+    heap: &mut HeapGuard,
+    csn: u8,
+    speed_khz: u32,
+    count: usize,
+) -> Result<FutureBoxExHdl<SendTransaction>, ()> {
     let data = heap.alloc_box_array(0u8, count)?;
-    FutureBoxExHdl::new_exclusive(heap, SendTransaction {
-        data,
-        csn,
-        speed_khz
-    }, Source::Kernel).map_err(drop)
+    FutureBoxExHdl::new_exclusive(
+        heap,
+        SendTransaction {
+            data,
+            csn,
+            speed_khz,
+        },
+        Source::Kernel,
+    )
+    .map_err(drop)
 }
 
 impl Spim {
@@ -86,11 +92,16 @@ impl Spim {
             return None;
         }
         let data = heap.alloc_box_array(0u8, count).ok()?;
-        let fut = FutureBoxExHdl::new_exclusive(heap, SendTransaction {
-            data,
-            csn,
-            speed_khz
-        }, Source::Userspace).ok()?;
+        let fut = FutureBoxExHdl::new_exclusive(
+            heap,
+            SendTransaction {
+                data,
+                csn,
+                speed_khz,
+            },
+            Source::Userspace,
+        )
+        .ok()?;
 
         let our_hdl = fut.kernel_waiter();
         self.waiting.push_back(our_hdl).ok()?;
@@ -98,7 +109,10 @@ impl Spim {
         Some(fut)
     }
 
-    pub fn send(&mut self, st: FutureBoxExHdl<SendTransaction>) -> Result<FutureBoxPendHdl<SendTransaction>, FutureBoxExHdl<SendTransaction>> {
+    pub fn send(
+        &mut self,
+        st: FutureBoxExHdl<SendTransaction>,
+    ) -> Result<FutureBoxPendHdl<SendTransaction>, FutureBoxExHdl<SendTransaction>> {
         // Does this CS exist?
         if (st.csn as usize) >= self.csns.len() {
             return Err(st);
@@ -115,7 +129,7 @@ impl Spim {
 
         match self.state {
             State::Idle => self.start_send(),
-            State::Transferring { .. } => {},
+            State::Transferring { .. } => {}
         }
 
         Ok(mon)
@@ -124,18 +138,21 @@ impl Spim {
     pub fn flush_waiting(&mut self) {
         while !self.vdq.is_full() {
             match self.waiting.pop_front() {
-                Some(pend) => {
-                    match pend.try_upgrade() {
-                        Ok(Some(ready)) => {
-                            self.vdq.push_back(InProgress { data: ready, start_offset: 0 }).ok();
-                        },
-                        Ok(None) => {
-                            self.waiting.push_front(pend).ok();
-                            break;
-                        },
-                        Err(_) => {
-                            defmt::println!("Dropped error");
-                        },
+                Some(pend) => match pend.try_upgrade() {
+                    Ok(Some(ready)) => {
+                        self.vdq
+                            .push_back(InProgress {
+                                data: ready,
+                                start_offset: 0,
+                            })
+                            .ok();
+                    }
+                    Ok(None) => {
+                        self.waiting.push_front(pend).ok();
+                        break;
+                    }
+                    Err(_) => {
+                        defmt::println!("Dropped error");
                     }
                 },
                 None => break,
@@ -147,7 +164,7 @@ impl Spim {
         self.flush_waiting();
 
         match self.state {
-            State::Idle => {},
+            State::Idle => {}
             State::Transferring => return,
         }
 
@@ -167,7 +184,10 @@ impl Spim {
         // defmt::println!("[SPI] START {=u8}", data.data.csn);
 
         self.spi.change_speed(data.data.speed_khz).unwrap();
-        self.csns.get_mut(data.data.csn as usize).unwrap().set_pin(false);
+        self.csns
+            .get_mut(data.data.csn as usize)
+            .unwrap()
+            .set_pin(false);
 
         compiler_fence(Ordering::SeqCst);
 
@@ -194,20 +214,23 @@ impl Spim {
         let mut wip = match state {
             State::Idle => {
                 self.spi.clear_events();
-                return
-            },
+                return;
+            }
             State::Transferring => match self.vdq.pop_front() {
                 Some(wip) => wip,
                 None => {
                     self.spi.clear_events();
-                    return
-                },
+                    return;
+                }
             },
         };
 
         match self.spi.do_spi_dma_transfer_end() {
             Ok((tx_len, _rx_len)) => {
-                self.csns.get_mut(wip.data.csn as usize).unwrap().set_pin(true);
+                self.csns
+                    .get_mut(wip.data.csn as usize)
+                    .unwrap()
+                    .set_pin(true);
 
                 compiler_fence(Ordering::SeqCst);
 
@@ -228,7 +251,7 @@ impl Spim {
                     // robining of this resource. For now... don't.
                     self.vdq.push_front(wip).map_err(drop).unwrap();
                 }
-            },
+            }
             Err(e) => panic!("{:?}", e),
         }
     }
@@ -259,10 +282,8 @@ pub use embedded_hal::spi::{Mode, Phase, Polarity, MODE_0, MODE_1, MODE_2, MODE_
 
 // use core::iter::repeat_with;
 
-
 use nrf52840_hal::gpio::{Floating, Input, Output, Pin, PushPull};
 use nrf52840_hal::target_constants::{EASY_DMA_SIZE, SRAM_LOWER, SRAM_UPPER};
-
 
 /// Does this slice reside entirely within RAM?
 #[allow(dead_code)]
@@ -303,16 +324,8 @@ impl DmaSlice {
     }
 }
 
-
-impl SpimInner
-{
-    pub fn new(
-        spim: SPIM3,
-        pins: Pins,
-        frequency: Frequency,
-        mode: Mode,
-        orc: u8,
-    ) -> Self {
+impl SpimInner {
+    pub fn new(spim: SPIM3, pins: Pins, frequency: Frequency, mode: Mode, orc: u8) -> Self {
         // Select pins.
         spim.psel.sck.write(|w| {
             unsafe { w.bits(pins.sck.psel_bits()) };
@@ -369,9 +382,7 @@ impl SpimInner
             // there.
             unsafe { w.orc().bits(orc) });
 
-        SpimInner {
-            periph: spim,
-        }
+        SpimInner { periph: spim }
     }
 
     #[allow(dead_code)]
@@ -391,7 +402,7 @@ impl SpimInner
                     } else {
                         Ok(())
                     }
-                },
+                }
                 Err(Error::NotDone) => continue,
                 Err(e) => break Err(e),
             }
@@ -406,7 +417,10 @@ impl SpimInner
         compiler_fence(SeqCst);
 
         // Set up the DMA write.
-        self.periph.txd.ptr.write(|w| unsafe { w.ptr().bits(tx.ptr) });
+        self.periph
+            .txd
+            .ptr
+            .write(|w| unsafe { w.ptr().bits(tx.ptr) });
 
         self.periph.txd.maxcnt.write(|w|
             // Note that that nrf52840 maxcnt is a wider.
@@ -468,7 +482,6 @@ impl SpimInner
 
         let tx_done = self.periph.txd.amount.read().bits();
         let rx_done = self.periph.rxd.amount.read().bits();
-
 
         Ok((tx_done, rx_done))
     }
@@ -606,7 +619,9 @@ impl SpimInner
             _ => Frequency::M32,
         };
 
-        self.periph.frequency.write(|w| w.frequency().variant(speed));
+        self.periph
+            .frequency
+            .write(|w| w.frequency().variant(speed));
         Ok(())
     }
 }
@@ -635,4 +650,3 @@ pub enum Error {
     Receive,
     NotDone,
 }
-

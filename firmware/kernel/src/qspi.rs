@@ -10,8 +10,8 @@
 //! Manufacturer ID: 0x??
 //! Device ID: 0x??_????
 
-use core::{sync::atomic::Ordering, task::Poll, ops::Deref};
 pub use byte_slab::ManagedArcSlab;
+use core::{ops::Deref, sync::atomic::Ordering, task::Poll};
 
 pub const QSPI_MAPPED_BASE_ADDRESS: usize = 0x12000000;
 
@@ -157,7 +157,6 @@ impl Qspi {
         }
     }
 
-
     pub fn read_slice(&self, flash_addr: usize, len: usize) -> Result<&[u8], u32> {
         if !(flash_addr < (16 * 1024 * 1024)) {
             return Err(flash_addr as u32);
@@ -168,23 +167,36 @@ impl Qspi {
 
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
         Ok(unsafe {
-            core::slice::from_raw_parts(
-                (flash_addr + QSPI_MAPPED_BASE_ADDRESS) as *const u8,
-                len
-            )
+            core::slice::from_raw_parts((flash_addr + QSPI_MAPPED_BASE_ADDRESS) as *const u8, len)
         })
     }
 
-    pub async unsafe fn read_spicy(&mut self, start: usize, dest: *mut u8, len: usize) -> Result<(), Error> {
+    pub async unsafe fn read_spicy(
+        &mut self,
+        start: usize,
+        dest: *mut u8,
+        len: usize,
+    ) -> Result<(), Error> {
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
 
-        self.periph.read.dst.write(|w| unsafe { w.bits(dest as u32) });
-        self.periph.read.src.write(|w| unsafe { w.bits(start as u32)});
-        self.periph.read.cnt.write(|w| unsafe { w.bits(len as u32)});
+        self.periph
+            .read
+            .dst
+            .write(|w| unsafe { w.bits(dest as u32) });
+        self.periph
+            .read
+            .src
+            .write(|w| unsafe { w.bits(start as u32) });
+        self.periph
+            .read
+            .cnt
+            .write(|w| unsafe { w.bits(len as u32) });
 
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
         self.periph.events_ready.reset();
-        self.periph.tasks_readstart.write(|w| w.tasks_readstart().set_bit());
+        self.periph
+            .tasks_readstart
+            .write(|w| w.tasks_readstart().set_bit());
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
         self.wait_done().await;
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
@@ -195,13 +207,24 @@ impl Qspi {
     pub async fn read(&mut self, start: usize, dest: &mut [u8]) -> Result<(), Error> {
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
 
-        self.periph.read.dst.write(|w| unsafe { w.bits(dest.as_ptr() as u32) });
-        self.periph.read.src.write(|w| unsafe { w.bits(start as u32)});
-        self.periph.read.cnt.write(|w| unsafe { w.bits(dest.len() as u32)});
+        self.periph
+            .read
+            .dst
+            .write(|w| unsafe { w.bits(dest.as_ptr() as u32) });
+        self.periph
+            .read
+            .src
+            .write(|w| unsafe { w.bits(start as u32) });
+        self.periph
+            .read
+            .cnt
+            .write(|w| unsafe { w.bits(dest.len() as u32) });
 
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
         self.periph.events_ready.reset();
-        self.periph.tasks_readstart.write(|w| w.tasks_readstart().set_bit());
+        self.periph
+            .tasks_readstart
+            .write(|w| w.tasks_readstart().set_bit());
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
         self.wait_done().await;
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
@@ -209,16 +232,30 @@ impl Qspi {
         Ok(())
     }
 
-    pub async fn write<'a, const CT: usize, const SZ: usize>(&mut self, data: FlashChunk<'a, CT, SZ>) -> Result<(), Error> {
+    pub async fn write<'a, const CT: usize, const SZ: usize>(
+        &mut self,
+        data: FlashChunk<'a, CT, SZ>,
+    ) -> Result<(), Error> {
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
 
-        self.periph.write.dst.write(|w| unsafe { w.bits(data.addr as u32)});
-        self.periph.write.src.write(|w| unsafe { w.bits(data.data.deref().as_ptr() as u32)});
-        self.periph.write.cnt.write(|w| unsafe { w.bits(data.data.len() as u32)});
+        self.periph
+            .write
+            .dst
+            .write(|w| unsafe { w.bits(data.addr as u32) });
+        self.periph
+            .write
+            .src
+            .write(|w| unsafe { w.bits(data.data.deref().as_ptr() as u32) });
+        self.periph
+            .write
+            .cnt
+            .write(|w| unsafe { w.bits(data.data.len() as u32) });
 
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
         self.periph.events_ready.reset();
-        self.periph.tasks_writestart.write(|w| w.tasks_writestart().set_bit());
+        self.periph
+            .tasks_writestart
+            .write(|w| w.tasks_writestart().set_bit());
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
         self.wait_done().await;
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
@@ -239,12 +276,17 @@ impl Qspi {
             _ => {}
         }
 
-        self.periph.erase.ptr.write(|w| unsafe { w.bits(start as u32) });
-        self.periph.erase.len.write(|w| w.len().variant(len) );
+        self.periph
+            .erase
+            .ptr
+            .write(|w| unsafe { w.bits(start as u32) });
+        self.periph.erase.len.write(|w| w.len().variant(len));
 
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
         self.periph.events_ready.reset();
-        self.periph.tasks_erasestart.write(|w| w.tasks_erasestart().set_bit());
+        self.periph
+            .tasks_erasestart
+            .write(|w| w.tasks_erasestart().set_bit());
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
         self.wait_done().await;
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
@@ -254,12 +296,19 @@ impl Qspi {
 
     pub async fn wait_done(&self) {
         poll_fn(|_| {
-            if self.periph.events_ready.read().events_ready().bit_is_clear() {
+            if self
+                .periph
+                .events_ready
+                .read()
+                .events_ready()
+                .bit_is_clear()
+            {
                 Poll::Pending
             } else {
                 Poll::Ready(())
             }
-        }).await
+        })
+        .await
     }
 
     pub fn uninit(self) {
@@ -275,57 +324,47 @@ impl Qspi {
 }
 
 fn read_status_regs(periph: &QSPI) -> [u8; 2] {
-
     // Clear the "is ready" flag
     periph.events_ready.reset();
 
-    periph
-        .cinstrdat0
-        .write(|w| unsafe { w.bits(0xFFFF_FFFF)});
+    periph.cinstrdat0.write(|w| unsafe { w.bits(0xFFFF_FFFF) });
 
-    periph
-        .cinstrconf
-        .write(|w| {
-            unsafe { w.opcode().bits(0x05) };
-            w.length()._2b();
-            w.lio2().set_bit(); // ???
-            w.lio3().set_bit(); // ???
-            w.wipwait().set_bit();
-            w.wren().disable();
-            w.lfen().disable();
-            w.lfstop().clear_bit();
-            w
-        });
+    periph.cinstrconf.write(|w| {
+        unsafe { w.opcode().bits(0x05) };
+        w.length()._2b();
+        w.lio2().set_bit(); // ???
+        w.lio3().set_bit(); // ???
+        w.wipwait().set_bit();
+        w.wren().disable();
+        w.lfen().disable();
+        w.lfstop().clear_bit();
+        w
+    });
 
-    while periph.events_ready.read().events_ready().bit_is_clear() { }
+    while periph.events_ready.read().events_ready().bit_is_clear() {}
 
     let data = periph.cinstrdat0.read();
     // S7..S0
     let by_05 = data.byte0().bits();
 
-
     // Clear the "is ready" flag
     periph.events_ready.reset();
 
-    periph
-        .cinstrdat0
-        .write(|w| unsafe { w.bits(0xFFFF_FFFF)});
+    periph.cinstrdat0.write(|w| unsafe { w.bits(0xFFFF_FFFF) });
 
-    periph
-        .cinstrconf
-        .write(|w| {
-            unsafe { w.opcode().bits(0x35) };
-            w.length()._2b();
-            w.lio2().set_bit(); // ???
-            w.lio3().set_bit(); // ???
-            w.wipwait().set_bit();
-            w.wren().disable();
-            w.lfen().disable();
-            w.lfstop().clear_bit();
-            w
-        });
+    periph.cinstrconf.write(|w| {
+        unsafe { w.opcode().bits(0x35) };
+        w.length()._2b();
+        w.lio2().set_bit(); // ???
+        w.lio3().set_bit(); // ???
+        w.wipwait().set_bit();
+        w.wren().disable();
+        w.lfen().disable();
+        w.lfstop().clear_bit();
+        w
+    });
 
-    while periph.events_ready.read().events_ready().bit_is_clear() { }
+    while periph.events_ready.read().events_ready().bit_is_clear() {}
 
     let data = periph.cinstrdat0.read();
     // S15..S7
@@ -342,21 +381,19 @@ fn write_enable(periph: &QSPI) {
     // Clear the "is ready" flag
     periph.events_ready.reset();
 
-    periph
-        .cinstrconf
-        .write(|w| {
-            unsafe { w.opcode().bits(0x06) };
-            w.length()._1b();
-            w.lio2().set_bit(); // ???
-            w.lio3().set_bit(); // ???
-            w.wipwait().set_bit();
-            w.wren().disable();
-            w.lfen().disable();
-            w.lfstop().clear_bit();
-            w
-        });
+    periph.cinstrconf.write(|w| {
+        unsafe { w.opcode().bits(0x06) };
+        w.length()._1b();
+        w.lio2().set_bit(); // ???
+        w.lio3().set_bit(); // ???
+        w.wipwait().set_bit();
+        w.wren().disable();
+        w.lfen().disable();
+        w.lfstop().clear_bit();
+        w
+    });
 
-    while periph.events_ready.read().events_ready().bit_is_clear() { }
+    while periph.events_ready.read().events_ready().bit_is_clear() {}
 }
 
 fn quad_enable(periph: &QSPI) {
@@ -365,29 +402,25 @@ fn quad_enable(periph: &QSPI) {
 
     let status = read_status_regs(periph);
 
-    periph
-        .cinstrdat0
-        .write(|w| unsafe {
-            w.byte0().bits(status[0]);
-            w.byte1().bits(status[1] | 0x02);
-            w
-        });
+    periph.cinstrdat0.write(|w| unsafe {
+        w.byte0().bits(status[0]);
+        w.byte1().bits(status[1] | 0x02);
+        w
+    });
 
-    periph
-        .cinstrconf
-        .write(|w| {
-            unsafe { w.opcode().bits(0x06) };
-            w.length()._3b();
-            w.lio2().set_bit(); // ???
-            w.lio3().set_bit(); // ???
-            w.wipwait().set_bit();
-            w.wren().enable();
-            w.lfen().disable();
-            w.lfstop().clear_bit();
-            w
-        });
+    periph.cinstrconf.write(|w| {
+        unsafe { w.opcode().bits(0x06) };
+        w.length()._3b();
+        w.lio2().set_bit(); // ???
+        w.lio3().set_bit(); // ???
+        w.wipwait().set_bit();
+        w.wren().enable();
+        w.lfen().disable();
+        w.lfstop().clear_bit();
+        w
+    });
 
-    while periph.events_ready.read().events_ready().bit_is_clear() { }
+    while periph.events_ready.read().events_ready().bit_is_clear() {}
 
     let status = read_status_regs(periph);
     assert_eq!(status[1] & 0x02, 0x02, "QE bit not set?");

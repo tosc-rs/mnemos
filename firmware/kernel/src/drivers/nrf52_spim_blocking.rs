@@ -1,9 +1,6 @@
-use nrf52840_hal::{
-    pac::SPIM3,
-    spim::Frequency,
-};
+use nrf52840_hal::{pac::SPIM3, spim::Frequency};
 
-use crate::traits::{Spi, OutputPin};
+use crate::traits::{OutputPin, Spi};
 
 struct SpimInner {
     periph: SPIM3,
@@ -38,15 +35,28 @@ impl Spi for Spim {
         spi.write(*cs, data_out).map_err(drop)
     }
 
-    fn transfer<'a>(&mut self, csn: u8, speed_khz: u32, data_out: &'a [u8], data_in: &'a mut [u8]) -> Result<&'a mut [u8], ()> {
+    fn transfer<'a>(
+        &mut self,
+        csn: u8,
+        speed_khz: u32,
+        data_out: &'a [u8],
+        data_in: &'a mut [u8],
+    ) -> Result<&'a mut [u8], ()> {
         let Self { spi, csns } = self;
         let cs = csns.get_mut(csn as usize).ok_or(())?;
         spi.change_speed(speed_khz)?;
-        spi.transfer_split_even(*cs, data_out, data_in).map_err(drop)?;
+        spi.transfer_split_even(*cs, data_out, data_in)
+            .map_err(drop)?;
         Ok(data_in)
     }
 
-    fn read<'a>(&mut self, csn: u8, speed_khz: u32, dummy_char: u8, data_in: &'a mut [u8]) -> Result<&'a mut [u8], ()> {
+    fn read<'a>(
+        &mut self,
+        csn: u8,
+        speed_khz: u32,
+        dummy_char: u8,
+        data_in: &'a mut [u8],
+    ) -> Result<&'a mut [u8], ()> {
         let Self { spi, csns } = self;
         let cs = csns.get_mut(csn as usize).ok_or(())?;
         spi.change_speed(speed_khz)?;
@@ -63,10 +73,8 @@ pub use embedded_hal::spi::{Mode, Phase, Polarity, MODE_0, MODE_1, MODE_2, MODE_
 
 // use core::iter::repeat_with;
 
-
 use nrf52840_hal::gpio::{Floating, Input, Output, Pin, PushPull};
 use nrf52840_hal::target_constants::{EASY_DMA_SIZE, SRAM_LOWER, SRAM_UPPER};
-
 
 /// Does this slice reside entirely within RAM?
 pub(crate) fn slice_in_ram(slice: &[u8]) -> bool {
@@ -105,16 +113,8 @@ impl DmaSlice {
     }
 }
 
-
-impl SpimInner
-{
-    pub fn new(
-        spim: SPIM3,
-        pins: Pins,
-        frequency: Frequency,
-        mode: Mode,
-        orc: u8,
-    ) -> Self {
+impl SpimInner {
+    pub fn new(spim: SPIM3, pins: Pins, frequency: Frequency, mode: Mode, orc: u8) -> Self {
         // Select pins.
         spim.psel.sck.write(|w| {
             unsafe { w.bits(pins.sck.psel_bits()) };
@@ -171,9 +171,7 @@ impl SpimInner
             // there.
             unsafe { w.orc().bits(orc) });
 
-        SpimInner {
-            periph: spim,
-        }
+        SpimInner { periph: spim }
     }
 
     /// Internal helper function to setup and execute SPIM DMA transfer.
@@ -184,7 +182,10 @@ impl SpimInner
         compiler_fence(SeqCst);
 
         // Set up the DMA write.
-        self.periph.txd.ptr.write(|w| unsafe { w.ptr().bits(tx.ptr) });
+        self.periph
+            .txd
+            .ptr
+            .write(|w| unsafe { w.ptr().bits(tx.ptr) });
 
         self.periph.txd.maxcnt.write(|w|
             // Note that that nrf52840 maxcnt is a wider.
@@ -369,7 +370,9 @@ impl SpimInner
             _ => Frequency::M32,
         };
 
-        self.periph.frequency.write(|w| w.frequency().variant(speed));
+        self.periph
+            .frequency
+            .write(|w| w.frequency().variant(speed));
         Ok(())
     }
 }
@@ -397,4 +400,3 @@ pub enum Error {
     Transmit,
     Receive,
 }
-

@@ -1,9 +1,9 @@
 // TODO: For now, assume all syscalls are blocking, non-reentrant, and all
 // that other good stuff
 
-use core::sync::atomic::Ordering;
-use common::{SYSCALL_IN_PTR, SYSCALL_IN_LEN, SYSCALL_OUT_PTR, SYSCALL_OUT_LEN};
 use common::syscall::{request::SysCallRequest, success::SysCallSuccess};
+use common::{SYSCALL_IN_LEN, SYSCALL_IN_PTR, SYSCALL_OUT_LEN, SYSCALL_OUT_PTR};
+use core::sync::atomic::Ordering;
 
 // TODO: This is really only a "kernel" thing...
 // DON'T call this in the svc handler! Userspace should clean up after
@@ -25,14 +25,16 @@ where
     // of the syscall. Userspace has two, since it has a different view of
     // the data. We need to be rid of BOTH before we are done handling the
     // syscall.
-    F: FnOnce(SysCallRequest<'a>) -> Result<SysCallSuccess<'a>, ()>
+    F: FnOnce(SysCallRequest<'a>) -> Result<SysCallSuccess<'a>, ()>,
 {
     let inp_ptr = SYSCALL_IN_PTR.load(Ordering::SeqCst) as *const u8;
     let inp_len = SYSCALL_IN_LEN.load(Ordering::SeqCst);
     let out_ptr = SYSCALL_OUT_PTR.load(Ordering::SeqCst);
     let out_len = SYSCALL_OUT_LEN.load(Ordering::SeqCst);
 
-    let any_zeros = [inp_ptr as usize, inp_len, out_ptr as usize, out_len].iter().any(|v| *v == 0);
+    let any_zeros = [inp_ptr as usize, inp_len, out_ptr as usize, out_len]
+        .iter()
+        .any(|v| *v == 0);
 
     if any_zeros {
         // ANGERY
@@ -48,7 +50,7 @@ where
             // ANGERY
             SYSCALL_OUT_LEN.store(0, Ordering::SeqCst);
             return Err(());
-        },
+        }
     };
 
     let response = match hdlr(request) {
@@ -57,7 +59,7 @@ where
             // ANGERY
             SYSCALL_OUT_LEN.store(0, Ordering::SeqCst);
             return Err(());
-        },
+        }
     };
 
     let out_slice = unsafe { core::slice::from_raw_parts_mut(out_ptr, out_len) };
@@ -68,7 +70,7 @@ where
             // ANGERY
             SYSCALL_OUT_LEN.store(0, Ordering::SeqCst);
             return Err(());
-        },
+        }
     };
 
     // Happy!

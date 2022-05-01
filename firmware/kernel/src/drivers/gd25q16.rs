@@ -1,13 +1,23 @@
-use core::{str::FromStr, sync::atomic::{compiler_fence, Ordering}};
+use core::{
+    str::FromStr,
+    sync::atomic::{compiler_fence, Ordering},
+};
 
 use byte_slab::ManagedArcSlab;
-use cassette::{Cassette, pin_mut};
-use common::syscall::{BlockKind, success::{BlockInfo, BlockStatus}};
+use cassette::{pin_mut, Cassette};
+use common::syscall::{
+    success::{BlockInfo, BlockStatus},
+    BlockKind,
+};
 use heapless::String;
 use postcard::{from_bytes_cobs, to_slice_cobs};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
-use crate::{traits::BlockStorage, qspi::{Qspi, FlashChunk, EraseLength}, alloc::{HEAP, HeapGuard}};
+use crate::{
+    alloc::{HeapGuard, HEAP},
+    qspi::{EraseLength, FlashChunk, Qspi},
+    traits::BlockStorage,
+};
 
 pub struct Gd25q16 {
     table: BlockTable,
@@ -18,12 +28,14 @@ pub struct Gd25q16 {
 #[repr(align(4))]
 #[derive(Clone, Copy)]
 struct WordAlign<const N: usize> {
-    data: [u8; N]
+    data: [u8; N],
 }
 
 impl Gd25q16 {
     pub fn new(mut qspi: Qspi, heap: &mut HeapGuard) -> Result<Self, ()> {
-        let mut data = heap.alloc_box(WordAlign { data: [0u8; 4096] }).map_err(drop)?;
+        let mut data = heap
+            .alloc_box(WordAlign { data: [0u8; 4096] })
+            .map_err(drop)?;
         {
             // Note: do this manually so we don't have to build the block table twice
             let fut = qspi.read(15 * 64 * 1024, &mut data.data);
@@ -33,7 +45,6 @@ impl Gd25q16 {
         }
 
         let mut was_bad = false;
-
 
         let bt = if let Some(pos) = data.data.iter().position(|b| *b == 0) {
             let bt: BlockTable = from_bytes_cobs(&mut data.data[..pos]).unwrap_or_else(|_| {
@@ -70,7 +81,9 @@ impl Gd25q16 {
 
         if was_bad {
             defmt::println!("Invalid block table! Writing blank table...");
-            let used = to_slice_cobs(&bd.table, data.data.as_mut_slice()).map_err(drop)?.len();
+            let used = to_slice_cobs(&bd.table, data.data.as_mut_slice())
+                .map_err(drop)?
+                .len();
             // Round up to the next word
             let used = ((used + 3) / 4) * 4;
             defmt::println!("Writing: {=[u8]}", &data.data[..used]);
@@ -90,7 +103,12 @@ impl Gd25q16 {
         cas_fut.block_on().map_err(drop)
     }
 
-    fn read<'a>(&mut self, block: u32, offset: u32, data: &'a mut [u8]) -> Result<&'a mut [u8], ()> {
+    fn read<'a>(
+        &mut self,
+        block: u32,
+        offset: u32,
+        data: &'a mut [u8],
+    ) -> Result<&'a mut [u8], ()> {
         match block {
             0..=14 => {
                 let stat = self.status.get_mut(block as usize).ok_or(())?;
@@ -98,16 +116,16 @@ impl Gd25q16 {
                     // Must be opened before reading
                     BlockStatus::Idle => {
                         defmt::println!("Tried to read without opening!");
-                        return Err(())
+                        return Err(());
                     }
-                    _ => {},
+                    _ => {}
                 }
             }
             // This is the table block, just let it happen
-            15 => {},
+            15 => {}
             _ => {
                 defmt::println!("Invalid block ID for read!");
-                return Err(())
+                return Err(());
             }
         }
 
@@ -115,7 +133,11 @@ impl Gd25q16 {
         fits_in_dest(offset, data)?;
         let src_addr = block_offset_to_aligned_addr(block, offset)?;
 
-        defmt::println!("Reading {=usize} bytes from QSPI 0x{=u32:08X}", data.len(), src_addr);
+        defmt::println!(
+            "Reading {=usize} bytes from QSPI 0x{=u32:08X}",
+            data.len(),
+            src_addr
+        );
 
         {
             let fut = self.qspi.read(src_addr as usize, data);
@@ -136,7 +158,7 @@ impl Gd25q16 {
                     // Must be opened before writing
                     BlockStatus::Idle => {
                         defmt::println!("Tried to write without opening!");
-                        return Err(())
+                        return Err(());
                     }
 
                     // Mark as writes pending
@@ -151,19 +173,19 @@ impl Gd25q16 {
                             len: 0,
                             kind: BlockKind::Unused,
                         };
-                    },
+                    }
 
                     // Already pending writes
-                    BlockStatus::OpenWritten => {},
+                    BlockStatus::OpenWritten => {}
                 }
             }
             // This is the table block, just let it happen
             15 => {
                 Self::erase_block(&mut self.qspi, block)?;
-            },
+            }
             _ => {
                 defmt::println!("Invalid block ID for write!");
-                return Err(())
+                return Err(());
             }
         }
 
@@ -171,7 +193,11 @@ impl Gd25q16 {
         fits_in_dest(offset, data)?;
         let dest_addr = block_offset_to_aligned_addr(block, offset)?;
 
-        defmt::println!("Writing {=usize} bytes to QSPI 0x{=u32:08X}", data.len(), dest_addr);
+        defmt::println!(
+            "Writing {=usize} bytes to QSPI 0x{=u32:08X}",
+            data.len(),
+            dest_addr
+        );
 
         let fut = self.qspi.write(FlashChunk {
             addr: dest_addr as usize,
@@ -184,7 +210,14 @@ impl Gd25q16 {
         Ok(())
     }
 
-    fn close(&mut self, heap: &mut HeapGuard, block: u32, name: &str, len: u32, kind: BlockKind) -> Result<(), ()> {
+    fn close(
+        &mut self,
+        heap: &mut HeapGuard,
+        block: u32,
+        name: &str,
+        len: u32,
+        kind: BlockKind,
+    ) -> Result<(), ()> {
         let status = self.status.get_mut(block as usize).ok_or(())?;
         let bloc = self.table.blocks.get_mut(block as usize).ok_or(())?;
         if len > (64 * 1024) {
@@ -200,12 +233,16 @@ impl Gd25q16 {
 
         if !(no_writes && name_match && len_match && kind_match) {
             defmt::println!("Block {=u32} changed! updating...", block);
-            let mut data = heap.alloc_box(WordAlign { data: [0u8; 4096] }).map_err(drop)?;
+            let mut data = heap
+                .alloc_box(WordAlign { data: [0u8; 4096] })
+                .map_err(drop)?;
 
             let name = String::from_str(name).map_err(drop)?;
             *bloc = Block { name, len, kind };
 
-            let used = to_slice_cobs(&self.table, data.data.as_mut_slice()).map_err(drop)?.len();
+            let used = to_slice_cobs(&self.table, data.data.as_mut_slice())
+                .map_err(drop)?
+                .len();
             // Round up to the next word
             let used = ((used + 3) / 4) * 4;
             self.write(15, 0, &data.data[..used])?;
@@ -336,7 +373,7 @@ impl BlockStorage for Gd25q16 {
         match status {
             BlockStatus::Idle => {
                 *status = BlockStatus::OpenNoWrites;
-            },
+            }
             BlockStatus::OpenNoWrites => return Err(()),
             BlockStatus::OpenWritten => return Err(()),
         }
@@ -353,7 +390,12 @@ impl BlockStorage for Gd25q16 {
         }
     }
 
-    fn block_read<'a>(&mut self, block: u32, offset: u32, data: &'a mut [u8]) -> Result<&'a mut [u8], ()> {
+    fn block_read<'a>(
+        &mut self,
+        block: u32,
+        offset: u32,
+        data: &'a mut [u8],
+    ) -> Result<&'a mut [u8], ()> {
         // Don't let the user read the internal table block
         if block < 15 {
             self.read(block, offset, data)
@@ -362,15 +404,27 @@ impl BlockStorage for Gd25q16 {
         }
     }
 
-    fn block_close(&mut self, heap: &mut HeapGuard, block: u32, name: &str, len: u32, kind: BlockKind) -> Result<(), ()> {
+    fn block_close(
+        &mut self,
+        heap: &mut HeapGuard,
+        block: u32,
+        name: &str,
+        len: u32,
+        kind: BlockKind,
+    ) -> Result<(), ()> {
         self.close(heap, block, name, len, kind)
     }
 
-    unsafe fn block_load_to(&mut self, block: u32, dest: *mut u8, max_len: usize) -> Result<(*const u8, usize), ()> {
+    unsafe fn block_load_to(
+        &mut self,
+        block: u32,
+        dest: *mut u8,
+        max_len: usize,
+    ) -> Result<(*const u8, usize), ()> {
         let block_usize = block as usize;
         let bloc = self.table.blocks.get(block as usize).ok_or(())?;
         match bloc.kind {
-            BlockKind::Program => {},
+            BlockKind::Program => {}
             _ => return Err(()),
         }
         if bloc.len as usize > max_len {
