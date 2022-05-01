@@ -8,7 +8,7 @@ use nrf52840_hal::{usbd::{Usbd, UsbPeripheral}, pac::USBD};
 use usb_device::{device::UsbDevice, UsbError};
 use usbd_serial::SerialPort;
 use heapless::{LinearMap, Deque, Vec};
-use crate::alloc::{HeapArray, HEAP};
+use crate::alloc::{HeapArray, HEAP, HeapGuard};
 use postcard::{CobsAccumulator, FeedResult};
 use serde::{Serialize, Deserialize};
 
@@ -155,7 +155,7 @@ impl crate::traits::Serial for UsbUartSys {
         }
     }
 
-    fn process(&mut self) {
+    fn process(&mut self, heap: &mut HeapGuard) {
         // Process all incoming message and dispatch to queues
         while let Ok(rgr) = self.inc.read() {
             let mut window = rgr.deref();
@@ -184,9 +184,7 @@ impl crate::traits::Serial for UsbUartSys {
                         let failed = self.ports
                             .get_mut(&data.port)
                             .and_then(|dq| {
-                                // Keep the heap locked for as short as possible!
-                                let mut hp = HEAP.try_lock()?;
-                                let habox = hp.alloc_box_array(0u8, data.buf.len()).ok()?;
+                                let habox = heap.alloc_box_array(0u8, data.buf.len()).ok()?;
                                 Some((dq, habox))
                             })
                             .and_then(|(dq, mut habox)| {
@@ -207,8 +205,8 @@ impl crate::traits::Serial for UsbUartSys {
         }
     }
 
-    fn recv<'a>(&mut self, port: u16, buf: &'a mut [u8]) -> Result<&'a mut [u8], ()> {
-        self.process();
+    fn recv<'a>(&mut self, heap: &mut HeapGuard, port: u16, buf: &'a mut [u8]) -> Result<&'a mut [u8], ()> {
+        self.process(heap);
 
         let deq = self.ports.get_mut(&port).ok_or(())?;
         let mut used = 0;
@@ -235,8 +233,7 @@ impl crate::traits::Serial for UsbUartSys {
                 let (now, later) = msg.split_at(avail);
                 buf[used..].copy_from_slice(now);
 
-                let mut hp = defmt::unwrap!(HEAP.try_lock());
-                let mut habox = defmt::unwrap!(hp.alloc_box_array(0u8, later.len()).ok());
+                let mut habox = defmt::unwrap!(heap.alloc_box_array(0u8, later.len()).ok());
                 habox.copy_from_slice(later);
 
                 // Okay to ignore error - We just made space

@@ -57,15 +57,42 @@ impl AHeap {
         }
     }
 
-    /// Initialize the AHeap.
-    ///
-    /// This takes care of initializing all contained memory and tracking variables.
-    /// This function should only be called once, and should be called prior to using
-    /// the AHeap.
-    ///
-    /// Returns `Ok(())` if initialization was successful. Returns `Err(())` if the
-    /// AHeap was previously initialized.
-    pub fn init(&self) -> Result<(), ()> {
+    // /// Initialize the AHeap.
+    // ///
+    // /// This takes care of initializing all contained memory and tracking variables.
+    // /// This function should only be called once, and should be called prior to using
+    // /// the AHeap.
+    // ///
+    // /// Returns `Ok(())` if initialization was successful. Returns `Err(())` if the
+    // /// AHeap was previously initialized.
+    // pub fn init(&self) -> Result<(), ()> {
+    //     self.state
+    //         .compare_exchange(
+    //             Self::UNINIT,
+    //             Self::BUSY_LOCKED,
+    //             Ordering::SeqCst,
+    //             Ordering::SeqCst,
+    //         )
+    //         .map_err(drop)?;
+
+    //     unsafe {
+    //         // Create a heap type from the given storage buffer
+    //         let heap = HEAP_BUF.take_heap();
+
+    //         // Initialize the Free Queue
+    //         FREE_Q.init();
+
+    //         // Initialize the heap
+    //         (*self.heap.get()).write(heap);
+    //     }
+
+    //     // We have exclusive access, a "store" is okay.
+    //     self.state.store(Self::INIT_IDLE, Ordering::SeqCst);
+
+    //     Ok(())
+    // }
+
+    pub fn init_exclusive(&self) -> Result<HeapGuard, ()> {
         self.state
             .compare_exchange(
                 Self::UNINIT,
@@ -86,30 +113,31 @@ impl AHeap {
             (*self.heap.get()).write(heap);
         }
 
-        // We have exclusive access, a "store" is okay.
-        self.state.store(Self::INIT_IDLE, Ordering::SeqCst);
-
-        Ok(())
-    }
-
-    pub fn try_lock(&'static self) -> Option<HeapGuard> {
-        // The heap must be idle
-        self.state
-            .compare_exchange(
-                Self::INIT_IDLE,
-                Self::BUSY_LOCKED,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            )
-            .ok()?;
-
-        // SAFETY: If we were in the INIT_IDLE state, then the heap has been
-        // initialized (is valid), and no other access exists (mutually exclusive).
+        // SAFETY: We are already in the BUSY_LOCKED state, we have exclusive access.
         unsafe {
             let heap = &mut *self.heap.get().cast();
-            Some(HeapGuard { heap })
+            Ok(HeapGuard { heap })
         }
     }
+
+    // pub fn try_lock(&'static self) -> Option<HeapGuard> {
+    //     // The heap must be idle
+    //     self.state
+    //         .compare_exchange(
+    //             Self::INIT_IDLE,
+    //             Self::BUSY_LOCKED,
+    //             Ordering::SeqCst,
+    //             Ordering::SeqCst,
+    //         )
+    //         .ok()?;
+
+    //     // SAFETY: If we were in the INIT_IDLE state, then the heap has been
+    //     // initialized (is valid), and no other access exists (mutually exclusive).
+    //     unsafe {
+    //         let heap = &mut *self.heap.get().cast();
+    //         Some(HeapGuard { heap })
+    //     }
+    // }
 }
 
 struct FreeQueue {
@@ -283,23 +311,15 @@ struct FreeBox {
 
 impl FreeBox {
     fn box_drop(self) {
-        // Attempt to get exclusive access to the heap
-        if let Some(mut h) = HEAP.try_lock() {
-            // If we can access the heap directly, then immediately free this memory
-            unsafe {
-                h.deref_mut().deallocate(self.ptr, self.layout);
-            }
-        } else {
-            // If not, try to store the allocation into the free list, and it will be
-            // reclaimed before the next alloc.
-            //
-            // SAFETY: A HeapBox can only be created if the Heap, and by extension the
-            // FreeQueue, has been previously initialized
-            let free_q = unsafe { FREE_Q.get_unchecked() };
+        // Try to store the allocation into the free list, and it will be
+        // reclaimed before the next alloc.
+        //
+        // SAFETY: A HeapBox can only be created if the Heap, and by extension the
+        // FreeQueue, has been previously initialized
+        let free_q = unsafe { FREE_Q.get_unchecked() };
 
-            // If the free list is completely full, for now, just panic.
-            defmt::unwrap!(free_q.enqueue(self).map_err(drop), "Free list is full!");
-        }
+        // If the free list is completely full, for now, just panic.
+        defmt::unwrap!(free_q.enqueue(self).map_err(drop), "Free list is full!");
     }
 }
 

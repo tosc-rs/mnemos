@@ -10,6 +10,8 @@ use common::{
 use groundhog::RollingTimer;
 use groundhog_nrf52::GlobalRollingTimer;
 
+use crate::alloc::HeapGuard;
+
 pub trait OutputPin: Send {
     fn set_pin(&mut self, is_high: bool);
 }
@@ -29,11 +31,11 @@ pub trait Spi: Send {
 pub trait Serial: Send {
     fn register_port(&mut self, port: u16) -> Result<(), ()>;
     fn release_port(&mut self, port: u16) -> Result<(), ()>;
-    fn process(&mut self);
+    fn process(&mut self, heap: &mut HeapGuard);
 
     // On success: The valid received part (<= buf.len()). Can be &[] (if no bytes)
     // On error: TODO
-    fn recv<'a>(&mut self, port: u16, buf: &'a mut [u8]) -> Result<&'a mut [u8], ()>;
+    fn recv<'a>(&mut self, heap: &mut HeapGuard, port: u16, buf: &'a mut [u8]) -> Result<&'a mut [u8], ()>;
 
     // On success: All bytes were sent/enqueued.
     // On error: the portion of bytes that were NOT sent (the remainder). (<= buf.len()).
@@ -48,7 +50,7 @@ pub trait BlockStorage: Send {
     fn block_open(&mut self, block: u32) -> Result<(), ()>;
     fn block_write(&mut self, block: u32, offset: u32, data: &[u8]) -> Result<(), ()>;
     fn block_read<'a>(&mut self, block: u32, offset: u32, data: &'a mut [u8]) -> Result<&'a mut [u8], ()>;
-    fn block_close(&mut self, block: u32, name: &str, len: u32, kind: BlockKind) -> Result<(), ()>;
+    fn block_close(&mut self, heap: &mut HeapGuard, block: u32, name: &str, len: u32, kind: BlockKind) -> Result<(), ()>;
     unsafe fn block_load_to(&mut self, block: u32, dest: *mut u8, max_len: usize) -> Result<(*const u8, usize), ()>;
 }
 
@@ -62,6 +64,7 @@ pub struct Machine {
 impl Machine {
     pub fn handle_syscall<'a>(
         &'a mut self,
+        heap: &mut HeapGuard,
         req: SysCallRequest<'a>,
     ) -> Result<SysCallSuccess<'a>, ()> {
         match req {
@@ -70,11 +73,11 @@ impl Machine {
                 Ok(SysCallSuccess::Time(resp))
             }
             SysCallRequest::Serial(sr) => {
-                let resp = self.handle_serial_request(sr)?;
+                let resp = self.handle_serial_request(heap, sr)?;
                 Ok(SysCallSuccess::Serial(resp))
             }
             SysCallRequest::BlockStore(bsr) => {
-                let resp = self.handle_block_request(bsr)?;
+                let resp = self.handle_block_request(heap, bsr)?;
                 Ok(SysCallSuccess::BlockStore(resp))
             },
             SysCallRequest::System(sr) => {
@@ -179,12 +182,13 @@ impl Machine {
 
     pub fn handle_serial_request<'a>(
         &mut self,
+        heap: &mut HeapGuard,
         req: SerialRequest<'a>
     ) -> Result<SerialSuccess<'a>, ()> {
         match req {
             SerialRequest::SerialReceive { port, dest_buf } => {
                 let dest_buf = unsafe { dest_buf.to_slice_mut() };
-                let used = self.serial.recv(port, dest_buf)?;
+                let used = self.serial.recv(heap, port, dest_buf)?;
                 Ok(SerialSuccess::DataReceived {
                     dest_buf: used.into(),
                 })
@@ -209,6 +213,7 @@ impl Machine {
 
     pub fn handle_block_request<'a>(
         &'a mut self,
+        heap: &mut HeapGuard,
         req: BlockRequest<'a>,
     ) -> Result<BlockSuccess<'a>, ()> {
         // Match early to provide the "null" storage info if we have none.
@@ -251,7 +256,7 @@ impl Machine {
             BlockRequest::BlockClose { block_idx, name, len, kind } => {
                 let name_bytes = unsafe { name.to_slice() };
                 let name = core::str::from_utf8(name_bytes).map_err(drop)?;
-                sto.block_close(block_idx, name, len, kind)?;
+                sto.block_close(heap, block_idx, name, len, kind)?;
                 Ok(BlockSuccess::BlockClosed)
             },
         }

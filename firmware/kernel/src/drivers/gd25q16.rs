@@ -7,7 +7,7 @@ use heapless::String;
 use postcard::{from_bytes_cobs, to_slice_cobs};
 use serde::{Serialize, Deserialize};
 
-use crate::{traits::BlockStorage, qspi::{Qspi, FlashChunk, EraseLength}, alloc::HEAP};
+use crate::{traits::BlockStorage, qspi::{Qspi, FlashChunk, EraseLength}, alloc::{HEAP, HeapGuard}};
 
 pub struct Gd25q16 {
     table: BlockTable,
@@ -22,8 +22,8 @@ struct WordAlign<const N: usize> {
 }
 
 impl Gd25q16 {
-    pub fn new(mut qspi: Qspi) -> Result<Self, ()> {
-        let mut data = HEAP.try_lock().ok_or(())?.alloc_box(WordAlign { data: [0u8; 4096] })?;
+    pub fn new(mut qspi: Qspi, heap: &mut HeapGuard) -> Result<Self, ()> {
+        let mut data = heap.alloc_box(WordAlign { data: [0u8; 4096] })?;
         {
             // Note: do this manually so we don't have to build the block table twice
             let fut = qspi.read(15 * 64 * 1024, &mut data.data);
@@ -184,7 +184,7 @@ impl Gd25q16 {
         Ok(())
     }
 
-    fn close(&mut self, block: u32, name: &str, len: u32, kind: BlockKind) -> Result<(), ()> {
+    fn close(&mut self, heap: &mut HeapGuard, block: u32, name: &str, len: u32, kind: BlockKind) -> Result<(), ()> {
         let status = self.status.get_mut(block as usize).ok_or(())?;
         let bloc = self.table.blocks.get_mut(block as usize).ok_or(())?;
         if len > (64 * 1024) {
@@ -200,7 +200,7 @@ impl Gd25q16 {
 
         if !(no_writes && name_match && len_match && kind_match) {
             defmt::println!("Block {=u32} changed! updating...", block);
-            let mut data = HEAP.try_lock().ok_or(())?.alloc_box(WordAlign { data: [0u8; 4096] })?;
+            let mut data = heap.alloc_box(WordAlign { data: [0u8; 4096] })?;
 
             let name = String::from_str(name).map_err(drop)?;
             *bloc = Block { name, len, kind };
@@ -362,8 +362,8 @@ impl BlockStorage for Gd25q16 {
         }
     }
 
-    fn block_close(&mut self, block: u32, name: &str, len: u32, kind: BlockKind) -> Result<(), ()> {
-        self.close(block, name, len, kind)
+    fn block_close(&mut self, heap: &mut HeapGuard, block: u32, name: &str, len: u32, kind: BlockKind) -> Result<(), ()> {
+        self.close(heap, block, name, len, kind)
     }
 
     unsafe fn block_load_to(&mut self, block: u32, dest: *mut u8, max_len: usize) -> Result<(*const u8, usize), ()> {

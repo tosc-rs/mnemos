@@ -4,7 +4,7 @@ use nrf52840_hal::{
 };
 
 use crate::alloc::HeapArray;
-use crate::traits::{Spi, OutputPin};
+use crate::traits::OutputPin;
 use heapless::Deque;
 
 enum State {
@@ -89,23 +89,20 @@ impl Spim {
             None => return,
         };
 
+        let rx_data = DmaSlice::null();
+        let tx_data = if data.data.len() > data.start_offset {
+            let sl = &data.data[data.start_offset..];
+            DmaSlice::from_slice(sl)
+        } else {
+            return;
+        };
+
         defmt::println!("[SPI] START {=u8}", data.csn);
 
         self.spi.change_speed(data.speed_khz).unwrap();
         self.csns.get_mut(data.csn as usize).unwrap().set_pin(false);
 
         compiler_fence(Ordering::SeqCst);
-
-        let rx_data = DmaSlice::null();
-        let tx_data = if data.data.len() > data.start_offset {
-            let sl = &data.data[data.start_offset..];
-            DmaSlice {
-                ptr: sl.as_ptr() as u32,
-                len: sl.len() as u32,
-            }
-        } else {
-            return;
-        };
 
         unsafe {
             self.spi.do_spi_dma_transfer_start(tx_data, rx_data);
@@ -198,12 +195,14 @@ use nrf52840_hal::target_constants::{EASY_DMA_SIZE, SRAM_LOWER, SRAM_UPPER};
 
 
 /// Does this slice reside entirely within RAM?
+#[allow(dead_code)]
 pub(crate) fn slice_in_ram(slice: &[u8]) -> bool {
     let ptr = slice.as_ptr() as usize;
     ptr >= SRAM_LOWER && (ptr + slice.len()) < SRAM_UPPER
 }
 
 /// Return an error if slice is not in RAM.
+#[allow(dead_code)]
 pub(crate) fn slice_in_ram_or<T>(slice: &[u8], err: T) -> Result<(), T> {
     if slice_in_ram(slice) {
         Ok(())
@@ -215,7 +214,6 @@ pub(crate) fn slice_in_ram_or<T>(slice: &[u8], err: T) -> Result<(), T> {
 /// A handy structure for converting rust slices into ptr and len pairs
 /// for use with EasyDMA. Care must be taken to make sure mutability
 /// guarantees are respected
-#[cfg(not(feature = "51"))]
 pub(crate) struct DmaSlice {
     ptr: u32,
     len: u32,
@@ -226,6 +224,7 @@ impl DmaSlice {
         Self { ptr: 0, len: 0 }
     }
 
+    #[allow(dead_code)]
     pub fn from_slice(slice: &[u8]) -> Self {
         Self {
             ptr: slice.as_ptr() as u32,
@@ -305,6 +304,7 @@ impl SpimInner
         }
     }
 
+    #[allow(dead_code)]
     fn do_spi_dma_transfer(&mut self, tx: DmaSlice, rx: DmaSlice) -> Result<(), Error> {
         let tx_len = tx.len;
         let rx_len = rx.len;
@@ -314,9 +314,9 @@ impl SpimInner
         loop {
             match self.do_spi_dma_transfer_end() {
                 Ok((tx_done, rx_done)) => {
-                    break if (tx_done != tx_len) {
+                    break if tx_done != tx_len {
                         Err(Error::Transmit)
-                    } else if (rx_done != rx_len) {
+                    } else if rx_done != rx_len {
                         Err(Error::Receive)
                     } else {
                         Ok(())
