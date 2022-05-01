@@ -23,7 +23,7 @@ struct WordAlign<const N: usize> {
 
 impl Gd25q16 {
     pub fn new(mut qspi: Qspi, heap: &mut HeapGuard) -> Result<Self, ()> {
-        let mut data = heap.alloc_box(WordAlign { data: [0u8; 4096] })?;
+        let mut data = heap.alloc_box(WordAlign { data: [0u8; 4096] }).map_err(drop)?;
         {
             // Note: do this manually so we don't have to build the block table twice
             let fut = qspi.read(15 * 64 * 1024, &mut data.data);
@@ -200,7 +200,7 @@ impl Gd25q16 {
 
         if !(no_writes && name_match && len_match && kind_match) {
             defmt::println!("Block {=u32} changed! updating...", block);
-            let mut data = heap.alloc_box(WordAlign { data: [0u8; 4096] })?;
+            let mut data = heap.alloc_box(WordAlign { data: [0u8; 4096] }).map_err(drop)?;
 
             let name = String::from_str(name).map_err(drop)?;
             *bloc = Block { name, len, kind };

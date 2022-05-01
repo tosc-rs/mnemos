@@ -153,16 +153,16 @@ mod app {
             None
         };
 
-        let to_uart: &'static mut dyn kernel::traits::Serial = defmt::unwrap!(heap_guard.leak_send(sys));
-        let to_block: &'static mut dyn kernel::traits::BlockStorage = defmt::unwrap!(heap_guard.leak_send(block));
+        let to_uart: &'static mut dyn kernel::traits::Serial = defmt::unwrap!(heap_guard.leak_send(sys).map_err(drop));
+        let to_block: &'static mut dyn kernel::traits::BlockStorage = defmt::unwrap!(heap_guard.leak_send(block).map_err(drop));
 
         //
         // Map GPIO pins
         //
 
         // LEDs
-        let led1 = defmt::unwrap!(heap_guard.leak_send(MPin::new(pins.led1.degrade())));
-        let led2 = defmt::unwrap!(heap_guard.leak_send(MPin::new(pins.led2.degrade())));
+        let led1 = defmt::unwrap!(heap_guard.leak_send(MPin::new(pins.led1.degrade())).map_err(drop));
+        let led2 = defmt::unwrap!(heap_guard.leak_send(MPin::new(pins.led2.degrade())).map_err(drop));
 
         // IRQ/AUX pins
         let d05_pre = pins.d05.degrade().into_floating_input();
@@ -180,10 +180,10 @@ mod app {
         ppi0.set_task_endpoint(&device.SPIM3.tasks_stop);
         ppi0.disable();
 
-        let d05 = defmt::unwrap!(heap_guard.leak_send(MPin::new_input_floating(d05_pre)));
+        let d05 = defmt::unwrap!(heap_guard.leak_send(MPin::new_input_floating(d05_pre)).map_err(drop));
         // let d06 = defmt::unwrap!(heap_guard.leak_send(MPin::new(pins.d06.degrade())));
-        let scl = defmt::unwrap!(heap_guard.leak_send(MPin::new(pins.scl.degrade())));
-        let sda = defmt::unwrap!(heap_guard.leak_send(MPin::new(pins.sda.degrade())));
+        let scl = defmt::unwrap!(heap_guard.leak_send(MPin::new(pins.scl.degrade())).map_err(drop));
+        let sda = defmt::unwrap!(heap_guard.leak_send(MPin::new(pins.sda.degrade())).map_err(drop));
 
         let array_gpios: [&'static mut dyn GpioPin; 5] = [
             led1,
@@ -192,15 +192,15 @@ mod app {
             scl,
             sda,
         ];
-        let leak_gpios = defmt::unwrap!(heap_guard.leak_send(array_gpios));
+        let leak_gpios = defmt::unwrap!(heap_guard.leak_send(array_gpios).map_err(drop));
 
         // Chip Selects
-        let d09 = defmt::unwrap!(heap_guard.leak_send(pins.d09.degrade().into_push_pull_output(Level::High)));
-        let d10 = defmt::unwrap!(heap_guard.leak_send(pins.d10.degrade().into_push_pull_output(Level::High)));
-        let d11 = defmt::unwrap!(heap_guard.leak_send(pins.d11.degrade().into_push_pull_output(Level::High)));
-        let d12 = defmt::unwrap!(heap_guard.leak_send(pins.d12.degrade().into_push_pull_output(Level::High)));
-        let d13 = defmt::unwrap!(heap_guard.leak_send(pins.d13.degrade().into_push_pull_output(Level::High)));
-        let d06 = defmt::unwrap!(heap_guard.leak_send(pins.d06.degrade().into_push_pull_output(Level::High)));
+        let d09 = defmt::unwrap!(heap_guard.leak_send(pins.d09.degrade().into_push_pull_output(Level::High)).map_err(drop));
+        let d10 = defmt::unwrap!(heap_guard.leak_send(pins.d10.degrade().into_push_pull_output(Level::High)).map_err(drop));
+        let d11 = defmt::unwrap!(heap_guard.leak_send(pins.d11.degrade().into_push_pull_output(Level::High)).map_err(drop));
+        let d12 = defmt::unwrap!(heap_guard.leak_send(pins.d12.degrade().into_push_pull_output(Level::High)).map_err(drop));
+        let d13 = defmt::unwrap!(heap_guard.leak_send(pins.d13.degrade().into_push_pull_output(Level::High)).map_err(drop));
+        let d06 = defmt::unwrap!(heap_guard.leak_send(pins.d06.degrade().into_push_pull_output(Level::High)).map_err(drop));
 
 
         let csn_pins: [&'static mut dyn kernel::traits::OutputPin; 6] = [
@@ -211,7 +211,7 @@ mod app {
             d13,
             d06, // TODO: Oops
         ];
-        let leak_csns = defmt::unwrap!(heap_guard.leak_send(csn_pins));
+        let leak_csns = defmt::unwrap!(heap_guard.leak_send(csn_pins).map_err(drop));
 
         let spi = kernel::drivers::nrf52_spim_nonblocking::Spim::new(
             device.SPIM3,
@@ -333,14 +333,25 @@ mod app {
         }
 
         // SOFT RESET
-        let mut buf_out = heap.lock(|heap| heap.alloc_box_array(0u8, 4).unwrap());
-        buf_out.copy_from_slice(&[
-            0x02, // Write
-            0x00, // MODE
-            0x48,
-            0x04,
-        ]);
-        cx.shared.spi.lock(|spi| spi.send(CSN_XCS, 1_000, buf_out).map_err(drop).unwrap());
+        use kernel::drivers::nrf52_spim_nonblocking::SendTransaction;
+        use kernel::future_box::FutureBoxExHdl;
+
+        let tx = heap.lock(|heap| {
+            let mut buf_out = heap.alloc_box_array(0u8, 4).unwrap();
+            buf_out.copy_from_slice(&[
+                0x02, // Write
+                0x00, // MODE
+                0x48,
+                0x04,
+            ]);
+            FutureBoxExHdl::new_exclusive(heap, SendTransaction {
+                data: buf_out,
+                csn: CSN_XCS,
+                speed_khz: 1_000,
+            }).map_err(drop).unwrap()
+        });
+
+        cx.shared.spi.lock(|spi| spi.send(tx).map_err(drop).unwrap());
 
         // Wait "a couple hundred cycles", I dunno, 5ms?
         let delay = timer.get_ticks();
@@ -361,14 +372,22 @@ mod app {
         //   XTALIx3.5 (Mult)
         //   XTALIx1.5 (Max boost)
         //   Freq = 0 (12.288MHz)
-        let mut buf_out = heap.lock(|heap| heap.alloc_box_array(0u8, 4).unwrap());
-        buf_out.copy_from_slice(&[
-            0x02, // Write
-            0x03, // CLOCKF
-            0x98,
-            0x00,
-        ]);
-        cx.shared.spi.lock(|spi| spi.send(CSN_XCS, 1_000, buf_out).map_err(drop).unwrap());
+        let tx = heap.lock(|heap| {
+            let mut buf_out = heap.alloc_box_array(0u8, 4).unwrap();
+            buf_out.copy_from_slice(&[
+                0x02, // Write
+                0x03, // CLOCKF
+                0x98,
+                0x00,
+            ]);
+            FutureBoxExHdl::new_exclusive(heap, SendTransaction {
+                data: buf_out,
+                csn: CSN_XCS,
+                speed_khz: 1_000,
+            }).map_err(drop).unwrap()
+        });
+
+        cx.shared.spi.lock(|spi| spi.send(tx).map_err(drop).unwrap());
 
         // Wait "a couple hundred cycles", I dunno, 5ms?
         let delay = timer.get_ticks();
@@ -388,14 +407,23 @@ mod app {
 
         // Probably skip the others, but probably set volume to like 0x2424,
         // which means -18.0dB in each ear.
-        let mut buf_out = heap.lock(|heap| heap.alloc_box_array(0u8, 4).unwrap());
-        buf_out.copy_from_slice(&[
+        let tx = heap.lock(|heap| {
+            let mut buf_out = heap.alloc_box_array(0u8, 4).unwrap();
+            buf_out.copy_from_slice(&[
             0x02, // Write
             0x0B, // VOLUME
             0x24,
             0x24,
-        ]);
-        cx.shared.spi.lock(|spi| spi.send(CSN_XCS, 1_000, buf_out).map_err(drop).unwrap());
+            ]);
+            FutureBoxExHdl::new_exclusive(heap, SendTransaction {
+                data: buf_out,
+                csn: CSN_XCS,
+                speed_khz: 1_000,
+            }).map_err(drop).unwrap()
+        });
+
+        cx.shared.spi.lock(|spi| spi.send(tx).map_err(drop).unwrap());
+
 
         // Wait "a couple hundred cycles", I dunno, 5ms?
         let delay = timer.get_ticks();
@@ -446,14 +474,21 @@ mod app {
         // 0000 52 49 46 46 ff ff ff ff 57 41 56 45 66 6d 74 20 |RIFF....WAVEfmt |
         // 0100 10 00 00 00 01 00 02 00 44 ac 00 00 10 b1 02 00 |........D.......|
         // 0200 04 00 10 00 64 61 74 61 ff ff ff ff             |....data....|
+        let tx = heap.lock(|heap| {
+            let mut buf_out = heap.alloc_box_array(0u8, 44).unwrap();
+            buf_out.copy_from_slice(&[
+                0x52, 0x49, 0x46, 0x46, 0xff, 0xff, 0xff, 0xff, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74, 0x20,
+                0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x44, 0xac, 0x00, 0x00, 0x10, 0xb1, 0x02, 0x00,
+                0x04, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61, 0xff, 0xff, 0xff, 0xff,
+            ]);
+            FutureBoxExHdl::new_exclusive(heap, SendTransaction {
+                data: buf_out,
+                csn: CSN_XDCS,
+                speed_khz: 8_000,
+            }).map_err(drop).unwrap()
+        });
 
-        let mut header = heap.lock(|heap| heap.alloc_box_array(0u8, 44).unwrap());
-        header.copy_from_slice(&[
-            0x52, 0x49, 0x46, 0x46, 0xff, 0xff, 0xff, 0xff, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74, 0x20,
-            0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x44, 0xac, 0x00, 0x00, 0x10, 0xb1, 0x02, 0x00,
-            0x04, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61, 0xff, 0xff, 0xff, 0xff,
-        ]);
-        cx.shared.spi.lock(|spi| spi.send(CSN_XDCS, 8_000, header).map_err(drop).unwrap());
+        cx.shared.spi.lock(|spi| spi.send(tx).map_err(drop).unwrap());
 
         cx.local.ppi0.enable();
         let mut forever = idata.iter().cycle();
@@ -464,11 +499,17 @@ mod app {
             let small_buf = match already_calcd.take() {
                 Some(sb) => sb,
                 None => {
-                    let mut small_buf = heap.lock(|heap| heap.alloc_box_array(0u8, 2048).unwrap());
-                    small_buf.chunks_exact_mut(2).for_each(|ch| {
-                        ch.copy_from_slice(&forever.next().unwrap().to_le_bytes());
-                    });
-                    small_buf
+                    heap.lock(|heap| {
+                        let mut buf_out = heap.alloc_box_array(0u8, 2048).unwrap();
+                        buf_out.chunks_exact_mut(2).for_each(|ch| {
+                            ch.copy_from_slice(&forever.next().unwrap().to_le_bytes());
+                        });
+                        FutureBoxExHdl::new_exclusive(heap, SendTransaction {
+                            data: buf_out,
+                            csn: CSN_XDCS,
+                            speed_khz: 8_000,
+                        }).map_err(drop).unwrap()
+                    })
                 }
             };
 
@@ -483,7 +524,7 @@ mod app {
 
             // TODO: this will be bad, but okay.
             cx.shared.spi.lock(|spi| {
-                already_calcd = match spi.send(CSN_XDCS, 8_000, small_buf) {
+                already_calcd = match spi.send(small_buf) {
                     Ok(()) => {
                         iters += 1;
                         None

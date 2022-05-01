@@ -376,12 +376,15 @@ impl HeapGuard {
     ///
     /// If space was available, the allocation will be returned. If not, an
     /// error will be returned
-    pub fn alloc_box<T>(&mut self, data: T) -> Result<HeapBox<T>, ()> {
+    pub fn alloc_box<T>(&mut self, data: T) -> Result<HeapBox<T>, T> {
         // Clean up any pending allocs
         self.clean_allocs();
 
         // Then, attempt to allocate the requested T.
-        let nnu8 = self.deref_mut().allocate_first_fit(Layout::new::<T>())?;
+        let nnu8 = match self.deref_mut().allocate_first_fit(Layout::new::<T>()) {
+            Ok(t) => t,
+            Err(_) => return Err(data),
+        };
         let ptr = nnu8.as_ptr().cast::<T>();
 
         // And initialize it with the contents given to us
@@ -392,7 +395,7 @@ impl HeapGuard {
         Ok(HeapBox { ptr })
     }
 
-    pub fn leak_send<T>(&mut self, inp: T) -> Result<&'static mut T, ()>
+    pub fn leak_send<T>(&mut self, inp: T) -> Result<&'static mut T, T>
     where
         T: Send + Sized + 'static,
     {

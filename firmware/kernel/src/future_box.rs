@@ -3,7 +3,7 @@
 
 use core::{sync::atomic::{AtomicU8, AtomicBool, Ordering, AtomicPtr}, ops::{Deref, DerefMut}, ptr::null_mut};
 
-use crate::alloc::HeapBox;
+use crate::alloc::{HeapBox, HeapGuard};
 
 pub mod status {
     /// Kernel is working, and should be allowed exclusive access,
@@ -88,6 +88,36 @@ pub struct FutureBoxExHdl<T> {
     payload: *mut T,
 }
 
+unsafe impl<T> Send for FutureBoxExHdl<T>
+where
+    T: Send
+{}
+
+impl<T> FutureBoxExHdl<T>
+where
+    T: Send + Sized + 'static
+{
+    pub fn new_exclusive(heap: &mut HeapGuard, payload: T) -> Result<Self, T> {
+        let res_fb = heap.leak_send(FutureBox {
+            status: AtomicU8::new(status::INVALID),
+            refcnt: AtomicU8::new(1),
+            ex_taken: AtomicBool::new(true),
+            payload: AtomicPtr::new(null_mut()),
+        });
+
+        if let Ok(b) = res_fb {
+            let res_payload = heap.leak_send(payload)?;
+            b.payload.store(res_payload, Ordering::SeqCst);
+            Ok(FutureBoxExHdl {
+                fb: b,
+                payload: res_payload,
+            })
+        } else {
+            Err(payload)
+        }
+    }
+}
+
 impl<T> FutureBoxExHdl<T> {
     // TODO: I might want methods at some point that get BACK a handle too.
     // Example: using a single buffer for Transfer traits. For now, just expect the user
@@ -167,6 +197,11 @@ pub struct FutureBoxPendHdl<T> {
     fb: *mut FutureBox<T>,
     awaiting: u8,
 }
+
+unsafe impl<T> Send for FutureBoxPendHdl<T>
+where
+    T: Send
+{}
 
 impl<T> FutureBoxPendHdl<T> {
     pub fn is_complete(&self) -> Result<bool, ()> {

@@ -3,9 +3,10 @@ use nrf52840_hal::{
     spim::Frequency,
 };
 
-use crate::alloc::HeapArray;
+use crate::alloc::{HeapArray, HeapGuard};
+use crate::future_box::{FutureBoxPendHdl, FutureBoxExHdl};
 use crate::traits::OutputPin;
-use heapless::Deque;
+use heapless::{Deque, Vec};
 
 enum State {
     Idle,
@@ -19,16 +20,14 @@ struct SpimInner {
 }
 
 struct InProgress {
-    // TODO: This probably needs to be some kind of async completion type...
-    data: HeapArray<u8>,
+    data: FutureBoxExHdl<SendTransaction>,
     start_offset: usize,
-    speed_khz: u32,
-    csn: u8,
 }
 
 pub struct Spim {
     spi: SpimInner,
     vdq: Deque<InProgress, 8>,
+    waiting: Vec<FutureBoxPendHdl<SendTransaction>, 8>,
     csns: &'static mut [&'static mut dyn OutputPin],
     state: State,
 }
@@ -53,21 +52,31 @@ impl Spim {
         Self {
             spi: SpimInner::new(spim, pins, frequency, mode, orc),
             vdq: Deque::new(),
+            waiting: Vec::new(),
             csns,
             state: State::Idle,
         }
     }
 }
 
+pub struct SendTransaction {
+    pub data: HeapArray<u8>,
+    pub csn: u8,
+    pub speed_khz: u32,
+}
+
 impl Spim {
-    pub fn send(&mut self, csn: u8, speed_khz: u32, data_out: HeapArray<u8>) -> Result<(), HeapArray<u8>> {
+    pub fn send(&mut self, st: FutureBoxExHdl<SendTransaction>) -> Result<(), FutureBoxExHdl<SendTransaction>> {
         // Does this CS exist?
-        if (csn as usize) >= self.csns.len() {
-            return Err(data_out);
+        if (st.csn as usize) >= self.csns.len() {
+            return Err(st);
         }
 
         self.vdq
-            .push_back(InProgress { data: data_out, start_offset: 0, speed_khz, csn })
+            .push_back(InProgress {
+                data: st,
+                start_offset: 0,
+            })
             .map_err(|ip| ip.data)?;
 
         match self.state {
@@ -90,17 +99,17 @@ impl Spim {
         };
 
         let rx_data = DmaSlice::null();
-        let tx_data = if data.data.len() > data.start_offset {
-            let sl = &data.data[data.start_offset..];
+        let tx_data = if data.data.data.len() > data.start_offset {
+            let sl = &data.data.data[data.start_offset..];
             DmaSlice::from_slice(sl)
         } else {
             return;
         };
 
-        defmt::println!("[SPI] START {=u8}", data.csn);
+        defmt::println!("[SPI] START {=u8}", data.data.csn);
 
-        self.spi.change_speed(data.speed_khz).unwrap();
-        self.csns.get_mut(data.csn as usize).unwrap().set_pin(false);
+        self.spi.change_speed(data.data.speed_khz).unwrap();
+        self.csns.get_mut(data.data.csn as usize).unwrap().set_pin(false);
 
         compiler_fence(Ordering::SeqCst);
 
@@ -138,12 +147,12 @@ impl Spim {
 
         match self.spi.do_spi_dma_transfer_end() {
             Ok((tx_len, _rx_len)) => {
-                self.csns.get_mut(wip.csn as usize).unwrap().set_pin(true);
+                self.csns.get_mut(wip.data.csn as usize).unwrap().set_pin(true);
 
                 compiler_fence(Ordering::SeqCst);
 
                 let txul = tx_len as usize;
-                if (txul + wip.start_offset) == wip.data.len() {
+                if (txul + wip.start_offset) == wip.data.data.len() {
                     // We are done! Yay! Start the next item
                     defmt::println!("[SPI] STOP");
                     self.start_send();
