@@ -244,6 +244,9 @@ impl<T> HeapBox<T> {
 
 impl<T> Drop for HeapBox<T> {
     fn drop(&mut self) {
+        unsafe {
+            self.ptr.drop_in_place();
+        }
         // Calculate the pointer, size, and layout of this allocation
         let free_box = unsafe { self.free_box() };
         free_box.box_drop();
@@ -310,8 +313,14 @@ impl<T> HeapArray<T> {
 
 impl<T> Drop for HeapArray<T> {
     fn drop(&mut self) {
+        for i in 0..self.count {
+            unsafe {
+                self.ptr.add(i).drop_in_place();
+            }
+        }
         // Calculate the pointer, size, and layout of this allocation
         let free_box = unsafe { self.free_box() };
+        // defmt::println!("[ALLOC] dropping array: {=usize}", free_box.layout.size());
         free_box.box_drop();
     }
 }
@@ -363,6 +372,7 @@ impl HeapGuard {
 
         // Then, free all pending memory in order to maximize space available.
         while let Some(FreeBox { ptr, layout }) = free_q.dequeue() {
+            // defmt::println!("[ALLOC] FREE: {=usize}", layout.size());
             // SAFETY: We have mutually exclusive access to the allocator, and
             // the pointer and layout are correctly calculated by the relevant
             // FreeBox types.

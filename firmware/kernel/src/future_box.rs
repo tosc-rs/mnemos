@@ -56,6 +56,7 @@ impl<T> Drop for FutureBoxExHdl<T> {
             // TODO(AJM): I don't think we should ever just "drop" an exclusive handle
             // For now, always mark the state as ERROR and drop the payload in this
             // case.
+            defmt::println!("WRITING AS ERROR!");
             fb.status.store(status::ERROR, Ordering::SeqCst);
             // Go ahead and drop the payload
             let _ = unsafe { HeapBox::from_leaked(self.payload) };
@@ -73,6 +74,7 @@ impl<T> Drop for FutureBoxExHdl<T> {
         if drop_fb {
             // We are responsible for dropping the payload, and the futurebox
             if self.payload != null_mut() {
+                defmt::println!("Freed payload on ex drop!");
                 let _ = unsafe { HeapBox::from_leaked(self.payload) };
             }
             let _ = unsafe { HeapBox::from_leaked(self.fb) };
@@ -159,24 +161,27 @@ impl<T> FutureBoxExHdl<T> {
         self.convert_to_monitor()
     }
 
-    pub fn release_to_error(self) {
+    pub fn release_to_error(mut self) {
         let fb = unsafe { &*self.fb };
         fb.status.store(status::ERROR, Ordering::SeqCst);
         // Go ahead and drop the payload
         let _ = unsafe { HeapBox::from_leaked(self.payload) };
+        self.payload = null_mut();
         fb.payload.store(null_mut(), Ordering::SeqCst);
-
         fb.ex_taken.store(false, Ordering::SeqCst);
+        let _ = self.convert_to_monitor();
     }
 
-    pub fn release_to_complete(self) {
+    pub fn release_to_complete(mut self) {
         let fb = unsafe { &*self.fb };
-        fb.status.store(status::ERROR, Ordering::SeqCst);
+        fb.status.store(status::COMPLETED, Ordering::SeqCst);
         // Go ahead and drop the payload
         let _ = unsafe { HeapBox::from_leaked(self.payload) };
+        self.payload = null_mut();
         fb.payload.store(null_mut(), Ordering::SeqCst);
 
         fb.ex_taken.store(false, Ordering::SeqCst);
+        let _ = self.convert_to_monitor();
     }
 }
 
@@ -205,6 +210,32 @@ impl<T> DerefMut for FutureBoxExHdl<T> {
 pub struct FutureBoxPendHdl<T> {
     fb: *mut FutureBox<T>,
     awaiting: u8,
+}
+
+impl<T> Drop for FutureBoxPendHdl<T> {
+    fn drop(&mut self) {
+        let ptr;
+
+        let drop_fb = {
+            let fb = unsafe { &*self.fb };
+            let pre_refs = fb.refcnt.fetch_sub(1, Ordering::SeqCst);
+            ptr = fb.payload.load(Ordering::SeqCst);
+            debug_assert!(pre_refs != 0);
+            pre_refs <= 1
+        };
+
+        // Split off, to avoid reference to self.fb being live
+        // SAFETY: This arm only executes if we were the LAST handle to know
+        // about this futurebox.
+        if drop_fb {
+            // We are responsible for dropping the payload, and the futurebox
+            if ptr != null_mut() {
+                defmt::println!("Freed payload on pend drop!");
+                let _ = unsafe { HeapBox::from_leaked(ptr) };
+            }
+            let _ = unsafe { HeapBox::from_leaked(self.fb) };
+        }
+    }
 }
 
 unsafe impl<T> Send for FutureBoxPendHdl<T>

@@ -172,6 +172,9 @@ mod app {
         let ch0 = gpiote.channel0();
         let ch_ev = ch0.input_pin(&d05_pre);
         ch_ev.hi_to_lo();
+        let ch1 = gpiote.channel1();
+        let ch_ev = ch1.input_pin(&d05_pre);
+        ch_ev.lo_to_hi().enable_interrupt();
 
         let ppi = nrf52840_hal::ppi::Parts::new(device.PPI);
         let mut ppi0 = ppi.ppi0;
@@ -201,7 +204,6 @@ mod app {
         let d12 = defmt::unwrap!(heap_guard.leak_send(pins.d12.degrade().into_push_pull_output(Level::High)).map_err(drop));
         let d13 = defmt::unwrap!(heap_guard.leak_send(pins.d13.degrade().into_push_pull_output(Level::High)).map_err(drop));
         let d06 = defmt::unwrap!(heap_guard.leak_send(pins.d06.degrade().into_push_pull_output(Level::High)).map_err(drop));
-
 
         let csn_pins: [&'static mut dyn kernel::traits::OutputPin; 6] = [
             d09,
@@ -262,6 +264,21 @@ mod app {
     //     }
     // }
 
+    #[task(binds = GPIOTE, shared = [spi], priority = 2)]
+    fn gpiote(mut cx: gpiote::Context) {
+        // TODO: NOT this
+        let gpiote = unsafe {
+            &*GPIOTE::ptr()
+        };
+
+        // Clear channel 1 events
+        gpiote.events_in[1].write(|w| w);
+
+        cx.shared.spi.lock(|spi| {
+            spi.start_send();
+        })
+    }
+
     #[task(binds = SPIM3, shared = [spi], priority = 2)]
     fn spim3(mut cx: spim3::Context) {
         // TODO: NOT this
@@ -294,9 +311,8 @@ mod app {
         use common::syscall::request::GpioMode;
         let mut heap = cx.shared.heap;
 
-        // let freq = cx.local.rng.random_u8();
-        // let freq = (freq as f32) + 256.0;
-        let freq = 441.0f32;
+        let freq = cx.local.rng.random_u8();
+        let freq = (freq as f32) + 256.0;
 
         defmt::println!("Hello, world!");
 
@@ -335,10 +351,10 @@ mod app {
         // SOFT RESET
         use kernel::drivers::nrf52_spim_nonblocking::SendTransaction;
         use kernel::future_box::FutureBoxExHdl;
-        use kernel::drivers::nrf52_spim_nonblocking::new_send;
+        use kernel::drivers::nrf52_spim_nonblocking::new_send_fut;
 
         let tx = heap.lock(|heap| {
-            let mut tx = new_send(heap, CSN_XCS, 1_000, 4).unwrap();
+            let mut tx = new_send_fut(heap, CSN_XCS, 1_000, 4).unwrap();
             tx.data.copy_from_slice(&[
                 0x02, // Write
                 0x00, // MODE
@@ -370,7 +386,7 @@ mod app {
         //   XTALIx1.5 (Max boost)
         //   Freq = 0 (12.288MHz)
         let tx = heap.lock(|heap| {
-            let mut tx = new_send(heap, CSN_XCS, 1_000, 4).unwrap();
+            let mut tx = new_send_fut(heap, CSN_XCS, 1_000, 4).unwrap();
             tx.data.copy_from_slice(&[
                 0x02, // Write
                 0x03, // CLOCKF
@@ -401,7 +417,7 @@ mod app {
         // Probably skip the others, but probably set volume to like 0x2424,
         // which means -18.0dB in each ear.
         let tx = heap.lock(|heap| {
-            let mut tx = new_send(heap, CSN_XCS, 1_000, 4).unwrap();
+            let mut tx = new_send_fut(heap, CSN_XCS, 1_000, 4).unwrap();
             tx.data.copy_from_slice(&[
                 0x02, // Write
                 0x0B, // VOLUME
@@ -417,43 +433,19 @@ mod app {
         // Wait "a couple hundred cycles", I dunno, 5ms?
         let delay = timer.get_ticks();
         while timer.millis_since(delay) < 5 { }
-        let mut idata = [0i16; 200];
 
         defmt::println!("Generating data...");
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
         let t0 = timer.get_ticks();
 
-        {
-            use crate::SINE_TABLE;
+        use crate::SINE_TABLE;
 
-            let samp_per_cyc: f32 = 44100.0 / freq; // 141.7
-            let fincr = 256.0 / samp_per_cyc; // 1.81
-            let incr: i32 = (((1 << 24) as f32) * fincr) as i32;
+        let samp_per_cyc: f32 = 44100.0 / freq; // 141.7
+        let fincr = 256.0 / samp_per_cyc; // 1.81
+        let mut incr: i32 = (((1 << 24) as f32) * fincr) as i32;
 
-            // generate the next 256 samples...
-            let mut cur_offset = 0i32;
-
-            idata.chunks_exact_mut(2).for_each(|i| {
-                let val = cur_offset as u32;
-                let idx_now = ((val >> 24) & 0xFF) as u8;
-                let idx_nxt = idx_now.wrapping_add(1);
-                let base_val = SINE_TABLE[idx_now as usize] as i32;
-                let next_val = SINE_TABLE[idx_nxt as usize] as i32;
-
-                // Distance to next value - perform 256 slot linear interpolation
-                let off = ((val >> 16) & 0xFF) as i32; // 0..=255
-                let cur_weight = base_val.wrapping_mul(256i32.wrapping_sub(off));
-                let nxt_weight = next_val.wrapping_mul(off);
-                let ttl_weight = cur_weight.wrapping_add(nxt_weight);
-                let ttl_val = ttl_weight >> 8; // div 256
-                let ttl_val = ttl_val as i16;
-
-                // Set the linearly interpolated value
-                i.iter_mut().for_each(|i| *i = ttl_val);
-
-                cur_offset = cur_offset.wrapping_add(incr);
-            });
-        }
+        // generate the next 256 samples...
+        let mut cur_offset = 0i32;
 
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
         let elapsed = timer.ticks_since(t0);
@@ -464,7 +456,7 @@ mod app {
         // 0100 10 00 00 00 01 00 02 00 44 ac 00 00 10 b1 02 00 |........D.......|
         // 0200 04 00 10 00 64 61 74 61 ff ff ff ff             |....data....|
         let tx = heap.lock(|heap| {
-            let mut tx = new_send(heap, CSN_XDCS, 8_000, 44).unwrap();
+            let mut tx = new_send_fut(heap, CSN_XDCS, 8_000, 44).unwrap();
             tx.data.copy_from_slice(&[
                 0x52, 0x49, 0x46, 0x46, 0xff, 0xff, 0xff, 0xff, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74, 0x20,
                 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x44, 0xac, 0x00, 0x00, 0x10, 0xb1, 0x02, 0x00,
@@ -472,56 +464,100 @@ mod app {
             ]);
             tx
         });
-
         cx.shared.spi.lock(|spi| spi.send(tx).map_err(drop).unwrap());
 
         cx.local.ppi0.enable();
-        let mut forever = idata.iter().cycle();
+
         let mut already_calcd = None;
+        let mut last_sent: u32 = timer.get_ticks();
+        let mut wait_fut: Option<kernel::future_box::FutureBoxPendHdl<SendTransaction> > = None;
+
+        let mut last_change = timer.get_ticks();
+
+        let mut dontwaits = 3;
+
         let mut iters = 0;
-        while iters < 1000 {
+        while iters < 10_000 {
+
+            if timer.millis_since(last_change) > 250 {
+                last_change = timer.get_ticks();
+                let f = cx.local.rng.random_u8();
+                let freq = (f as f32) + 256.0;
+                let samp_per_cyc: f32 = 44100.0 / freq; // 141.7
+                let fincr = 256.0 / samp_per_cyc; // 1.81
+                incr = (((1 << 24) as f32) * fincr) as i32;
+                defmt::println!("Freq: {=f32}", freq);
+            }
+
+
 
             let small_buf = match already_calcd.take() {
-                Some(sb) => sb,
+                Some(sb) => {
+                    if let Some(wf) = wait_fut.take() {
+                        if let Ok(true) = wf.is_complete() {
+                            let elapsed = timer.micros_since(last_sent);
+                            if elapsed < 11_000 || elapsed > 12_000 {
+                                defmt::println!("Send {=u32} took {=u32}us", iters, elapsed);
+                            }
+                            sb
+                        } else {
+                            wait_fut = Some(wf);
+                            already_calcd = Some(sb);
+                            continue;
+                        }
+                    } else {
+                        sb
+                    }
+                },
                 None => {
-                    heap.lock(|heap| {
-                        let mut tx = new_send(heap, CSN_XDCS, 8_000, 2048).unwrap();
-                        tx.data.chunks_exact_mut(2).for_each(|ch| {
-                            ch.copy_from_slice(&forever.next().unwrap().to_le_bytes());
-                        });
-                        tx
-                    })
+                    let mut tx = heap.lock(|heap| {
+                        new_send_fut(heap, CSN_XDCS, 8_000, 2048).unwrap()
+                    });
+                    tx.data.chunks_exact_mut(4).for_each(|ch| {
+                        let val = cur_offset as u32;
+                        let idx_now = ((val >> 24) & 0xFF) as u8;
+                        let idx_nxt = idx_now.wrapping_add(1);
+                        let base_val = SINE_TABLE[idx_now as usize] as i32;
+                        let next_val = SINE_TABLE[idx_nxt as usize] as i32;
+
+                        // Distance to next value - perform 256 slot linear interpolation
+                        let off = ((val >> 16) & 0xFF) as i32; // 0..=255
+                        let cur_weight = base_val.wrapping_mul(256i32.wrapping_sub(off));
+                        let nxt_weight = next_val.wrapping_mul(off);
+                        let ttl_weight = cur_weight.wrapping_add(nxt_weight);
+                        let ttl_val = ttl_weight >> 8; // div 256
+                        let ttl_val = ttl_val as i16;
+
+                        // Set the linearly interpolated value
+                        let leb = ttl_val.to_le_bytes();
+                        ch[0] = leb[0];
+                        ch[1] = leb[1];
+                        ch[2] = leb[0];
+                        ch[3] = leb[1];
+
+                        cur_offset = cur_offset.wrapping_add(incr);
+                    });
+                    tx
                 }
             };
 
-            // Wait for DREQ to go high
-            loop {
-                match dreq.read_pin() {
-                    Ok(true) => break,
-                    _ => {}
-                }
-            }
-
-            // TODO: this will be bad, but okay.
-            cx.shared.spi.lock(|spi| {
-                already_calcd = match spi.send(small_buf) {
-                    Ok(_hdl) => {
+            let maybe_hdl = cx.shared.spi.lock(|spi| {
+                match spi.send(small_buf) {
+                    Ok(hdl) => {
                         iters += 1;
-                        None
+                        last_sent = timer.get_ticks();
+                        Some(hdl)
                     },
                     Err(e) => {
-                        spi.start_send();
-                        Some(e)
+                        already_calcd = Some(e);
+                        None
                     },
-                };
+                }
             });
 
-            let start = timer.get_ticks();
-            while timer.millis_since(start) <= 1 { }
-
-            // cx.shared.spi.lock(|spi| {
-            //     spi.start_send();
-            // });
+            // Wait for the previous send to complete before filling the next
+            // if we were able to send
+            wait_fut = maybe_hdl;
         }
         let start = timer.get_ticks();
         while timer.millis_since(start) <= 1000 { }

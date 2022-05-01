@@ -65,7 +65,7 @@ pub struct SendTransaction {
     pub speed_khz: u32,
 }
 
-pub fn new_send(heap: &mut HeapGuard, csn: u8, speed_khz: u32, count: usize) -> Result<FutureBoxExHdl<SendTransaction>, ()> {
+pub fn new_send_fut(heap: &mut HeapGuard, csn: u8, speed_khz: u32, count: usize) -> Result<FutureBoxExHdl<SendTransaction>, ()> {
     let data = heap.alloc_box_array(0u8, count)?;
     FutureBoxExHdl::new_exclusive(heap, SendTransaction {
         data,
@@ -117,7 +117,7 @@ impl Spim {
             return;
         };
 
-        defmt::println!("[SPI] START {=u8}", data.data.csn);
+        // defmt::println!("[SPI] START {=u8}", data.data.csn);
 
         self.spi.change_speed(data.data.speed_khz).unwrap();
         self.csns.get_mut(data.data.csn as usize).unwrap().set_pin(false);
@@ -166,10 +166,10 @@ impl Spim {
                 if (txul + wip.start_offset) == wip.data.data.len() {
                     // We are done! Yay! Start the next item and mark the previous as complete
                     wip.data.release_to_complete();
-                    defmt::println!("[SPI] STOP");
+                    // defmt::println!("[SPI] STOP");
                     self.start_send();
                 } else {
-                    defmt::println!("[SPI] PAUSE {=usize}", txul);
+                    // defmt::println!("[SPI] PAUSE {=usize}", txul);
                     // Uh oh! We stopped early. Assume that was for a reason, and don't autostart.
                     wip.start_offset += txul;
 
