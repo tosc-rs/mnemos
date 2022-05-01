@@ -95,11 +95,16 @@ where
     T: Send
 {}
 
+pub enum Source {
+    Kernel,
+    Userspace,
+}
+
 impl<T> FutureBoxExHdl<T>
 where
     T: Send + Sized + 'static
 {
-    pub fn new_exclusive(heap: &mut HeapGuard, payload: T) -> Result<Self, T> {
+    pub fn new_exclusive(heap: &mut HeapGuard, payload: T, source: Source) -> Result<Self, T> {
         let res_fb = heap.leak_send(FutureBox {
             status: AtomicU8::new(status::INVALID),
             refcnt: AtomicU8::new(1),
@@ -125,6 +130,15 @@ impl<T> FutureBoxExHdl<T> {
         let ret = FutureBoxPendHdl {
             fb: self.fb,
             awaiting: status::INVALID,
+        };
+        unsafe { (*self.fb).refcnt.fetch_add(1, Ordering::SeqCst); }
+        ret
+    }
+
+    pub fn kernel_waiter(&self) -> FutureBoxPendHdl<T> {
+        let ret = FutureBoxPendHdl {
+            fb: self.fb,
+            awaiting: status::KERNEL_ACCESS,
         };
         unsafe { (*self.fb).refcnt.fetch_add(1, Ordering::SeqCst); }
         ret

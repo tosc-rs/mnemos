@@ -309,7 +309,6 @@ mod app {
     #[idle(local = [machine, rng, ppi0], shared = [spi, heap])]
     fn idle(mut cx: idle::Context) -> ! {
         use common::syscall::request::GpioMode;
-        let mut heap = cx.shared.heap;
 
         let freq = cx.local.rng.random_u8();
         let freq = (freq as f32) + 256.0;
@@ -350,10 +349,9 @@ mod app {
 
         // SOFT RESET
         use kernel::drivers::nrf52_spim_nonblocking::SendTransaction;
-        use kernel::future_box::FutureBoxExHdl;
         use kernel::drivers::nrf52_spim_nonblocking::new_send_fut;
 
-        let tx = heap.lock(|heap| {
+        let tx = cx.shared.heap.lock(|heap| {
             let mut tx = new_send_fut(heap, CSN_XCS, 1_000, 4).unwrap();
             tx.data.copy_from_slice(&[
                 0x02, // Write
@@ -385,7 +383,7 @@ mod app {
         //   XTALIx3.5 (Mult)
         //   XTALIx1.5 (Max boost)
         //   Freq = 0 (12.288MHz)
-        let tx = heap.lock(|heap| {
+        let tx = cx.shared.heap.lock(|heap| {
             let mut tx = new_send_fut(heap, CSN_XCS, 1_000, 4).unwrap();
             tx.data.copy_from_slice(&[
                 0x02, // Write
@@ -416,7 +414,7 @@ mod app {
 
         // Probably skip the others, but probably set volume to like 0x2424,
         // which means -18.0dB in each ear.
-        let tx = heap.lock(|heap| {
+        let tx = cx.shared.heap.lock(|heap| {
             let mut tx = new_send_fut(heap, CSN_XCS, 1_000, 4).unwrap();
             tx.data.copy_from_slice(&[
                 0x02, // Write
@@ -455,7 +453,7 @@ mod app {
         // 0000 52 49 46 46 ff ff ff ff 57 41 56 45 66 6d 74 20 |RIFF....WAVEfmt |
         // 0100 10 00 00 00 01 00 02 00 44 ac 00 00 10 b1 02 00 |........D.......|
         // 0200 04 00 10 00 64 61 74 61 ff ff ff ff             |....data....|
-        let tx = heap.lock(|heap| {
+        let tx = cx.shared.heap.lock(|heap| {
             let mut tx = new_send_fut(heap, CSN_XDCS, 8_000, 44).unwrap();
             tx.data.copy_from_slice(&[
                 0x52, 0x49, 0x46, 0x46, 0xff, 0xff, 0xff, 0xff, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74, 0x20,
@@ -468,96 +466,47 @@ mod app {
 
         cx.local.ppi0.enable();
 
-        let mut already_calcd = None;
-        let mut last_sent: u32 = timer.get_ticks();
-        let mut wait_fut: Option<kernel::future_box::FutureBoxPendHdl<SendTransaction> > = None;
+        // Send the first data immediately
+        let mut tx = cx.shared.heap.lock(|heap| {
+            new_send_fut(heap, CSN_XDCS, 8_000, 2048).unwrap()
+        });
+        super::fill_sample_buf(&mut tx.data, incr, &mut cur_offset);
+        cx.shared.spi.lock(|spi| spi.send(tx)).map_err(drop).unwrap();
 
         let mut last_change = timer.get_ticks();
 
-        let mut dontwaits = 3;
+        let mut ttl_timer_sec = timer.get_ticks();
+        let mut idl_timer_sec = 0u32;
 
         let mut iters = 0;
         while iters < 10_000 {
 
-            if timer.millis_since(last_change) > 250 {
-                last_change = timer.get_ticks();
-                let f = cx.local.rng.random_u8();
-                let freq = (f as f32) + 256.0;
-                let samp_per_cyc: f32 = 44100.0 / freq; // 141.7
-                let fincr = 256.0 / samp_per_cyc; // 1.81
-                incr = (((1 << 24) as f32) * fincr) as i32;
-                defmt::println!("Freq: {=f32}", freq);
+            if timer.millis_since(ttl_timer_sec) >= 1_000 {
+                let act_elapsed = timer.micros_since(ttl_timer_sec);
+                defmt::println!("idle pct: {=f32}%", (idl_timer_sec as f32 * 100.0) / (act_elapsed as f32));
+                idl_timer_sec = 0;
+                ttl_timer_sec = timer.get_ticks();
             }
 
+            if timer.millis_since(last_change) > 250 {
+                last_change = timer.get_ticks();
+                incr = super::new_freq_incr(cx.local.rng);
+            }
 
+            let spi = &mut cx.shared.spi;
+            let heap = &mut cx.shared.heap;
 
-            let small_buf = match already_calcd.take() {
-                Some(sb) => {
-                    if let Some(wf) = wait_fut.take() {
-                        if let Ok(true) = wf.is_complete() {
-                            let elapsed = timer.micros_since(last_sent);
-                            if elapsed < 11_000 || elapsed > 12_000 {
-                                defmt::println!("Send {=u32} took {=u32}us", iters, elapsed);
-                            }
-                            sb
-                        } else {
-                            wait_fut = Some(wf);
-                            already_calcd = Some(sb);
-                            continue;
-                        }
-                    } else {
-                        sb
-                    }
-                },
-                None => {
-                    let mut tx = heap.lock(|heap| {
-                        new_send_fut(heap, CSN_XDCS, 8_000, 2048).unwrap()
-                    });
-                    tx.data.chunks_exact_mut(4).for_each(|ch| {
-                        let val = cur_offset as u32;
-                        let idx_now = ((val >> 24) & 0xFF) as u8;
-                        let idx_nxt = idx_now.wrapping_add(1);
-                        let base_val = SINE_TABLE[idx_now as usize] as i32;
-                        let next_val = SINE_TABLE[idx_nxt as usize] as i32;
-
-                        // Distance to next value - perform 256 slot linear interpolation
-                        let off = ((val >> 16) & 0xFF) as i32; // 0..=255
-                        let cur_weight = base_val.wrapping_mul(256i32.wrapping_sub(off));
-                        let nxt_weight = next_val.wrapping_mul(off);
-                        let ttl_weight = cur_weight.wrapping_add(nxt_weight);
-                        let ttl_val = ttl_weight >> 8; // div 256
-                        let ttl_val = ttl_val as i16;
-
-                        // Set the linearly interpolated value
-                        let leb = ttl_val.to_le_bytes();
-                        ch[0] = leb[0];
-                        ch[1] = leb[1];
-                        ch[2] = leb[0];
-                        ch[3] = leb[1];
-
-                        cur_offset = cur_offset.wrapping_add(incr);
-                    });
-                    tx
-                }
-            };
-
-            let maybe_hdl = cx.shared.spi.lock(|spi| {
-                match spi.send(small_buf) {
-                    Ok(hdl) => {
-                        iters += 1;
-                        last_sent = timer.get_ticks();
-                        Some(hdl)
-                    },
-                    Err(e) => {
-                        already_calcd = Some(e);
-                        None
-                    },
-                }
-            });
-
-            // Wait for the previous send to complete before filling the next
-            // if we were able to send
-            wait_fut = maybe_hdl;
+            if let Some(mut buf) = (spi, heap).lock(|spi, heap| {
+                spi.alloc_send(heap, CSN_XDCS, 8_000, 2048)
+            }) {
+                super::fill_sample_buf(&mut buf.data, incr, &mut cur_offset);
+                buf.release_to_kernel();
+                iters += 1;
+            } else {
+                let start = timer.get_ticks();
+                idl_timer_sec += 5_000;
+                while timer.micros_since(start) < 5_000 { }
+            }
         }
         let start = timer.get_ticks();
         while timer.millis_since(start) <= 1000 { }
@@ -565,8 +514,19 @@ mod app {
     }
 }
 
+fn new_freq_incr(rng: &mut Rng) -> i32 {
+    let f = rng.random_u8();
+    let freq = (f as f32) + 256.0;
+    defmt::println!("Freq: {=f32}", freq);
+    let samp_per_cyc: f32 = 44100.0 / freq; // 141.7
+    let fincr = 256.0 / samp_per_cyc; // 1.81
+    let incr = (((1 << 24) as f32) * fincr) as i32;
+    incr
+}
+
 use core::arch::asm;
 use cortex_m::register::{control, psp};
+use nrf52840_hal::Rng;
 
 #[inline(always)]
 unsafe fn letsago(sp: u32, entry: u32) -> ! {
@@ -596,4 +556,32 @@ unsafe fn letsago(sp: u32, entry: u32) -> ! {
         options(noreturn, nomem, nostack),
     );
 
+}
+
+#[inline(always)]
+pub fn fill_sample_buf(data: &mut [u8], incr: i32, cur_offset: &mut i32) {
+    data.chunks_exact_mut(4).for_each(|ch| {
+        let val = (*cur_offset) as u32;
+        let idx_now = ((val >> 24) & 0xFF) as u8;
+        let idx_nxt = idx_now.wrapping_add(1);
+        let base_val = SINE_TABLE[idx_now as usize] as i32;
+        let next_val = SINE_TABLE[idx_nxt as usize] as i32;
+
+        // Distance to next value - perform 256 slot linear interpolation
+        let off = ((val >> 16) & 0xFF) as i32; // 0..=255
+        let cur_weight = base_val.wrapping_mul(256i32.wrapping_sub(off));
+        let nxt_weight = next_val.wrapping_mul(off);
+        let ttl_weight = cur_weight.wrapping_add(nxt_weight);
+        let ttl_val = ttl_weight >> 8; // div 256
+        let ttl_val = ttl_val as i16;
+
+        // Set the linearly interpolated value
+        let leb = ttl_val.to_le_bytes();
+        ch[0] = leb[0];
+        ch[1] = leb[1];
+        ch[2] = leb[0];
+        ch[3] = leb[1];
+
+        *cur_offset = cur_offset.wrapping_add(incr);
+    });
 }

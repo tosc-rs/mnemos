@@ -4,7 +4,7 @@ use nrf52840_hal::{
 };
 
 use crate::alloc::{HeapArray, HeapGuard};
-use crate::future_box::{FutureBoxPendHdl, FutureBoxExHdl};
+use crate::future_box::{FutureBoxPendHdl, FutureBoxExHdl, Source};
 use crate::traits::OutputPin;
 use heapless::{Deque, Vec};
 
@@ -27,7 +27,7 @@ struct InProgress {
 pub struct Spim {
     spi: SpimInner,
     vdq: Deque<InProgress, 8>,
-    waiting: Vec<FutureBoxPendHdl<SendTransaction>, 8>,
+    waiting: Deque<FutureBoxPendHdl<SendTransaction>, 8>,
     csns: &'static mut [&'static mut dyn OutputPin],
     state: State,
 }
@@ -52,7 +52,7 @@ impl Spim {
         Self {
             spi: SpimInner::new(spim, pins, frequency, mode, orc),
             vdq: Deque::new(),
-            waiting: Vec::new(),
+            waiting: Deque::new(),
             csns,
             state: State::Idle,
         }
@@ -71,10 +71,33 @@ pub fn new_send_fut(heap: &mut HeapGuard, csn: u8, speed_khz: u32, count: usize)
         data,
         csn,
         speed_khz
-    }).map_err(drop)
+    }, Source::Kernel).map_err(drop)
 }
 
 impl Spim {
+    pub fn alloc_send(
+        &mut self,
+        heap: &mut HeapGuard,
+        csn: u8,
+        speed_khz: u32,
+        count: usize,
+    ) -> Option<FutureBoxExHdl<SendTransaction>> {
+        if self.waiting.is_full() {
+            return None;
+        }
+        let data = heap.alloc_box_array(0u8, count).ok()?;
+        let fut = FutureBoxExHdl::new_exclusive(heap, SendTransaction {
+            data,
+            csn,
+            speed_khz
+        }, Source::Userspace).ok()?;
+
+        let our_hdl = fut.kernel_waiter();
+        self.waiting.push_back(our_hdl).ok()?;
+
+        Some(fut)
+    }
+
     pub fn send(&mut self, st: FutureBoxExHdl<SendTransaction>) -> Result<FutureBoxPendHdl<SendTransaction>, FutureBoxExHdl<SendTransaction>> {
         // Does this CS exist?
         if (st.csn as usize) >= self.csns.len() {
@@ -98,7 +121,31 @@ impl Spim {
         Ok(mon)
     }
 
+    pub fn flush_waiting(&mut self) {
+        while !self.vdq.is_full() {
+            match self.waiting.pop_front() {
+                Some(pend) => {
+                    match pend.try_upgrade() {
+                        Ok(Some(ready)) => {
+                            self.vdq.push_back(InProgress { data: ready, start_offset: 0 }).ok();
+                        },
+                        Ok(None) => {
+                            self.waiting.push_front(pend).ok();
+                            break;
+                        },
+                        Err(_) => {
+                            defmt::println!("Dropped error");
+                        },
+                    }
+                },
+                None => break,
+            }
+        }
+    }
+
     pub fn start_send(&mut self) {
+        self.flush_waiting();
+
         match self.state {
             State::Idle => {},
             State::Transferring => return,
@@ -139,6 +186,8 @@ impl Spim {
     // This should probably be called any time a "stopped" or "end" event occurs. Could be the
     // natural end, or some kind of trigger.
     pub fn end_send(&mut self) {
+        self.flush_waiting();
+
         let mut state = State::Idle;
         core::mem::swap(&mut self.state, &mut state);
 
