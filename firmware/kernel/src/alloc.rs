@@ -215,6 +215,12 @@ impl<T> DerefMut for HeapBox<T> {
 }
 
 impl<T> HeapBox<T> {
+    pub unsafe fn from_leaked(ptr: *mut T) -> Self {
+        Self {
+            ptr,
+        }
+    }
+
     /// Create a free_box, with location and layout information necessary
     /// to free the box.
     ///
@@ -267,6 +273,13 @@ impl<T> DerefMut for HeapArray<T> {
 }
 
 impl<T> HeapArray<T> {
+    pub unsafe fn from_leaked(ptr: *mut T, count: usize) -> Self {
+        Self {
+            ptr,
+            count,
+        }
+    }
+
     /// Create a free_box, with location and layout information necessary
     /// to free the box.
     ///

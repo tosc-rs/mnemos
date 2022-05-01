@@ -3,8 +3,6 @@
 
 static DEFAULT_IMAGE: &[u8] = include_bytes!("../appbins/blinker.bin");
 
-use cmsis_dsp_sys as _;
-
 const SINE_TABLE: [i16; 256] = [
     0, 804, 1608, 2410, 3212, 4011, 4808, 5602, 6393, 7179, 7962, 8739, 9512, 10278, 11039, 11793,
     12539, 13279, 14010, 14732, 15446, 16151, 16846, 17530, 18204, 18868, 19519, 20159, 20787,
@@ -541,11 +539,4 @@ unsafe fn letsago(sp: u32, entry: u32) -> ! {
         options(noreturn, nomem, nostack),
     );
 
-}
-
-fn armsin(v: f32) -> f32 {
-    extern "C" {
-        fn arm_sin_f32(i: f32) -> f32;
-    }
-    unsafe { arm_sin_f32(v) }
 }

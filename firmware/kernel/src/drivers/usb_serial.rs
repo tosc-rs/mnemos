@@ -8,7 +8,7 @@ use nrf52840_hal::{usbd::{Usbd, UsbPeripheral}, pac::USBD};
 use usb_device::{device::UsbDevice, UsbError};
 use usbd_serial::SerialPort;
 use heapless::{LinearMap, Deque, Vec};
-use crate::alloc::{HeapArray, HEAP, HeapGuard};
+use crate::alloc::{HeapArray, HeapGuard};
 use postcard::{CobsAccumulator, FeedResult};
 use serde::{Serialize, Deserialize};
 
