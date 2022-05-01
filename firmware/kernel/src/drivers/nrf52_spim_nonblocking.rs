@@ -65,12 +65,23 @@ pub struct SendTransaction {
     pub speed_khz: u32,
 }
 
+pub fn new_send(heap: &mut HeapGuard, csn: u8, speed_khz: u32, count: usize) -> Result<FutureBoxExHdl<SendTransaction>, ()> {
+    let data = heap.alloc_box_array(0u8, count)?;
+    FutureBoxExHdl::new_exclusive(heap, SendTransaction {
+        data,
+        csn,
+        speed_khz
+    }).map_err(drop)
+}
+
 impl Spim {
-    pub fn send(&mut self, st: FutureBoxExHdl<SendTransaction>) -> Result<(), FutureBoxExHdl<SendTransaction>> {
+    pub fn send(&mut self, st: FutureBoxExHdl<SendTransaction>) -> Result<FutureBoxPendHdl<SendTransaction>, FutureBoxExHdl<SendTransaction>> {
         // Does this CS exist?
         if (st.csn as usize) >= self.csns.len() {
             return Err(st);
         }
+
+        let mon = st.create_monitor();
 
         self.vdq
             .push_back(InProgress {
@@ -84,7 +95,7 @@ impl Spim {
             State::Transferring { .. } => {},
         }
 
-        Ok(())
+        Ok(mon)
     }
 
     pub fn start_send(&mut self) {
@@ -153,7 +164,8 @@ impl Spim {
 
                 let txul = tx_len as usize;
                 if (txul + wip.start_offset) == wip.data.data.len() {
-                    // We are done! Yay! Start the next item
+                    // We are done! Yay! Start the next item and mark the previous as complete
+                    wip.data.release_to_complete();
                     defmt::println!("[SPI] STOP");
                     self.start_send();
                 } else {

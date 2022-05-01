@@ -206,7 +206,7 @@ mod app {
         let csn_pins: [&'static mut dyn kernel::traits::OutputPin; 6] = [
             d09,
             d10,
-            d11,
+            d11, //
             d12,
             d13,
             d06, // TODO: Oops
@@ -335,20 +335,17 @@ mod app {
         // SOFT RESET
         use kernel::drivers::nrf52_spim_nonblocking::SendTransaction;
         use kernel::future_box::FutureBoxExHdl;
+        use kernel::drivers::nrf52_spim_nonblocking::new_send;
 
         let tx = heap.lock(|heap| {
-            let mut buf_out = heap.alloc_box_array(0u8, 4).unwrap();
-            buf_out.copy_from_slice(&[
+            let mut tx = new_send(heap, CSN_XCS, 1_000, 4).unwrap();
+            tx.data.copy_from_slice(&[
                 0x02, // Write
                 0x00, // MODE
                 0x48,
                 0x04,
             ]);
-            FutureBoxExHdl::new_exclusive(heap, SendTransaction {
-                data: buf_out,
-                csn: CSN_XCS,
-                speed_khz: 1_000,
-            }).map_err(drop).unwrap()
+            tx
         });
 
         cx.shared.spi.lock(|spi| spi.send(tx).map_err(drop).unwrap());
@@ -373,18 +370,14 @@ mod app {
         //   XTALIx1.5 (Max boost)
         //   Freq = 0 (12.288MHz)
         let tx = heap.lock(|heap| {
-            let mut buf_out = heap.alloc_box_array(0u8, 4).unwrap();
-            buf_out.copy_from_slice(&[
+            let mut tx = new_send(heap, CSN_XCS, 1_000, 4).unwrap();
+            tx.data.copy_from_slice(&[
                 0x02, // Write
                 0x03, // CLOCKF
                 0x98,
                 0x00,
             ]);
-            FutureBoxExHdl::new_exclusive(heap, SendTransaction {
-                data: buf_out,
-                csn: CSN_XCS,
-                speed_khz: 1_000,
-            }).map_err(drop).unwrap()
+            tx
         });
 
         cx.shared.spi.lock(|spi| spi.send(tx).map_err(drop).unwrap());
@@ -408,18 +401,14 @@ mod app {
         // Probably skip the others, but probably set volume to like 0x2424,
         // which means -18.0dB in each ear.
         let tx = heap.lock(|heap| {
-            let mut buf_out = heap.alloc_box_array(0u8, 4).unwrap();
-            buf_out.copy_from_slice(&[
-            0x02, // Write
-            0x0B, // VOLUME
-            0x24,
-            0x24,
+            let mut tx = new_send(heap, CSN_XCS, 1_000, 4).unwrap();
+            tx.data.copy_from_slice(&[
+                0x02, // Write
+                0x0B, // VOLUME
+                0x24,
+                0x24,
             ]);
-            FutureBoxExHdl::new_exclusive(heap, SendTransaction {
-                data: buf_out,
-                csn: CSN_XCS,
-                speed_khz: 1_000,
-            }).map_err(drop).unwrap()
+            tx
         });
 
         cx.shared.spi.lock(|spi| spi.send(tx).map_err(drop).unwrap());
@@ -475,17 +464,13 @@ mod app {
         // 0100 10 00 00 00 01 00 02 00 44 ac 00 00 10 b1 02 00 |........D.......|
         // 0200 04 00 10 00 64 61 74 61 ff ff ff ff             |....data....|
         let tx = heap.lock(|heap| {
-            let mut buf_out = heap.alloc_box_array(0u8, 44).unwrap();
-            buf_out.copy_from_slice(&[
+            let mut tx = new_send(heap, CSN_XDCS, 8_000, 44).unwrap();
+            tx.data.copy_from_slice(&[
                 0x52, 0x49, 0x46, 0x46, 0xff, 0xff, 0xff, 0xff, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74, 0x20,
                 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x44, 0xac, 0x00, 0x00, 0x10, 0xb1, 0x02, 0x00,
                 0x04, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61, 0xff, 0xff, 0xff, 0xff,
             ]);
-            FutureBoxExHdl::new_exclusive(heap, SendTransaction {
-                data: buf_out,
-                csn: CSN_XDCS,
-                speed_khz: 8_000,
-            }).map_err(drop).unwrap()
+            tx
         });
 
         cx.shared.spi.lock(|spi| spi.send(tx).map_err(drop).unwrap());
@@ -500,19 +485,14 @@ mod app {
                 Some(sb) => sb,
                 None => {
                     heap.lock(|heap| {
-                        let mut buf_out = heap.alloc_box_array(0u8, 2048).unwrap();
-                        buf_out.chunks_exact_mut(2).for_each(|ch| {
+                        let mut tx = new_send(heap, CSN_XDCS, 8_000, 2048).unwrap();
+                        tx.data.chunks_exact_mut(2).for_each(|ch| {
                             ch.copy_from_slice(&forever.next().unwrap().to_le_bytes());
                         });
-                        FutureBoxExHdl::new_exclusive(heap, SendTransaction {
-                            data: buf_out,
-                            csn: CSN_XDCS,
-                            speed_khz: 8_000,
-                        }).map_err(drop).unwrap()
+                        tx
                     })
                 }
             };
-
 
             // Wait for DREQ to go high
             loop {
@@ -525,7 +505,7 @@ mod app {
             // TODO: this will be bad, but okay.
             cx.shared.spi.lock(|spi| {
                 already_calcd = match spi.send(small_buf) {
-                    Ok(()) => {
+                    Ok(_hdl) => {
                         iters += 1;
                         None
                     },

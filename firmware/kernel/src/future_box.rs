@@ -119,6 +119,15 @@ where
 }
 
 impl<T> FutureBoxExHdl<T> {
+    pub fn create_monitor(&self) -> FutureBoxPendHdl<T> {
+        let ret = FutureBoxPendHdl {
+            fb: self.fb,
+            awaiting: status::INVALID,
+        };
+        unsafe { (*self.fb).refcnt.fetch_add(1, Ordering::SeqCst); }
+        ret
+    }
+
     // TODO: I might want methods at some point that get BACK a handle too.
     // Example: using a single buffer for Transfer traits. For now, just expect the user
     // to allocate two buffers in that case.
