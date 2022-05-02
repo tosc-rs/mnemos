@@ -1,4 +1,4 @@
-use nrf52840_hal::{pac::SPIM3, spim::Frequency};
+use nrf52840_hal::{pac::SPIM0, spim::Frequency};
 
 use crate::alloc::{HeapArray, HeapGuard};
 use crate::future_box::{FutureBoxExHdl, FutureBoxPendHdl, Source};
@@ -13,7 +13,7 @@ enum State {
 }
 
 struct SpimInner {
-    periph: SPIM3,
+    periph: SPIM0,
 }
 
 struct InProgress {
@@ -61,7 +61,7 @@ pub struct Spim {
 }
 
 impl Spim {
-    pub fn new(spim: SPIM3, pins: Pins, mode: Mode) -> Self {
+    pub fn new(spim: SPIM0, pins: Pins, mode: Mode) -> Self {
         // Enable certain interrupts
         spim.intenset.modify(|_r, w| {
             w.stopped().set_bit();
@@ -381,7 +381,7 @@ impl DmaSlice {
 }
 
 impl SpimInner {
-    pub fn new(spim: SPIM3, pins: Pins, frequency: Frequency, mode: Mode, orc: u8) -> Self {
+    pub fn new(spim: SPIM0, pins: Pins, frequency: Frequency, mode: Mode, orc: u8) -> Self {
         // Select pins.
         spim.psel.sck.write(|w| {
             unsafe { w.bits(pins.sck.psel_bits()) };

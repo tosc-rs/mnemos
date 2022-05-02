@@ -184,7 +184,7 @@ mod app {
         let ppi = nrf52840_hal::ppi::Parts::new(device.PPI);
         let ppi0 = ppi.ppi0;
         let (cmd_node, data_node) =
-            crate::make_nodes(dreq, command_pin, data_pin, ppi0, gpiote, &device.SPIM3);
+            crate::make_nodes(dreq, command_pin, data_pin, ppi0, gpiote, &device.SPIM0);
 
         use kernel::drivers::nrf52_spim_nonblocking::SpimNode;
 
@@ -194,7 +194,7 @@ mod app {
             heap_guard.leak_send(data_node).map_err(drop).unwrap();
 
         let mut spi = kernel::drivers::nrf52_spim_nonblocking::Spim::new(
-            device.SPIM3,
+            device.SPIM0,
             kernel::drivers::nrf52_spim_nonblocking::Pins {
                 sck: pins.sclk.into_push_pull_output(Level::Low).degrade(),
                 mosi: Some(pins.mosi.into_push_pull_output(Level::Low).degrade()),
@@ -254,15 +254,15 @@ mod app {
         })
     }
 
-    #[task(binds = SPIM3, shared = [spi], priority = 2)]
-    fn spim3(mut cx: spim3::Context) {
+    #[task(binds = SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0, shared = [spi], priority = 2)]
+    fn spim0(mut cx: spim0::Context) {
         // TODO: NOT this
         let gpiote = unsafe { &*GPIOTE::ptr() };
 
         // Clear channel 0 events (which probably stopped our SPI device)
         gpiote.events_in[0].write(|w| w);
 
-        // defmt::println!("[INT]: SPIM3");
+        // defmt::println!("[INT]: SPIM0");
 
         cx.shared.spi.lock(|spi| {
             spi.end_send();
@@ -293,6 +293,8 @@ mod app {
 
         // Wait, to allow RTT to attach
         while timer.millis_since(start) < 1000 {}
+
+        const DATA_SPEED_KHZ: u32 = 2_000;
 
         // let spi = machine.spi.as_mut().unwrap();
 
@@ -400,7 +402,7 @@ mod app {
         // 0100 10 00 00 00 01 00 02 00 44 ac 00 00 10 b1 02 00 |........D.......|
         // 0200 04 00 10 00 64 61 74 61 ff ff ff ff             |....data....|
         let tx = cx.shared.heap.lock(|heap| {
-            let mut tx = new_send_fut(heap, *cx.local.data_hdl, 8_000, 44).unwrap();
+            let mut tx = new_send_fut(heap, *cx.local.data_hdl, DATA_SPEED_KHZ, 44).unwrap();
             tx.data.copy_from_slice(&[
                 0x52, 0x49, 0x46, 0x46, 0xff, 0xff, 0xff, 0xff, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d,
                 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x44, 0xac, 0x00, 0x00,
@@ -417,7 +419,7 @@ mod app {
         let mut tx = cx
             .shared
             .heap
-            .lock(|heap| new_send_fut(heap, *cx.local.data_hdl, 8_000, 2048).unwrap());
+            .lock(|heap| new_send_fut(heap, *cx.local.data_hdl, DATA_SPEED_KHZ, 2048).unwrap());
         super::fill_sample_buf(&mut tx.data, incr, &mut cur_offset);
         cx.shared
             .spi
@@ -451,7 +453,7 @@ mod app {
             let heap = &mut cx.shared.heap;
 
             if let Some(mut buf) =
-                (spi, heap).lock(|spi, heap| spi.alloc_send(heap, *cx.local.data_hdl, 8_000, 2048))
+                (spi, heap).lock(|spi, heap| spi.alloc_send(heap, *cx.local.data_hdl, DATA_SPEED_KHZ, 2048))
             {
                 super::fill_sample_buf(&mut buf.data, incr, &mut cur_offset);
                 buf.release_to_kernel();
@@ -483,7 +485,7 @@ use cortex_m::register::{control, psp};
 use nrf52840_hal::{
     gpio::{Floating, Input, Output, Pin, PushPull},
     gpiote::Gpiote,
-    pac::{GPIOTE, P0, P1, PPI, SPIM3},
+    pac::{GPIOTE, P0, P1, PPI, SPIM0},
     ppi::{ConfigurablePpi, Ppi, Ppi0},
     prelude::OutputPin,
     Rng,
@@ -555,7 +557,7 @@ pub fn make_nodes(
     xdcs: Pin<Output<PushPull>>,
     mut ppi0: Ppi0,
     gpiote: Gpiote,
-    spim3: &SPIM3,
+    spim0: &SPIM0,
 ) -> (CommandNode, DataNode) {
     let ch0 = gpiote.channel0();
     let ch_ev = ch0.input_pin(&dreq);
@@ -566,7 +568,7 @@ pub fn make_nodes(
     ch_ev.lo_to_hi().enable_interrupt();
 
     ppi0.set_event_endpoint(ch0.event());
-    ppi0.set_task_endpoint(&spim3.tasks_stop);
+    ppi0.set_task_endpoint(&spim0.tasks_stop);
     ppi0.disable();
 
     let dreq_pin = dreq.pin();
