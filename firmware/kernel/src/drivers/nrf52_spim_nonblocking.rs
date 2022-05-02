@@ -3,13 +3,13 @@ use nrf52840_hal::{pac::SPIM3, spim::Frequency};
 use crate::alloc::{HeapArray, HeapGuard};
 use crate::future_box::{FutureBoxExHdl, FutureBoxPendHdl, Source};
 use crate::traits::OutputPin;
-use heapless::{Deque, Vec};
+use heapless::{Deque, LinearMap};
 
 enum State {
     Idle,
 
     // The data is at the front of vdq.
-    Transferring,
+    Transferring { hdl: SpimHandle },
 }
 
 struct SpimInner {
@@ -21,23 +21,47 @@ struct InProgress {
     start_offset: usize,
 }
 
-pub struct Spim {
-    spi: SpimInner,
+pub trait SpimNode: Send {
+    /// Set the node active. This should set any chip selects
+    /// necessary, and enable any additional behavior, such as an interrupt
+    /// or other event that would stop a transfer early, such as a "BUSY"
+    /// pin going high.
+    fn set_active(&mut self);
+
+    /// Set the node inactive. This should clear any chip selects necessary,
+    /// and disable any additional behavior as described in `set_active`.
+    fn set_inactive(&mut self);
+
+    /// This should be used to tell the Spim device whether a new transfer
+    /// should be started. If your device is always ready, you do not need
+    /// to implement this method. If your device has some kind of "BUSY"
+    /// pin or similar that should be respected, you should override this
+    /// method with necessary handling.
+    fn is_ready(&mut self) -> bool {
+        true
+    }
+}
+
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub struct SpimHandle {
+    idx: u8,
+}
+
+pub struct Node {
+    node: &'static mut dyn SpimNode,
     vdq: Deque<InProgress, 8>,
     waiting: Deque<FutureBoxPendHdl<SendTransaction>, 8>,
-    csns: &'static mut [&'static mut dyn OutputPin],
+}
+
+pub struct Spim {
+    spi: SpimInner,
+    nodes: LinearMap<SpimHandle, Node, 4>,
     state: State,
+    cur_idx: u8,
 }
 
 impl Spim {
-    pub fn new(
-        spim: SPIM3,
-        pins: Pins,
-        frequency: Frequency,
-        mode: Mode,
-        orc: u8,
-        csns: &'static mut [&'static mut dyn OutputPin],
-    ) -> Self {
+    pub fn new(spim: SPIM3, pins: Pins, mode: Mode) -> Self {
         // Enable certain interrupts
         spim.intenset.modify(|_r, w| {
             w.stopped().set_bit();
@@ -46,24 +70,47 @@ impl Spim {
         });
 
         Self {
-            spi: SpimInner::new(spim, pins, frequency, mode, orc),
-            vdq: Deque::new(),
-            waiting: Deque::new(),
-            csns,
+            spi: SpimInner::new(spim, pins, Frequency::M1, mode, 0x00),
+            nodes: LinearMap::new(),
             state: State::Idle,
+            cur_idx: 0,
         }
+    }
+
+    pub fn register_handle(
+        &mut self,
+        node: &'static mut dyn SpimNode,
+    ) -> Result<SpimHandle, &'static mut dyn SpimNode> {
+        if self.nodes.len() == self.nodes.capacity() {
+            return Err(node);
+        }
+
+        Ok(loop {
+            self.cur_idx = self.cur_idx.wrapping_add(1);
+            let new_hdl = SpimHandle { idx: self.cur_idx };
+            if !self.nodes.contains_key(&new_hdl) {
+                let node = Node {
+                    node,
+                    vdq: Deque::new(),
+                    waiting: Deque::new(),
+                };
+                // We already checked if there was size
+                self.nodes.insert(new_hdl, node).ok();
+                break new_hdl;
+            }
+        })
     }
 }
 
 pub struct SendTransaction {
     pub data: HeapArray<u8>,
-    pub csn: u8,
+    pub hdl: SpimHandle,
     pub speed_khz: u32,
 }
 
 pub fn new_send_fut(
     heap: &mut HeapGuard,
-    csn: u8,
+    hdl: SpimHandle,
     speed_khz: u32,
     count: usize,
 ) -> Result<FutureBoxExHdl<SendTransaction>, ()> {
@@ -72,7 +119,7 @@ pub fn new_send_fut(
         heap,
         SendTransaction {
             data,
-            csn,
+            hdl,
             speed_khz,
         },
         Source::Kernel,
@@ -84,11 +131,16 @@ impl Spim {
     pub fn alloc_send(
         &mut self,
         heap: &mut HeapGuard,
-        csn: u8,
+        hdl: SpimHandle,
         speed_khz: u32,
         count: usize,
     ) -> Option<FutureBoxExHdl<SendTransaction>> {
-        if self.waiting.is_full() {
+        let handle = match self.nodes.get_mut(&hdl) {
+            Some(h) => h,
+            None => return None,
+        };
+
+        if handle.waiting.is_full() {
             return None;
         }
         let data = heap.alloc_box_array(0u8, count).ok()?;
@@ -96,7 +148,7 @@ impl Spim {
             heap,
             SendTransaction {
                 data,
-                csn,
+                hdl,
                 speed_khz,
             },
             Source::Userspace,
@@ -104,7 +156,7 @@ impl Spim {
         .ok()?;
 
         let our_hdl = fut.kernel_waiter();
-        self.waiting.push_back(our_hdl).ok()?;
+        handle.waiting.push_back(our_hdl).ok()?;
 
         Some(fut)
     }
@@ -113,14 +165,16 @@ impl Spim {
         &mut self,
         st: FutureBoxExHdl<SendTransaction>,
     ) -> Result<FutureBoxPendHdl<SendTransaction>, FutureBoxExHdl<SendTransaction>> {
-        // Does this CS exist?
-        if (st.csn as usize) >= self.csns.len() {
-            return Err(st);
-        }
+        // Does this node exist?
+        let handle = match self.nodes.get_mut(&st.hdl) {
+            Some(h) => h,
+            None => return Err(st),
+        };
 
         let mon = st.create_monitor();
 
-        self.vdq
+        handle
+            .vdq
             .push_back(InProgress {
                 data: st,
                 start_offset: 0,
@@ -136,26 +190,28 @@ impl Spim {
     }
 
     pub fn flush_waiting(&mut self) {
-        while !self.vdq.is_full() {
-            match self.waiting.pop_front() {
-                Some(pend) => match pend.try_upgrade() {
-                    Ok(Some(ready)) => {
-                        self.vdq
-                            .push_back(InProgress {
-                                data: ready,
-                                start_offset: 0,
-                            })
-                            .ok();
-                    }
-                    Ok(None) => {
-                        self.waiting.push_front(pend).ok();
-                        break;
-                    }
-                    Err(_) => {
-                        defmt::println!("Dropped error");
-                    }
-                },
-                None => break,
+        for node in self.nodes.values_mut() {
+            while !node.vdq.is_full() {
+                match node.waiting.pop_front() {
+                    Some(pend) => match pend.try_upgrade() {
+                        Ok(Some(ready)) => {
+                            node.vdq
+                                .push_back(InProgress {
+                                    data: ready,
+                                    start_offset: 0,
+                                })
+                                .ok();
+                        }
+                        Ok(None) => {
+                            node.waiting.push_front(pend).ok();
+                            break;
+                        }
+                        Err(_) => {
+                            defmt::println!("Dropped error");
+                        }
+                    },
+                    None => break,
+                }
             }
         }
     }
@@ -165,10 +221,26 @@ impl Spim {
 
         match self.state {
             State::Idle => {}
-            State::Transferring => return,
+            State::Transferring { .. } => return,
         }
 
-        let data = match self.vdq.pop_front() {
+        let mut hdl_node = None;
+        for (hdl, node) in self.nodes.iter_mut() {
+            let data_ready = !node.vdq.is_empty();
+            let node_ready = node.node.is_ready();
+
+            if data_ready && node_ready {
+                hdl_node = Some((hdl, node));
+                break;
+            }
+        }
+
+        let (sh, handle) = match hdl_node {
+            Some(h) => h,
+            None => return,
+        };
+
+        let data = match handle.vdq.pop_front() {
             Some(d) => d,
             None => return,
         };
@@ -184,10 +256,7 @@ impl Spim {
         // defmt::println!("[SPI] START {=u8}", data.data.csn);
 
         self.spi.change_speed(data.data.speed_khz).unwrap();
-        self.csns
-            .get_mut(data.data.csn as usize)
-            .unwrap()
-            .set_pin(false);
+        handle.node.set_active();
 
         compiler_fence(Ordering::SeqCst);
 
@@ -199,8 +268,8 @@ impl Spim {
         // consumer can't re-fill it between the start of send and end of send.
         //
         // This should be impossible, since we just freed at least one space here.
-        self.vdq.push_front(data).map_err(drop).unwrap();
-        self.state = State::Transferring;
+        handle.vdq.push_front(data).map_err(drop).unwrap();
+        self.state = State::Transferring { hdl: *sh };
     }
 
     // This should probably be called any time a "stopped" or "end" event occurs. Could be the
@@ -211,26 +280,30 @@ impl Spim {
         let mut state = State::Idle;
         core::mem::swap(&mut self.state, &mut state);
 
-        let mut wip = match state {
+        let (mut wip, handle) = match state {
             State::Idle => {
                 self.spi.clear_events();
                 return;
             }
-            State::Transferring => match self.vdq.pop_front() {
-                Some(wip) => wip,
-                None => {
+            State::Transferring { hdl } => {
+                if let Some(handle) = self.nodes.get_mut(&hdl) {
+                    match handle.vdq.pop_front() {
+                        Some(wip) => (wip, handle),
+                        None => {
+                            self.spi.clear_events();
+                            return;
+                        }
+                    }
+                } else {
                     self.spi.clear_events();
                     return;
                 }
-            },
+            }
         };
 
         match self.spi.do_spi_dma_transfer_end() {
             Ok((tx_len, _rx_len)) => {
-                self.csns
-                    .get_mut(wip.data.csn as usize)
-                    .unwrap()
-                    .set_pin(true);
+                handle.node.set_inactive();
 
                 compiler_fence(Ordering::SeqCst);
 
@@ -249,29 +322,12 @@ impl Spim {
                     // TODO: A vecdeque is probably the wrong structure here. We probably ACTUALLY
                     // want a vecdeque for EACH chip select, and do some sort of priority or round
                     // robining of this resource. For now... don't.
-                    self.vdq.push_front(wip).map_err(drop).unwrap();
+                    handle.vdq.push_front(wip).map_err(drop).unwrap();
                 }
             }
             Err(e) => panic!("{:?}", e),
         }
     }
-
-    // fn transfer<'a>(&mut self, csn: u8, speed_khz: u32, data_out: &'a [u8], data_in: &'a mut [u8]) -> Result<&'a mut [u8], ()> {
-    //     let Self { spi, csns, .. } = self;
-    //     let cs = csns.get_mut(csn as usize).ok_or(())?;
-    //     spi.change_speed(speed_khz)?;
-    //     spi.transfer_split_even(*cs, data_out, data_in).map_err(drop)?;
-    //     Ok(data_in)
-    // }
-
-    // fn read<'a>(&mut self, csn: u8, speed_khz: u32, dummy_char: u8, data_in: &'a mut [u8]) -> Result<&'a mut [u8], ()> {
-    //     let Self { spi, csns, .. } = self;
-    //     let cs = csns.get_mut(csn as usize).ok_or(())?;
-    //     spi.change_speed(speed_khz)?;
-    //     spi.change_orc(dummy_char);
-    //     spi.transfer_split_uneven(*cs, &[], data_in).map_err(drop)?;
-    //     Ok(data_in)
-    // }
 }
 
 use core::iter::repeat_with;

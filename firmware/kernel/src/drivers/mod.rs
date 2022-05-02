@@ -7,3 +7,4 @@ pub mod nrf52_pin;
 pub mod nrf52_spim_blocking;
 pub mod nrf52_spim_nonblocking;
 pub mod usb_serial;
+pub mod vs1053b;

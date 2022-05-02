@@ -106,8 +106,12 @@ where
     T: Send + Sized + 'static,
 {
     pub fn new_exclusive(heap: &mut HeapGuard, payload: T, source: Source) -> Result<Self, T> {
+        let stat = match source {
+            Source::Kernel => status::KERNEL_ACCESS,
+            Source::Userspace => status::USERSPACE_ACCESS,
+        };
         let res_fb = heap.leak_send(FutureBox {
-            status: AtomicU8::new(status::INVALID),
+            status: AtomicU8::new(stat),
             refcnt: AtomicU8::new(1),
             ex_taken: AtomicBool::new(true),
             payload: AtomicPtr::new(null_mut()),
@@ -302,6 +306,3 @@ impl<T> FutureBoxPendHdl<T> {
         }
     }
 }
-
-// ------------------ | FUTURE ARRAY | ------------------------
-// TODO

@@ -38,6 +38,7 @@ mod app {
         alloc::HEAP,
         drivers::{
             nrf52_pin::MPin,
+            nrf52_spim_nonblocking::SpimHandle,
             usb_serial::{enable_usb_interrupts, setup_usb_uart, UsbUartIsr, UsbUartParts},
         },
         loader::validate_header,
@@ -74,7 +75,8 @@ mod app {
         usb_isr: UsbUartIsr,
         machine: kernel::traits::Machine,
         rng: nrf52840_hal::Rng,
-        ppi0: nrf52840_hal::ppi::Ppi0,
+        cmd_hdl: SpimHandle,
+        data_hdl: SpimHandle,
         // prog_loaded: Option<(*const u8, usize)>,
     }
 
@@ -169,93 +171,46 @@ mod app {
         // Map GPIO pins
         //
 
-        // LEDs
-        let led1 = defmt::unwrap!(heap_guard
-            .leak_send(MPin::new(pins.led1.degrade()))
-            .map_err(drop));
-        let led2 = defmt::unwrap!(heap_guard
-            .leak_send(MPin::new(pins.led2.degrade()))
-            .map_err(drop));
+        // DREQ
+        let d05 = pins.d05.degrade().into_floating_input();
+        let d11 = pins.d11.degrade().into_push_pull_output(Level::High);
+        let d06 = pins.d06.degrade().into_push_pull_output(Level::High);
 
-        // IRQ/AUX pins
-        let d05_pre = pins.d05.degrade().into_floating_input();
+        let command_pin = d11;
+        let data_pin = d06;
+        let dreq = d05;
 
-        // Enable hi-to-low interrupts
         let gpiote = nrf52840_hal::gpiote::Gpiote::new(device.GPIOTE);
-        let ch0 = gpiote.channel0();
-        let ch_ev = ch0.input_pin(&d05_pre);
-        ch_ev.hi_to_lo();
-        let ch1 = gpiote.channel1();
-        let ch_ev = ch1.input_pin(&d05_pre);
-        ch_ev.lo_to_hi().enable_interrupt();
-
         let ppi = nrf52840_hal::ppi::Parts::new(device.PPI);
-        let mut ppi0 = ppi.ppi0;
+        let ppi0 = ppi.ppi0;
+        let (cmd_node, data_node) =
+            crate::make_nodes(dreq, command_pin, data_pin, ppi0, gpiote, &device.SPIM3);
 
-        ppi0.set_event_endpoint(ch0.event());
-        ppi0.set_task_endpoint(&device.SPIM3.tasks_stop);
-        ppi0.disable();
+        use kernel::drivers::nrf52_spim_nonblocking::SpimNode;
 
-        let d05 = defmt::unwrap!(heap_guard
-            .leak_send(MPin::new_input_floating(d05_pre))
-            .map_err(drop));
-        // let d06 = defmt::unwrap!(heap_guard.leak_send(MPin::new(pins.d06.degrade())));
-        let scl = defmt::unwrap!(heap_guard
-            .leak_send(MPin::new(pins.scl.degrade()))
-            .map_err(drop));
-        let sda = defmt::unwrap!(heap_guard
-            .leak_send(MPin::new(pins.sda.degrade()))
-            .map_err(drop));
+        let cmd_node: &'static mut dyn SpimNode =
+            heap_guard.leak_send(cmd_node).map_err(drop).unwrap();
+        let data_node: &'static mut dyn SpimNode =
+            heap_guard.leak_send(data_node).map_err(drop).unwrap();
 
-        let array_gpios: [&'static mut dyn GpioPin; 5] = [led1, led2, d05, scl, sda];
-        let leak_gpios = defmt::unwrap!(heap_guard.leak_send(array_gpios).map_err(drop));
-
-        // Chip Selects
-        let d09 = defmt::unwrap!(heap_guard
-            .leak_send(pins.d09.degrade().into_push_pull_output(Level::High))
-            .map_err(drop));
-        let d10 = defmt::unwrap!(heap_guard
-            .leak_send(pins.d10.degrade().into_push_pull_output(Level::High))
-            .map_err(drop));
-        let d11 = defmt::unwrap!(heap_guard
-            .leak_send(pins.d11.degrade().into_push_pull_output(Level::High))
-            .map_err(drop));
-        let d12 = defmt::unwrap!(heap_guard
-            .leak_send(pins.d12.degrade().into_push_pull_output(Level::High))
-            .map_err(drop));
-        let d13 = defmt::unwrap!(heap_guard
-            .leak_send(pins.d13.degrade().into_push_pull_output(Level::High))
-            .map_err(drop));
-        let d06 = defmt::unwrap!(heap_guard
-            .leak_send(pins.d06.degrade().into_push_pull_output(Level::High))
-            .map_err(drop));
-
-        let csn_pins: [&'static mut dyn kernel::traits::OutputPin; 6] = [
-            d09, d10, d11, //
-            d12, d13, d06, // TODO: Oops
-        ];
-        let leak_csns = defmt::unwrap!(heap_guard.leak_send(csn_pins).map_err(drop));
-
-        let spi = kernel::drivers::nrf52_spim_nonblocking::Spim::new(
+        let mut spi = kernel::drivers::nrf52_spim_nonblocking::Spim::new(
             device.SPIM3,
             kernel::drivers::nrf52_spim_nonblocking::Pins {
                 sck: pins.sclk.into_push_pull_output(Level::Low).degrade(),
                 mosi: Some(pins.mosi.into_push_pull_output(Level::Low).degrade()),
                 miso: Some(pins.miso.into_floating_input().degrade()),
             },
-            nrf52840_hal::spim::Frequency::M1,
             embedded_hal::spi::MODE_0,
-            0x00,
-            leak_csns,
         );
-        // let spi: &'static mut dyn kernel::traits::Spi = defmt::unwrap!(heap_guard.leak_send(spi));
+        let cmd_hdl = spi.register_handle(cmd_node).map_err(drop).unwrap();
+        let data_hdl = spi.register_handle(data_node).map_err(drop).unwrap();
 
         let machine = kernel::traits::Machine {
             serial: to_uart,
             block_storage: Some(to_block),
             // spi: Some(spi),
             spi: None,
-            gpios: leak_gpios.as_mut_slice(),
+            gpios: &mut [],
         };
 
         (
@@ -267,7 +222,8 @@ mod app {
                 usb_isr: isr,
                 machine,
                 rng,
-                ppi0,
+                cmd_hdl,
+                data_hdl,
                 // prog_loaded,
             },
             init::Monotonics(mono),
@@ -323,7 +279,7 @@ mod app {
     // to the SWI handler, and idle will basically just launch a program. I think.
     // Maybe idle will use SWIs too.
     // #[idle(local = [prog_loaded])]
-    #[idle(local = [machine, rng, ppi0], shared = [spi, heap])]
+    #[idle(local = [machine, rng, cmd_hdl, data_hdl], shared = [spi, heap])]
     fn idle(mut cx: idle::Context) -> ! {
         use common::syscall::request::GpioMode;
 
@@ -338,14 +294,6 @@ mod app {
         // Wait, to allow RTT to attach
         while timer.millis_since(start) < 1000 {}
 
-        const CSN_XCS: u8 = 2;
-        const CSN_XDCS: u8 = 5;
-        const IRQ_DREQ: usize = 2;
-
-        let machine = cx.local.machine;
-        let dreq = &mut machine.gpios[IRQ_DREQ];
-        dreq.set_mode(GpioMode::InputFloating).unwrap();
-
         // let spi = machine.spi.as_mut().unwrap();
 
         // SCI command goes:
@@ -355,21 +303,12 @@ mod app {
         // Address: 1 byte
         // Data: 2 bytes
 
-        // Wait for DREQ to go high
-        loop {
-            match dreq.read_pin() {
-                Ok(true) => break,
-                Ok(false) => {}
-                Err(()) => panic!(),
-            }
-        }
-
         // SOFT RESET
         use kernel::drivers::nrf52_spim_nonblocking::new_send_fut;
         use kernel::drivers::nrf52_spim_nonblocking::SendTransaction;
 
         let tx = cx.shared.heap.lock(|heap| {
-            let mut tx = new_send_fut(heap, CSN_XCS, 1_000, 4).unwrap();
+            let mut tx = new_send_fut(heap, *cx.local.cmd_hdl, 1_000, 4).unwrap();
             tx.data.copy_from_slice(&[
                 0x02, // Write
                 0x00, // MODE
@@ -386,15 +325,6 @@ mod app {
         let delay = timer.get_ticks();
         while timer.millis_since(delay) < 5 {}
 
-        // Wait for DREQ to go high
-        loop {
-            match dreq.read_pin() {
-                Ok(true) => break,
-                Ok(false) => {}
-                Err(()) => panic!(),
-            }
-        }
-
         // Set CLOCKF register (0x03)
         // 10.2 recommend a value of 9800, meaning
         // 100 - 11 - 00000000000
@@ -402,7 +332,7 @@ mod app {
         //   XTALIx1.5 (Max boost)
         //   Freq = 0 (12.288MHz)
         let tx = cx.shared.heap.lock(|heap| {
-            let mut tx = new_send_fut(heap, CSN_XCS, 1_000, 4).unwrap();
+            let mut tx = new_send_fut(heap, *cx.local.cmd_hdl, 1_000, 4).unwrap();
             tx.data.copy_from_slice(&[
                 0x02, // Write
                 0x03, // CLOCKF
@@ -433,7 +363,7 @@ mod app {
         // Probably skip the others, but probably set volume to like 0x2424,
         // which means -18.0dB in each ear.
         let tx = cx.shared.heap.lock(|heap| {
-            let mut tx = new_send_fut(heap, CSN_XCS, 1_000, 4).unwrap();
+            let mut tx = new_send_fut(heap, *cx.local.cmd_hdl, 1_000, 4).unwrap();
             tx.data.copy_from_slice(&[
                 0x02, // Write
                 0x0B, // VOLUME
@@ -454,8 +384,6 @@ mod app {
         core::sync::atomic::compiler_fence(Ordering::SeqCst);
         let t0 = timer.get_ticks();
 
-        use crate::SINE_TABLE;
-
         let samp_per_cyc: f32 = 44100.0 / freq; // 141.7
         let fincr = 256.0 / samp_per_cyc; // 1.81
         let mut incr: i32 = (((1 << 24) as f32) * fincr) as i32;
@@ -472,7 +400,7 @@ mod app {
         // 0100 10 00 00 00 01 00 02 00 44 ac 00 00 10 b1 02 00 |........D.......|
         // 0200 04 00 10 00 64 61 74 61 ff ff ff ff             |....data....|
         let tx = cx.shared.heap.lock(|heap| {
-            let mut tx = new_send_fut(heap, CSN_XDCS, 8_000, 44).unwrap();
+            let mut tx = new_send_fut(heap, *cx.local.data_hdl, 8_000, 44).unwrap();
             tx.data.copy_from_slice(&[
                 0x52, 0x49, 0x46, 0x46, 0xff, 0xff, 0xff, 0xff, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d,
                 0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x44, 0xac, 0x00, 0x00,
@@ -485,13 +413,11 @@ mod app {
             .spi
             .lock(|spi| spi.send(tx).map_err(drop).unwrap());
 
-        cx.local.ppi0.enable();
-
         // Send the first data immediately
         let mut tx = cx
             .shared
             .heap
-            .lock(|heap| new_send_fut(heap, CSN_XDCS, 8_000, 2048).unwrap());
+            .lock(|heap| new_send_fut(heap, *cx.local.data_hdl, 8_000, 2048).unwrap());
         super::fill_sample_buf(&mut tx.data, incr, &mut cur_offset);
         cx.shared
             .spi
@@ -525,7 +451,7 @@ mod app {
             let heap = &mut cx.shared.heap;
 
             if let Some(mut buf) =
-                (spi, heap).lock(|spi, heap| spi.alloc_send(heap, CSN_XDCS, 8_000, 2048))
+                (spi, heap).lock(|spi, heap| spi.alloc_send(heap, *cx.local.data_hdl, 8_000, 2048))
             {
                 super::fill_sample_buf(&mut buf.data, incr, &mut cur_offset);
                 buf.release_to_kernel();
@@ -554,7 +480,14 @@ fn new_freq_incr(rng: &mut Rng) -> i32 {
 
 use core::arch::asm;
 use cortex_m::register::{control, psp};
-use nrf52840_hal::Rng;
+use nrf52840_hal::{
+    gpio::{Floating, Input, Output, Pin, PushPull},
+    gpiote::Gpiote,
+    pac::{GPIOTE, P0, P1, PPI, SPIM3},
+    ppi::{ConfigurablePpi, Ppi, Ppi0},
+    prelude::OutputPin,
+    Rng,
+};
 
 #[inline(always)]
 unsafe fn letsago(sp: u32, entry: u32) -> ! {
@@ -611,4 +544,133 @@ pub fn fill_sample_buf(data: &mut [u8], incr: i32, cur_offset: &mut i32) {
 
         *cur_offset = cur_offset.wrapping_add(incr);
     });
+}
+
+use kernel::drivers::nrf52_spim_nonblocking::SpimNode;
+use nrf52840_hal::gpio::Port;
+
+pub fn make_nodes(
+    dreq: Pin<Input<Floating>>,
+    xcs: Pin<Output<PushPull>>,
+    xdcs: Pin<Output<PushPull>>,
+    mut ppi0: Ppi0,
+    gpiote: Gpiote,
+    spim3: &SPIM3,
+) -> (CommandNode, DataNode) {
+    let ch0 = gpiote.channel0();
+    let ch_ev = ch0.input_pin(&dreq);
+    ch_ev.none();
+
+    let ch1 = gpiote.channel1();
+    let ch_ev = ch1.input_pin(&dreq);
+    ch_ev.lo_to_hi().enable_interrupt();
+
+    ppi0.set_event_endpoint(ch0.event());
+    ppi0.set_task_endpoint(&spim3.tasks_stop);
+    ppi0.disable();
+
+    let dreq_pin = dreq.pin();
+
+    (
+        CommandNode {
+            cs: xcs,
+            dreq: BadInputPin {
+                dreq_port: dreq.port(),
+                dreq_pin,
+            },
+        },
+        DataNode {
+            cs: xdcs,
+            dreq: BadInputPin {
+                dreq_port: dreq.port(),
+                dreq_pin,
+            },
+        },
+    )
+}
+
+pub struct CommandNode {
+    cs: Pin<Output<PushPull>>,
+    dreq: BadInputPin,
+}
+
+pub struct DataNode {
+    cs: Pin<Output<PushPull>>,
+    dreq: BadInputPin,
+}
+
+pub struct BadInputPin {
+    dreq_port: Port,
+    dreq_pin: u8,
+}
+
+impl BadInputPin {
+    fn pin_high(&mut self) -> bool {
+        let port = unsafe {
+            &*match self.dreq_port {
+                Port::Port0 => P0::ptr(),
+                Port::Port1 => P1::ptr(),
+            }
+        };
+        if self.dreq_pin >= 32 {
+            return false;
+        }
+        (port.in_.read().bits() & (1 << self.dreq_pin as u32)) != 0
+    }
+}
+
+impl SpimNode for CommandNode {
+    fn set_active(&mut self) {
+        self.cs.set_low().ok();
+        let gpiote = unsafe { &*GPIOTE::ptr() };
+        // hi-to-lo, used for shortcut
+        gpiote.config[0].modify(|_r, w| w.polarity().hi_to_lo());
+
+        // Enable hi-to-lo -> stop shortcut
+        let ppi = unsafe { &*PPI::ptr() };
+        ppi.chenset.write(|w| unsafe { w.bits(1 << 0) });
+    }
+
+    fn set_inactive(&mut self) {
+        self.cs.set_high().ok();
+
+        // Disable hi-to-lo -> stop shortcut
+        let ppi = unsafe { &*PPI::ptr() };
+        ppi.chenclr.write(|w| unsafe { w.bits(1 << 0) });
+
+        let gpiote = unsafe { &*GPIOTE::ptr() };
+        gpiote.config[0].modify(|_r, w| w.polarity().none());
+    }
+
+    fn is_ready(&mut self) -> bool {
+        self.dreq.pin_high()
+    }
+}
+
+impl SpimNode for DataNode {
+    fn set_active(&mut self) {
+        self.cs.set_low().ok();
+        let gpiote = unsafe { &*GPIOTE::ptr() };
+        // hi-to-lo, used for shortcut
+        gpiote.config[0].modify(|_r, w| w.polarity().hi_to_lo());
+
+        // Enable hi-to-lo -> stop shortcut
+        let ppi = unsafe { &*PPI::ptr() };
+        ppi.chenset.write(|w| unsafe { w.bits(1 << 0) });
+    }
+
+    fn set_inactive(&mut self) {
+        self.cs.set_high().ok();
+
+        // Disable hi-to-lo -> stop shortcut
+        let ppi = unsafe { &*PPI::ptr() };
+        ppi.chenclr.write(|w| unsafe { w.bits(1 << 0) });
+
+        let gpiote = unsafe { &*GPIOTE::ptr() };
+        gpiote.config[0].modify(|_r, w| w.polarity().none());
+    }
+
+    fn is_ready(&mut self) -> bool {
+        self.dreq.pin_high()
+    }
 }
