@@ -1,15 +1,27 @@
-use nrf52840_hal::{pac::SPIM0, spim::Frequency};
+use crate::{
+    alloc::HeapGuard,
+    future_box::{FutureBoxExHdl, FutureBoxPendHdl, Source},
+    traits::{OutputPin, SpiTransactionKind, SpiHandle, SpiTransaction, Spi, SpimNode},
+};
+use core::{
+    iter::repeat_with,
+    sync::atomic::{compiler_fence, Ordering},
+};
 
-use crate::alloc::{HeapArray, HeapGuard};
-use crate::future_box::{FutureBoxExHdl, FutureBoxPendHdl, Source};
-use crate::traits::OutputPin;
+use embedded_hal::spi::{Mode, MODE_0, MODE_1, MODE_2};
 use heapless::{Deque, LinearMap};
+use nrf52840_hal::{
+    gpio::{Floating, Input, Output, Pin, PushPull},
+    pac::SPIM0,
+    spim::Frequency,
+    target_constants::{EASY_DMA_SIZE, SRAM_LOWER, SRAM_UPPER},
+};
 
 enum State {
     Idle,
 
     // The data is at the front of vdq.
-    Transferring { hdl: SpimHandle },
+    Transferring { hdl: SpiHandle },
 }
 
 struct SpimInner {
@@ -17,45 +29,19 @@ struct SpimInner {
 }
 
 struct InProgress {
-    data: FutureBoxExHdl<SendTransaction>,
+    data: FutureBoxExHdl<SpiTransaction>,
     start_offset: usize,
-}
-
-pub trait SpimNode: Send {
-    /// Set the node active. This should set any chip selects
-    /// necessary, and enable any additional behavior, such as an interrupt
-    /// or other event that would stop a transfer early, such as a "BUSY"
-    /// pin going high.
-    fn set_active(&mut self);
-
-    /// Set the node inactive. This should clear any chip selects necessary,
-    /// and disable any additional behavior as described in `set_active`.
-    fn set_inactive(&mut self);
-
-    /// This should be used to tell the Spim device whether a new transfer
-    /// should be started. If your device is always ready, you do not need
-    /// to implement this method. If your device has some kind of "BUSY"
-    /// pin or similar that should be respected, you should override this
-    /// method with necessary handling.
-    fn is_ready(&mut self) -> bool {
-        true
-    }
-}
-
-#[derive(PartialEq, Eq, Copy, Clone)]
-pub struct SpimHandle {
-    idx: u8,
 }
 
 pub struct Node {
     node: &'static mut dyn SpimNode,
     vdq: Deque<InProgress, 8>,
-    waiting: Deque<FutureBoxPendHdl<SendTransaction>, 8>,
+    waiting: Deque<FutureBoxPendHdl<SpiTransaction>, 8>,
 }
 
 pub struct Spim {
     spi: SpimInner,
-    nodes: LinearMap<SpimHandle, Node, 4>,
+    nodes: LinearMap<SpiHandle, Node, 4>,
     state: State,
     cur_idx: u8,
 }
@@ -76,18 +62,40 @@ impl Spim {
             cur_idx: 0,
         }
     }
+}
 
-    pub fn register_handle(
+pub fn new_send_fut(
+    heap: &mut HeapGuard,
+    hdl: SpiHandle,
+    speed_khz: u32,
+    count: usize,
+) -> Result<FutureBoxExHdl<SpiTransaction>, ()> {
+    let data = heap.alloc_box_array(0u8, count)?;
+    FutureBoxExHdl::new_exclusive(
+        heap,
+        SpiTransaction {
+            kind: SpiTransactionKind::Send,
+            data,
+            hdl,
+            speed_khz,
+        },
+        Source::Kernel,
+    )
+    .map_err(drop)
+}
+
+impl Spi for Spim {
+    fn register_handle(
         &mut self,
         node: &'static mut dyn SpimNode,
-    ) -> Result<SpimHandle, &'static mut dyn SpimNode> {
+    ) -> Result<SpiHandle, &'static mut dyn SpimNode> {
         if self.nodes.len() == self.nodes.capacity() {
             return Err(node);
         }
 
         Ok(loop {
             self.cur_idx = self.cur_idx.wrapping_add(1);
-            let new_hdl = SpimHandle { idx: self.cur_idx };
+            let new_hdl = SpiHandle { idx: self.cur_idx };
             if !self.nodes.contains_key(&new_hdl) {
                 let node = Node {
                     node,
@@ -100,41 +108,39 @@ impl Spim {
             }
         })
     }
-}
 
-pub struct SendTransaction {
-    pub data: HeapArray<u8>,
-    pub hdl: SpimHandle,
-    pub speed_khz: u32,
-}
+    fn alloc_transaction(
+        &mut self,
+        heap: &mut HeapGuard,
+        kind: SpiTransactionKind,
+        hdl: SpiHandle,
+        speed_khz: u32,
+        count: usize,
+    ) -> Option<FutureBoxExHdl<SpiTransaction>> {
+        self.alloc_transaction(heap, kind, hdl, speed_khz, count)
+    }
 
-pub fn new_send_fut(
-    heap: &mut HeapGuard,
-    hdl: SpimHandle,
-    speed_khz: u32,
-    count: usize,
-) -> Result<FutureBoxExHdl<SendTransaction>, ()> {
-    let data = heap.alloc_box_array(0u8, count)?;
-    FutureBoxExHdl::new_exclusive(
-        heap,
-        SendTransaction {
-            data,
-            hdl,
-            speed_khz,
-        },
-        Source::Kernel,
-    )
-    .map_err(drop)
+    fn start_send(&mut self) {
+        self.start_send()
+    }
+
+    fn end_send(&mut self) {
+        self.end_send()
+    }
 }
 
 impl Spim {
-    pub fn alloc_send(
+    pub fn alloc_transaction(
         &mut self,
         heap: &mut HeapGuard,
-        hdl: SpimHandle,
+        kind: SpiTransactionKind,
+        hdl: SpiHandle,
         speed_khz: u32,
         count: usize,
-    ) -> Option<FutureBoxExHdl<SendTransaction>> {
+    ) -> Option<FutureBoxExHdl<SpiTransaction>> {
+        // TODO
+        let SpiTransactionKind::Send = kind;
+
         let handle = match self.nodes.get_mut(&hdl) {
             Some(h) => h,
             None => return None,
@@ -146,7 +152,8 @@ impl Spim {
         let data = heap.alloc_box_array(0u8, count).ok()?;
         let fut = FutureBoxExHdl::new_exclusive(
             heap,
-            SendTransaction {
+            SpiTransaction {
+                kind: SpiTransactionKind::Send,
                 data,
                 hdl,
                 speed_khz,
@@ -163,8 +170,8 @@ impl Spim {
 
     pub fn send(
         &mut self,
-        st: FutureBoxExHdl<SendTransaction>,
-    ) -> Result<FutureBoxPendHdl<SendTransaction>, FutureBoxExHdl<SendTransaction>> {
+        st: FutureBoxExHdl<SpiTransaction>,
+    ) -> Result<FutureBoxPendHdl<SpiTransaction>, FutureBoxExHdl<SpiTransaction>> {
         // Does this node exist?
         let handle = match self.nodes.get_mut(&st.hdl) {
             Some(h) => h,
@@ -245,6 +252,9 @@ impl Spim {
             None => return,
         };
 
+        // TODO: This only handles Send transactions! This is a static assert basically, for now
+        let SpiTransactionKind::Send = data.data.kind;
+
         let rx_data = DmaSlice::null();
         let tx_data = if data.data.data.len() > data.start_offset {
             let sl = &data.data.data[data.start_offset..];
@@ -253,7 +263,7 @@ impl Spim {
             return;
         };
 
-        // defmt::println!("[SPI] START {=u8}", data.data.csn);
+        defmt::println!("[SPI] START");
 
         self.spi.change_speed(data.data.speed_khz).unwrap();
         handle.node.set_active();
@@ -301,6 +311,9 @@ impl Spim {
             }
         };
 
+        // TODO: This only handles Send transactions! This is a static assert basically, for now
+        let SpiTransactionKind::Send = wip.data.kind;
+
         match self.spi.do_spi_dma_transfer_end() {
             Ok((tx_len, _rx_len)) => {
                 handle.node.set_inactive();
@@ -311,10 +324,10 @@ impl Spim {
                 if (txul + wip.start_offset) == wip.data.data.len() {
                     // We are done! Yay! Start the next item and mark the previous as complete
                     wip.data.release_to_complete();
-                    // defmt::println!("[SPI] STOP");
+                    defmt::println!("[SPI] STOP");
                     self.start_send();
                 } else {
-                    // defmt::println!("[SPI] PAUSE {=usize}", txul);
+                    defmt::println!("[SPI] PAUSE {=usize}", txul);
                     // Uh oh! We stopped early. Assume that was for a reason, and don't autostart.
                     wip.start_offset += txul;
 
@@ -329,17 +342,6 @@ impl Spim {
         }
     }
 }
-
-use core::iter::repeat_with;
-use core::sync::atomic::Ordering;
-use core::sync::atomic::{compiler_fence, Ordering::SeqCst};
-
-pub use embedded_hal::spi::{Mode, Phase, Polarity, MODE_0, MODE_1, MODE_2, MODE_3};
-
-// use core::iter::repeat_with;
-
-use nrf52840_hal::gpio::{Floating, Input, Output, Pin, PushPull};
-use nrf52840_hal::target_constants::{EASY_DMA_SIZE, SRAM_LOWER, SRAM_UPPER};
 
 /// Does this slice reside entirely within RAM?
 #[allow(dead_code)]
@@ -470,7 +472,7 @@ impl SpimInner {
         // Conservative compiler fence to prevent optimizations that do not
         // take in to account actions by DMA. The fence has been placed here,
         // before any DMA action has started.
-        compiler_fence(SeqCst);
+        compiler_fence(Ordering::SeqCst);
 
         // Set up the DMA write.
         self.periph
@@ -503,7 +505,7 @@ impl SpimInner {
         // Conservative compiler fence to prevent optimizations that do not
         // take in to account actions by DMA. The fence has been placed here,
         // after all possible DMA actions have completed.
-        compiler_fence(SeqCst);
+        compiler_fence(Ordering::SeqCst);
     }
 
     fn clear_events(&mut self) -> (bool, bool) {
@@ -534,7 +536,7 @@ impl SpimInner {
         // Conservative compiler fence to prevent optimizations that do not
         // take in to account actions by DMA. The fence has been placed here,
         // after all possible DMA actions have completed.
-        compiler_fence(SeqCst);
+        compiler_fence(Ordering::SeqCst);
 
         let tx_done = self.periph.txd.amount.read().bits();
         let rx_done = self.periph.rxd.amount.read().bits();
@@ -553,6 +555,7 @@ impl SpimInner {
     ///
     /// If `tx_buffer.len() != rx_buffer.len()`, the transaction will stop at the
     /// smaller of either buffer.
+    #[allow(dead_code)]
     pub fn transfer_split_even(
         &mut self,
         chip_select: &mut dyn OutputPin,
@@ -591,6 +594,7 @@ impl SpimInner {
     /// it is allowed to perform transactions where `tx_buffer.len() != rx_buffer.len()`.
     /// If this occurs, extra incoming bytes will be discarded, OR extra outgoing bytes
     /// will be filled with the `orc` value.
+    #[allow(dead_code)]
     pub fn transfer_split_uneven(
         &mut self,
         chip_select: &mut dyn OutputPin,
@@ -648,6 +652,7 @@ impl SpimInner {
     /// This method uses the provided chip select pin to initiate the
     /// transaction, then transmits all bytes in `tx_buffer`. All incoming
     /// bytes are discarded.
+    #[allow(dead_code)]
     pub fn write(
         &mut self,
         chip_select: &mut dyn OutputPin,
@@ -657,6 +662,7 @@ impl SpimInner {
         self.transfer_split_uneven(chip_select, tx_buffer, &mut [0u8; 0])
     }
 
+    #[allow(dead_code)]
     fn change_orc(&mut self, orc: u8) {
         self.periph.orc.write(|w| unsafe { w.orc().bits(orc) });
     }

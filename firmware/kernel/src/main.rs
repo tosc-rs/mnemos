@@ -1,6 +1,50 @@
 #![no_main]
 #![no_std]
 
+use core::arch::asm;
+use cortex_m::{
+    asm::isb,
+    register::{control, psp},
+    singleton,
+};
+use defmt::unwrap;
+use groundhog::RollingTimer;
+use groundhog_nrf52::GlobalRollingTimer;
+
+#[allow(unused_imports)]
+use kernel::{
+    alloc::{HeapGuard, HEAP},
+    drivers::{
+        gd25q16::Gd25q16,
+        nrf52_spim_nonblocking::{new_send_fut, Spim},
+        usb_serial::{enable_usb_interrupts, setup_usb_uart, UsbUartIsr, UsbUartParts},
+        vs1053b::Vs1053b,
+    },
+    loader::validate_header,
+    map_pins,
+    monotonic::MonoTimer,
+    qspi::{Qspi, QspiPins},
+    syscall::{syscall_clear, try_recv_syscall},
+    traits::{BlockStorage, Machine, Serial, SpiHandle, SpiTransactionKind, SpimNode, Spi, PcmSink},
+    MAGIC_BOOT,
+};
+use nrf52840_hal::{
+    clocks::{ExternalOscillator, Internal, LfOscStopped},
+    gpio::{Floating, Input, Level, Output, Pin, Port, PushPull},
+    gpiote::Gpiote,
+    pac::{GPIOTE, P0, P1, PPI, SPIM0, TIMER0},
+    ppi::{ConfigurablePpi, Parts, Ppi, Ppi0},
+    prelude::OutputPin,
+    rng::Rng,
+    usbd::{UsbPeripheral, Usbd},
+    Clocks,
+};
+use usb_device::{
+    class_prelude::UsbBusAllocator,
+    device::{UsbDeviceBuilder, UsbVidPid},
+};
+use usbd_serial::{SerialPort, USB_CLASS_CDC};
+
 static DEFAULT_IMAGE: &[u8] = include_bytes!("../appbins/blinker.bin");
 
 const SINE_TABLE: [i16; 256] = [
@@ -28,55 +72,23 @@ const SINE_TABLE: [i16; 256] = [
 
 #[rtic::app(device = nrf52840_hal::pac, dispatchers = [SWI0_EGU0])]
 mod app {
-    use super::{letsago, DEFAULT_IMAGE};
-    use core::sync::atomic::Ordering;
-    use cortex_m::singleton;
-    use defmt::unwrap;
-    use groundhog::RollingTimer;
-    use groundhog_nrf52::GlobalRollingTimer;
-    use kernel::{
-        alloc::HEAP,
-        drivers::{
-            nrf52_pin::MPin,
-            nrf52_spim_nonblocking::SpimHandle,
-            usb_serial::{enable_usb_interrupts, setup_usb_uart, UsbUartIsr, UsbUartParts},
-        },
-        loader::validate_header,
-        monotonic::MonoTimer,
-        syscall::{syscall_clear, try_recv_syscall},
-        traits::{BlockStorage, GpioPin},
-    };
-    use nrf52840_hal::{
-        clocks::{ExternalOscillator, Internal, LfOscStopped},
-        gpio::Level,
-        pac::{GPIOTE, TIMER0},
-        ppi::ConfigurablePpi,
-        prelude::Ppi,
-        usbd::{UsbPeripheral, Usbd},
-        Clocks,
-    };
-    use usb_device::{
-        class_prelude::UsbBusAllocator,
-        device::{UsbDeviceBuilder, UsbVidPid},
-    };
-    use usbd_serial::{SerialPort, USB_CLASS_CDC};
+    use super::*;
 
     #[monotonic(binds = TIMER0, default = true)]
     type Monotonic = MonoTimer<TIMER0>;
 
     #[shared]
     struct Shared {
-        spi: kernel::drivers::nrf52_spim_nonblocking::Spim,
-        heap: kernel::alloc::HeapGuard,
+        heap: HeapGuard,
+        machine: Machine,
     }
 
     #[local]
     struct Local {
         usb_isr: UsbUartIsr,
-        machine: kernel::traits::Machine,
-        rng: nrf52840_hal::Rng,
-        cmd_hdl: SpimHandle,
-        data_hdl: SpimHandle,
+        rng: Rng,
+        cmd_hdl: SpiHandle,
+        data_hdl: SpiHandle,
         // prog_loaded: Option<(*const u8, usize)>,
     }
 
@@ -92,7 +104,7 @@ mod app {
 
         // Enable instruction caches for MAXIMUM SPEED
         device.NVMC.icachecnf.write(|w| w.cacheen().set_bit());
-        cortex_m::asm::isb();
+        isb();
 
         // Configure the monotonic timer, currently using TIMER0, a 32-bit, 1MHz timer
         let mono = Monotonic::new(device.TIMER0);
@@ -100,7 +112,7 @@ mod app {
         // I am annoying, and prefer my own libraries.
         GlobalRollingTimer::init(device.TIMER1);
 
-        let rng = nrf52840_hal::Rng::new(device.RNG);
+        let rng = Rng::new(device.RNG);
 
         // Setup the heap
         let mut heap_guard = HEAP.init_exclusive().unwrap();
@@ -132,8 +144,8 @@ mod app {
 
         let UsbUartParts { isr, sys } = defmt::unwrap!(setup_usb_uart(usb_dev, usb_serial));
 
-        let pins = kernel::map_pins(device.P0, device.P1);
-        let qsp = kernel::qspi::QspiPins {
+        let pins = map_pins(device.P0, device.P1);
+        let qsp = QspiPins {
             qspi_copi_io0: pins.qspi_d0.degrade(),
             qspi_cipo_io1: pins.qspi_d1.degrade(),
             qspi_io2: pins.qspi_d2.degrade(),
@@ -141,13 +153,10 @@ mod app {
             qspi_csn: pins.qspi_csn.degrade(),
             qspi_sck: pins.qspi_sck.degrade(),
         };
-        let qspi = kernel::qspi::Qspi::new(device.QSPI, qsp);
-        let mut block = defmt::unwrap!(kernel::drivers::gd25q16::Gd25q16::new(
-            qspi,
-            &mut heap_guard
-        ));
+        let qspi = Qspi::new(device.QSPI, qsp);
+        let mut block = defmt::unwrap!(Gd25q16::new(qspi, &mut heap_guard));
 
-        let prog_loaded = if let Some(blk) = kernel::MAGIC_BOOT.read_clear() {
+        let prog_loaded = if let Some(blk) = MAGIC_BOOT.read_clear() {
             unsafe {
                 extern "C" {
                     static _app_start: u32;
@@ -162,9 +171,9 @@ mod app {
             None
         };
 
-        let to_uart: &'static mut dyn kernel::traits::Serial =
+        let to_uart: &'static mut dyn Serial =
             defmt::unwrap!(heap_guard.leak_send(sys).map_err(drop));
-        let to_block: &'static mut dyn kernel::traits::BlockStorage =
+        let to_block: &'static mut dyn BlockStorage =
             defmt::unwrap!(heap_guard.leak_send(block).map_err(drop));
 
         //
@@ -180,20 +189,18 @@ mod app {
         let data_pin = d06;
         let dreq = d05;
 
-        let gpiote = nrf52840_hal::gpiote::Gpiote::new(device.GPIOTE);
-        let ppi = nrf52840_hal::ppi::Parts::new(device.PPI);
+        let gpiote = Gpiote::new(device.GPIOTE);
+        let ppi = Parts::new(device.PPI);
         let ppi0 = ppi.ppi0;
         let (cmd_node, data_node) =
             crate::make_nodes(dreq, command_pin, data_pin, ppi0, gpiote, &device.SPIM0);
-
-        use kernel::drivers::nrf52_spim_nonblocking::SpimNode;
 
         let cmd_node: &'static mut dyn SpimNode =
             heap_guard.leak_send(cmd_node).map_err(drop).unwrap();
         let data_node: &'static mut dyn SpimNode =
             heap_guard.leak_send(data_node).map_err(drop).unwrap();
 
-        let mut spi = kernel::drivers::nrf52_spim_nonblocking::Spim::new(
+        let spi = Spim::new(
             device.SPIM0,
             kernel::drivers::nrf52_spim_nonblocking::Pins {
                 sck: pins.sclk.into_push_pull_output(Level::Low).degrade(),
@@ -202,25 +209,31 @@ mod app {
             },
             embedded_hal::spi::MODE_0,
         );
+
+        let spi: &'static mut dyn Spi = heap_guard.leak_send(spi).map_err(drop).unwrap();
+
         let cmd_hdl = spi.register_handle(cmd_node).map_err(drop).unwrap();
         let data_hdl = spi.register_handle(data_node).map_err(drop).unwrap();
 
-        let machine = kernel::traits::Machine {
+        let vs1053b = Vs1053b::from_handles(cmd_hdl, data_hdl);
+        let vs1053b: &'static mut dyn PcmSink = heap_guard.leak_send(vs1053b).map_err(drop).unwrap();
+
+
+        let machine = Machine {
             serial: to_uart,
             block_storage: Some(to_block),
-            // spi: Some(spi),
-            spi: None,
+            spi: Some(spi),
+            pcm: Some(vs1053b),
             gpios: &mut [],
         };
 
         (
             Shared {
-                spi,
                 heap: heap_guard,
+                machine,
             },
             Local {
                 usb_isr: isr,
-                machine,
                 rng,
                 cmd_hdl,
                 data_hdl,
@@ -241,7 +254,7 @@ mod app {
     //     }
     // }
 
-    #[task(binds = GPIOTE, shared = [spi], priority = 2)]
+    #[task(binds = GPIOTE, shared = [machine], priority = 2)]
     fn gpiote(mut cx: gpiote::Context) {
         // TODO: NOT this
         let gpiote = unsafe { &*GPIOTE::ptr() };
@@ -249,12 +262,12 @@ mod app {
         // Clear channel 1 events
         gpiote.events_in[1].write(|w| w);
 
-        cx.shared.spi.lock(|spi| {
-            spi.start_send();
+        cx.shared.machine.lock(|machine| {
+            machine.spi.as_mut().map(|spi| spi.start_send());
         })
     }
 
-    #[task(binds = SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0, shared = [spi], priority = 2)]
+    #[task(binds = SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0, shared = [machine], priority = 2)]
     fn spim0(mut cx: spim0::Context) {
         // TODO: NOT this
         let gpiote = unsafe { &*GPIOTE::ptr() };
@@ -264,8 +277,8 @@ mod app {
 
         // defmt::println!("[INT]: SPIM0");
 
-        cx.shared.spi.lock(|spi| {
-            spi.end_send();
+        cx.shared.machine.lock(|machine| {
+            machine.spi.as_mut().map(|spi| spi.end_send());
         })
     }
 
@@ -279,10 +292,8 @@ mod app {
     // to the SWI handler, and idle will basically just launch a program. I think.
     // Maybe idle will use SWIs too.
     // #[idle(local = [prog_loaded])]
-    #[idle(local = [machine, rng, cmd_hdl, data_hdl], shared = [spi, heap])]
+    #[idle(local = [rng, cmd_hdl, data_hdl], shared = [heap, machine])]
     fn idle(mut cx: idle::Context) -> ! {
-        use common::syscall::request::GpioMode;
-
         let freq = cx.local.rng.random_u8();
         let freq = (freq as f32) + 256.0;
 
@@ -294,98 +305,6 @@ mod app {
         // Wait, to allow RTT to attach
         while timer.millis_since(start) < 1000 {}
 
-        const DATA_SPEED_KHZ: u32 = 2_000;
-
-        // let spi = machine.spi.as_mut().unwrap();
-
-        // SCI command goes:
-        // Operation: 1 byte
-        //     * Read:  0x03
-        //     * Write: 0x02
-        // Address: 1 byte
-        // Data: 2 bytes
-
-        // SOFT RESET
-        use kernel::drivers::nrf52_spim_nonblocking::new_send_fut;
-        use kernel::drivers::nrf52_spim_nonblocking::SendTransaction;
-
-        let tx = cx.shared.heap.lock(|heap| {
-            let mut tx = new_send_fut(heap, *cx.local.cmd_hdl, 1_000, 4).unwrap();
-            tx.data.copy_from_slice(&[
-                0x02, // Write
-                0x00, // MODE
-                0x48, 0x04,
-            ]);
-            tx
-        });
-
-        cx.shared
-            .spi
-            .lock(|spi| spi.send(tx).map_err(drop).unwrap());
-
-        // Wait "a couple hundred cycles", I dunno, 5ms?
-        let delay = timer.get_ticks();
-        while timer.millis_since(delay) < 5 {}
-
-        // Set CLOCKF register (0x03)
-        // 10.2 recommend a value of 9800, meaning
-        // 100 - 11 - 00000000000
-        //   XTALIx3.5 (Mult)
-        //   XTALIx1.5 (Max boost)
-        //   Freq = 0 (12.288MHz)
-        let tx = cx.shared.heap.lock(|heap| {
-            let mut tx = new_send_fut(heap, *cx.local.cmd_hdl, 1_000, 4).unwrap();
-            tx.data.copy_from_slice(&[
-                0x02, // Write
-                0x03, // CLOCKF
-                0x98, 0x00,
-            ]);
-            tx
-        });
-
-        cx.shared
-            .spi
-            .lock(|spi| spi.send(tx).map_err(drop).unwrap());
-
-        // Wait "a couple hundred cycles", I dunno, 5ms?
-        let delay = timer.get_ticks();
-        while timer.millis_since(delay) < 5 {}
-
-        // One bit every 4 CLKI pulses.
-        // Since we've increased the clock rate to
-        // 3.5xXTALI (~43MHz), that gives us a max SPI
-        // clock rate of ~10.75MHz. Use 8MHz.
-
-        // Before decoding, set
-        // * SCI_MODE
-        // * SCI_BASS
-        // * SCI_CLOCKF (done)
-        // * SCI_VOL
-
-        // Probably skip the others, but probably set volume to like 0x2424,
-        // which means -18.0dB in each ear.
-        let tx = cx.shared.heap.lock(|heap| {
-            let mut tx = new_send_fut(heap, *cx.local.cmd_hdl, 1_000, 4).unwrap();
-            tx.data.copy_from_slice(&[
-                0x02, // Write
-                0x0B, // VOLUME
-                0x24, 0x24,
-            ]);
-            tx
-        });
-
-        cx.shared
-            .spi
-            .lock(|spi| spi.send(tx).map_err(drop).unwrap());
-
-        // Wait "a couple hundred cycles", I dunno, 5ms?
-        let delay = timer.get_ticks();
-        while timer.millis_since(delay) < 5 {}
-
-        defmt::println!("Generating data...");
-        core::sync::atomic::compiler_fence(Ordering::SeqCst);
-        let t0 = timer.get_ticks();
-
         let samp_per_cyc: f32 = 44100.0 / freq; // 141.7
         let fincr = 256.0 / samp_per_cyc; // 1.81
         let mut incr: i32 = (((1 << 24) as f32) * fincr) as i32;
@@ -393,44 +312,24 @@ mod app {
         // generate the next 256 samples...
         let mut cur_offset = 0i32;
 
-        core::sync::atomic::compiler_fence(Ordering::SeqCst);
-        let elapsed = timer.ticks_since(t0);
-        defmt::println!("Took {=u32} ticks", elapsed);
-
-        // Example: A 44100 Hz 16-bit stereo PCM header would read as follows:
-        // 0000 52 49 46 46 ff ff ff ff 57 41 56 45 66 6d 74 20 |RIFF....WAVEfmt |
-        // 0100 10 00 00 00 01 00 02 00 44 ac 00 00 10 b1 02 00 |........D.......|
-        // 0200 04 00 10 00 64 61 74 61 ff ff ff ff             |....data....|
-        let tx = cx.shared.heap.lock(|heap| {
-            let mut tx = new_send_fut(heap, *cx.local.data_hdl, DATA_SPEED_KHZ, 44).unwrap();
-            tx.data.copy_from_slice(&[
-                0x52, 0x49, 0x46, 0x46, 0xff, 0xff, 0xff, 0xff, 0x57, 0x41, 0x56, 0x45, 0x66, 0x6d,
-                0x74, 0x20, 0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x02, 0x00, 0x44, 0xac, 0x00, 0x00,
-                0x10, 0xb1, 0x02, 0x00, 0x04, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61, 0xff, 0xff,
-                0xff, 0xff,
-            ]);
-            tx
-        });
-        cx.shared
-            .spi
-            .lock(|spi| spi.send(tx).map_err(drop).unwrap());
-
-        // Send the first data immediately
-        let mut tx = cx
-            .shared
-            .heap
-            .lock(|heap| new_send_fut(heap, *cx.local.data_hdl, DATA_SPEED_KHZ, 2048).unwrap());
-        super::fill_sample_buf(&mut tx.data, incr, &mut cur_offset);
-        cx.shared
-            .spi
-            .lock(|spi| spi.send(tx))
-            .map_err(drop)
-            .unwrap();
-
         let mut last_change = timer.get_ticks();
-
         let mut ttl_timer_sec = timer.get_ticks();
         let mut idl_timer_sec = 0u32;
+
+        let machine = &mut cx.shared.machine;
+        let heap = &mut cx.shared.heap;
+
+        defmt::println!("Enabling...");
+        (machine, heap).lock(|machine, heap| {
+            let Machine { spi, pcm, .. } = machine;
+
+            if let (Some(spi), Some(pcm)) = (spi, pcm) {
+                pcm.enable(heap, &mut **spi).unwrap();
+            } else {
+                panic!()
+            }
+        });
+        defmt::println!("Enabled!");
 
         let mut iters = 0;
         while iters < 10_000 {
@@ -446,17 +345,25 @@ mod app {
 
             if timer.millis_since(last_change) > 250 {
                 last_change = timer.get_ticks();
-                incr = super::new_freq_incr(cx.local.rng);
+                incr = new_freq_incr(cx.local.rng);
             }
 
-            let spi = &mut cx.shared.spi;
+            let machine = &mut cx.shared.machine;
             let heap = &mut cx.shared.heap;
 
-            if let Some(mut buf) =
-                (spi, heap).lock(|spi, heap| spi.alloc_send(heap, *cx.local.data_hdl, DATA_SPEED_KHZ, 2048))
-            {
-                super::fill_sample_buf(&mut buf.data, incr, &mut cur_offset);
-                buf.release_to_kernel();
+            let tx = (machine, heap).lock(|machine, heap| {
+                let Machine { spi, pcm, .. } = machine;
+
+                if let (Some(spi), Some(pcm)) = (spi, pcm) {
+                    pcm.allocate_stereo_samples(heap, &mut **spi, 512)
+                } else {
+                    None
+                }
+            });
+
+            if let Some(mut tx) = tx {
+                fill_sample_buf(&mut tx.data, incr, &mut cur_offset);
+                tx.release_to_kernel();
                 iters += 1;
             } else {
                 let start = timer.get_ticks();
@@ -479,17 +386,6 @@ fn new_freq_incr(rng: &mut Rng) -> i32 {
     let incr = (((1 << 24) as f32) * fincr) as i32;
     incr
 }
-
-use core::arch::asm;
-use cortex_m::register::{control, psp};
-use nrf52840_hal::{
-    gpio::{Floating, Input, Output, Pin, PushPull},
-    gpiote::Gpiote,
-    pac::{GPIOTE, P0, P1, PPI, SPIM0},
-    ppi::{ConfigurablePpi, Ppi, Ppi0},
-    prelude::OutputPin,
-    Rng,
-};
 
 #[inline(always)]
 unsafe fn letsago(sp: u32, entry: u32) -> ! {
@@ -547,9 +443,6 @@ pub fn fill_sample_buf(data: &mut [u8], incr: i32, cur_offset: &mut i32) {
         *cur_offset = cur_offset.wrapping_add(incr);
     });
 }
-
-use kernel::drivers::nrf52_spim_nonblocking::SpimNode;
-use nrf52840_hal::gpio::Port;
 
 pub fn make_nodes(
     dreq: Pin<Input<Floating>>,

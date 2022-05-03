@@ -53,7 +53,6 @@ pub mod request {
         Time(TimeRequest),
         BlockStore(BlockRequest<'a>),
         System(SystemRequest),
-        Spi(SpiRequest<'a>),
         Gpio(GpioRequest),
     }
 
@@ -91,27 +90,6 @@ pub mod request {
                 GpioRequest::WriteOutput { pin, .. } => *pin,
             }
         }
-    }
-
-    #[derive(Serialize, Deserialize)]
-    pub enum SpiRequest<'a> {
-        Send {
-            csn: u8,
-            data_out: SysCallSlice<'a>,
-            speed_khz: u32,
-        },
-        Transfer {
-            csn: u8,
-            data_out: SysCallSlice<'a>,
-            data_in: SysCallSliceMut<'a>,
-            speed_khz: u32,
-        },
-        Read {
-            csn: u8,
-            dummy_byte: u8,
-            data_in: SysCallSliceMut<'a>,
-            speed_khz: u32,
-        },
     }
 
     /// Requests associated with system control.
@@ -190,7 +168,6 @@ pub mod success {
         Time(TimeSuccess),
         BlockStore(BlockSuccess<'a>),
         System(SystemSuccess),
-        Spi(SpiSuccess<'a>),
         Gpio(GpioSuccess),
     }
 

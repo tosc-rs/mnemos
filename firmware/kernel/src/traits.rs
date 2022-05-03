@@ -1,9 +1,9 @@
 use common::{
     syscall::request::SysCallRequest,
     syscall::{
-        request::{BlockRequest, GpioMode, GpioRequest, SpiRequest, SystemRequest},
+        request::{BlockRequest, GpioMode, GpioRequest, SystemRequest},
         success::{
-            BlockInfo, BlockSuccess, GpioSuccess, SpiSuccess, StoreInfo, SysCallSuccess,
+            BlockInfo, BlockSuccess, GpioSuccess, StoreInfo, SysCallSuccess,
             SystemSuccess, TimeSuccess,
         },
     },
@@ -16,7 +16,7 @@ use common::{
 use groundhog::RollingTimer;
 use groundhog_nrf52::GlobalRollingTimer;
 
-use crate::alloc::HeapGuard;
+use crate::{alloc::{HeapGuard, HeapArray}, future_box::FutureBoxExHdl};
 
 pub trait OutputPin: Send {
     fn set_pin(&mut self, is_high: bool);
@@ -28,22 +28,68 @@ pub trait GpioPin: Send {
     fn set_pin(&mut self, is_high: bool) -> Result<(), ()>;
 }
 
+pub struct SpiTransaction {
+    pub kind: SpiTransactionKind,
+    pub data: HeapArray<u8>,
+    pub hdl: SpiHandle,
+    pub speed_khz: u32,
+}
+
+pub enum SpiTransactionKind {
+    Send
+}
+
+#[derive(PartialEq, Eq, Copy, Clone)]
+pub struct SpiHandle {
+    pub(crate) idx: u8,
+}
+
+pub trait SpimNode: Send {
+    /// Set the node active. This should set any chip selects
+    /// necessary, and enable any additional behavior, such as an interrupt
+    /// or other event that would stop a transfer early, such as a "BUSY"
+    /// pin going high.
+    fn set_active(&mut self);
+
+    /// Set the node inactive. This should clear any chip selects necessary,
+    /// and disable any additional behavior as described in `set_active`.
+    fn set_inactive(&mut self);
+
+    /// This should be used to tell the Spim device whether a new transfer
+    /// should be started. If your device is always ready, you do not need
+    /// to implement this method. If your device has some kind of "BUSY"
+    /// pin or similar that should be respected, you should override this
+    /// method with necessary handling.
+    fn is_ready(&mut self) -> bool {
+        true
+    }
+}
+
+pub trait PcmSink: Send {
+    // TODO: Always assumes stereo 16-bit signed PCM audio, at 44100Hz sample rate
+    fn enable(&mut self, heap: &mut HeapGuard, spi: &mut dyn Spi) -> Result<(), ()>;
+    fn disable(&mut self, heap: &mut HeapGuard, spi: &mut dyn Spi) -> Result<(), ()>;
+    // TODO: This leaks the fact that we only support a SPI device... How do handle
+    // going from Future<PcmSamples> to Future<SpiTransaction>?
+    fn allocate_stereo_samples(&mut self, heap: &mut HeapGuard, spi: &mut dyn Spi, count: usize) -> Option<FutureBoxExHdl<SpiTransaction>>;
+}
+
 pub trait Spi: Send {
-    fn send<'a>(&mut self, csn: u8, speed_khz: u32, data_out: &'a [u8]) -> Result<(), ()>;
-    fn transfer<'a>(
+    fn register_handle(
         &mut self,
-        csn: u8,
-        speed_khz: u32,
-        data_out: &'a [u8],
-        data_in: &'a mut [u8],
-    ) -> Result<&'a mut [u8], ()>;
-    fn read<'a>(
+        node: &'static mut dyn SpimNode,
+    ) -> Result<SpiHandle, &'static mut dyn SpimNode>;
+
+    fn alloc_transaction(
         &mut self,
-        csn: u8,
+        heap: &mut HeapGuard,
+        kind: SpiTransactionKind,
+        hdl: SpiHandle,
         speed_khz: u32,
-        dummy_char: u8,
-        data_in: &'a mut [u8],
-    ) -> Result<&'a mut [u8], ()>;
+        count: usize,
+    ) -> Option<FutureBoxExHdl<SpiTransaction>>;
+    fn start_send(&mut self);
+    fn end_send(&mut self);
 }
 
 pub trait Serial: Send {
@@ -99,6 +145,7 @@ pub struct Machine {
     pub block_storage: Option<&'static mut dyn BlockStorage>,
     pub spi: Option<&'static mut dyn Spi>,
     pub gpios: &'static mut [&'static mut dyn GpioPin],
+    pub pcm: Option<&'static mut dyn PcmSink>,
 }
 
 impl Machine {
@@ -124,54 +171,9 @@ impl Machine {
                 let resp = self.handle_system_request(sr)?;
                 Ok(SysCallSuccess::System(resp))
             }
-            SysCallRequest::Spi(sr) => {
-                let resp = self.handle_spi_request(sr)?;
-                Ok(SysCallSuccess::Spi(resp))
-            }
             SysCallRequest::Gpio(gr) => {
                 let resp = self.handle_gpio_request(gr)?;
                 Ok(SysCallSuccess::Gpio(resp))
-            }
-        }
-    }
-
-    fn handle_spi_request<'a>(&mut self, sr: SpiRequest<'a>) -> Result<SpiSuccess<'a>, ()> {
-        let spi = self.spi.as_mut().ok_or(())?;
-
-        match sr {
-            SpiRequest::Send {
-                csn,
-                data_out,
-                speed_khz,
-            } => {
-                let buf = unsafe { data_out.to_slice() };
-                spi.send(csn, speed_khz, buf)?;
-                Ok(SpiSuccess::SendSuccess)
-            }
-            SpiRequest::Transfer {
-                csn,
-                data_out,
-                data_in,
-                speed_khz,
-            } => {
-                let buf_in = unsafe { data_in.to_slice_mut() };
-                let buf_out = unsafe { data_out.to_slice() };
-                let buf_in = spi.transfer(csn, speed_khz, buf_out, buf_in)?;
-                Ok(SpiSuccess::Transfer {
-                    data_in: buf_in.into(),
-                })
-            }
-            SpiRequest::Read {
-                csn,
-                dummy_byte,
-                data_in,
-                speed_khz,
-            } => {
-                let buf_in = unsafe { data_in.to_slice_mut() };
-                let buf_in = spi.read(csn, speed_khz, dummy_byte, buf_in)?;
-                Ok(SpiSuccess::Read {
-                    data_in: buf_in.into(),
-                })
             }
         }
     }

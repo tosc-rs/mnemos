@@ -14,7 +14,7 @@ use postcard::{from_bytes_cobs, to_slice_cobs};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    alloc::{HeapGuard, HEAP},
+    alloc::HeapGuard,
     qspi::{EraseLength, FlashChunk, Qspi},
     traits::BlockStorage,
 };
