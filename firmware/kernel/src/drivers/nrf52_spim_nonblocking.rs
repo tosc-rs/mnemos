@@ -263,7 +263,7 @@ impl Spim {
             return;
         };
 
-        defmt::println!("[SPI] START");
+        // defmt::println!("[SPI] START");
 
         self.spi.change_speed(data.data.speed_khz).unwrap();
         handle.node.set_active();
@@ -324,10 +324,10 @@ impl Spim {
                 if (txul + wip.start_offset) == wip.data.data.len() {
                     // We are done! Yay! Start the next item and mark the previous as complete
                     wip.data.release_to_complete();
-                    defmt::println!("[SPI] STOP");
+                    // defmt::println!("[SPI] STOP");
                     self.start_send();
                 } else {
-                    defmt::println!("[SPI] PAUSE {=usize}", txul);
+                    // defmt::println!("[SPI] PAUSE {=usize}", txul);
                     // Uh oh! We stopped early. Assume that was for a reason, and don't autostart.
                     wip.start_offset += txul;
 
