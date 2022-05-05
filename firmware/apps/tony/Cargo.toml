@@ -39,5 +39,5 @@ incremental = false
 # the bug results in log messages not having location information
 # (the line printed below the log message that contains the file-line location)
 lto = 'fat'
-opt-level = 's' # <-
+opt-level = 3 # <-
 overflow-checks = false # <-

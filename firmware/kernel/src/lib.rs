@@ -5,6 +5,8 @@ use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 use defmt_rtt as _; // global logger
 
+use groundhog::RollingTimer;
+use groundhog_nrf52::GlobalRollingTimer;
 use nrf52840_hal::{
     self,
     gpio::{
@@ -35,6 +37,10 @@ pub mod traits;
 fn panic() -> ! {
     cortex_m::asm::udf()
 }
+
+defmt::timestamp!("{=u32:us}", {
+    GlobalRollingTimer::default().get_ticks() as u32
+});
 
 /// Terminates the application and makes `probe-run` exit with exit-code = 0
 pub fn exit() -> ! {

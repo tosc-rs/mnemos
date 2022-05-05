@@ -468,6 +468,7 @@ pub fn make_nodes(
                 dreq_port: dreq.port(),
                 dreq_pin,
             },
+            last_low: None,
         },
     )
 }
@@ -480,6 +481,7 @@ pub struct CommandNode {
 pub struct DataNode {
     cs: Pin<Output<PushPull>>,
     dreq: BadInputPin,
+    last_low: Option<u32>,
 }
 
 pub struct BadInputPin {
@@ -554,6 +556,18 @@ impl SpimNode for DataNode {
     }
 
     fn is_ready(&mut self) -> bool {
-        self.dreq.pin_high()
+        let timer = GlobalRollingTimer::default();
+        if let Some(time) = self.last_low.take() {
+            if timer.millis_since(time) < 5 {
+                self.last_low = Some(time);
+                return false;
+            }
+        }
+
+        let ready = self.dreq.pin_high();
+        if !ready {
+            self.last_low = Some(timer.get_ticks());
+        }
+        ready
     }
 }

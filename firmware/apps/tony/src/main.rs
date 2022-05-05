@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use core::{sync::atomic::{Ordering, AtomicU32, fence, AtomicUsize}, arch::asm};
+use core::{sync::atomic::{Ordering, AtomicU32, fence, AtomicUsize}, arch::asm, ops::DerefMut};
 
 use userspace::common::porcelain::{
     pcm_sink as pcm,
@@ -15,30 +15,55 @@ mod scale;
 pub fn entry() -> ! {
     pcm::enable().ok();
 
-    let mut samps = 0;
-    let mut incr = new_freq_incr();
-    let mut cur_offset = 0;
+    let mut samps_a = 0;
+    let mut samps_b = 0;
+    let mut cur_offset_a = 0;
+    let mut cur_offset_b = 0;
+    let mut it1 = 0;
+    let mut it2 = 0;
+    let mut incr_a = new_freq_incr(&mut it1, 3);
+    let mut incr_b = new_freq_incr(&mut it2, 4);
+
+    let mut buf_a = [0i16; 512];
+    let mut buf_b = [0i16; 512];
+    fill_sample_buf(&mut buf_a, incr_a, &mut cur_offset_a);
+    fill_sample_buf(&mut buf_b, incr_b, &mut cur_offset_b);
 
     loop {
         if let Ok(mut samples) = pcm::alloc_samples(512) {
-            fill_sample_buf(&mut samples, incr, &mut cur_offset);
+            samples.deref_mut().chunks_exact_mut(4).zip(buf_a.iter().zip(buf_b.iter())).for_each(|(ch, (a, b))| {
+                let val = (*a >> 1).wrapping_add(*b >> 1);
+
+                let leb = val.to_le_bytes();
+                ch[0] = leb[0];
+                ch[1] = leb[1];
+                ch[2] = leb[0];
+                ch[3] = leb[1];
+            });
             // // loop {
             // //     time::sleep_micros(2_000_000).ok();
             // // }
             samples.send();
-            samps += 512;
+            samps_a += 512;
+            samps_b += 512;
+            fill_sample_buf(&mut buf_a, incr_a, &mut cur_offset_a);
+            fill_sample_buf(&mut buf_b, incr_b, &mut cur_offset_b);
         }
 
-        if samps >= (44100 / 2) {
-            samps = 0;
-            incr = new_freq_incr();
+        if samps_a >= (44100 / 2) {
+            samps_a = 0;
+            incr_a = new_freq_incr(&mut it1, 3);
+        }
+        if samps_b >= (88200 / 3) {
+            samps_b = 0;
+            incr_b = new_freq_incr(&mut it2, 4);
         }
     }
 }
 
 #[inline(always)]
-pub fn fill_sample_buf(data: &mut [u8], incr: i32, cur_offset: &mut i32) {
-    data.chunks_exact_mut(4).for_each(|ch| {
+pub fn fill_sample_buf(data: &mut [i16], incr: i32, cur_offset: &mut i32) {
+    data.iter_mut().for_each(|ch| {
         let val = (*cur_offset) as u32;
         let idx_now = ((val >> 24) & 0xFF) as u8;
         let idx_nxt = idx_now.wrapping_add(1);
@@ -54,23 +79,17 @@ pub fn fill_sample_buf(data: &mut [u8], incr: i32, cur_offset: &mut i32) {
         let ttl_val = ttl_val as i16;
 
         // Set the linearly interpolated value
-        let leb = ttl_val.to_le_bytes();
-        ch[0] = leb[0];
-        ch[1] = leb[1];
-        ch[2] = leb[0];
-        ch[3] = leb[1];
+        *ch = ttl_val;
 
         *cur_offset = cur_offset.wrapping_add(incr);
     });
 }
 
-fn new_freq_incr() -> i32 {
-    static FREQ: AtomicUsize = AtomicUsize::new(0);
-
-    let old = FREQ.fetch_add(1, Ordering::Relaxed);
+fn new_freq_incr(it: &mut usize, oct: u8) -> i32 {
+    *it = *it + 1;
     let cur_scale = scale::MAJOR_PENTATONIC_INTERVALS;
-    let semi = cur_scale[old % cur_scale.len()];
-    let cur_note = scale::Note { pitch: scale::Pitch::C, octave: 4 };
+    let semi = cur_scale[*it % cur_scale.len()];
+    let cur_note = scale::Note { pitch: scale::Pitch::C, octave: oct };
     let freq = (cur_note + semi).freq_f32();
 
     let samp_per_cyc: f32 = 44100.0 / freq; // 141.7
