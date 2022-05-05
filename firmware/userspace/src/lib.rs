@@ -15,8 +15,8 @@ extern "Rust" {
 #[doc(hidden)]
 pub static __ENTRY_POINT: unsafe fn() -> ! = entry;
 
+use core::fmt::Write;
 use core::panic::PanicInfo;
-use core::sync::atomic::{self, Ordering};
 
 // Provide a basic panic handler. In the future, this will probably
 // change to one or both of:
@@ -25,8 +25,19 @@ use core::sync::atomic::{self, Ordering};
 // * Attempt to print the panic to the stdout (e.g. serial port 0),
 //     then triggering a "halt" or "reboot" system call.
 #[panic_handler]
-fn panic(_info: &PanicInfo) -> ! {
-    loop {
-        atomic::compiler_fence(Ordering::SeqCst);
+fn panic(info: &PanicInfo) -> ! {
+    let mut sop = StdOut;
+    if let Some(location) = info.location() {
+        writeln!(&mut sop, "Panicked at {}", location).ok();
+    }
+    common::porcelain::system::panic()
+}
+
+pub struct StdOut;
+
+impl Write for StdOut {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        common::porcelain::serial::write_port(0, s.as_bytes()).ok();
+        Ok(())
     }
 }

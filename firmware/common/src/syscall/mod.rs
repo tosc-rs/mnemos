@@ -54,6 +54,7 @@ pub mod request {
         BlockStore(BlockRequest<'a>),
         System(SystemRequest),
         Gpio(GpioRequest),
+        PcmSink(PcmSinkRequest),
     }
 
     #[derive(Serialize, Deserialize)]
@@ -99,6 +100,12 @@ pub mod request {
             block: u32
         },
         Reset,
+        FreeFutureBox {
+            fb_ptr: u32,
+            payload_size: u32,
+            payload_align: u32,
+        },
+        Panic,
     }
 
     /// Requests associated with Virtual Serial Port operations.
@@ -153,11 +160,21 @@ pub mod request {
             kind: BlockKind,
         }
     }
+
+    #[derive(Serialize, Deserialize)]
+    pub enum PcmSinkRequest {
+        Enable,
+        Disable,
+        AllocateSampleBuffer {
+            count: u32,
+        }
+    }
 }
 
 /// Types used in syscall responses - from kernel to userspace
 pub mod success {
     use super::*;
+    use super::future::SysCallFuture;
     use crate::syscall::slice::{SysCallSlice, SysCallSliceMut};
 
     /// The top level SysCallRequest type. This is the type expected by the
@@ -169,17 +186,7 @@ pub mod success {
         BlockStore(BlockSuccess<'a>),
         System(SystemSuccess),
         Gpio(GpioSuccess),
-    }
-
-    #[derive(Serialize, Deserialize)]
-    pub enum SpiSuccess<'a> {
-        SendSuccess,
-        Transfer {
-            data_in: SysCallSliceMut<'a>,
-        },
-        Read {
-            data_in: SysCallSliceMut<'a>,
-        },
+        PcmSink(PcmSinkSuccess),
     }
 
     #[derive(Serialize, Deserialize)]
@@ -195,6 +202,7 @@ pub mod success {
     #[derive(Serialize, Deserialize)]
     pub enum SystemSuccess {
         BootBlockSet,
+        Freed,
     }
 
     /// Success type for Virtual Serial Port requests
@@ -253,6 +261,80 @@ pub mod success {
         },
         BlockWritten,
         BlockClosed,
+    }
+
+    #[derive(Serialize, Deserialize)]
+    pub enum PcmSinkSuccess {
+        Enabled,
+        Disabled,
+        SampleBuffer {
+            fut: SysCallFuture,
+        }
+    }
+}
+
+pub mod future {
+    use super::*;
+    use core::sync::atomic::{AtomicU8, AtomicBool, AtomicPtr};
+
+    // This gets leaked
+    #[repr(C)]
+    #[doc(hidden)]
+    #[derive(Debug)]
+    pub struct FutureBox<T> {
+        // TODO: Should these fields be one atomic u32?
+
+        // Current status. Should only be updated by the holder of
+        // the exclusive token
+        pub status: AtomicU8,
+
+        // Reference count, including exclusive and shared handles
+        pub refcnt: AtomicU8,
+
+        // Is the exclusive handle taken?
+        pub ex_taken: AtomicBool,
+
+        // TODO: This is a pointer to the T in a HeapBox<T>.
+        pub payload: AtomicPtr<T>,
+    }
+
+    pub mod status {
+        /// Kernel is working, and should be allowed exclusive access,
+        /// if it doesn't have it already.
+        pub const KERNEL_ACCESS: u8 = 0;
+
+        /// Userspace is working, and should be allowed exclusive access,
+        /// if it doesn't have it already.
+        pub const USERSPACE_ACCESS: u8 = 1;
+
+        /// The future has completed (on either side), but the payload
+        /// is no longer accessible.
+        pub const COMPLETED: u8 = 2;
+
+        /// This future encountered an error, and will never reach the
+        /// completed stage. The payload is no longer accessible.
+        pub const ERROR: u8 = 3;
+
+        /// Used to signify a handle that will only ever pend error or completed
+        pub const INVALID: u8 = 4;
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub enum SCFutureKind {
+        Bytes {
+            ptr: u32,
+            len: u32,
+        }
+    }
+
+    #[derive(Debug, Serialize, Deserialize)]
+    pub struct SysCallFuture {
+        // Pointer to the future box
+        pub ptr_fb: u32,
+        pub kind: SCFutureKind,
+        pub is_exclusive: bool,
+        pub payload_size: u32,
+        pub payload_align: u32,
     }
 }
 

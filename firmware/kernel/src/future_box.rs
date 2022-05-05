@@ -7,52 +7,15 @@ use core::{
     sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, Ordering},
 };
 
+use common::syscall::future::{FutureBox, status};
+
 use crate::alloc::{HeapBox, HeapGuard};
-
-pub mod status {
-    /// Kernel is working, and should be allowed exclusive access,
-    /// if it doesn't have it already.
-    pub const KERNEL_ACCESS: u8 = 0;
-
-    /// Userspace is working, and should be allowed exclusive access,
-    /// if it doesn't have it already.
-    pub const USERSPACE_ACCESS: u8 = 1;
-
-    /// The future has completed (on either side), but the payload
-    /// is no longer accessible.
-    pub const COMPLETED: u8 = 2;
-
-    /// This future encountered an error, and will never reach the
-    /// completed stage. The payload is no longer accessible.
-    pub const ERROR: u8 = 3;
-
-    /// Used to signify a handle that will only ever pend error or completed
-    pub const INVALID: u8 = 4;
-}
 
 // ------------------ | FUTURE BOX | ------------------------
 
-// This gets leaked
-#[repr(C)]
-pub struct FutureBox<T> {
-    // TODO: Should these fields be one atomic u32?
-
-    // Current status. Should only be updated by the holder of
-    // the exclusive token
-    status: AtomicU8,
-
-    // Reference count, including exclusive and shared handles
-    refcnt: AtomicU8,
-
-    // Is the exclusive handle taken?
-    ex_taken: AtomicBool,
-
-    // TODO: This is a HeapBox<T>.
-    payload: AtomicPtr<T>,
-}
-
 impl<T> Drop for FutureBoxExHdl<T> {
     fn drop(&mut self) {
+        // defmt::println!("Dropping FBEH!");
         let drop_fb = {
             let fb = unsafe { &*self.fb };
             let pre_refs = fb.refcnt.fetch_sub(1, Ordering::SeqCst);
@@ -89,9 +52,9 @@ impl<T> Drop for FutureBoxExHdl<T> {
 // This represents shared access to the FutureBox, and
 // exclusive access to the payload
 pub struct FutureBoxExHdl<T> {
-    fb: *mut FutureBox<T>,
+    pub(crate) fb: *mut FutureBox<T>,
     // Store the payload handle here, so we don't have to double deref
-    payload: *mut T,
+    pub(crate) payload: *mut T,
 }
 
 unsafe impl<T> Send for FutureBoxExHdl<T> where T: Send {}
@@ -235,6 +198,8 @@ impl<T> Drop for FutureBoxPendHdl<T> {
     fn drop(&mut self) {
         let ptr;
 
+        // defmt::println!("Dropping FBPH {=usize}!", self.fb as usize);
+
         let drop_fb = {
             let fb = unsafe { &*self.fb };
             let pre_refs = fb.refcnt.fetch_sub(1, Ordering::SeqCst);
@@ -260,6 +225,7 @@ impl<T> Drop for FutureBoxPendHdl<T> {
 unsafe impl<T> Send for FutureBoxPendHdl<T> where T: Send {}
 
 impl<T> FutureBoxPendHdl<T> {
+    // TODO: Keep in sync with porcelain::SampleBufCompletionFut!
     pub fn is_complete(&self) -> Result<bool, ()> {
         let fb = unsafe { &*self.fb };
         match fb.status.load(Ordering::SeqCst) {

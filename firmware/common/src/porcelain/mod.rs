@@ -170,7 +170,9 @@ pub mod time {
 
 /// Capabilities related to system control
 pub mod system {
-    use crate::syscall::{success::SystemSuccess, request::SystemRequest};
+    use core::sync::atomic::{compiler_fence, Ordering};
+
+    use crate::syscall::{success::SystemSuccess, request::SystemRequest, future::FutureBox};
 
     use super::*;
 
@@ -182,14 +184,43 @@ pub mod system {
         }
     }
 
+    pub fn panic() -> ! {
+        let req = SysCallRequest::System(SystemRequest::Panic);
+        let _ = try_syscall(req);
+        loop {
+            compiler_fence(Ordering::SeqCst);
+        }
+    }
+
     /// Set a given block index of the block storage device to be booted from
     ///
     /// The block must be non-empty, and contain a valid User Application image.
     pub fn set_boot_block(block: u32) -> Result<(), ()> {
         let req = SysCallRequest::System(SystemRequest::SetBootBlock { block });
         let resp = success_filter(try_syscall(req)?)?;
-        let SystemSuccess::BootBlockSet = resp;
-        Ok(())
+        if let SystemSuccess::BootBlockSet = resp {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    pub unsafe fn free_future_box(
+        fb_ptr: *mut FutureBox<()>,
+        payload_size: usize,
+        payload_align: usize,
+    ) -> Result<(), ()> {
+        let req = SysCallRequest::System(SystemRequest::FreeFutureBox {
+            fb_ptr: fb_ptr as usize as u32,
+            payload_size: payload_size as u32,
+            payload_align: payload_align as u32,
+        });
+        let resp = success_filter(try_syscall(req)?)?;
+        if let SystemSuccess::BootBlockSet = resp {
+            Ok(())
+        } else {
+            Err(())
+        }
     }
 
     /// Immediately reboot the system
@@ -202,6 +233,234 @@ pub mod system {
 
         // We'll never get here...
         Ok(())
+    }
+}
+
+pub mod pcm_sink {
+    use core::{sync::atomic::Ordering, ops::{Deref, DerefMut}};
+
+    use super::*;
+    use crate::syscall::{
+        request::PcmSinkRequest,
+        success::PcmSinkSuccess, future::{FutureBox, SysCallFuture, SCFutureKind, status},
+    };
+
+    fn success_filter(succ: SysCallSuccess) -> Result<PcmSinkSuccess, ()> {
+        if let SysCallSuccess::PcmSink(bsr) = succ {
+            Ok(bsr)
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn enable() -> Result<(), ()> {
+        let req = SysCallRequest::PcmSink(PcmSinkRequest::Enable);
+        let resp = success_filter(try_syscall(req)?)?;
+
+        if let PcmSinkSuccess::Enabled = resp {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    pub fn disable() -> Result<(), ()> {
+        let req = SysCallRequest::PcmSink(PcmSinkRequest::Disable);
+        let resp = success_filter(try_syscall(req)?)?;
+
+        if let PcmSinkSuccess::Disabled = resp {
+            Ok(())
+        } else {
+            Err(())
+        }
+    }
+
+    // #[derive(Serialize, Deserialize)]
+    // pub struct SysCallFuture {
+    //     // Pointer to the future box
+    //     pub ptr_fb: u32,
+    //     pub kind: SCFutureKind,
+    //     pub is_exclusive: bool,
+    //     pub payload_size: u32,
+    //     pub payload_align: u32,
+    // }
+
+    #[derive(Debug)]
+    pub struct SampleBufExFut {
+        fb_ptr: *mut FutureBox<()>,
+        samples_ptr: *mut u8,
+        samples_len: usize,
+        payload_size: usize,
+        payload_align: usize,
+    }
+
+    impl Deref for SampleBufExFut {
+        type Target = [u8];
+
+        fn deref(&self) -> &Self::Target {
+            unsafe { core::slice::from_raw_parts(self.samples_ptr, self.samples_len) }
+        }
+    }
+
+    impl DerefMut for SampleBufExFut {
+        fn deref_mut(&mut self) -> &mut Self::Target {
+            unsafe { core::slice::from_raw_parts_mut(self.samples_ptr, self.samples_len) }
+        }
+    }
+
+    impl Drop for SampleBufExFut {
+        fn drop(&mut self) {
+            let drop_fb = {
+                let fb = unsafe { &*self.fb_ptr };
+                let pre_refs = fb.refcnt.fetch_sub(1, Ordering::SeqCst);
+
+                // TODO(AJM): I don't think we should ever just "drop" an exclusive handle
+                // For now, always mark the state as ERROR
+                fb.status.store(status::ERROR, Ordering::SeqCst);
+
+                // Release our exlusive status
+                fb.ex_taken.store(false, Ordering::SeqCst);
+                debug_assert!(pre_refs != 0);
+                pre_refs <= 1
+            };
+
+            // Split off, to avoid reference to self.fb being live
+            // SAFETY: This arm only executes if we were the LAST handle to know
+            // about this futurebox.
+            if drop_fb {
+                unsafe {
+                    super::system::free_future_box(
+                        self.fb_ptr,
+                        self.payload_size,
+                        self.payload_align,
+                    ).unwrap();
+                }
+            }
+        }
+    }
+
+    impl SampleBufExFut {
+        pub fn send(self) -> SampleBufCompletionFut {
+            let fb = unsafe { &*self.fb_ptr };
+            fb.status.store(status::KERNEL_ACCESS, Ordering::SeqCst);
+            fb.ex_taken.store(false, Ordering::SeqCst);
+
+            struct StdOut;
+            use core::fmt::Write;
+            impl Write for StdOut {
+                fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                    super::serial::write_port(0, s.as_bytes()).ok();
+                    Ok(())
+                }
+            }
+
+            writeln!(&mut StdOut, "send: {:08X?}", fb).ok();
+
+            let ret = SampleBufCompletionFut {
+                fb_ptr: self.fb_ptr,
+                payload_size: self.payload_size,
+                payload_align: self.payload_align,
+            };
+
+            core::mem::forget(self);
+
+            ret
+        }
+    }
+
+    pub struct SampleBufCompletionFut {
+        fb_ptr: *mut FutureBox<()>,
+        payload_size: usize,
+        payload_align: usize,
+    }
+
+    impl Drop for SampleBufCompletionFut {
+        fn drop(&mut self) {
+            let drop_fb = {
+                let fb = unsafe { &*self.fb_ptr };
+                let pre_refs = fb.refcnt.fetch_sub(1, Ordering::SeqCst);
+
+                // Release our exlusive status
+                fb.ex_taken.store(false, Ordering::SeqCst);
+                debug_assert!(pre_refs != 0);
+                pre_refs <= 1
+            };
+
+            // Split off, to avoid reference to self.fb being live
+            // SAFETY: This arm only executes if we were the LAST handle to know
+            // about this futurebox.
+            if drop_fb {
+                unsafe {
+                    super::system::free_future_box(
+                        self.fb_ptr,
+                        self.payload_size,
+                        self.payload_align,
+                    ).unwrap();
+                }
+            }
+        }
+    }
+
+    impl SampleBufCompletionFut {
+        // TODO: Keep in sync with future_box::FutureBoxPendHdl!
+        pub fn is_complete(&self) -> Result<bool, ()> {
+            let fb = unsafe { &*self.fb_ptr };
+            match fb.status.load(Ordering::SeqCst) {
+                status::COMPLETED => Ok(true),
+                status::ERROR => Err(()),
+                _ => Ok(false),
+            }
+        }
+    }
+
+    pub fn alloc_samples(count: usize) -> Result<SampleBufExFut, ()> {
+        let req = SysCallRequest::PcmSink(PcmSinkRequest::AllocateSampleBuffer { count: count as u32 });
+        let resp = success_filter(try_syscall(req)?)?;
+
+        if let PcmSinkSuccess::SampleBuffer { fut } = resp {
+            if let SysCallFuture {
+                ptr_fb,
+                kind: SCFutureKind::Bytes { ptr, len },
+                is_exclusive: true,
+                payload_size,
+                payload_align
+            } = fut {
+
+                struct StdOut;
+                use core::fmt::Write;
+                impl Write for StdOut {
+                    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+                        super::serial::write_port(0, s.as_bytes()).ok();
+                        Ok(())
+                    }
+                }
+
+                writeln!(&mut StdOut, "{:08X?}", fut).ok();
+                let fub_ptr = ptr_fb as usize as *const FutureBox<()> as *mut FutureBox<()>;
+                unsafe {
+                    writeln!(&mut StdOut, "{:08X?}", &*fub_ptr).ok();
+                }
+                let sbef = SampleBufExFut {
+                    fb_ptr: fub_ptr,
+                    payload_size: payload_size as usize,
+                    payload_align: payload_align as usize,
+                    samples_ptr: ptr as usize as *const u8 as *mut u8,
+                    samples_len: len as usize,
+                };
+
+                writeln!(&mut StdOut, "{:08X?}", sbef).ok();
+
+                Ok(sbef)
+            } else {
+                // uh oh
+                loop {
+                    super::time::sleep_micros(1_000_000).ok();
+                }
+                panic!("Got a bad future!");
+            }
+        } else {
+            Err(())
+        }
     }
 }
 

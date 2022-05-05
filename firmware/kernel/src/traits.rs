@@ -1,11 +1,14 @@
+use core::{alloc::Layout, sync::atomic::Ordering, ptr::{null_mut, NonNull}};
+
 use common::{
     syscall::request::SysCallRequest,
     syscall::{
-        request::{BlockRequest, GpioMode, GpioRequest, SystemRequest},
+        request::{BlockRequest, GpioMode, GpioRequest, SystemRequest, PcmSinkRequest},
         success::{
             BlockInfo, BlockSuccess, GpioSuccess, StoreInfo, SysCallSuccess,
-            SystemSuccess, TimeSuccess,
+            SystemSuccess, TimeSuccess, PcmSinkSuccess,
         },
+        future::{SysCallFuture, SCFutureKind, FutureBox},
     },
     syscall::{
         request::{SerialRequest, TimeRequest},
@@ -150,7 +153,7 @@ pub struct Machine {
 
 impl Machine {
     pub fn handle_syscall<'a>(
-        &'a mut self,
+        &mut self,
         heap: &mut HeapGuard,
         req: SysCallRequest<'a>,
     ) -> Result<SysCallSuccess<'a>, ()> {
@@ -168,12 +171,16 @@ impl Machine {
                 Ok(SysCallSuccess::BlockStore(resp))
             }
             SysCallRequest::System(sr) => {
-                let resp = self.handle_system_request(sr)?;
+                let resp = self.handle_system_request(heap, sr)?;
                 Ok(SysCallSuccess::System(resp))
             }
             SysCallRequest::Gpio(gr) => {
                 let resp = self.handle_gpio_request(gr)?;
                 Ok(SysCallSuccess::Gpio(resp))
+            }
+            SysCallRequest::PcmSink(psr) => {
+                let resp = self.handle_pcmsink_request(heap, psr)?;
+                Ok(SysCallSuccess::PcmSink(resp))
             }
         }
     }
@@ -197,7 +204,51 @@ impl Machine {
         }
     }
 
-    pub fn handle_system_request(&mut self, req: SystemRequest) -> Result<SystemSuccess, ()> {
+    pub fn handle_pcmsink_request(
+        &mut self,
+        heap: &mut HeapGuard,
+        req: PcmSinkRequest,
+    ) -> Result<PcmSinkSuccess, ()> {
+        let pcm = self.pcm.as_mut().ok_or(())?;
+        let spi = self.spi.as_mut().ok_or(())?;
+
+        match req {
+            PcmSinkRequest::Enable => {
+                // defmt::println!("[PCM] enable");
+                pcm.enable(heap, &mut **spi)?;
+                Ok(PcmSinkSuccess::Enabled)
+            },
+            PcmSinkRequest::Disable => {
+                pcm.disable(heap, &mut **spi)?;
+                Ok(PcmSinkSuccess::Disabled)
+            },
+            PcmSinkRequest::AllocateSampleBuffer { count } => {
+                let fbeh: FutureBoxExHdl<SpiTransaction> = pcm
+                    .allocate_stereo_samples(heap, &mut **spi, count as usize).ok_or(())?;
+                let payload_layout = Layout::new::<FutureBoxExHdl<SpiTransaction>>();
+
+                let fb: *mut FutureBox<_> = fbeh.fb;
+
+                // defmt::println!("fb: {=u32:08X}", fb as usize as u32);
+                let fut = SysCallFuture {
+                    ptr_fb: fb as usize as u32,
+                    kind: SCFutureKind::Bytes { ptr: fbeh.data.as_ptr() as u32, len: fbeh.data.len() as u32 },
+                    is_exclusive: true,
+                    payload_size: payload_layout.size() as u32,
+                    payload_align: payload_layout.align() as u32,
+                };
+
+                // defmt::println!("[PCM] alloc'd {=u32}", count);
+                // defmt::println!("[PCM] ref cnt {=u8}", unsafe { (&*fbeh.fb).refcnt.load(Ordering::SeqCst) });
+
+                // DON'T decrement the refcount - it still exists, it's just being sent to userspace
+                core::mem::forget(fbeh);
+                Ok(PcmSinkSuccess::SampleBuffer { fut })
+            },
+        }
+    }
+
+    pub fn handle_system_request(&mut self, heap: &mut HeapGuard, req: SystemRequest) -> Result<SystemSuccess, ()> {
         match req {
             SystemRequest::SetBootBlock { block } => {
                 crate::MAGIC_BOOT.set(block);
@@ -210,11 +261,44 @@ impl Machine {
                 while timer.millis_since(start) <= 1000 {}
                 nrf52840_hal::pac::SCB::sys_reset();
             }
+            SystemRequest::FreeFutureBox { fb_ptr, payload_size, payload_align } => {
+                // defmt::println!("Freeing FB");
+                // let fb_ptr: *mut FutureBox<()> = fb_ptr as usize as *const FutureBox<()> as *mut FutureBox<()>;
+
+                // {
+                //     let fb_ref = unsafe { &*fb_ptr };
+                //     let payload_layout = Layout::from_size_align(
+                //         payload_size as usize,
+                //         payload_align as usize,
+                //     ).map_err(drop)?;
+
+                //     if let Some(ptr) = NonNull::new(fb_ref.payload.load(Ordering::SeqCst).cast::<u8>()) {
+                //         unsafe {
+                //             heap.free_raw(ptr, payload_layout);
+                //         }
+                //         fb_ref.payload.store(null_mut(), Ordering::SeqCst);
+                //     }
+                // }
+                // unsafe {
+                //     let fb_layout = Layout::new::<FutureBox<()>>();
+                //     let ptr = NonNull::new(fb_ptr.cast()).ok_or(())?;
+                //     heap.free_raw(ptr, fb_layout);
+                // }
+
+                panic!("Freeing from userspace is currently broken, don't do that!");
+                Ok(SystemSuccess::Freed)
+            },
+            SystemRequest::Panic => {
+                defmt::println!("Application panicked!");
+                Err(())
+            }
         }
     }
 
     pub fn handle_time_request(&mut self, req: TimeRequest) -> Result<TimeSuccess, ()> {
         let TimeRequest::SleepMicros { us } = req;
+
+        defmt::println!("SLEEP");
 
         let timer = GlobalRollingTimer::default();
         let mut ttl_us = us;
@@ -264,7 +348,7 @@ impl Machine {
     }
 
     pub fn handle_block_request<'a>(
-        &'a mut self,
+        &mut self,
         heap: &mut HeapGuard,
         req: BlockRequest<'a>,
     ) -> Result<BlockSuccess<'a>, ()> {

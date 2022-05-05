@@ -202,6 +202,7 @@ impl Spim {
                 match node.waiting.pop_front() {
                     Some(pend) => match pend.try_upgrade() {
                         Ok(Some(ready)) => {
+                            // defmt::println!("[FLUSH] Pushing!");
                             node.vdq
                                 .push_back(InProgress {
                                     data: ready,

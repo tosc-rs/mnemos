@@ -45,33 +45,14 @@ use usb_device::{
 };
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
 
-static DEFAULT_IMAGE: &[u8] = include_bytes!("../appbins/blinker.bin");
+static DEFAULT_IMAGE: &[u8] = include_bytes!("../appbins/tony.bin");
 
-const SINE_TABLE: [i16; 256] = [
-    0, 804, 1608, 2410, 3212, 4011, 4808, 5602, 6393, 7179, 7962, 8739, 9512, 10278, 11039, 11793,
-    12539, 13279, 14010, 14732, 15446, 16151, 16846, 17530, 18204, 18868, 19519, 20159, 20787,
-    21403, 22005, 22594, 23170, 23731, 24279, 24811, 25329, 25832, 26319, 26790, 27245, 27683,
-    28105, 28510, 28898, 29268, 29621, 29956, 30273, 30571, 30852, 31113, 31356, 31580, 31785,
-    31971, 32137, 32285, 32412, 32521, 32609, 32678, 32728, 32757, 32767, 32757, 32728, 32678,
-    32609, 32521, 32412, 32285, 32137, 31971, 31785, 31580, 31356, 31113, 30852, 30571, 30273,
-    29956, 29621, 29268, 28898, 28510, 28105, 27683, 27245, 26790, 26319, 25832, 25329, 24811,
-    24279, 23731, 23170, 22594, 22005, 21403, 20787, 20159, 19519, 18868, 18204, 17530, 16846,
-    16151, 15446, 14732, 14010, 13279, 12539, 11793, 11039, 10278, 9512, 8739, 7962, 7179, 6393,
-    5602, 4808, 4011, 3212, 2410, 1608, 804, 0, -804, -1608, -2410, -3212, -4011, -4808, -5602,
-    -6393, -7179, -7962, -8739, -9512, -10278, -11039, -11793, -12539, -13279, -14010, -14732,
-    -15446, -16151, -16846, -17530, -18204, -18868, -19519, -20159, -20787, -21403, -22005, -22594,
-    -23170, -23731, -24279, -24811, -25329, -25832, -26319, -26790, -27245, -27683, -28105, -28510,
-    -28898, -29268, -29621, -29956, -30273, -30571, -30852, -31113, -31356, -31580, -31785, -31971,
-    -32137, -32285, -32412, -32521, -32609, -32678, -32728, -32757, -32767, -32757, -32728, -32678,
-    -32609, -32521, -32412, -32285, -32137, -31971, -31785, -31580, -31356, -31113, -30852, -30571,
-    -30273, -29956, -29621, -29268, -28898, -28510, -28105, -27683, -27245, -26790, -26319, -25832,
-    -25329, -24811, -24279, -23731, -23170, -22594, -22005, -21403, -20787, -20159, -19519, -18868,
-    -18204, -17530, -16846, -16151, -15446, -14732, -14010, -13279, -12539, -11793, -11039, -10278,
-    -9512, -8739, -7962, -7179, -6393, -5602, -4808, -4011, -3212, -2410, -1608, -804,
-];
+
 
 #[rtic::app(device = nrf52840_hal::pac, dispatchers = [SWI0_EGU0])]
 mod app {
+    use core::sync::atomic::Ordering;
+
     use super::*;
 
     #[monotonic(binds = TIMER0, default = true)]
@@ -87,9 +68,7 @@ mod app {
     struct Local {
         usb_isr: UsbUartIsr,
         rng: Rng,
-        cmd_hdl: SpiHandle,
-        data_hdl: SpiHandle,
-        // prog_loaded: Option<(*const u8, usize)>,
+        prog_loaded: Option<(*const u8, usize)>,
     }
 
     #[init]
@@ -235,24 +214,20 @@ mod app {
             Local {
                 usb_isr: isr,
                 rng,
-                cmd_hdl,
-                data_hdl,
-                // prog_loaded,
+                prog_loaded,
             },
             init::Monotonics(mono),
         )
     }
 
-    // #[task(binds = SVCall, local = [machine], priority = 1)]
-    // fn svc(cx: svc::Context) {
-    //     let machine = cx.local.machine;
-
-    //     if let Ok(()) = try_recv_syscall(|req| {
-    //         machine.handle_syscall(req)
-    //     }) {
-    //         // defmt::println!("Handled syscall!");
-    //     }
-    // }
+    #[task(binds = SVCall, shared = [machine, heap], priority = 1)]
+    fn svc(cx: svc::Context) {
+        if let Ok(()) = try_recv_syscall(|req| {
+            (cx.shared.heap, cx.shared.machine).lock(|heap, machine| machine.handle_syscall(heap, req))
+        }) {
+            // defmt::println!("Handled syscall!");
+        }
+    }
 
     #[task(binds = GPIOTE, shared = [machine], priority = 2)]
     fn gpiote(mut cx: gpiote::Context) {
@@ -291,90 +266,131 @@ mod app {
     // since I don't have syscalls yet. In the future, the `machine` will be given
     // to the SWI handler, and idle will basically just launch a program. I think.
     // Maybe idle will use SWIs too.
-    // #[idle(local = [prog_loaded])]
-    #[idle(local = [rng, cmd_hdl, data_hdl], shared = [heap, machine])]
-    fn idle(mut cx: idle::Context) -> ! {
-        let freq = cx.local.rng.random_u8();
-        let freq = (freq as f32) + 256.0;
-
+    #[idle(local = [prog_loaded])]
+    fn idle(cx: idle::Context) -> ! {
         defmt::println!("Hello, world!");
 
         let timer = GlobalRollingTimer::default();
         let start = timer.get_ticks();
 
         // Wait, to allow RTT to attach
-        while timer.millis_since(start) < 1000 {}
+        while timer.millis_since(start) < 1000 { }
 
-        let samp_per_cyc: f32 = 44100.0 / freq; // 141.7
-        let fincr = 256.0 / samp_per_cyc; // 1.81
-        let mut incr: i32 = (((1 << 24) as f32) * fincr) as i32;
+        defmt::println!("!!! - ENTERING USERSPACE - !!!");
+        let loaded = *cx.local.prog_loaded;
 
-        // generate the next 256 samples...
-        let mut cur_offset = 0i32;
+        let pws = if let Some((ptr, len)) = loaded {
+            {
+                // Slice MUST be dropped before we run ram_ram_setup
+                let slice = unsafe { core::slice::from_raw_parts(ptr, len) };
+                validate_header(slice)
+            }.map(|rh| {
+                rh.ram_ram_setup()
+            }).ok()
+        } else {
+            None
+        };
 
-        let mut last_change = timer.get_ticks();
-        let mut ttl_timer_sec = timer.get_ticks();
-        let mut idl_timer_sec = 0u32;
-
-        let machine = &mut cx.shared.machine;
-        let heap = &mut cx.shared.heap;
-
-        defmt::println!("Enabling...");
-        (machine, heap).lock(|machine, heap| {
-            let Machine { spi, pcm, .. } = machine;
-
-            if let (Some(spi), Some(pcm)) = (spi, pcm) {
-                pcm.enable(heap, &mut **spi).unwrap();
-            } else {
-                panic!()
-            }
+        let pws = pws.unwrap_or_else(|| {
+            let rh = validate_header(DEFAULT_IMAGE).unwrap();
+            rh.oc_flash_setup(DEFAULT_IMAGE)
         });
-        defmt::println!("Enabled!");
 
-        let mut iters = 0;
-        while iters < 10_000 {
-            if timer.millis_since(ttl_timer_sec) >= 1_000 {
-                let act_elapsed = timer.micros_since(ttl_timer_sec);
-                defmt::println!(
-                    "idle pct: {=f32}%",
-                    (idl_timer_sec as f32 * 100.0) / (act_elapsed as f32)
-                );
-                idl_timer_sec = 0;
-                ttl_timer_sec = timer.get_ticks();
-            }
+        core::sync::atomic::compiler_fence(Ordering::SeqCst);
 
-            if timer.millis_since(last_change) > 250 {
-                last_change = timer.get_ticks();
-                incr = new_freq_incr(cx.local.rng);
-            }
-
-            let machine = &mut cx.shared.machine;
-            let heap = &mut cx.shared.heap;
-
-            let tx = (machine, heap).lock(|machine, heap| {
-                let Machine { spi, pcm, .. } = machine;
-
-                if let (Some(spi), Some(pcm)) = (spi, pcm) {
-                    pcm.allocate_stereo_samples(heap, &mut **spi, 512)
-                } else {
-                    None
-                }
-            });
-
-            if let Some(mut tx) = tx {
-                fill_sample_buf(&mut tx.data, incr, &mut cur_offset);
-                tx.release_to_kernel();
-                iters += 1;
-            } else {
-                let start = timer.get_ticks();
-                idl_timer_sec += 5_000;
-                while timer.micros_since(start) < 5_000 {}
-            }
+        unsafe {
+            letsago(pws.stack_start, pws.entry_point);
         }
-        let start = timer.get_ticks();
-        while timer.millis_since(start) <= 1000 {}
-        kernel::exit();
     }
+
+//     // TODO: I am currently polling the syscall interfaces in the idle function,
+//     // since I don't have syscalls yet. In the future, the `machine` will be given
+//     // to the SWI handler, and idle will basically just launch a program. I think.
+//     // Maybe idle will use SWIs too.
+//     // #[idle(local = [prog_loaded])]
+//     #[idle(local = [rng, cmd_hdl, data_hdl], shared = [heap, machine])]
+//     fn idle(mut cx: idle::Context) -> ! {
+//         let freq = cx.local.rng.random_u8();
+//         let freq = (freq as f32) + 256.0;
+//
+//         defmt::println!("Hello, world!");
+//
+//         let timer = GlobalRollingTimer::default();
+//         let start = timer.get_ticks();
+//
+//         // Wait, to allow RTT to attach
+//         while timer.millis_since(start) < 1000 {}
+//
+//         let samp_per_cyc: f32 = 44100.0 / freq; // 141.7
+//         let fincr = 256.0 / samp_per_cyc; // 1.81
+//         let mut incr: i32 = (((1 << 24) as f32) * fincr) as i32;
+//
+//         // generate the next 256 samples...
+//         let mut cur_offset = 0i32;
+//
+//         let mut last_change = timer.get_ticks();
+//         let mut ttl_timer_sec = timer.get_ticks();
+//         let mut idl_timer_sec = 0u32;
+//
+//         let machine = &mut cx.shared.machine;
+//         let heap = &mut cx.shared.heap;
+//
+//         defmt::println!("Enabling...");
+//         (machine, heap).lock(|machine, heap| {
+//             let Machine { spi, pcm, .. } = machine;
+//
+//             if let (Some(spi), Some(pcm)) = (spi, pcm) {
+//                 pcm.enable(heap, &mut **spi).unwrap();
+//             } else {
+//                 panic!()
+//             }
+//         });
+//         defmt::println!("Enabled!");
+//
+//         let mut iters = 0;
+//         while iters < 10_000 {
+//             if timer.millis_since(ttl_timer_sec) >= 1_000 {
+//                 let act_elapsed = timer.micros_since(ttl_timer_sec);
+//                 defmt::println!(
+//                     "idle pct: {=f32}%",
+//                     (idl_timer_sec as f32 * 100.0) / (act_elapsed as f32)
+//                 );
+//                 idl_timer_sec = 0;
+//                 ttl_timer_sec = timer.get_ticks();
+//             }
+//
+//             if timer.millis_since(last_change) > 250 {
+//                 last_change = timer.get_ticks();
+//                 incr = new_freq_incr(cx.local.rng);
+//             }
+//
+//             let machine = &mut cx.shared.machine;
+//             let heap = &mut cx.shared.heap;
+//
+//             let tx = (machine, heap).lock(|machine, heap| {
+//                 let Machine { spi, pcm, .. } = machine;
+//
+//                 if let (Some(spi), Some(pcm)) = (spi, pcm) {
+//                     pcm.allocate_stereo_samples(heap, &mut **spi, 512)
+//                 } else {
+//                     None
+//                 }
+//             });
+//
+//             if let Some(mut tx) = tx {
+//                 fill_sample_buf(&mut tx.data, incr, &mut cur_offset);
+//                 tx.release_to_kernel();
+//                 iters += 1;
+//             } else {
+//                 let start = timer.get_ticks();
+//                 idl_timer_sec += 5_000;
+//                 while timer.micros_since(start) < 5_000 {}
+//             }
+//         }
+//         let start = timer.get_ticks();
+//         while timer.millis_since(start) <= 1000 {}
+//         kernel::exit();
+//     }
 }
 
 fn new_freq_incr(rng: &mut Rng) -> i32 {
@@ -414,34 +430,6 @@ unsafe fn letsago(sp: u32, entry: u32) -> ! {
         in(reg) entry,
         options(noreturn, nomem, nostack),
     );
-}
-
-#[inline(always)]
-pub fn fill_sample_buf(data: &mut [u8], incr: i32, cur_offset: &mut i32) {
-    data.chunks_exact_mut(4).for_each(|ch| {
-        let val = (*cur_offset) as u32;
-        let idx_now = ((val >> 24) & 0xFF) as u8;
-        let idx_nxt = idx_now.wrapping_add(1);
-        let base_val = SINE_TABLE[idx_now as usize] as i32;
-        let next_val = SINE_TABLE[idx_nxt as usize] as i32;
-
-        // Distance to next value - perform 256 slot linear interpolation
-        let off = ((val >> 16) & 0xFF) as i32; // 0..=255
-        let cur_weight = base_val.wrapping_mul(256i32.wrapping_sub(off));
-        let nxt_weight = next_val.wrapping_mul(off);
-        let ttl_weight = cur_weight.wrapping_add(nxt_weight);
-        let ttl_val = ttl_weight >> 8; // div 256
-        let ttl_val = ttl_val as i16;
-
-        // Set the linearly interpolated value
-        let leb = ttl_val.to_le_bytes();
-        ch[0] = leb[0];
-        ch[1] = leb[1];
-        ch[2] = leb[0];
-        ch[3] = leb[1];
-
-        *cur_offset = cur_offset.wrapping_add(incr);
-    });
 }
 
 pub fn make_nodes(

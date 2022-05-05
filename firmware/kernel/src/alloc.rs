@@ -252,8 +252,8 @@ impl<T> Drop for HeapBox<T> {
 
 /// An Anachro Heap Array Type
 pub struct HeapArray<T> {
-    count: usize,
-    ptr: *mut T,
+    pub(crate) count: usize,
+    pub(crate) ptr: *mut T,
 }
 
 unsafe impl<T> Send for HeapArray<T> {}
@@ -347,6 +347,10 @@ pub struct HeapGuard {
 
 // Public HeapGuard methods
 impl HeapGuard {
+    pub unsafe fn free_raw(&mut self, ptr: NonNull<u8>, layout: Layout) {
+        self.deref_mut().deallocate(ptr, layout);
+    }
+
     /// The free space (in bytes) available to the allocator
     pub fn free_space(&self) -> usize {
         self.deref().free()
