@@ -40,9 +40,7 @@ pub fn entry() -> ! {
                 ch[2] = leb[0];
                 ch[3] = leb[1];
             });
-            // // loop {
-            // //     time::sleep_micros(2_000_000).ok();
-            // // }
+
             samples.send();
             samps_a += 512;
             samps_b += 512;
