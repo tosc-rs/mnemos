@@ -1,15 +1,14 @@
 #![no_main]
 #![no_std]
 
-use core::arch::asm;
+use core::{arch::asm, sync::atomic::{AtomicU32, compiler_fence}};
 use cortex_m::{
     asm::isb,
     register::{control, psp},
-    singleton,
 };
-use defmt::unwrap;
 use groundhog::RollingTimer;
 use groundhog_nrf52::GlobalRollingTimer;
+use kernel::monotonic::ExtU32;
 
 #[allow(unused_imports)]
 use kernel::{
@@ -27,16 +26,18 @@ use kernel::{
     syscall::{syscall_clear, try_recv_syscall},
     traits::{BlockStorage, Machine, Serial, SpiHandle, SpiTransactionKind, SpimNode, Spi, PcmSink},
     MAGIC_BOOT,
+    DRIVER_QUEUE,
+    DriverCommand,
 };
 use nrf52840_hal::{
     clocks::{ExternalOscillator, Internal, LfOscStopped},
     gpio::{Floating, Input, Level, Output, Pin, Port, PushPull},
     gpiote::Gpiote,
-    pac::{GPIOTE, P0, P1, PPI, SPIM0, TIMER0},
+    pac::{GPIOTE, P0, P1, PPI, SPIM0, TIMER0, SCB, TIMER2},
     ppi::{ConfigurablePpi, Parts, Ppi, Ppi0},
     prelude::OutputPin,
-    rng::Rng,
     usbd::{UsbPeripheral, Usbd},
+    timer::Instance as _,
     Clocks,
 };
 use usb_device::{
@@ -46,13 +47,11 @@ use usb_device::{
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
 
 static DEFAULT_IMAGE: &[u8] = include_bytes!("../appbins/tony.bin");
-
-
+static IDLE_TICKS: AtomicU32 = AtomicU32::new(0);
 
 #[rtic::app(device = nrf52840_hal::pac, dispatchers = [SWI0_EGU0])]
 mod app {
     use core::sync::atomic::Ordering;
-
     use super::*;
 
     #[monotonic(binds = TIMER0, default = true)]
@@ -60,26 +59,31 @@ mod app {
 
     #[shared]
     struct Shared {
-        heap: HeapGuard,
         machine: Machine,
     }
 
     #[local]
     struct Local {
         usb_isr: UsbUartIsr,
-        rng: Rng,
         prog_loaded: Option<(*const u8, usize)>,
+        heap: HeapGuard,
+        timer: TIMER2,
     }
 
-    #[init]
+    type UsbBusAlloc = UsbBusAllocator<Usbd<UsbPeripheral<'static>>>;
+    type Clock = Clocks<ExternalOscillator, Internal, LfOscStopped>;
+
+    #[init(local = [
+        clocks: Option<Clock> = None,
+        usb_bus: Option<UsbBusAlloc> = None,
+    ])]
     fn init(cx: init::Context) -> (Shared, Local, init::Monotonics) {
         let device = cx.device;
 
         // Setup clocks early in the process. We need this for USB later
         let clocks = Clocks::new(device.CLOCK);
         let clocks = clocks.enable_ext_hfosc();
-        let clocks =
-            unwrap!(singleton!(: Clocks<ExternalOscillator, Internal, LfOscStopped> = clocks));
+        let clocks = cx.local.clocks.insert(clocks);
 
         // Enable instruction caches for MAXIMUM SPEED
         device.NVMC.icachecnf.write(|w| w.cacheen().set_bit());
@@ -91,7 +95,7 @@ mod app {
         // I am annoying, and prefer my own libraries.
         GlobalRollingTimer::init(device.TIMER1);
 
-        let rng = Rng::new(device.RNG);
+        let timer = device.TIMER2;
 
         // Setup the heap
         let mut heap_guard = HEAP.init_exclusive().unwrap();
@@ -102,24 +106,19 @@ mod app {
         // Before we give away the USB peripheral, enable the relevant interrupts
         enable_usb_interrupts(&device.USBD);
 
-        let (usb_dev, usb_serial) = {
-            let usb_bus = Usbd::new(UsbPeripheral::new(device.USBD, clocks));
-            let usb_bus =
-                defmt::unwrap!(singleton!(:UsbBusAllocator<Usbd<UsbPeripheral>> = usb_bus));
+        let usb_bus = Usbd::new(UsbPeripheral::new(device.USBD, clocks));
+        let usb_bus = cx.local.usb_bus.insert(usb_bus);
 
-            let usb_serial = SerialPort::new(usb_bus);
-            let usb_dev = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x16c0, 0x27dd))
-                .manufacturer("OVAR Labs")
-                .product("Anachro Pellegrino")
-                // TODO: Use some kind of unique ID. This will probably require another singleton,
-                // as the storage must be static. Probably heapless::String -> singleton!()
-                .serial_number("ajm001")
-                .device_class(USB_CLASS_CDC)
-                .max_packet_size_0(64) // (makes control transfers 8x faster)
-                .build();
-
-            (usb_dev, usb_serial)
-        };
+        let usb_serial = SerialPort::new(usb_bus);
+        let usb_dev = UsbDeviceBuilder::new(usb_bus, UsbVidPid(0x16c0, 0x27dd))
+            .manufacturer("OVAR Labs")
+            .product("Anachro Pellegrino")
+            // TODO: Use some kind of unique ID. This will probably require another singleton,
+            // as the storage must be static. Probably heapless::String -> singleton!()
+            .serial_number("ajm001")
+            .device_class(USB_CLASS_CDC)
+            .max_packet_size_0(64) // (makes control transfers 8x faster)
+            .build();
 
         let UsbUartParts { isr, sys } = defmt::unwrap!(setup_usb_uart(usb_dev, usb_serial));
 
@@ -206,44 +205,41 @@ mod app {
             gpios: &mut [],
         };
 
+        ticky::spawn_after(1000u32.millis()).ok();
+
         (
             Shared {
-                heap: heap_guard,
                 machine,
             },
             Local {
                 usb_isr: isr,
-                rng,
                 prog_loaded,
+                heap: heap_guard,
+                timer,
             },
             init::Monotonics(mono),
         )
     }
 
-    #[task(binds = SVCall, shared = [machine, heap], priority = 1)]
-    fn svc(cx: svc::Context) {
-        if let Ok(()) = try_recv_syscall(|req| {
-            (cx.shared.heap, cx.shared.machine).lock(|heap, machine| machine.handle_syscall(heap, req))
-        }) {
-            // defmt::println!("Handled syscall!");
-        }
+    #[task(binds = USBD, local = [usb_isr], priority = 4)]
+    fn usb_tick(cx: usb_tick::Context) {
+        cx.local.usb_isr.poll();
     }
 
-    #[task(binds = GPIOTE, shared = [machine], priority = 2)]
-    fn gpiote(mut cx: gpiote::Context) {
+    #[task(binds = GPIOTE, priority = 3)]
+    fn gpiote(_cx: gpiote::Context) {
         // TODO: NOT this
         let gpiote = unsafe { &*GPIOTE::ptr() };
 
         // Clear channel 1 events
         gpiote.events_in[1].write(|w| w);
 
-        cx.shared.machine.lock(|machine| {
-            machine.spi.as_mut().map(|spi| spi.start_send());
-        })
+        DRIVER_QUEUE.enqueue(DriverCommand::SpiStart).ok();
+        SCB::set_pendsv();
     }
 
-    #[task(binds = SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0, shared = [machine], priority = 2)]
-    fn spim0(mut cx: spim0::Context) {
+    #[task(binds = SPIM0_SPIS0_TWIM0_TWIS0_SPI0_TWI0, priority = 3)]
+    fn spim0(_cx: spim0::Context) {
         // TODO: NOT this
         let gpiote = unsafe { &*GPIOTE::ptr() };
 
@@ -251,21 +247,94 @@ mod app {
         gpiote.events_in[0].write(|w| w);
 
         // defmt::println!("[INT]: SPIM0");
-
-        cx.shared.machine.lock(|machine| {
-            machine.spi.as_mut().map(|spi| spi.end_send());
-        })
+        DRIVER_QUEUE.enqueue(DriverCommand::SpiEnd).ok();
+        SCB::set_pendsv();
     }
 
-    #[task(binds = USBD, local = [usb_isr], priority = 3)]
-    fn usb_tick(cx: usb_tick::Context) {
-        cx.local.usb_isr.poll();
+    #[task(binds = SVCall, local = [heap], shared = [machine], priority = 2)]
+    fn svc(cx: svc::Context) {
+        let mut machine = cx.shared.machine;
+        defmt::println!("SVC!");
+        if let Ok(()) = try_recv_syscall(|req| {
+            machine.lock(|machine| machine.handle_syscall(cx.local.heap, req))
+        }) {
+            // defmt::println!("Handled syscall!");
+        }
+        defmt::println!("SVC EXIT!");
     }
 
-    // TODO: I am currently polling the syscall interfaces in the idle function,
-    // since I don't have syscalls yet. In the future, the `machine` will be given
-    // to the SWI handler, and idle will basically just launch a program. I think.
-    // Maybe idle will use SWIs too.
+    #[task(binds = PendSV, shared = [machine], local = [timer], priority = 1)]
+    fn pendsv(cx: pendsv::Context) {
+        defmt::println!("PENDSV");
+        let mut machine = cx.shared.machine;
+        let hwtimer = cx.local.timer;
+        let mut sleep: Option<u32> = None;
+
+        while let Some(msg) = DRIVER_QUEUE.dequeue() {
+            match msg {
+                DriverCommand::SpiStart => {
+                    defmt::println!("SPISTART");
+                    machine.lock(|machine| {
+                        if let Some(spi) = machine.spi.as_mut() {
+                            spi.start_send();
+                        }
+                    })
+                }
+                DriverCommand::SpiEnd => {
+                    defmt::println!("SPIEND");
+                    machine.lock(|machine| {
+                        if let Some(spi) = machine.spi.as_mut() {
+                            spi.end_send();
+                        }
+                    })
+                }
+                DriverCommand::SleepMicros(us) => {
+                    if let Some(dly) = sleep.as_mut() {
+                        *dly = (*dly).max(us);
+                    }
+                }
+            }
+        }
+
+        if let Some(dly) = sleep {
+            defmt::println!("SLEEP");
+            hwtimer.set_oneshot();
+            hwtimer.timer_reset_event();
+            hwtimer.timer_start(dly);
+
+            while hwtimer.timer_running() {
+                // cortex_m::interrupt::disable();
+                // hwtimer.enable_interrupt();
+                // let start = hwtimer.read_counter();
+
+                // compiler_fence(Ordering::SeqCst);
+                // cortex_m::asm::wfi();
+                // compiler_fence(Ordering::SeqCst);
+
+                // hwtimer.disable_interrupt();
+                // hwtimer.timer_reset_event();
+
+                // let end = if !hwtimer.timer_running() {
+                //     dly
+                // } else {
+                //     hwtimer.read_counter()
+                // };
+                // IDLE_TICKS.fetch_add(end - start, Ordering::SeqCst);
+                // unsafe {
+                //     cortex_m::interrupt::enable();
+                // }
+            }
+        }
+        defmt::println!("PENDSV DONE");
+    }
+
+    #[task]
+    fn ticky(_cx: ticky::Context) {
+        let used = IDLE_TICKS.swap(0, Ordering::SeqCst);
+        defmt::println!("idle ms: {=u32}", used / 1000);
+        ticky::spawn_after(1000u32.millis()).ok();
+    }
+
     #[idle(local = [prog_loaded])]
     fn idle(cx: idle::Context) -> ! {
         defmt::println!("Hello, world!");
@@ -302,105 +371,6 @@ mod app {
             letsago(pws.stack_start, pws.entry_point);
         }
     }
-
-//     // TODO: I am currently polling the syscall interfaces in the idle function,
-//     // since I don't have syscalls yet. In the future, the `machine` will be given
-//     // to the SWI handler, and idle will basically just launch a program. I think.
-//     // Maybe idle will use SWIs too.
-//     // #[idle(local = [prog_loaded])]
-//     #[idle(local = [rng, cmd_hdl, data_hdl], shared = [heap, machine])]
-//     fn idle(mut cx: idle::Context) -> ! {
-//         let freq = cx.local.rng.random_u8();
-//         let freq = (freq as f32) + 256.0;
-//
-//         defmt::println!("Hello, world!");
-//
-//         let timer = GlobalRollingTimer::default();
-//         let start = timer.get_ticks();
-//
-//         // Wait, to allow RTT to attach
-//         while timer.millis_since(start) < 1000 {}
-//
-//         let samp_per_cyc: f32 = 44100.0 / freq; // 141.7
-//         let fincr = 256.0 / samp_per_cyc; // 1.81
-//         let mut incr: i32 = (((1 << 24) as f32) * fincr) as i32;
-//
-//         // generate the next 256 samples...
-//         let mut cur_offset = 0i32;
-//
-//         let mut last_change = timer.get_ticks();
-//         let mut ttl_timer_sec = timer.get_ticks();
-//         let mut idl_timer_sec = 0u32;
-//
-//         let machine = &mut cx.shared.machine;
-//         let heap = &mut cx.shared.heap;
-//
-//         defmt::println!("Enabling...");
-//         (machine, heap).lock(|machine, heap| {
-//             let Machine { spi, pcm, .. } = machine;
-//
-//             if let (Some(spi), Some(pcm)) = (spi, pcm) {
-//                 pcm.enable(heap, &mut **spi).unwrap();
-//             } else {
-//                 panic!()
-//             }
-//         });
-//         defmt::println!("Enabled!");
-//
-//         let mut iters = 0;
-//         while iters < 10_000 {
-//             if timer.millis_since(ttl_timer_sec) >= 1_000 {
-//                 let act_elapsed = timer.micros_since(ttl_timer_sec);
-//                 defmt::println!(
-//                     "idle pct: {=f32}%",
-//                     (idl_timer_sec as f32 * 100.0) / (act_elapsed as f32)
-//                 );
-//                 idl_timer_sec = 0;
-//                 ttl_timer_sec = timer.get_ticks();
-//             }
-//
-//             if timer.millis_since(last_change) > 250 {
-//                 last_change = timer.get_ticks();
-//                 incr = new_freq_incr(cx.local.rng);
-//             }
-//
-//             let machine = &mut cx.shared.machine;
-//             let heap = &mut cx.shared.heap;
-//
-//             let tx = (machine, heap).lock(|machine, heap| {
-//                 let Machine { spi, pcm, .. } = machine;
-//
-//                 if let (Some(spi), Some(pcm)) = (spi, pcm) {
-//                     pcm.allocate_stereo_samples(heap, &mut **spi, 512)
-//                 } else {
-//                     None
-//                 }
-//             });
-//
-//             if let Some(mut tx) = tx {
-//                 fill_sample_buf(&mut tx.data, incr, &mut cur_offset);
-//                 tx.release_to_kernel();
-//                 iters += 1;
-//             } else {
-//                 let start = timer.get_ticks();
-//                 idl_timer_sec += 5_000;
-//                 while timer.micros_since(start) < 5_000 {}
-//             }
-//         }
-//         let start = timer.get_ticks();
-//         while timer.millis_since(start) <= 1000 {}
-//         kernel::exit();
-//     }
-}
-
-fn new_freq_incr(rng: &mut Rng) -> i32 {
-    let f = rng.random_u8();
-    let freq = (f as f32) + 256.0;
-    defmt::println!("Freq: {=f32}", freq);
-    let samp_per_cyc: f32 = 44100.0 / freq; // 141.7
-    let fincr = 256.0 / samp_per_cyc; // 1.81
-    let incr = (((1 << 24) as f32) * fincr) as i32;
-    incr
 }
 
 #[inline(always)]

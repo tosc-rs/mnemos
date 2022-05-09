@@ -1,4 +1,4 @@
-use core::{alloc::Layout, sync::atomic::Ordering, ptr::{null_mut, NonNull}};
+use core::alloc::Layout;
 
 use common::{
     syscall::request::SysCallRequest,
@@ -16,10 +16,11 @@ use common::{
         BlockKind,
     },
 };
+use cortex_m::peripheral::SCB;
 use groundhog::RollingTimer;
 use groundhog_nrf52::GlobalRollingTimer;
 
-use crate::{alloc::{HeapGuard, HeapArray}, future_box::FutureBoxExHdl};
+use crate::{alloc::{HeapGuard, HeapArray}, future_box::FutureBoxExHdl, DriverCommand, DRIVER_QUEUE};
 
 pub trait OutputPin: Send {
     fn set_pin(&mut self, is_high: bool);
@@ -248,7 +249,7 @@ impl Machine {
         }
     }
 
-    pub fn handle_system_request(&mut self, heap: &mut HeapGuard, req: SystemRequest) -> Result<SystemSuccess, ()> {
+    pub fn handle_system_request(&mut self, _heap: &mut HeapGuard, req: SystemRequest) -> Result<SystemSuccess, ()> {
         match req {
             SystemRequest::SetBootBlock { block } => {
                 crate::MAGIC_BOOT.set(block);
@@ -261,7 +262,7 @@ impl Machine {
                 while timer.millis_since(start) <= 1000 {}
                 nrf52840_hal::pac::SCB::sys_reset();
             }
-            SystemRequest::FreeFutureBox { fb_ptr, payload_size, payload_align } => {
+            SystemRequest::FreeFutureBox { .. } => {
                 // defmt::println!("Freeing FB");
                 // let fb_ptr: *mut FutureBox<()> = fb_ptr as usize as *const FutureBox<()> as *mut FutureBox<()>;
 
@@ -286,7 +287,7 @@ impl Machine {
                 // }
 
                 panic!("Freeing from userspace is currently broken, don't do that!");
-                Ok(SystemSuccess::Freed)
+                // Ok(SystemSuccess::Freed)
             },
             SystemRequest::Panic => {
                 defmt::println!("Application panicked!");
@@ -298,23 +299,11 @@ impl Machine {
     pub fn handle_time_request(&mut self, req: TimeRequest) -> Result<TimeSuccess, ()> {
         let TimeRequest::SleepMicros { us } = req;
 
-        defmt::println!("SLEEP");
-
-        let timer = GlobalRollingTimer::default();
-        let mut ttl_us = us;
-        let orig_start = timer.get_ticks();
-
-        // Just in case the user asks for something REALLY close to a rollover (e.g. u32::MAX),
-        // don't delay for more than half of the range of the timer.
-        while ttl_us != 0 {
-            let start = timer.get_ticks();
-            let to_wait = ttl_us.min(u32::MAX / 2);
-            while timer.micros_since(start) <= to_wait {}
-            ttl_us = ttl_us.saturating_sub(to_wait)
-        }
+        DRIVER_QUEUE.enqueue(DriverCommand::SleepMicros(us)).ok();
+        SCB::set_pendsv();
 
         Ok(TimeSuccess::SleptMicros {
-            us: timer.micros_since(orig_start).min(us),
+            us,
         })
     }
 

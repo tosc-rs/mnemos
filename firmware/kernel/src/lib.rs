@@ -212,3 +212,13 @@ impl MagicBoot {
 }
 
 unsafe impl Sync for MagicBoot {}
+
+use heapless::mpmc::MpMcQueue;
+
+pub enum DriverCommand {
+    SpiStart,
+    SpiEnd,
+    SleepMicros(u32),
+}
+
+pub static DRIVER_QUEUE: MpMcQueue<DriverCommand, 64> = MpMcQueue::new();
