@@ -1,7 +1,7 @@
 #![no_main]
 #![no_std]
 
-use core::{arch::asm, sync::atomic::{AtomicU32, compiler_fence}};
+use core::{arch::asm, sync::atomic::{AtomicU32, compiler_fence, AtomicBool}};
 use cortex_m::{
     asm::isb,
     register::{control, psp},
@@ -18,6 +18,7 @@ use kernel::{
         nrf52_spim_nonblocking::{new_send_fut, Spim},
         usb_serial::{enable_usb_interrupts, setup_usb_uart, UsbUartIsr, UsbUartParts},
         vs1053b::Vs1053b,
+        nrf52_rng::HWRng,
     },
     loader::validate_header,
     map_pins,
@@ -36,6 +37,7 @@ use nrf52840_hal::{
     pac::{GPIOTE, P0, P1, PPI, SPIM0, TIMER0, SCB, TIMER2},
     ppi::{ConfigurablePpi, Parts, Ppi, Ppi0},
     prelude::OutputPin,
+    rng::Rng,
     usbd::{UsbPeripheral, Usbd},
     timer::Instance as _,
     Clocks,
@@ -48,10 +50,14 @@ use usbd_serial::{SerialPort, USB_CLASS_CDC};
 
 static DEFAULT_IMAGE: &[u8] = include_bytes!("../appbins/tony.bin");
 static IDLE_TICKS: AtomicU32 = AtomicU32::new(0);
+static SYSCALLS: AtomicU32 = AtomicU32::new(0);
+static SNAP: AtomicBool = AtomicBool::new(false);
 
 #[rtic::app(device = nrf52840_hal::pac, dispatchers = [SWI0_EGU0])]
 mod app {
     use core::sync::atomic::Ordering;
+    use kernel::traits::RandFill;
+
     use super::*;
 
     #[monotonic(binds = TIMER0, default = true)]
@@ -196,6 +202,9 @@ mod app {
         let vs1053b = Vs1053b::from_handles(cmd_hdl, data_hdl);
         let vs1053b: &'static mut dyn PcmSink = heap_guard.leak_send(vs1053b).map_err(drop).unwrap();
 
+        let rng = Rng::new(device.RNG);
+        let hwrng = HWRng::new(rng);
+        let rand: &'static mut dyn RandFill = heap_guard.leak_send(hwrng).map_err(drop).unwrap();
 
         let machine = Machine {
             serial: to_uart,
@@ -203,6 +212,7 @@ mod app {
             spi: Some(spi),
             pcm: Some(vs1053b),
             gpios: &mut [],
+            rand: Some(rand),
         };
 
         ticky::spawn_after(1000u32.millis()).ok();
@@ -221,6 +231,15 @@ mod app {
         )
     }
 
+    #[task(binds = TIMER2, priority = 5)]
+    fn timer_stub(_cx: timer_stub::Context) {
+        unsafe {
+            let timer = &*TIMER2::ptr();
+            timer.events_compare[0].write(|w| w);
+        }
+        SNAP.store(true, Ordering::Release);
+    }
+
     #[task(binds = USBD, local = [usb_isr], priority = 4)]
     fn usb_tick(cx: usb_tick::Context) {
         cx.local.usb_isr.poll();
@@ -234,7 +253,7 @@ mod app {
         // Clear channel 1 events
         gpiote.events_in[1].write(|w| w);
 
-        DRIVER_QUEUE.enqueue(DriverCommand::SpiStart).ok();
+        DRIVER_QUEUE.enqueue(DriverCommand::SpiStart).map_err(drop).unwrap();
         SCB::set_pendsv();
     }
 
@@ -246,26 +265,28 @@ mod app {
         // Clear channel 0 events (which probably stopped our SPI device)
         gpiote.events_in[0].write(|w| w);
 
+        let spim0 = unsafe { &*SPIM0::ptr() };
+        spim0.events_stopped.reset();
+        spim0.events_end.reset();
+
         // defmt::println!("[INT]: SPIM0");
-        DRIVER_QUEUE.enqueue(DriverCommand::SpiEnd).ok();
+        DRIVER_QUEUE.enqueue(DriverCommand::SpiEnd).map_err(drop).unwrap();
         SCB::set_pendsv();
     }
 
     #[task(binds = SVCall, local = [heap], shared = [machine], priority = 2)]
     fn svc(cx: svc::Context) {
+        SYSCALLS.fetch_add(1, Ordering::Release);
         let mut machine = cx.shared.machine;
-        defmt::println!("SVC!");
         if let Ok(()) = try_recv_syscall(|req| {
             machine.lock(|machine| machine.handle_syscall(cx.local.heap, req))
         }) {
             // defmt::println!("Handled syscall!");
         }
-        defmt::println!("SVC EXIT!");
     }
 
     #[task(binds = PendSV, shared = [machine], local = [timer], priority = 1)]
     fn pendsv(cx: pendsv::Context) {
-        defmt::println!("PENDSV");
         let mut machine = cx.shared.machine;
         let hwtimer = cx.local.timer;
         let mut sleep: Option<u32> = None;
@@ -273,7 +294,6 @@ mod app {
         while let Some(msg) = DRIVER_QUEUE.dequeue() {
             match msg {
                 DriverCommand::SpiStart => {
-                    defmt::println!("SPISTART");
                     machine.lock(|machine| {
                         if let Some(spi) = machine.spi.as_mut() {
                             spi.start_send();
@@ -281,7 +301,6 @@ mod app {
                     })
                 }
                 DriverCommand::SpiEnd => {
-                    defmt::println!("SPIEND");
                     machine.lock(|machine| {
                         if let Some(spi) = machine.spi.as_mut() {
                             spi.end_send();
@@ -291,47 +310,82 @@ mod app {
                 DriverCommand::SleepMicros(us) => {
                     if let Some(dly) = sleep.as_mut() {
                         *dly = (*dly).max(us);
+                    } else {
+                        sleep = Some(us);
                     }
                 }
             }
         }
 
+        // Implement a loop that counts the amount of time the CPU is idle.
         if let Some(dly) = sleep {
-            defmt::println!("SLEEP");
+            // Clear the "timer expired flag"
+            SNAP.store(false, Ordering::Release);
+
+            // Set up the timer to delay for the requested number of microseconds.
+            // Start the timer, and enable the interrupt
             hwtimer.set_oneshot();
+            hwtimer.shorts.write(|w| w.compare0_stop().enabled());
             hwtimer.timer_reset_event();
+            hwtimer.enable_interrupt();
             hwtimer.timer_start(dly);
 
-            while hwtimer.timer_running() {
-                // cortex_m::interrupt::disable();
-                // hwtimer.enable_interrupt();
-                // let start = hwtimer.read_counter();
+            loop {
+                // In order to make sure that we measure ALL interrupts, we disable them,
+                // which will still *pend* them, but not *service* them
+                cortex_m::interrupt::disable();
 
-                // compiler_fence(Ordering::SeqCst);
-                // cortex_m::asm::wfi();
-                // compiler_fence(Ordering::SeqCst);
+                // Don't check the "interrupt done" flag until AFTER interrupts are disabled,
+                // to prevent racing with the interrupt
+                let done = SNAP.load(Ordering::Acquire);
 
-                // hwtimer.disable_interrupt();
-                // hwtimer.timer_reset_event();
+                // If the timer hasn't expired yet, go to sleep with a WFI, and measure how
+                // long we were in that WFI condition
+                if !done {
+                    let start = hwtimer.read_counter();
 
-                // let end = if !hwtimer.timer_running() {
-                //     dly
-                // } else {
-                //     hwtimer.read_counter()
-                // };
-                // IDLE_TICKS.fetch_add(end - start, Ordering::SeqCst);
-                // unsafe {
-                //     cortex_m::interrupt::enable();
-                // }
+                    // Despite being in an interrupt at the moment, WFI will still return IF
+                    // a higher priority interrupt is fired (which our timer interrupt is).
+                    //
+                    // This means that we know when we make it past this block, SOME interrupt
+                    // has fired, either our high prio timer, or some other interrupt which will
+                    // cause us to use CPU.
+                    compiler_fence(Ordering::SeqCst);
+                    cortex_m::asm::wfi();
+                    compiler_fence(Ordering::SeqCst);
+
+                    // Increment the time spent sleeping, based on how long the time was between
+                    // starting WFI, and ending WFI.
+                    let end = hwtimer.read_counter();
+                    IDLE_TICKS.fetch_add(end - start, Ordering::SeqCst);
+                }
+
+                // Whether we are done or not, re-enable interrupts, to allow them to be immediately
+                // serviced. This will either handle our timer event, or whatever other interrupt
+                // is pending.
+                unsafe {
+                    cortex_m::interrupt::enable();
+                }
+
+                // If we noticed our timer interrupt is done, break out of the loop.
+                if done {
+                    hwtimer.disable_interrupt();
+                    break;
+                }
             }
         }
-        defmt::println!("PENDSV DONE");
     }
 
     #[task]
     fn ticky(_cx: ticky::Context) {
-        let used = IDLE_TICKS.swap(0, Ordering::SeqCst);
-        defmt::println!("idle ms: {=u32}", used / 1000);
+        let used = 1_000_000 - IDLE_TICKS.swap(0, Ordering::SeqCst);
+        let scc = SYSCALLS.swap(0, Ordering::AcqRel);
+
+        let used = used / 100;
+        let pct_used = used / 100;
+        let dec_used = used % 100;
+
+        defmt::println!("CPU usage: {=u32}.{=u32:02}% - syscalls: {=u32}", pct_used, dec_used, scc);
         ticky::spawn_after(1000u32.millis()).ok();
     }
 

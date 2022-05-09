@@ -52,7 +52,7 @@ pub mod request {
         Serial(SerialRequest<'a>),
         Time(TimeRequest),
         BlockStore(BlockRequest<'a>),
-        System(SystemRequest),
+        System(SystemRequest<'a>),
         Gpio(GpioRequest),
         PcmSink(PcmSinkRequest),
     }
@@ -95,7 +95,7 @@ pub mod request {
 
     /// Requests associated with system control.
     #[derive(Serialize, Deserialize)]
-    pub enum SystemRequest {
+    pub enum SystemRequest<'a> {
         SetBootBlock {
             block: u32
         },
@@ -106,6 +106,9 @@ pub mod request {
             payload_align: u32,
         },
         Panic,
+        RandFill {
+            dest: SysCallSliceMut<'a>
+        },
     }
 
     /// Requests associated with Virtual Serial Port operations.
@@ -184,7 +187,7 @@ pub mod success {
         Serial(SerialSuccess<'a>),
         Time(TimeSuccess),
         BlockStore(BlockSuccess<'a>),
-        System(SystemSuccess),
+        System(SystemSuccess<'a>),
         Gpio(GpioSuccess),
         PcmSink(PcmSinkSuccess),
     }
@@ -200,9 +203,12 @@ pub mod success {
 
     /// Success type for System level requests
     #[derive(Serialize, Deserialize)]
-    pub enum SystemSuccess {
+    pub enum SystemSuccess<'a> {
         BootBlockSet,
         Freed,
+        RandFilled {
+            dest: SysCallSliceMut<'a>
+        }
     }
 
     /// Success type for Virtual Serial Port requests

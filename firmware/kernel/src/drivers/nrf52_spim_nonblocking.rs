@@ -529,10 +529,10 @@ impl SpimInner {
         //
         // This event is triggered once both transmitting and receiving are
         // done.
-        let (is_ended, is_stopped) = self.clear_events();
-        if !(is_ended || is_stopped) {
-            return Err(Error::NotDone);
-        }
+        // let (is_ended, is_stopped) = self.clear_events();
+        // if !(is_ended || is_stopped) {
+        //     return Err(Error::NotDone);
+        // }
 
         // Conservative compiler fence to prevent optimizations that do not
         // take in to account actions by DMA. The fence has been placed here,

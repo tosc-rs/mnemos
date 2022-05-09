@@ -205,6 +205,16 @@ pub mod system {
         }
     }
 
+    pub fn rand_fill<'a>(buf: &'a mut [u8]) -> Result<&'a mut [u8], ()> {
+        let req = SysCallRequest::System(SystemRequest::RandFill { dest: buf.into() });
+        let resp = success_filter(try_syscall(req)?)?;
+        if let SystemSuccess::RandFilled { dest } = resp {
+            Ok(unsafe { dest.to_slice_mut() })
+        } else {
+            Err(())
+        }
+    }
+
     pub unsafe fn free_future_box(
         fb_ptr: *mut FutureBox<()>,
         payload_size: usize,
@@ -345,17 +355,6 @@ pub mod pcm_sink {
             fb.status.store(status::KERNEL_ACCESS, Ordering::SeqCst);
             fb.ex_taken.store(false, Ordering::SeqCst);
 
-            struct StdOut;
-            use core::fmt::Write;
-            impl Write for StdOut {
-                fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                    super::serial::write_port(0, s.as_bytes()).ok();
-                    Ok(())
-                }
-            }
-
-            writeln!(&mut StdOut, "send: {:08X?}", fb).ok();
-
             let ret = SampleBufCompletionFut {
                 fb_ptr: self.fb_ptr,
                 payload_size: self.payload_size,
@@ -426,20 +425,7 @@ pub mod pcm_sink {
                 payload_align
             } = fut {
 
-                struct StdOut;
-                use core::fmt::Write;
-                impl Write for StdOut {
-                    fn write_str(&mut self, s: &str) -> core::fmt::Result {
-                        super::serial::write_port(0, s.as_bytes()).ok();
-                        Ok(())
-                    }
-                }
-
-                writeln!(&mut StdOut, "{:08X?}", fut).ok();
                 let fub_ptr = ptr_fb as usize as *const FutureBox<()> as *mut FutureBox<()>;
-                unsafe {
-                    writeln!(&mut StdOut, "{:08X?}", &*fub_ptr).ok();
-                }
                 let sbef = SampleBufExFut {
                     fb_ptr: fub_ptr,
                     payload_size: payload_size as usize,
@@ -447,8 +433,6 @@ pub mod pcm_sink {
                     samples_ptr: ptr as usize as *const u8 as *mut u8,
                     samples_len: len as usize,
                 };
-
-                writeln!(&mut StdOut, "{:08X?}", sbef).ok();
 
                 Ok(sbef)
             } else {

@@ -6,31 +6,39 @@ use core::{sync::atomic::{Ordering, AtomicU32, fence, AtomicUsize}, arch::asm, o
 use userspace::common::porcelain::{
     pcm_sink as pcm,
     time,
+    system,
 };
+
+use rand_core::{self, SeedableRng, RngCore};
+use rand_chacha::{self, ChaCha8Rng};
 
 mod scale;
 
+const CHUNK_SZ: usize = 512;
 
 #[no_mangle]
 pub fn entry() -> ! {
     pcm::enable().ok();
 
-    let mut samps_a = 0;
-    let mut samps_b = 0;
+    let mut seed = [0u8; 32];
+    system::rand_fill(&mut seed).unwrap();
+
+    let mut rng = ChaCha8Rng::from_seed(seed);
+
+    let mut samps_a: usize = 0;
+    let mut samps_b: usize = 0;
     let mut cur_offset_a = 0;
     let mut cur_offset_b = 0;
-    let mut it1 = 0;
-    let mut it2 = 0;
-    let mut incr_a = new_freq_incr(&mut it1, 3);
-    let mut incr_b = new_freq_incr(&mut it2, 4);
+    let mut incr_a = new_freq_incr(rng.next_u32() as usize, 3);
+    let mut incr_b = new_freq_incr(rng.next_u32() as usize, 4);
 
-    let mut buf_a = [0i16; 512];
-    let mut buf_b = [0i16; 512];
+    let mut buf_a = [0i16; CHUNK_SZ];
+    let mut buf_b = [0i16; CHUNK_SZ];
     fill_sample_buf(&mut buf_a, incr_a, &mut cur_offset_a);
     fill_sample_buf(&mut buf_b, incr_b, &mut cur_offset_b);
 
     loop {
-        if let Ok(mut samples) = pcm::alloc_samples(512) {
+        if let Ok(mut samples) = pcm::alloc_samples(CHUNK_SZ) {
             samples.deref_mut().chunks_exact_mut(4).zip(buf_a.iter().zip(buf_b.iter())).for_each(|(ch, (a, b))| {
                 let val = (*a >> 1).wrapping_add(*b >> 1);
 
@@ -42,21 +50,46 @@ pub fn entry() -> ! {
             });
 
             samples.send();
-            samps_a += 512;
-            samps_b += 512;
+            samps_a = samps_a.saturating_sub(CHUNK_SZ);
+            samps_b = samps_b.saturating_sub(CHUNK_SZ);
             fill_sample_buf(&mut buf_a, incr_a, &mut cur_offset_a);
-            fill_sample_buf(&mut buf_b, incr_b, &mut cur_offset_b);
+            fill_sample_square(&mut buf_b, incr_b, &mut cur_offset_b);
+            // samples.deref_mut().iter_mut().for_each(|b| *b = 0);
+            // samples.send();
+        } else {
+            time::sleep_micros(5000).ok();
         }
 
-        if samps_a >= (44100 / 2) {
-            samps_a = 0;
-            incr_a = new_freq_incr(&mut it1, 3);
+        if samps_a == 0 {
+            samps_a = 44100 / ((rng.next_u32() as usize % 4) + 1);
+            incr_a = new_freq_incr(rng.next_u32() as usize, 3);
         }
-        if samps_b >= (88200 / 3) {
-            samps_b = 0;
-            incr_b = new_freq_incr(&mut it2, 4);
+        if samps_b == 0 {
+            samps_b = (88200 / 3);
+            incr_b = new_freq_incr(rng.next_u32() as usize, 4);
         }
     }
+}
+
+
+#[inline(always)]
+pub fn fill_sample_square(data: &mut [i16], incr: i32, cur_offset: &mut i32) {
+    data.iter_mut().for_each(|ch| {
+        if *cur_offset > 0 {
+            *ch = i16::MAX;
+        } else {
+            *ch = i16::MIN;
+        }
+        *cur_offset = cur_offset.wrapping_add(incr);
+    });
+}
+
+#[inline(always)]
+pub fn fill_sample_saw(data: &mut [i16], incr: i32, cur_offset: &mut i32) {
+    data.iter_mut().for_each(|ch| {
+        *ch = ((*cur_offset) >> 16) as i16;
+        *cur_offset = cur_offset.wrapping_add(incr);
+    });
 }
 
 #[inline(always)]
@@ -83,11 +116,10 @@ pub fn fill_sample_buf(data: &mut [i16], incr: i32, cur_offset: &mut i32) {
     });
 }
 
-fn new_freq_incr(it: &mut usize, oct: u8) -> i32 {
-    *it = *it + 1;
-    let cur_scale = scale::MAJOR_PENTATONIC_INTERVALS;
-    let semi = cur_scale[*it % cur_scale.len()];
-    let cur_note = scale::Note { pitch: scale::Pitch::C, octave: oct };
+fn new_freq_incr(it: usize, oct: u8) -> i32 {
+    let cur_scale = scale::BLUES_MAJOR_PENTATONIC_INTERVALS;
+    let semi = cur_scale[it % cur_scale.len()];
+    let cur_note = scale::Note { pitch: scale::Pitch::ASharp, octave: oct };
     let freq = (cur_note + semi).freq_f32();
 
     let samp_per_cyc: f32 = 44100.0 / freq; // 141.7

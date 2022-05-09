@@ -22,6 +22,10 @@ use groundhog_nrf52::GlobalRollingTimer;
 
 use crate::{alloc::{HeapGuard, HeapArray}, future_box::FutureBoxExHdl, DriverCommand, DRIVER_QUEUE};
 
+pub trait RandFill: Send {
+    fn fill(&mut self, buf: &mut [u8]) -> Result<(), ()>;
+}
+
 pub trait OutputPin: Send {
     fn set_pin(&mut self, is_high: bool);
 }
@@ -150,6 +154,7 @@ pub struct Machine {
     pub spi: Option<&'static mut dyn Spi>,
     pub gpios: &'static mut [&'static mut dyn GpioPin],
     pub pcm: Option<&'static mut dyn PcmSink>,
+    pub rand: Option<&'static mut dyn RandFill>,
 }
 
 impl Machine {
@@ -249,7 +254,7 @@ impl Machine {
         }
     }
 
-    pub fn handle_system_request(&mut self, _heap: &mut HeapGuard, req: SystemRequest) -> Result<SystemSuccess, ()> {
+    pub fn handle_system_request<'a>(&mut self, _heap: &mut HeapGuard, req: SystemRequest<'a>) -> Result<SystemSuccess<'a>, ()> {
         match req {
             SystemRequest::SetBootBlock { block } => {
                 crate::MAGIC_BOOT.set(block);
@@ -293,6 +298,14 @@ impl Machine {
                 defmt::println!("Application panicked!");
                 Err(())
             }
+            SystemRequest::RandFill { dest } => {
+                let rng = self.rand.as_mut().ok_or(())?;
+                let buf = unsafe { dest.to_slice_mut() };
+                rng.fill(buf)?;
+                Ok(SystemSuccess::RandFilled {
+                    dest: buf.into()
+                })
+            },
         }
     }
 
