@@ -48,7 +48,7 @@ use usb_device::{
 };
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
 
-static DEFAULT_IMAGE: &[u8] = include_bytes!("../appbins/tony.bin");
+static DEFAULT_IMAGE: &[u8] = include_bytes!("../appbins/tonyjam.bin");
 static IDLE_TICKS: AtomicU32 = AtomicU32::new(0);
 static SYSCALLS: AtomicU32 = AtomicU32::new(0);
 static SNAP: AtomicBool = AtomicBool::new(false);
