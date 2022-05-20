@@ -436,10 +436,6 @@ pub mod pcm_sink {
 
                 Ok(sbef)
             } else {
-                // uh oh
-                loop {
-                    super::time::sleep_micros(1_000_000).ok();
-                }
                 panic!("Got a bad future!");
             }
         } else {
