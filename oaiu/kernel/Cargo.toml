@@ -17,11 +17,6 @@ license = "MIT OR Apache-2.0"
 name = "kernel"
 harness = false
 
-# needed for each integration test
-[[test]]
-name = "integration"
-harness = false
-
 [dependencies]
 cortex-m = "0.7.3"
 cortex-m-rt = "0.7.0"
