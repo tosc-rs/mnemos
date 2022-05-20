@@ -20,15 +20,13 @@ use nrf52840_hal::{
     },
     pac::{P0, P1},
 }; // memory layout
+use heapless::mpmc::MpMcQueue;
 
 use panic_probe as _;
 pub mod alloc;
 pub mod drivers;
 pub mod future_box;
-pub mod loader;
 pub mod monotonic;
-pub mod qspi;
-pub mod syscall;
 pub mod traits;
 
 // same panicking *behavior* as `panic-probe` but doesn't print a panic message
@@ -212,8 +210,6 @@ impl MagicBoot {
 }
 
 unsafe impl Sync for MagicBoot {}
-
-use heapless::mpmc::MpMcQueue;
 
 pub enum DriverCommand {
     SpiStart,
