@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 rand_core = "0.6.3"
+heapless = "0.7.13"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

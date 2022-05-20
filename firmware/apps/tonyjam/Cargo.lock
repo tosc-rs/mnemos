@@ -110,9 +110,9 @@ dependencies = [
 
 [[package]]
 name = "heapless"
-version = "0.7.12"
+version = "0.7.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "80d9655b43f21008d1d6f6ae33ba8bfbaf1ef954f19ea3023e1bcf8e06b4e909"
+checksum = "8a08e755adbc0ad283725b29f4a4883deee15336f372d5f61fae59efec40f983"
 dependencies = [
  "atomic-polyfill",
  "hash32",
@@ -371,6 +371,7 @@ dependencies = [
 name = "tonyjam"
 version = "0.1.0"
 dependencies = [
+ "heapless",
  "minijam",
  "mnemos-userspace",
  "rand_chacha",
