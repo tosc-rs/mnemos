@@ -27,7 +27,7 @@ use usb_device::{
     device::{UsbDeviceBuilder, UsbVidPid},
 };
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
-use common::SysCallRings;
+use abi::SysCallRings;
 use kernel::syscall::KernelRings;
 
 static IDLE_TICKS: AtomicU32 = AtomicU32::new(0);
@@ -163,7 +163,7 @@ mod app {
     fn pendsv(cx: pendsv::Context) {
         // TODO: Catch blocked state? AtomicBool?
         // TODO: Deserialize + Process any incoming messages
-        while let Some(msg) = cx.local.kernel_rings.user_to_kernel.read() {
+        while let Some(_msg) = cx.local.kernel_rings.user_to_kernel.read() {
 
         }
         // TODO: progress the executor

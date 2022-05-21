@@ -1,6 +1,6 @@
 use core::cell::UnsafeCell;
-use common::{bbqueue_ipc::{BBBuffer, framed::{FrameProducer, FrameConsumer, FrameGrantR}}, syscall::request::SysCallRequest};
-use common::SysCallRings;
+use abi::{bbqueue_ipc::{BBBuffer, framed::{FrameProducer, FrameConsumer, FrameGrantR}}, syscall::request::SysCallRequest};
+use abi::SysCallRings;
 use core::sync::atomic::AtomicPtr;
 
 pub const RING_SIZE: usize = 4096;

@@ -22,9 +22,6 @@
 //! moment. If this is important to you, pin the exact `common` crate version
 //! you plan to support, or open an issue to discuss changing this policy.
 
-#[cfg(all(target_arch = "arm", target_os = "none"))]
-use core::{sync::atomic::Ordering, ptr::null_mut, arch::asm};
-
 use core::marker::PhantomData;
 use serde::{Serialize, Deserialize};
 use crate::syscall::{request::SysCallRequest, success::SysCallSuccess};
@@ -508,48 +505,8 @@ pub fn try_syscall<'a>(req: SysCallRequest<'a>) -> Result<SysCallSuccess<'a>, ()
 /// AtomicPtr/AtomicUsize pair), and triggers a Cortex M `SVCall 0` instruction,
 /// which prompts the kernel handler to run.
 #[cfg(all(target_arch = "arm", target_os = "none"))]
-fn raw_syscall<'i, 'o>(input: &'i [u8], output: &'o mut [u8]) -> Result<&'o mut [u8], ()> {
-    let in_ptr = input.as_ptr() as *mut u8;
-
-    // Try to atomically swap the in ptr for our input parameter. If this fails,
-    // it means another syscall is in progress, and we should try again later.
-    //
-    // An "idle" syscall state is represented as a null pointer in the input
-    // field.
-    //
-    // TODO: Should we just spin on this? Probably doesn't matter until we have
-    // pre-emption, if ever...
-    crate::SYSCALL_IN_PTR
-        .compare_exchange(
-            null_mut(),
-            in_ptr,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        )
-        .map_err(drop)?;
-
-    // We've made it past the hurdle! Fill the rest of the buffers, then trigger
-    // the svc call
-    crate::SYSCALL_IN_LEN.store(input.len(), Ordering::SeqCst);
-    crate::SYSCALL_OUT_PTR.store(output.as_ptr() as *mut u8, Ordering::SeqCst);
-    crate::SYSCALL_OUT_LEN.store(output.len(), Ordering::SeqCst);
-
-    unsafe {
-        asm!("svc 0");
-    }
-
-    // Now we need to grab the output length, then reset all fields.
-    let new_out_len = crate::SYSCALL_OUT_LEN.swap(0, Ordering::SeqCst);
-    crate::SYSCALL_OUT_PTR.store(null_mut(), Ordering::SeqCst);
-    crate::SYSCALL_IN_LEN.store(0, Ordering::SeqCst);
-    crate::SYSCALL_IN_PTR.store(null_mut(), Ordering::SeqCst);
-
-    if new_out_len == 0 {
-        // This is bad. Just report it as an error for now
-        Err(())
-    } else {
-        Ok(&mut output[..new_out_len])
-    }
+fn raw_syscall<'i, 'o>(_input: &'i [u8], _output: &'o mut [u8]) -> Result<&'o mut [u8], ()> {
+    todo!()
 }
 
 // Shim for testing/host builds

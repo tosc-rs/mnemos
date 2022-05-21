@@ -1,6 +1,6 @@
 use core::alloc::Layout;
 
-use common::{
+use abi::{
     syscall::request::SysCallRequest,
     syscall::{
         request::{BlockRequest, GpioMode, GpioRequest, SystemRequest, PcmSinkRequest},

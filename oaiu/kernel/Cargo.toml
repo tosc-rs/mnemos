@@ -40,10 +40,9 @@ nb = "1.0.0"
 version = "0.7.10"
 features = ["defmt-impl"]
 
-[dependencies.common]
-package = "mnemos-common"
+[dependencies.mnemos-abi]
 version = "0.1.0"
-path = "../common"
+path = "../abi"
 features = ["use-defmt"]
 
 [dependencies.bbqueue]

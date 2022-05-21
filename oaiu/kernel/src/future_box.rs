@@ -7,7 +7,7 @@ use core::{
     sync::atomic::{AtomicBool, AtomicPtr, AtomicU8, Ordering},
 };
 
-use common::syscall::future::{FutureBox, status};
+use abi::syscall::future::{FutureBox, status};
 
 use crate::alloc::{HeapBox, HeapGuard};
 
