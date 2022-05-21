@@ -5,6 +5,7 @@ use core::{sync::atomic::{AtomicPtr, AtomicUsize}, ptr::null_mut};
 
 pub mod porcelain;
 pub mod syscall;
+pub mod bbqueue_ipc;
 
 // NOTE: These symbols are only public so the kernel doesn't have to
 // redefine them. Don't touch. These will eventually go away.

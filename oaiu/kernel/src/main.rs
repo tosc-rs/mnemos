@@ -151,7 +151,11 @@ mod app {
 
     #[task(binds = PendSV, shared = [machine], local = [timer], priority = 1)]
     fn pendsv(_cx: pendsv::Context) {
-
+        // TODO: Catch blocked state? AtomicBool?
+        // TODO: Deserialize + Process any incoming messages
+        // TODO: progress the executor
+        // TODO: Process any dropped allocations
+        // TODO: serialize any outgoing messages
     }
 
     #[task]
