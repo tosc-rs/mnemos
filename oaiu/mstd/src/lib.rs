@@ -2,7 +2,7 @@
 #![no_std]
 
 /// Common between the Kernel and Userspace
-pub use common;
+pub use abi;
 
 /// The user must provide a `no_mangle` entrypoint.
 extern "Rust" {
@@ -30,14 +30,14 @@ fn panic(info: &PanicInfo) -> ! {
     if let Some(location) = info.location() {
         writeln!(&mut sop, "Panicked at {}", location).ok();
     }
-    common::porcelain::system::panic()
+    abi::porcelain::system::panic()
 }
 
 pub struct StdOut;
 
 impl Write for StdOut {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        common::porcelain::serial::write_port(0, s.as_bytes()).ok();
+        abi::porcelain::serial::write_port(0, s.as_bytes()).ok();
         Ok(())
     }
 }

@@ -1,5 +1,5 @@
 [package]
-name = "mnemos-userspace"
+name = "mnemos-std"
 version = "0.1.0"
 description = "A tiny embedded operating system userspace library"
 repository = "https://github.com/jamesmunns/pellegrino"
@@ -14,11 +14,11 @@ categories = [
 license = "MIT OR Apache-2.0"
 
 [lib]
-name = "userspace"
+name = "mstd"
 
 [dependencies]
 
-[dependencies.common]
-package = "mnemos-common"
+[dependencies.abi]
+package = "mnemos-abi"
 version = "0.1.0"
-path = "../common"
+path = "../abi"
