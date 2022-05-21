@@ -1,36 +1,22 @@
 #![cfg_attr(not(test), no_std)]
 #![doc = include_str!("../README.md")]
 
-use core::{sync::atomic::{AtomicPtr, AtomicUsize}, ptr::null_mut};
+use core::sync::atomic::AtomicPtr;
+use bbqueue_ipc::BBBuffer;
 
 pub mod porcelain;
 pub mod syscall;
 pub mod bbqueue_ipc;
 
-// NOTE: These symbols are only public so the kernel doesn't have to
-// redefine them. Don't touch. These will eventually go away.
+// This will always live at the TOP of the user memory region, and will be
+// initialized by the kernel before
+#[repr(C)]
+pub struct SysCallRings {
+    /// USER should take the PRODUCER
+    /// KERNEL should take the CONSUMER
+    pub user_to_kernel: AtomicPtr<BBBuffer>,
 
-#[link_section=".bridge.syscall_in.ptr"]
-#[no_mangle]
-#[used]
-#[doc(hidden)]
-pub static SYSCALL_IN_PTR: AtomicPtr<u8> = AtomicPtr::new(null_mut());
-
-#[link_section=".bridge.syscall_in.len"]
-#[no_mangle]
-#[used]
-#[doc(hidden)]
-pub static SYSCALL_IN_LEN: AtomicUsize = AtomicUsize::new(0);
-
-#[link_section=".bridge.syscall_out.ptr"]
-#[no_mangle]
-#[used]
-#[doc(hidden)]
-pub static SYSCALL_OUT_PTR: AtomicPtr<u8> = AtomicPtr::new(null_mut());
-
-#[link_section=".bridge.syscall_out.len"]
-#[no_mangle]
-#[used]
-#[doc(hidden)]
-pub static SYSCALL_OUT_LEN: AtomicUsize = AtomicUsize::new(0);
-
+    /// USER should take the CONSUMER
+    /// KERNEL should take the PRODUCER
+    pub kernel_to_user: AtomicPtr<BBBuffer>,
+}

@@ -102,7 +102,6 @@ mod bbbuffer;
 pub use bbbuffer::*;
 
 pub mod framed;
-mod vusize;
 
 use core::result::Result as CoreResult;
 
@@ -111,7 +110,7 @@ pub type Result<T> = CoreResult<T, Error>;
 
 /// Error type used by the `BBQueue` interfaces
 #[derive(Debug, PartialEq, Eq, Copy, Clone)]
-#[cfg_attr(feature = "defmt_0_3", derive(defmt::Format))]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
 pub enum Error {
     /// The buffer does not contain sufficient size for the requested action
     InsufficientSize,

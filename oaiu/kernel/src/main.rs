@@ -27,6 +27,8 @@ use usb_device::{
     device::{UsbDeviceBuilder, UsbVidPid},
 };
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
+use common::SysCallRings;
+use kernel::syscall::KernelRings;
 
 static IDLE_TICKS: AtomicU32 = AtomicU32::new(0);
 static SYSCALLS: AtomicU32 = AtomicU32::new(0);
@@ -43,13 +45,15 @@ mod app {
 
     #[shared]
     struct Shared {
-        machine: Machine,
     }
 
     #[local]
     struct Local {
         usb_isr: UsbUartIsr,
         timer: TIMER2,
+        kernel_rings: KernelRings,
+        user_rings: SysCallRings,
+        machine: Machine,
     }
 
     type UsbBusAlloc = UsbBusAllocator<Usbd<UsbPeripheral<'static>>>;
@@ -115,15 +119,21 @@ mod app {
             rand: None,
         };
 
+        // Initialize the system call ring buffers
+        let kernel_rings = unsafe { KernelRings::initialize() };
+        let user_rings = unsafe { kernel_rings.user_rings() };
+
         ticky::spawn_after(1000u32.millis()).ok();
 
         (
             Shared {
-                machine,
             },
             Local {
                 usb_isr: isr,
                 timer,
+                user_rings,
+                kernel_rings,
+                machine,
             },
             init::Monotonics(mono),
         )
@@ -149,10 +159,13 @@ mod app {
         SCB::set_pendsv();
     }
 
-    #[task(binds = PendSV, shared = [machine], local = [timer], priority = 1)]
-    fn pendsv(_cx: pendsv::Context) {
+    #[task(binds = PendSV, local = [timer, kernel_rings, machine], priority = 1)]
+    fn pendsv(cx: pendsv::Context) {
         // TODO: Catch blocked state? AtomicBool?
         // TODO: Deserialize + Process any incoming messages
+        while let Some(msg) = cx.local.kernel_rings.user_to_kernel.read() {
+
+        }
         // TODO: progress the executor
         // TODO: Process any dropped allocations
         // TODO: serialize any outgoing messages
@@ -171,7 +184,7 @@ mod app {
         ticky::spawn_after(1000u32.millis()).ok();
     }
 
-    #[idle]
+    #[idle(local = [user_rings])]
     fn idle(_cx: idle::Context) -> ! {
         defmt::println!("Hello, world!");
 
