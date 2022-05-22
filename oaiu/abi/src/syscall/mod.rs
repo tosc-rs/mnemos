@@ -37,13 +37,15 @@ pub enum BlockKind {
 
 /// Types used in syscall requests - from userspace to kernel
 pub mod request {
+    use crate::boxes::SysCallFutureBytes;
+
     use super::*;
 
     /// The top level SysCallRequest type. This is the type expected by the
     /// kernel when triggering a syscall.
     #[derive(Serialize, Deserialize)]
     pub enum SysCallRequest {
-    //     Serial(SerialRequest<'a>),
+        Serial(SerialRequest),
         Time(TimeRequest),
     //     BlockStore(BlockRequest<'a>),
     //     System(SystemRequest<'a>),
@@ -105,21 +107,21 @@ pub mod request {
     //     },
     // }
 
-    // /// Requests associated with Virtual Serial Port operations.
-    // #[derive(Serialize, Deserialize)]
-    // pub enum SerialRequest<'a> {
-    //     SerialOpenPort {
-    //         port: u16,
-    //     },
-    //     SerialReceive {
-    //         port: u16,
-    //         dest_buf: SysCallSliceMut<'a>
-    //     },
-    //     SerialSend {
-    //         port: u16,
-    //         src_buf: SysCallSlice<'a>,
-    //     },
-    // }
+    /// Requests associated with Virtual Serial Port operations.
+    #[derive(Serialize, Deserialize)]
+    pub enum SerialRequest {
+        SerialOpenPort {
+            port: u16,
+        },
+        SerialReceive {
+            port: u16,
+            dest_buf: SysCallFutureBytes,
+        },
+        SerialSend {
+            port: u16,
+            src_buf: SysCallFutureBytes,
+        },
+    }
 
     /// Requests associated with time.
     #[derive(Serialize, Deserialize)]
@@ -176,7 +178,7 @@ pub mod success {
     /// userspace when obtaining the result of a successful system call.
     #[derive(Serialize, Deserialize)]
     pub enum SysCallSuccess {
-        // Serial(SerialSuccess<'a>),
+        Serial(SerialSuccess),
         Time(TimeSuccess),
         // BlockStore(BlockSuccess<'a>),
         // System(SystemSuccess<'a>),
@@ -203,17 +205,11 @@ pub mod success {
     //     }
     // }
 
-    // /// Success type for Virtual Serial Port requests
-    // #[derive(Serialize, Deserialize)]
-    // pub enum SerialSuccess<'a> {
-    //     PortOpened,
-    //     DataReceived {
-    //         dest_buf: SysCallSliceMut<'a>,
-    //     },
-    //     DataSent {
-    //         remainder: Option<SysCallSlice<'a>>,
-    //     },
-    // }
+    /// Success type for Virtual Serial Port requests
+    #[derive(Serialize, Deserialize)]
+    pub enum SerialSuccess {
+        PortOpened,
+    }
 
     /// Success type for time related requests
     #[derive(Serialize, Deserialize)]

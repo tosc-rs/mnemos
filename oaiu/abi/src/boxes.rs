@@ -7,7 +7,8 @@ use serde::{Serialize, Deserialize};
 pub struct BoxBytes<const N: usize> {
     // when N == 0, we can use the size to
     // get the slice
-    sz_bytes: u32,
+    capacity: u32,
+    len: u32,
     payload: [u8; N],
 }
 
@@ -23,7 +24,7 @@ impl BoxBytes<0> {
         unsafe {
             core::slice::from_raw_parts(
                 self.payload.as_ptr(),
-                self.sz_bytes as usize,
+                self.len as usize,
             )
         }
     }
@@ -35,12 +36,20 @@ impl BoxBytes<0> {
         let align_add = me_align - 1;
         // Round up to next
         // TODO: Replace with `next_multiple_of` once https://github.com/rust-lang/rust/issues/88581 lands
-        let to_add = ((self.sz_bytes as usize + align_add) / me_align) * me_align;
+        let to_add = ((self.capacity as usize + align_add) / me_align) * me_align;
         unsafe {
             Layout::from_size_align_unchecked(
                 me.size() + to_add,
                 me.align(),
             )
+        }
+    }
+}
+
+impl<const N: usize> From<&'static BoxBytes<N>> for SysCallBoxBytes {
+    fn from(other: &'static BoxBytes<N>) -> Self {
+        Self {
+            bb_ptr: (other as *const BoxBytes<N>) as usize as u32,
         }
     }
 }
@@ -57,8 +66,6 @@ pub struct FutureBytes {
     payload: AtomicPtr<BoxBytes<0>>,
     status: AtomicU8,
     ex_taken: AtomicBool,
-    // TODO: Include a "kind" type in case
-    // We want something OTHER than BoxBytes?
 }
 
 pub mod status {
@@ -85,4 +92,12 @@ pub mod status {
 #[derive(Serialize, Deserialize)]
 pub struct SysCallFutureBytes {
     fb_ptr: u32,
+}
+
+impl From<&'static FutureBytes> for SysCallFutureBytes {
+    fn from(other: &'static FutureBytes) -> Self {
+        Self {
+            fb_ptr: (other as *const FutureBytes) as usize as u32,
+        }
+    }
 }
