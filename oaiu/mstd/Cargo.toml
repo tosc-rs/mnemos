@@ -17,8 +17,26 @@ license = "MIT OR Apache-2.0"
 name = "mstd"
 
 [dependencies]
+defmt = "0.3.0"
+
+[dependencies.cordyceps]
+git = "https://github.com/hawkw/mycelium.git"
+sha = "7a3cede678be7467c79047b7f93bdbf5ff3f5d3a"
+features = ["no-cache-pad"]
 
 [dependencies.abi]
 package = "mnemos-abi"
 version = "0.1.0"
 path = "../abi"
+
+[dependencies.heapless]
+version = "0.7.10"
+features = ["defmt-impl"]
+
+[dependencies.linked_list_allocator]
+version = "0.9.1"
+default-features = false
+
+[features]
+panic-handler = []
+
