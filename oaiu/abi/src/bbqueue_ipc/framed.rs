@@ -118,8 +118,7 @@ impl<'a> FrameConsumer<'a> {
         // The header consists of a single u16, in little endian order
         let mut len_b = [0u8; 2];
         len_b.copy_from_slice(&grant_r[..HDR_LEN]);
-        let frame_len = u16::from_le_bytes(len_b) as usize;
-        let total_len = frame_len + HDR_LEN;
+        let total_len = u16::from_le_bytes(len_b) as usize;
 
         debug_assert!(grant_r.len() >= total_len);
 
