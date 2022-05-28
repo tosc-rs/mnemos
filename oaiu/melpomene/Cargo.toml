@@ -9,3 +9,6 @@ edition = "2021"
 
 [dependencies.mnemos-abi]
 path = "../abi"
+
+[dependencies.mnemos-std]
+path = "../mstd"

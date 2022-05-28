@@ -1,6 +1,6 @@
-use std::{sync::atomic::{Ordering, compiler_fence, AtomicBool}, thread::{spawn, yield_now, sleep}, time::Duration, ops::Deref};
+use std::{sync::atomic::{Ordering, compiler_fence, AtomicBool}, thread::{spawn, yield_now, sleep}, time::Duration, ops::Deref, future::Future, task::Poll};
 
-use abi::bbqueue_ipc::BBBuffer;
+use abi::{bbqueue_ipc::BBBuffer, HEAP_PTR};
 
 const RING_SIZE: usize = 4096;
 const HEAP_SIZE: usize = 192 * 1024;
@@ -38,18 +38,20 @@ fn main() {
 }
 
 fn kernel_entry() {
+    // First, we'll do some stuff that later the linker script will do...
     let u2k = Box::into_raw(Box::new(BBBuffer::new()));
     let u2k_buf = Box::into_raw(Box::new([0u8; RING_SIZE]));
     let k2u = Box::into_raw(Box::new(BBBuffer::new()));
     let k2u_buf = Box::into_raw(Box::new([0u8; RING_SIZE]));
-
     let user_heap = Box::into_raw(Box::new([0u8; HEAP_SIZE]));
+
+    // Still linker script things...
     abi::U2K_RING.store(u2k, Ordering::Relaxed);
     abi::K2U_RING.store(k2u, Ordering::Relaxed);
     abi::HEAP_PTR.store(user_heap.cast(), Ordering::Relaxed);
     abi::HEAP_LEN.store(HEAP_SIZE, Ordering::Relaxed);
 
-    // TODO: The kernel is supposed to do this...
+    // TODO: The kernel itself is supposed to do this...
     unsafe {
         (*u2k).initialize(u2k_buf.cast(), RING_SIZE);
         (*k2u).initialize(k2u_buf.cast(), RING_SIZE);
@@ -58,7 +60,6 @@ fn kernel_entry() {
     let u2k = unsafe { BBBuffer::take_framed_consumer(u2k) };
     let _k2u = unsafe { BBBuffer::take_framed_producer(k2u) };
 
-    println!("DING!");
     compiler_fence(Ordering::SeqCst);
 
     loop {
@@ -81,32 +82,56 @@ fn kernel_entry() {
 }
 
 fn userspace_entry() {
+    use mstd::alloc::HEAP;
+
+    // Set up kernel rings
     let u2k = unsafe { BBBuffer::take_framed_producer(abi::U2K_RING.load(Ordering::Acquire)) };
     let _k2u = unsafe { BBBuffer::take_framed_consumer(abi::K2U_RING.load(Ordering::Acquire)) };
 
+    // Set up allocator
+    let mut hg = HEAP.init_exclusive(
+        abi::HEAP_PTR.load(Ordering::Acquire) as usize,
+        abi::HEAP_LEN.load(Ordering::Acquire),
+    ).unwrap();
+
+    // Set up executor
+    let terpsichore = &mstd::executor::EXECUTOR;
+
+    // Spawn the `main` task
+    let mtask = mstd::executor::task::Task::new_raw(async move {
+        amain().await
+    });
+    let hbmtask = hg.alloc_box(mtask).map_err(drop).unwrap();
+    let mhdl = mstd::executor::spawn(hbmtask);
+
+    terpsichore.
+}
+
+async fn amain() -> Result<(), ()> {
     loop {
-        while KERNEL_LOCK.load(Ordering::Acquire) {
-            yield_now();
-        }
+        println!("Hi, I'm amain!");
+        ayield_now().await;
+    }
+}
 
-        // ...
-        match u2k.grant(4) {
-            Ok(mut gr) => {
-                println!("Sending...");
-                gr.copy_from_slice(&[1, 2, 3, 4]);
-                gr.commit(4);
-                println!("Sent!");
+fn ayield_now() -> Yield {
+    Yield { once: false }
+}
 
-                sleep(Duration::from_millis(100));
-                KERNEL_LOCK.store(true, Ordering::Release);
-                sleep(Duration::from_millis(100));
+struct Yield {
+    once: bool,
+}
 
-                unimplemented!()
-            },
-            Err(_) => {
-                println!("WHAT");
-                panic!();
-            },
+impl Future for Yield {
+    type Output = ();
+
+    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        if !self.once {
+            self.once = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        } else {
+            Poll::Ready(())
         }
     }
 }

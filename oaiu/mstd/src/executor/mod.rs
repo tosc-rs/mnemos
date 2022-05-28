@@ -5,8 +5,9 @@
 pub mod task;
 
 use core::{marker::PhantomData, future::Future, sync::atomic::AtomicUsize, ptr::NonNull, task::Poll};
-use crate::alloc::HeapBox;
+use crate::alloc::{HeapBox, HeapGuard};
 
+use abi::bbqueue_ipc::framed::{FrameProducer, FrameConsumer};
 use task::Header;
 use cordyceps::mpsc_queue::{Links, MpscQueue};
 
@@ -46,9 +47,22 @@ pub fn spawn<F: Future + 'static>(task: HeapBox<Task<F>>) -> JoinHandle<F::Outpu
 }
 
 impl Terpsichore {
-    fn run(&self) {
+    pub fn run(
+        &self,
+        u2k: &mut FrameProducer,
+        k2u: &mut FrameConsumer,
+        hg: &mut HeapGuard,
+    ) {
         loop {
+            // TODO: Process messages
 
+            // TODO: Process heap allocations
+
+            while let Ok(run) = self.run_queue.try_dequeue() {
+                unsafe {
+                    Task::poll(run.0);
+                }
+            }
         }
     }
 }

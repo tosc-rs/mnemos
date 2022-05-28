@@ -267,7 +267,7 @@ impl FreeBox {
         let free_q = unsafe { FREE_Q.get_unchecked() };
 
         // If the free list is completely full, for now, just panic.
-        defmt::unwrap!(free_q.enqueue(self).map_err(drop), "Free list is full!");
+        free_q.enqueue(self).map_err(drop).expect("Should have had room in the free list...");
     }
 }
 

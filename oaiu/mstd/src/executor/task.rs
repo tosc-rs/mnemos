@@ -42,6 +42,10 @@ pub struct Task<F: Future> {
 
 impl<F: Future> Task<F> {
     pub async fn new(f: F) -> HeapBox<Self> {
+        crate::alloc::allocate(Self::new_raw(f)).await
+    }
+
+    pub fn new_raw(f: F) -> Self {
         let header = Header {
             links: Links::new(),
             vtable: &Self::TASK_VTABLE,
@@ -49,10 +53,11 @@ impl<F: Future> Task<F> {
             status: AtomicUsize::new(Header::PENDING),
         };
         let inner = UnsafeCell::new(Cell { future: ManuallyDrop::new(f) });
-        crate::alloc::allocate(Self {
+
+        Self {
             header,
             inner,
-        }).await
+        }
     }
 }
 
@@ -116,7 +121,7 @@ impl<F: Future> Task<F> {
         }
     }
 
-    unsafe fn poll(ptr: NonNull<Header>) -> Poll<()> {
+    pub(crate) unsafe fn poll(ptr: NonNull<Header>) -> Poll<()> {
         // trace_task!(ptr, F, "poll");
         // let ptr = ptr.cast::<Self>();
         // let waker = Waker::from_raw(Self::raw_waker(ptr.as_ptr()));
