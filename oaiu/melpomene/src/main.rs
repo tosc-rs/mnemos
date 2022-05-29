@@ -103,26 +103,29 @@ fn userspace_entry() {
         amain().await
     });
     let hbmtask = hg.alloc_box(mtask).map_err(drop).unwrap();
-    let mhdl = mstd::executor::spawn(hbmtask);
+    drop(hg);
+    let _mhdl = mstd::executor::spawn(hbmtask);
 
-    terpsichore.run(&mut u2k, &mut k2u, &mut hg);
+    terpsichore.run(&mut u2k, &mut k2u);
 }
 
 async fn amain() -> Result<(), ()> {
     let subtask = Task::new(async {
-        for _ in 0..3 {
-            println!("Hi, I'm amain's subtask!");
-            Sleepy::new(Duration::from_secs(3)).await;
-        }
+        // for _ in 0..3 {
+        //     println!("Hi, I'm amain's subtask!");
+        //     Sleepy::new(Duration::from_secs(3)).await;
+        // }
         println!("subtask done!");
     }).await;
 
     let _jhdl = mstd::executor::spawn(subtask);
 
-    loop {
+    for _ in 0..5 {
         println!("Hi, I'm amain!");
         Sleepy::new(Duration::from_secs(1)).await;
     }
+
+    Ok(())
 }
 
 fn ayield_now() -> Yield {
@@ -165,8 +168,8 @@ impl Future for Sleepy {
     type Output = ();
 
     fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        cx.waker().wake_by_ref();
         if self.start.elapsed() < self.dur {
-            cx.waker().wake_by_ref();
             Poll::Pending
         } else {
             Poll::Ready(())

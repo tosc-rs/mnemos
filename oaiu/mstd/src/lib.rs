@@ -1,5 +1,5 @@
 #![doc = include_str!("../README.md")]
-#![no_std]
+// #![no_std]
 
 /// Common between the Kernel and Userspace
 pub use abi;

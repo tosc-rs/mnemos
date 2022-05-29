@@ -10,12 +10,15 @@ use core::{
     mem::{align_of, forget, size_of},
     ops::{Deref, DerefMut},
     ptr::NonNull,
-    sync::atomic::{AtomicU8, Ordering}, pin::Pin,
+    sync::atomic::{AtomicU8, Ordering}, pin::Pin, future::Future, task::Poll,
 };
 use heapless::mpmc::MpMcQueue;
 use linked_list_allocator::Heap;
 
 pub static HEAP: AHeap = AHeap::new();
+
+// TODO: I could replace the free queue with a cordyceps MpMcQueue for the cost of an extra pointer
+// (and maybe layout? maybe not?) per allocation
 static FREE_Q: FreeQueue = FreeQueue::new();
 
 // Size is roughly ptr + size + align, so about 3 words.
@@ -73,6 +76,23 @@ impl AHeap {
             // Initialize the heap
             (*self.heap.get()).write(heap);
         }
+
+        // SAFETY: We are already in the BUSY_LOCKED state, we have exclusive access.
+        unsafe {
+            let heap = &mut *self.heap.get().cast();
+            Ok(HeapGuard { heap })
+        }
+    }
+
+    pub(crate) fn lock(&self) -> Result<HeapGuard, ()> {
+        self.state
+            .compare_exchange(
+                Self::INIT_IDLE,
+                Self::BUSY_LOCKED,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .map_err(drop)?;
 
         // SAFETY: We are already in the BUSY_LOCKED state, we have exclusive access.
         unsafe {
@@ -404,7 +424,58 @@ impl Drop for HeapGuard {
     }
 }
 
+struct AllocFut {
+}
 
-pub async fn allocate<T>(_item: T) -> HeapBox<T> {
-    todo!()
+impl Future for AllocFut {
+    type Output = HeapGuard;
+
+    fn poll(mut self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
+        // TODO: Keep a waiting list instead of rewaking on every poll...
+        cx.waker().wake_by_ref();
+
+        if let Ok(hg) = HEAP.lock() {
+            println!("Granted.");
+            Poll::Ready(hg)
+        } else {
+            panic!("grant failed");
+            Poll::Pending
+        }
+    }
+}
+
+pub async fn allocate<T>(mut item: T) -> HeapBox<T> {
+    loop {
+        let mut hg = AllocFut{}.await;
+        match hg.alloc_box(item) {
+            Ok(hb) => {
+                println!("allocated.");
+                return hb
+            },
+            Err(i) => {
+                println!("Alloc failed");
+                item = i;
+            },
+        }
+        drop(hg);
+        Yield { once: false }.await
+    }
+}
+
+struct Yield {
+    once: bool,
+}
+
+impl Future for Yield {
+    type Output = ();
+
+    fn poll(mut self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
+        cx.waker().wake_by_ref();
+        if !self.once {
+            self.once = true;
+            Poll::Pending
+        } else {
+            Poll::Ready(())
+        }
+    }
 }

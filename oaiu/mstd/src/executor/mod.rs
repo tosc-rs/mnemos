@@ -39,6 +39,7 @@ pub fn spawn<F: Future + 'static>(task: HeapBox<Task<F>>) -> JoinHandle<F::Outpu
         (*tr.0.as_ref()).incr_refcnt();
         tr.0
     };
+    println!("{:?}", nntr);
     EXECUTOR.run_queue.enqueue(tr);
     JoinHandle {
         marker: PhantomData,
@@ -51,14 +52,13 @@ impl Terpsichore {
         &self,
         u2k: &mut FrameProducer,
         k2u: &mut FrameConsumer,
-        hg: &mut HeapGuard,
     ) {
         loop {
             // TODO: Process messages
 
             // TODO: Process heap allocations
 
-            for task in self.run_queue.consume() {
+            for task in self.run_queue.consume().take(5) {
                 task.poll();
             }
         }
