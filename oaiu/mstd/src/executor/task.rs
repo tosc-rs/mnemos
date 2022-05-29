@@ -1,5 +1,6 @@
 
-use core::{pin::Pin, ptr::NonNull, future::Future, cell::UnsafeCell, task::{Poll, RawWakerVTable, RawWaker}, sync::atomic::{AtomicUsize, Ordering}};
+use core::{pin::Pin, ptr::NonNull, future::Future, cell::UnsafeCell, task::{Poll, RawWakerVTable, RawWaker}, sync::atomic::{AtomicUsize, Ordering}, ops::{Deref, DerefMut}};
+use core::task::{Waker, Context};
 use cordyceps::{Linked, mpsc_queue::{Links, MpscQueue}};
 use crate::alloc::HeapBox;
 
@@ -108,6 +109,10 @@ impl<F: Future> Task<F> {
     unsafe fn drop_waker(ptr: *const ()) {
         let ptr = ptr as *mut ();
         let ptr = ptr.cast::<Self>();
+        Self::drop_ref(ptr);
+    }
+
+    unsafe fn drop_ref(ptr: *mut Self) {
         if (*ptr).header.decr_refcnt() {
             let hb = HeapBox::from_leaked(ptr);
             match hb.header.status.load(Ordering::Relaxed) {
@@ -123,21 +128,40 @@ impl<F: Future> Task<F> {
 
     pub(crate) unsafe fn poll(ptr: NonNull<Header>) -> Poll<()> {
         // trace_task!(ptr, F, "poll");
-        // let ptr = ptr.cast::<Self>();
-        // let waker = Waker::from_raw(Self::raw_waker(ptr.as_ptr()));
-        // let cx = Context::from_waker(&waker);
-        // let pin = Pin::new_unchecked(ptr.cast::<Self>().as_mut());
-        // let poll = pin.poll_inner(cx);
-        // if poll.is_ready() {
-        //     Self::drop_ref(ptr);
-        // }
-
-        // poll
-        todo!()
+        let ptr = ptr.cast::<Self>();
+        let waker = Waker::from_raw(Self::raw_waker(ptr.as_ptr()));
+        let cx = Context::from_waker(&waker);
+        let pin = Pin::new_unchecked(ptr.cast::<Self>().as_mut());
+        let poll = pin.poll_inner(cx);
+        if poll.is_ready() {
+            Self::drop_ref(ptr.as_ptr());
+        }
+        poll
     }
 
     unsafe fn schedule(this: NonNull<Self>) {
         EXECUTOR.run_queue.enqueue(TaskRef(this.cast()));
+    }
+
+
+    fn poll_inner(&self, mut cx: Context<'_>) -> Poll<()> {
+        let cell = self.inner.get();
+        let poll = match self.header.status.load(Ordering::SeqCst) {
+            Header::PENDING => unsafe {
+                Pin::new_unchecked((*cell).future.deref_mut()).poll(&mut cx)
+            }
+            _ => panic!(),
+        };
+        match poll {
+            Poll::Ready(ready) => {
+                unsafe {
+                    ManuallyDrop::drop(&mut (*cell).future);
+                    (*cell).output = ManuallyDrop::new(ready);
+                }
+                Poll::Ready(())
+            }
+            Poll::Pending => Poll::Pending
+        }
     }
 }
 
@@ -148,6 +172,16 @@ impl TaskRef {
     pub(crate) fn new<F: Future + 'static>(task: HeapBox<Task<F>>) -> Self {
         let ltr = task.leak() as *mut Task<F>;
         TaskRef(unsafe { NonNull::new_unchecked(ltr.cast()) })
+    }
+
+    pub(crate) fn poll(&self) -> Poll<()> {
+        let poll_fn = self.header().vtable.poll;
+        unsafe { poll_fn(self.0) }
+    }
+
+    #[inline]
+    fn header(&self) -> &Header {
+        unsafe { self.0.as_ref() }
     }
 }
 

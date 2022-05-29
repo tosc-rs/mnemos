@@ -1,6 +1,7 @@
-use std::{sync::atomic::{Ordering, compiler_fence, AtomicBool}, thread::{spawn, yield_now, sleep}, time::Duration, ops::Deref, future::Future, task::Poll};
+use std::{sync::atomic::{Ordering, compiler_fence, AtomicBool}, thread::{spawn, yield_now, sleep}, time::{Duration, Instant}, ops::Deref, future::Future, task::Poll};
 
 use abi::{bbqueue_ipc::BBBuffer, HEAP_PTR};
+use mstd::executor::task::Task;
 
 const RING_SIZE: usize = 4096;
 const HEAP_SIZE: usize = 192 * 1024;
@@ -85,8 +86,8 @@ fn userspace_entry() {
     use mstd::alloc::HEAP;
 
     // Set up kernel rings
-    let u2k = unsafe { BBBuffer::take_framed_producer(abi::U2K_RING.load(Ordering::Acquire)) };
-    let _k2u = unsafe { BBBuffer::take_framed_consumer(abi::K2U_RING.load(Ordering::Acquire)) };
+    let mut u2k = unsafe { BBBuffer::take_framed_producer(abi::U2K_RING.load(Ordering::Acquire)) };
+    let mut k2u = unsafe { BBBuffer::take_framed_consumer(abi::K2U_RING.load(Ordering::Acquire)) };
 
     // Set up allocator
     let mut hg = HEAP.init_exclusive(
@@ -104,13 +105,23 @@ fn userspace_entry() {
     let hbmtask = hg.alloc_box(mtask).map_err(drop).unwrap();
     let mhdl = mstd::executor::spawn(hbmtask);
 
-    terpsichore.
+    terpsichore.run(&mut u2k, &mut k2u, &mut hg);
 }
 
 async fn amain() -> Result<(), ()> {
+    let subtask = Task::new(async {
+        for _ in 0..3 {
+            println!("Hi, I'm amain's subtask!");
+            Sleepy::new(Duration::from_secs(3)).await;
+        }
+        println!("subtask done!");
+    }).await;
+
+    let _jhdl = mstd::executor::spawn(subtask);
+
     loop {
         println!("Hi, I'm amain!");
-        ayield_now().await;
+        Sleepy::new(Duration::from_secs(1)).await;
     }
 }
 
@@ -128,6 +139,33 @@ impl Future for Yield {
     fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
         if !self.once {
             self.once = true;
+            cx.waker().wake_by_ref();
+            Poll::Pending
+        } else {
+            Poll::Ready(())
+        }
+    }
+}
+
+struct Sleepy {
+    start: Instant,
+    dur: Duration,
+}
+
+impl Sleepy {
+    fn new(dur: Duration) -> Self {
+        Self {
+            start: Instant::now(),
+            dur,
+        }
+    }
+}
+
+impl Future for Sleepy {
+    type Output = ();
+
+    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+        if self.start.elapsed() < self.dur {
             cx.waker().wake_by_ref();
             Poll::Pending
         } else {

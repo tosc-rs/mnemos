@@ -20,7 +20,7 @@ pub struct Terpsichore {
 }
 
 static RUN_QUEUE_STUB: Header = task::Header {
-    links: Links::new(),
+    links: Links::new_stub(),
     vtable: &Vtable { poll: nop },
     refcnt: AtomicUsize::new(0),
     status: AtomicUsize::new(task::Header::ERROR),
@@ -58,10 +58,8 @@ impl Terpsichore {
 
             // TODO: Process heap allocations
 
-            while let Ok(run) = self.run_queue.try_dequeue() {
-                unsafe {
-                    Task::poll(run.0);
-                }
+            for task in self.run_queue.consume() {
+                task.poll();
             }
         }
     }
