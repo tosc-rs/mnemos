@@ -435,7 +435,7 @@ impl Future for AllocFut {
         cx.waker().wake_by_ref();
 
         if let Ok(hg) = HEAP.lock() {
-            println!("Granted.");
+            // println!("Granted.");
             Poll::Ready(hg)
         } else {
             panic!("grant failed");
@@ -449,11 +449,11 @@ pub async fn allocate<T>(mut item: T) -> HeapBox<T> {
         let mut hg = AllocFut{}.await;
         match hg.alloc_box(item) {
             Ok(hb) => {
-                println!("allocated.");
+                // println!("allocated.");
                 return hb
             },
             Err(i) => {
-                println!("Alloc failed");
+                // println!("Alloc failed");
                 item = i;
             },
         }

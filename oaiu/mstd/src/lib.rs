@@ -1,11 +1,12 @@
 #![doc = include_str!("../README.md")]
-// #![no_std]
+#![no_std]
 
 /// Common between the Kernel and Userspace
 pub use abi;
 
 pub mod alloc;
 pub mod executor;
+pub mod utils;
 
 // The user must provide a `no_mangle` entrypoint.
 extern "Rust" {
