@@ -10,6 +10,8 @@ pub struct ArfCell<T> {
     item: UnsafeCell<T>,
 }
 
+unsafe impl<T> Sync for ArfCell<T> where T: Send {}
+
 pub struct MutArfGuard<'a, T> {
     cell: NonNull<ArfCell<T>>,
     plt: PhantomData<&'a mut T>,
