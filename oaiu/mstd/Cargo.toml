@@ -21,8 +21,14 @@ name = "mstd"
 
 [dependencies.cordyceps]
 git = "https://github.com/hawkw/mycelium.git"
-sha = "7a3cede678be7467c79047b7f93bdbf5ff3f5d3a"
+rev = "a0809c558b5921c8ca74a72da277d9a0b138aa02"
 features = ["no-cache-pad"]
+default-features = false
+
+[dependencies.maitake]
+git = "https://github.com/hawkw/mycelium.git"
+rev = "a0809c558b5921c8ca74a72da277d9a0b138aa02"
+default-features = false
 
 [dependencies.abi]
 package = "mnemos-abi"

@@ -2,95 +2,81 @@
 //!
 //! [mycelium]: https://github.com/hawkw/mycelium
 
-pub mod task;
+// pub mod task;
 pub mod time;
 
-use core::{marker::PhantomData, future::Future, sync::atomic::AtomicUsize, ptr::NonNull, task::Poll};
-use crate::alloc::{HeapBox, HeapGuard};
+use maitake::{self, scheduler::{StaticScheduler, TaskStub}, task::Storage};
+use maitake::task::Task as MaitakeTask;
+
+
+use core::{future::Future, ptr::NonNull};
+use crate::alloc::HeapBox;
 
 use abi::bbqueue_ipc::framed::{FrameProducer, FrameConsumer};
-use task::Header;
-use cordyceps::mpsc_queue::{Links, MpscQueue};
-
-use self::task::{Vtable, TaskRef, Task};
 
 // https://main--magnificent-halva-1c2bb0.netlify.app/cordyceps/mpsc_queue/struct.mpscqueue
 
-pub struct Terpsichore {
-    pub(crate) run_queue: MpscQueue<Header>,
-}
+#[repr(transparent)]
+pub struct Task<F: Future + 'static>(MaitakeTask<&'static StaticScheduler, F, HBStorage>);
 
-static RUN_QUEUE_STUB: Header = task::Header {
-    links: Links::new_stub(),
-    vtable: &Vtable { poll: nop },
-    refcnt: AtomicUsize::new(0),
-    status: AtomicUsize::new(task::Header::ERROR),
-};
-unsafe fn nop(_: NonNull<Header>) -> Poll<()> {
-    Poll::Pending
-}
-
-pub static EXECUTOR: Terpsichore = Terpsichore {
-    run_queue: unsafe { MpscQueue::new_with_static_stub(&RUN_QUEUE_STUB) },
-};
-
-pub fn spawn<F: Future + 'static>(task: HeapBox<Task<F>>) -> JoinHandle<F::Output> {
-    let tr = TaskRef::new(task);
-    let nntr = unsafe {
-        (*tr.0.as_ref()).incr_refcnt();
-        tr.0
-    };
-    // println!("{:?}", nntr);
-    EXECUTOR.run_queue.enqueue(tr);
-    JoinHandle {
-        marker: PhantomData,
-        ptr: nntr,
+impl<F: Future + 'static> Task<F> {
+    pub fn new(fut: F) -> Self {
+        Self(MaitakeTask::new(&EXECUTOR.scheduler, fut))
     }
 }
 
-impl Terpsichore {
-    pub fn run(
-        &self,
-        u2k: &mut FrameProducer,
-        k2u: &mut FrameConsumer,
-    ) {
-        loop {
-            // TODO: Process messages
+pub struct Terpsichore {
+    pub(crate) scheduler: StaticScheduler,
+}
 
-            // TODO: Process heap allocations
+static TASK_STUB: TaskStub = TaskStub::new();
+pub static EXECUTOR: Terpsichore = Terpsichore {
+    scheduler: unsafe { StaticScheduler::new_with_static_stub(&TASK_STUB) },
+};
 
-            for task in self.run_queue.consume().take(5) {
-                task.poll();
-            }
+pub struct HBStorage;
+
+
+impl<F: Future + 'static> Storage<&'static StaticScheduler, F> for HBStorage {
+    type StoredTask = HeapBox<Task<F>>;
+
+    fn into_raw(task: Self::StoredTask) -> NonNull<MaitakeTask<&'static StaticScheduler, F, Self>> {
+        unsafe {
+            let ptr = &mut task.leak().0 as *mut MaitakeTask<&'static StaticScheduler, F, HBStorage>;
+            NonNull::new_unchecked(ptr)
+        }
+    }
+
+    fn from_raw(ptr: NonNull<MaitakeTask<&'static StaticScheduler, F, Self>>) -> Self::StoredTask {
+        unsafe {
+            HeapBox::from_leaked(ptr.as_ptr().cast())
         }
     }
 }
 
-#[derive(Debug)]
-struct Stub {
-    header: task::Header,
+pub async fn spawn<F: Future + 'static>(fut: F) {
+    let task = Task(MaitakeTask::new(&EXECUTOR.scheduler, fut));
+    let atask = crate::alloc::allocate(task).await;
+    spawn_allocated(atask);
 }
 
-// impl Schedule for Stub {
-//     fn schedule(&self, _: TaskRef) {
-//         unimplemented!("stub task should never be woken!")
-//     }
-// }
-
-// impl Future for Stub {
-//     type Output = ();
-//     fn poll(self: Pin<&mut Self>, _: &mut task::Context<'_>) -> task::Poll<Self::Output> {
-//         unreachable!("the stub task should never be polled!")
-//     }
-// }
-
-pub struct JoinHandle<T> {
-    marker: PhantomData<T>,
-    ptr: NonNull<Header>,
+pub fn spawn_allocated<F: Future + 'static>(task: HeapBox<Task<F>>) -> () {
+    EXECUTOR.scheduler.spawn_allocated::<F, HBStorage>(task)
 }
 
-// pub fn spawn<F: Future>(fut: Pin<HeapBox<F>>) -> JoinHandle<F::Output> {
-//     todo!()
-// }
+impl Terpsichore {
+    pub fn run(
+        &'static self,
+        _u2k: &mut FrameProducer,
+        _k2u: &mut FrameConsumer,
+    ) {
+        // Process timer
+        crate::executor::time::CHRONOS.poll();
 
-// pub(crate) fn schedule()
+        // TODO: Process messages
+
+        // TODO: Process heap allocations
+
+        self.scheduler.tick();
+    }
+}

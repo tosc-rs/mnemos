@@ -1,23 +1,19 @@
-use cordyceps::{MpscQueue, mpsc_queue::Links};
 use heapless::Vec;
 
 use crate::utils::ArfCell;
-use core::{ops::{Sub, Add, DerefMut}, sync::atomic::AtomicUsize, future::Future, pin::Pin, task::{Context, Poll, Waker}};
+use core::{ops::{Sub, Add, DerefMut}, future::Future, pin::Pin, task::{Context, Poll, Waker}};
 pub use core::time::Duration;
 
-use super::{task::{TaskRef, Header, Vtable}, nop};
 
 // TODO: This is an `ArfCell` and not just a plain atomic in order to
 // support 32-bit targets. It might be worth specializing this to make it
 // more efficient on 64-bit targets
-static CURRENT_TIME: ArfCell<u64> = ArfCell::new(0);
+pub static CURRENT_TIME: ArfCell<u64> = ArfCell::new(0);
 const TICKS_PER_SEC: u64 = 1_000_000;
-static CHRONOS: Chronos = Chronos {
+pub(crate) static CHRONOS: Chronos = Chronos {
     inner: ArfCell::new(ChronosInner {
         shorts: Vec::new(),
-        jailbreak: Alarm::never(),
     }),
-    purgatory: unsafe { MpscQueue::new_with_static_stub(&CHRONOS_STUB) },
 };
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq)]
@@ -122,15 +118,38 @@ struct Alarmed {
 
 struct ChronosInner {
     shorts: Vec<Alarmed, 32>,
-    jailbreak: Alarm,
 }
 
-struct Chronos {
+pub(crate) struct Chronos {
     inner: ArfCell<ChronosInner>,
-    purgatory: MpscQueue<Header>,
 }
 
 impl Chronos {
+    pub(crate) fn poll(&self) {
+        let curr_tick = *CURRENT_TIME.borrow().unwrap();
+
+        let mut inner = self.inner.borrow_mut().unwrap();
+        if let Some(alm) = inner.shorts.get(0) {
+            if alm.alarm.tick > curr_tick {
+                // Nothing to wake, we're done
+                return;
+            }
+        } else {
+            // No items, we're done
+            return;
+        }
+
+        let mut new = Vec::new();
+        core::mem::swap(&mut new, &mut inner.shorts);
+        for almd in new.into_iter() {
+            if almd.alarm.tick <= curr_tick {
+                almd.waker.wake();
+            } else {
+                inner.shorts.push(almd).ok();
+            }
+        }
+    }
+
     fn register(&self, alarm: &Alarm, waker: &Waker) {
         let mut inner = self.inner.borrow_mut().unwrap();
         let almd = Alarmed {
@@ -138,7 +157,7 @@ impl Chronos {
             waker: waker.clone(),
         };
 
-        let mut almd = match inner.shorts.push(almd) {
+        let _almd = match inner.shorts.push(almd) {
             Ok(()) => {
                 inner.shorts.deref_mut().sort_unstable();
                 return;
@@ -146,26 +165,22 @@ impl Chronos {
             Err(almd) => almd,
         };
 
+        panic!("Timer overflow!");
+
         // The list is full. See if the new item is sooner than any on the list
-        let worked = if let Some(last) = inner.shorts.last_mut() {
-            if last < &mut almd {
-                core::mem::swap(last, &mut almd);
-                true
-            } else {
-                false
-            }
-        } else {
-            false
-        };
+        // let worked = if let Some(last) = inner.shorts.last_mut() {
+        //     if last < &mut almd {
+        //         core::mem::swap(last, &mut almd);
+        //         true
+        //     } else {
+        //         false
+        //     }
+        // } else {
+        //     false
+        // };
 
         // We now need to put whatever is in `almd` into the purgatory queue
-        self.purgatory.enqueue(todo!("HOW DO I A GET A `HEADER`???"));
+        // self.purgatory.enqueue(todo!("HOW DO I A GET A `HEADER`???"));
     }
 }
 
-static CHRONOS_STUB: Header = Header {
-    links: Links::new_stub(),
-    vtable: &Vtable { poll: nop },
-    refcnt: AtomicUsize::new(0),
-    status: AtomicUsize::new(Header::ERROR),
-};

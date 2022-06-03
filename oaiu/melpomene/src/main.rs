@@ -1,7 +1,7 @@
 use std::{sync::atomic::{Ordering, compiler_fence, AtomicBool}, thread::{spawn, yield_now, sleep}, time::{Duration, Instant}, ops::Deref, future::Future, task::Poll};
 
 use abi::{bbqueue_ipc::BBBuffer, HEAP_PTR};
-use mstd::executor::task::Task;
+use mstd::executor::Task;
 
 const RING_SIZE: usize = 4096;
 const HEAP_SIZE: usize = 192 * 1024;
@@ -99,26 +99,29 @@ fn userspace_entry() {
     let terpsichore = &mstd::executor::EXECUTOR;
 
     // Spawn the `main` task
-    let mtask = mstd::executor::task::Task::new_raw(async move {
+    let mtask = mstd::executor::Task::new(async move {
         amain().await
     });
     let hbmtask = hg.alloc_box(mtask).map_err(drop).unwrap();
     drop(hg);
-    let _mhdl = mstd::executor::spawn(hbmtask);
+    let _mhdl = mstd::executor::spawn_allocated(hbmtask);
 
-    terpsichore.run(&mut u2k, &mut k2u);
+    let start = Instant::now();
+    loop {
+        *mstd::executor::time::CURRENT_TIME.borrow_mut().unwrap() = start.elapsed().as_micros() as u64;
+        terpsichore.run(&mut u2k, &mut k2u);
+    }
+
 }
 
 async fn amain() -> Result<(), ()> {
-    let subtask = Task::new(async {
-        // for _ in 0..3 {
-        //     println!("Hi, I'm amain's subtask!");
-        //     Sleepy::new(Duration::from_secs(3)).await;
-        // }
+    mstd::executor::spawn(async {
+        for _ in 0..3 {
+            println!("Hi, I'm amain's subtask!");
+            Sleepy::new(Duration::from_secs(3)).await;
+        }
         println!("subtask done!");
     }).await;
-
-    let _jhdl = mstd::executor::spawn(subtask);
 
     for _ in 0..5 {
         println!("Hi, I'm amain!");

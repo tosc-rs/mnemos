@@ -185,7 +185,7 @@ impl<T> HeapBox<T> {
 
     /// Leak the contents of this box, never to be recovered (probably)
     pub fn leak(self) -> &'static mut T {
-        let mutref = unsafe { &mut *self.ptr };
+        let mutref: &'static mut _ = unsafe { &mut *self.ptr };
         forget(self);
         mutref
     }
@@ -430,7 +430,7 @@ struct AllocFut {
 impl Future for AllocFut {
     type Output = HeapGuard;
 
-    fn poll(mut self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
+    fn poll(self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
         // TODO: Keep a waiting list instead of rewaking on every poll...
         cx.waker().wake_by_ref();
 
@@ -438,7 +438,6 @@ impl Future for AllocFut {
             // println!("Granted.");
             Poll::Ready(hg)
         } else {
-            panic!("grant failed");
             Poll::Pending
         }
     }
