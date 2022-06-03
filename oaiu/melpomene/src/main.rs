@@ -100,7 +100,7 @@ fn userspace_entry() {
 
     // Spawn the `main` task
     let mtask = mstd::executor::Task::new(async move {
-        amain().await
+        aman().await
     });
     let hbmtask = hg.alloc_box(mtask).map_err(drop).unwrap();
     drop(hg);
@@ -115,17 +115,17 @@ fn userspace_entry() {
 
 }
 
-async fn amain() -> Result<(), ()> {
+async fn aman() -> Result<(), ()> {
     mstd::executor::spawn(async {
         for _ in 0..3 {
-            println!("Hi, I'm amain's subtask!");
+            println!("Hi, I'm aman's subtask!");
             Sleepy::new(Duration::from_secs(3)).await;
         }
         println!("subtask done!");
     }).await;
 
     loop {
-        println!("Hi, I'm amain!");
+        println!("Hi, I'm aman!");
         Sleepy::new(Duration::from_secs(1)).await;
     }
 }
