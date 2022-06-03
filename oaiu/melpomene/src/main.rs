@@ -110,6 +110,7 @@ fn userspace_entry() {
     loop {
         *mstd::executor::time::CURRENT_TIME.borrow_mut().unwrap() = start.elapsed().as_micros() as u64;
         terpsichore.run(&mut u2k, &mut k2u);
+        sleep(Duration::from_millis(50));
     }
 
 }
@@ -123,12 +124,10 @@ async fn amain() -> Result<(), ()> {
         println!("subtask done!");
     }).await;
 
-    for _ in 0..5 {
+    loop {
         println!("Hi, I'm amain!");
         Sleepy::new(Duration::from_secs(1)).await;
     }
-
-    Ok(())
 }
 
 fn ayield_now() -> Yield {
