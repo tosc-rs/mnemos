@@ -1,4 +1,4 @@
-use std::{sync::atomic::{Ordering, compiler_fence, AtomicBool}, thread::{spawn, yield_now, sleep}, time::{Duration, Instant}, ops::Deref, future::Future, task::Poll};
+use std::{sync::atomic::{Ordering, compiler_fence, AtomicBool}, thread::{spawn, yield_now, sleep}, time::{Duration, Instant}, ops::Deref, future::Future, task::Poll, collections::VecDeque};
 
 use abi::{bbqueue_ipc::BBBuffer, HEAP_PTR};
 use mstd::executor::Task;
@@ -59,26 +59,50 @@ fn kernel_entry() {
     }
 
     let u2k = unsafe { BBBuffer::take_framed_consumer(u2k) };
-    let _k2u = unsafe { BBBuffer::take_framed_producer(k2u) };
+    let k2u = unsafe { BBBuffer::take_framed_producer(k2u) };
 
     compiler_fence(Ordering::SeqCst);
+
+    struct DelayMsg {
+        rx: Instant,
+        msg: Vec<u8>,
+    }
+
+    let mut msgs: VecDeque<DelayMsg> = VecDeque::new();
 
     loop {
         while !KERNEL_LOCK.load(Ordering::Acquire) {
             yield_now();
         }
+
         // Here I would do kernel things, IF I HAD ANY
-        match u2k.read() {
-            Some(msg) => {
-                // println!("{:?}", &msg);
-                // msg.release();
-                sleep(Duration::from_millis(500));
-                unimplemented!("{:?}", msg.deref());
-            }
-            None => {
-                KERNEL_LOCK.store(false, Ordering::Release);
+        while let Some(msg) = u2k.read() {
+            msgs.push_back(DelayMsg {
+                rx: Instant::now(),
+                msg: msg.to_vec(),
+            });
+            msg.release();
+        }
+
+        // Loop back userspace messages, delayed one second
+        while let Some(msg) = msgs.pop_front() {
+            if msg.rx.elapsed() > Duration::from_secs(1) {
+                if let Ok(mut wgr) = k2u.grant(msg.msg.len()) {
+                    wgr.copy_from_slice(&msg.msg);
+                    wgr.commit(msg.msg.len());
+                } else {
+                    // No receive space, put it back
+                    msgs.push_front(msg);
+                    break;
+                }
+            } else {
+                // Not ready, put it back
+                msgs.push_front(msg);
+                break;
             }
         }
+
+        KERNEL_LOCK.store(false, Ordering::Release);
     }
 }
 
