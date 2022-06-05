@@ -131,6 +131,8 @@ fn userspace_entry() {
     });
     let hbmtask = hg.alloc_box(mtask).map_err(drop).unwrap();
     drop(hg);
+    let hg2 = HEAP.lock().unwrap();
+    drop(hg2);
     let _mhdl = mstd::executor::spawn_allocated(hbmtask);
 
     let rings = Rings {
@@ -138,6 +140,8 @@ fn userspace_entry() {
         k2u,
     };
     mstd::executor::mailbox::MAILBOX.set_rings(rings);
+
+
 
     let start = Instant::now();
     loop {

@@ -10,10 +10,11 @@ use core::{
     mem::{align_of, forget, size_of},
     ops::{Deref, DerefMut},
     ptr::NonNull,
-    sync::atomic::{AtomicU8, Ordering}, pin::Pin, future::Future, task::Poll,
+    sync::atomic::{AtomicU8, Ordering, AtomicBool}, pin::Pin,
 };
 use heapless::mpmc::MpMcQueue;
 use linked_list_allocator::Heap;
+use maitake::wait::WaitQueue;
 
 pub static HEAP: AHeap = AHeap::new();
 
@@ -28,6 +29,9 @@ const FREE_Q_LEN: usize = 128;
 pub struct AHeap {
     state: AtomicU8,
     heap: UnsafeCell<MaybeUninit<Heap>>,
+    heap_wait: WaitQueue,
+    inhibit_alloc: AtomicBool,
+    any_frees: AtomicBool,
 }
 
 // SAFETY: Safety is checked through the `state` member, which uses
@@ -52,6 +56,9 @@ impl AHeap {
         Self {
             state: AtomicU8::new(Self::UNINIT),
             heap: UnsafeCell::new(MaybeUninit::uninit()),
+            inhibit_alloc: AtomicBool::new(true),
+            heap_wait: WaitQueue::new(),
+            any_frees: AtomicBool::new(false),
         }
     }
 
@@ -77,6 +84,8 @@ impl AHeap {
             (*self.heap.get()).write(heap);
         }
 
+        self.inhibit_alloc.store(false, Ordering::Release);
+
         // SAFETY: We are already in the BUSY_LOCKED state, we have exclusive access.
         unsafe {
             let heap = &mut *self.heap.get().cast();
@@ -84,15 +93,30 @@ impl AHeap {
         }
     }
 
-    pub(crate) fn lock(&self) -> Result<HeapGuard, ()> {
+    pub fn poll(&self) {
+        let mut hg = self.lock().unwrap();
+
+        // Clean any pending allocs
+        hg.clean_allocs();
+
+        // Did we perform any deallocations?
+        if self.any_frees.swap(false, Ordering::SeqCst) {
+            // Clear the inhibit flag
+            self.inhibit_alloc.store(false, Ordering::SeqCst);
+
+            // Wake any tasks waiting on alloc
+            self.heap_wait.wake_all();
+        }
+    }
+
+    pub fn lock(&self) -> Result<HeapGuard, u8> {
         self.state
             .compare_exchange(
                 Self::INIT_IDLE,
                 Self::BUSY_LOCKED,
                 Ordering::SeqCst,
                 Ordering::SeqCst,
-            )
-            .map_err(drop)?;
+            )?;
 
         // SAFETY: We are already in the BUSY_LOCKED state, we have exclusive access.
         unsafe {
@@ -279,28 +303,39 @@ struct FreeBox {
 
 impl FreeBox {
     fn box_drop(self) {
-        // Try to store the allocation into the free list, and it will be
-        // reclaimed before the next alloc.
-        //
-        // SAFETY: A HeapBox can only be created if the Heap, and by extension the
-        // FreeQueue, has been previously initialized
-        let free_q = unsafe { FREE_Q.get_unchecked() };
+        // Attempt to immediately drop, if possible
+        if let Ok(mut hg) = HEAP.lock() {
+            unsafe {
+                hg.free_raw(self.ptr, self.layout);
+            }
+            return;
+        } else {
+            // Nope, couldn't lock the heap.
+            //
+            // Try to store the allocation into the free list, and it will be
+            // reclaimed before the next alloc.
+            //
+            // SAFETY: A HeapBox can only be created if the Heap, and by extension the
+            // FreeQueue, has been previously initialized
+            let free_q = unsafe { FREE_Q.get_unchecked() };
 
-        // If the free list is completely full, for now, just panic.
-        free_q.enqueue(self).map_err(drop).expect("Should have had room in the free list...");
+            // If the free list is completely full, for now, just panic.
+            free_q.enqueue(self).map_err(drop).expect("Should have had room in the free list...");
+        }
     }
 }
 
 /// A guard type that provides mutually exclusive access to the allocator as
 /// long as the guard is held.
 pub struct HeapGuard {
-    heap: &'static mut AHeap,
+    heap: &'static mut Heap,
 }
 
 // Public HeapGuard methods
 impl HeapGuard {
     pub unsafe fn free_raw(&mut self, ptr: NonNull<u8>, layout: Layout) {
         self.deref_mut().deallocate(ptr, layout);
+        HEAP.any_frees.store(true, Ordering::Relaxed);
     }
 
     /// The free space (in bytes) available to the allocator
@@ -320,6 +355,7 @@ impl HeapGuard {
         // FreeQueue, has been previously initialized
         let free_q = unsafe { FREE_Q.get_unchecked() };
 
+        let mut any = false;
         // Then, free all pending memory in order to maximize space available.
         while let Some(FreeBox { ptr, layout }) = free_q.dequeue() {
             // defmt::println!("[ALLOC] FREE: {=usize}", layout.size());
@@ -328,7 +364,12 @@ impl HeapGuard {
             // FreeBox types.
             unsafe {
                 self.deref_mut().deallocate(ptr, layout);
+                any = true;
             }
+        }
+
+        if any {
+            HEAP.any_frees.store(true, Ordering::Relaxed);
         }
     }
 
@@ -406,75 +447,51 @@ impl HeapGuard {
 // type. For now, I'd like them to only use the "public" allocation interfaces.
 impl HeapGuard {
     fn deref(&self) -> &Heap {
-        // SAFETY: If we have a HeapGuard, we have single access.
-        unsafe { (*self.heap.heap.get()).assume_init_ref() }
+        &*self.heap
     }
 
     fn deref_mut(&mut self) -> &mut Heap {
-        // SAFETY: If we have a HeapGuard, we have single access.
-        unsafe { (*self.heap.heap.get()).assume_init_mut() }
+        self.heap
     }
 }
 
 impl Drop for HeapGuard {
+    #[track_caller]
     fn drop(&mut self) {
         // A HeapGuard represents exclusive access to the AHeap. Because of
         // this, a regular store is okay.
-        self.heap.state.store(AHeap::INIT_IDLE, Ordering::SeqCst);
-    }
-}
-
-struct AllocFut {
-}
-
-impl Future for AllocFut {
-    type Output = HeapGuard;
-
-    fn poll(self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
-        // TODO: Keep a waiting list instead of rewaking on every poll...
-        cx.waker().wake_by_ref();
-
-        if let Ok(hg) = HEAP.lock() {
-            // println!("Granted.");
-            Poll::Ready(hg)
-        } else {
-            Poll::Pending
-        }
+        HEAP.state.store(AHeap::INIT_IDLE, Ordering::SeqCst);
     }
 }
 
 pub async fn allocate<T>(mut item: T) -> HeapBox<T> {
     loop {
-        let mut hg = AllocFut{}.await;
-        match hg.alloc_box(item) {
-            Ok(hb) => {
-                // println!("allocated.");
-                return hb
-            },
-            Err(i) => {
-                // println!("Alloc failed");
-                item = i;
-            },
+        // Is the heap inhibited?
+        if !HEAP.inhibit_alloc.load(Ordering::Acquire) {
+            // Can we get an exclusive heap handle?
+            if let Ok(mut hg) = HEAP.lock() {
+                // Can we allocate our item?
+                match hg.alloc_box(item) {
+                    Ok(hb) => {
+                        // Yes! Return our allocated item
+                        return hb;
+                    }
+                    Err(it) => {
+                        // Nope, the allocation failed.
+                        item = it;
+                    },
+                }
+            }
+            // We weren't inhibited before, but something failed. Inhibit
+            // further allocations to prevent starving waiting allocations
+            HEAP.inhibit_alloc.store(true, Ordering::Release);
         }
-        drop(hg);
-        Yield { once: false }.await
+
+        // Didn't succeed, wait until we've done some de-allocations
+        HEAP.heap_wait
+            .wait()
+            .await
+            .unwrap();
     }
 }
 
-struct Yield {
-    once: bool,
-}
-
-impl Future for Yield {
-    type Output = ();
-
-    fn poll(mut self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
-        cx.waker().wake_by_ref();
-        if !self.once {
-            self.once = true;
-            Poll::Pending
-        } else {
-            Poll::Ready(())
-        }
-    }
-}

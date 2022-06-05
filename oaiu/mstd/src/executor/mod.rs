@@ -66,13 +66,14 @@ impl Terpsichore {
     pub fn run(
         &'static self,
     ) {
-        // Process timer
+        // Process timers
         crate::executor::time::CHRONOS.poll();
 
-        // TODO: Process messages
+        // Process messages
         crate::executor::mailbox::MAILBOX.poll();
 
-        // TODO: Process heap allocations
+        // Process heap allocations
+        crate::alloc::HEAP.poll();
 
         self.scheduler.tick();
     }
