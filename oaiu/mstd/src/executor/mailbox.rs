@@ -34,11 +34,18 @@
 // SOME way to process the response messages, and if we get back a response before
 // the request has made it into the "response map", it'll be a problem.
 
-use core::{sync::atomic::{AtomicBool, Ordering, AtomicU32}, mem::MaybeUninit, cell::UnsafeCell, future::Future, pin::Pin, task::{Context, Poll}};
+use core::{
+    cell::UnsafeCell,
+    mem::MaybeUninit,
+    sync::atomic::{AtomicBool, AtomicU32, Ordering},
+};
 
-use maitake::wait::WaitQueue;
+use abi::{
+    bbqueue_ipc::framed::{FrameConsumer, FrameProducer},
+    syscall::{request::SysCallRequest, success::SysCallSuccess},
+};
 use heapless::LinearMap;
-use abi::{syscall::{request::SysCallRequest, success::SysCallSuccess}, bbqueue_ipc::framed::{FrameProducer, FrameConsumer}};
+use maitake::wait::WaitQueue;
 
 use crate::utils::ArfCell;
 
@@ -51,7 +58,7 @@ pub struct MailBox {
     send_wait: WaitQueue,
     recv_wait: WaitQueue,
     rings: OnceRings,
-    received: ArfCell<LinearMap<u32, Result<SysCallSuccess, ()>, 32>>
+    received: ArfCell<LinearMap<u32, Result<SysCallSuccess, ()>, 32>>,
 }
 
 impl MailBox {
@@ -79,7 +86,6 @@ impl MailBox {
         'process: while recv.len() < recv.capacity() {
             match rings.k2u.read() {
                 Some(msg) => {
-
                     assert!(msg.len() >= 4);
                     let (nonce, msgb) = msg.split_at(4);
                     let mut nonce_b = [0u8; 4];
@@ -90,18 +96,18 @@ impl MailBox {
                         Ok(dec_msg) => {
                             recv.insert(nonce, dec_msg).ok();
                             any = true;
-                        },
+                        }
                         Err(_) => {
                             // todo: print something?
-                        },
+                        }
                     }
 
                     msg.release();
-                },
+                }
                 None => {
                     // All done!
                     break 'process;
-                },
+                }
             }
         }
 
@@ -122,7 +128,8 @@ impl MailBox {
         // Wait for a successful send
         loop {
             if !self.inhibit_send.load(Ordering::Acquire) {
-                if let Ok(mut wgr) = rings.u2k.grant(128) { // TODO: Max Size
+                if let Ok(mut wgr) = rings.u2k.grant(128) {
+                    // TODO: Max Size
                     let (num, rest) = wgr.split_at_mut(4);
                     num.copy_from_slice(&nonce.to_le_bytes());
                     let used = postcard::to_slice(&msg, rest).map_err(drop)?.len();
@@ -134,19 +141,13 @@ impl MailBox {
                     self.inhibit_send.store(true, Ordering::Release);
                 }
             }
-            self.send_wait
-                .wait()
-                .await
-                .map_err(drop)?;
+            self.send_wait.wait().await.map_err(drop)?;
         }
 
         // Wait for successful receive
         loop {
             // Wait first, the message won't already be there (unless we got REALLY lucky)
-            self.recv_wait
-                .wait()
-                .await
-                .map_err(drop)?;
+            self.recv_wait.wait().await.map_err(drop)?;
 
             if let Ok(mut rxg) = self.received.borrow_mut() {
                 if let Some(rx) = rxg.remove(&nonce) {
@@ -157,7 +158,7 @@ impl MailBox {
     }
 }
 
-unsafe impl Sync for OnceRings { }
+unsafe impl Sync for OnceRings {}
 
 struct OnceRings {
     set: AtomicBool,
@@ -182,9 +183,7 @@ impl OnceRings {
 
     fn get(&self) -> &Rings {
         assert!(self.set.load(Ordering::Relaxed));
-        unsafe {
-            &*self.queues.get().cast::<Rings>()
-        }
+        unsafe { &*self.queues.get().cast::<Rings>() }
     }
 }
 

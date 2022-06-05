@@ -74,7 +74,7 @@ fn kernel_entry() {
 
     loop {
         while !KERNEL_LOCK.load(Ordering::Acquire) {
-            yield_now();
+            sleep(Duration::from_millis(50));
         }
 
         // Here I would do kernel things, IF I HAD ANY
