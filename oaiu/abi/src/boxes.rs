@@ -89,7 +89,7 @@ pub mod status {
     pub const INVALID: u8 = 4;
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct SysCallFutureBytes {
     fb_ptr: u32,
 }

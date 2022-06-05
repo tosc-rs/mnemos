@@ -43,7 +43,7 @@ pub mod request {
 
     /// The top level SysCallRequest type. This is the type expected by the
     /// kernel when triggering a syscall.
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub enum SysCallRequest {
         Serial(SerialRequest),
         Time(TimeRequest),
@@ -53,7 +53,7 @@ pub mod request {
     //     PcmSink(PcmSinkRequest),
     }
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub enum GpioMode {
         Disabled,
         InputFloating,
@@ -64,7 +64,7 @@ pub mod request {
         },
     }
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub enum GpioRequest {
         SetMode {
             pin: u8,
@@ -108,7 +108,7 @@ pub mod request {
     // }
 
     /// Requests associated with Virtual Serial Port operations.
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub enum SerialRequest {
         SerialOpenPort {
             port: u16,
@@ -124,7 +124,7 @@ pub mod request {
     }
 
     /// Requests associated with time.
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub enum TimeRequest {
         SleepMicros {
             us: u32,
@@ -176,7 +176,7 @@ pub mod success {
 
     /// The top level SysCallRequest type. This is the type expected by the
     /// userspace when obtaining the result of a successful system call.
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub enum SysCallSuccess {
         Serial(SerialSuccess),
         Time(TimeSuccess),
@@ -184,9 +184,10 @@ pub mod success {
         // System(SystemSuccess<'a>),
         Gpio(GpioSuccess),
         // PcmSink(PcmSinkSuccess),
+        TodoLoopback,
     }
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub enum GpioSuccess {
         ModeSet,
         ReadInput {
@@ -206,13 +207,13 @@ pub mod success {
     // }
 
     /// Success type for Virtual Serial Port requests
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub enum SerialSuccess {
         PortOpened,
     }
 
     /// Success type for time related requests
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Debug)]
     pub enum TimeSuccess {
         SleptMicros {
             us: u32,

@@ -272,6 +272,7 @@ version = "0.1.0"
 dependencies = [
  "mnemos-abi",
  "mnemos-std",
+ "postcard",
 ]
 
 [[package]]
@@ -297,6 +298,7 @@ dependencies = [
  "linked_list_allocator",
  "maitake",
  "mnemos-abi",
+ "postcard",
 ]
 
 [[package]]

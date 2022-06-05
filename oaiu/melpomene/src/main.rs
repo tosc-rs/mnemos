@@ -1,7 +1,7 @@
 use std::{sync::atomic::{Ordering, compiler_fence, AtomicBool}, thread::{spawn, yield_now, sleep}, time::{Duration, Instant}, ops::Deref, future::Future, task::Poll, collections::VecDeque};
 
-use abi::{bbqueue_ipc::BBBuffer, HEAP_PTR};
-use mstd::executor::Task;
+use abi::{bbqueue_ipc::BBBuffer, HEAP_PTR, syscall::{success::SysCallSuccess, request::{SysCallRequest, TimeRequest}}};
+use mstd::executor::{Task, mailbox::{Rings, MAILBOX}};
 
 const RING_SIZE: usize = 4096;
 const HEAP_SIZE: usize = 192 * 1024;
@@ -25,14 +25,16 @@ fn main() {
     println!("[Melpo]: Userspace started.");
     println!("========================================");
 
+    let uj = userspace.join();
+    println!("========================================");
+    sleep(Duration::from_millis(50));
+    println!("[Melpo]: Userspace ended: {:?}", uj);
+
     let kj = kernel.join();
     sleep(Duration::from_millis(50));
-    let uj = userspace.join();
-    sleep(Duration::from_millis(50));
-
-    println!("========================================");
     println!("[Melpo]: Kernel ended:    {:?}", kj);
-    println!("[Melpo]: Userspace ended: {:?}", uj);
+
+
     println!("========================================");
 
     println!("[Melpo]: You've met with a terrible fate, haven't you?");
@@ -88,8 +90,9 @@ fn kernel_entry() {
         while let Some(msg) = msgs.pop_front() {
             if msg.rx.elapsed() > Duration::from_secs(1) {
                 if let Ok(mut wgr) = k2u.grant(msg.msg.len()) {
-                    wgr.copy_from_slice(&msg.msg);
-                    wgr.commit(msg.msg.len());
+                    wgr[..4].copy_from_slice(&msg.msg[..4]);
+                    let used = postcard::to_slice(&Result::<SysCallSuccess, ()>::Ok(SysCallSuccess::TodoLoopback), &mut wgr[4..]).unwrap().len();
+                    wgr.commit(4 + used);
                 } else {
                     // No receive space, put it back
                     msgs.push_front(msg);
@@ -110,8 +113,8 @@ fn userspace_entry() {
     use mstd::alloc::HEAP;
 
     // Set up kernel rings
-    let mut u2k = unsafe { BBBuffer::take_framed_producer(abi::U2K_RING.load(Ordering::Acquire)) };
-    let mut k2u = unsafe { BBBuffer::take_framed_consumer(abi::K2U_RING.load(Ordering::Acquire)) };
+    let u2k = unsafe { BBBuffer::take_framed_producer(abi::U2K_RING.load(Ordering::Acquire)) };
+    let k2u = unsafe { BBBuffer::take_framed_consumer(abi::K2U_RING.load(Ordering::Acquire)) };
 
     // Set up allocator
     let mut hg = HEAP.init_exclusive(
@@ -130,11 +133,20 @@ fn userspace_entry() {
     drop(hg);
     let _mhdl = mstd::executor::spawn_allocated(hbmtask);
 
+    let rings = Rings {
+        u2k,
+        k2u,
+    };
+    mstd::executor::mailbox::MAILBOX.set_rings(rings);
+
     let start = Instant::now();
     loop {
         *mstd::executor::time::CURRENT_TIME.borrow_mut().unwrap() = start.elapsed().as_micros() as u64;
-        terpsichore.run(&mut u2k, &mut k2u);
-        sleep(Duration::from_millis(50));
+        terpsichore.run();
+        KERNEL_LOCK.store(true, Ordering::Release);
+        while KERNEL_LOCK.load(Ordering::Acquire) {
+            sleep(Duration::from_millis(50));
+        }
     }
 
 }
@@ -142,14 +154,25 @@ fn userspace_entry() {
 async fn aman() -> Result<(), ()> {
     mstd::executor::spawn(async {
         for _ in 0..3 {
-            println!("Hi, I'm aman's subtask!");
+            println!("[ST1] Hi, I'm aman's subtask!");
             Sleepy::new(Duration::from_secs(3)).await;
         }
-        println!("subtask done!");
+        println!("[ST1] subtask done!");
+    }).await;
+
+    mstd::executor::spawn(async {
+        for _ in 0..3 {
+            let msg = SysCallRequest::Time(TimeRequest::SleepMicros { us: 123 });
+            println!("[ST2] Sending to kernel: {:?}", msg);
+            let resp = MAILBOX.send(msg).await;
+            println!("[ST2] Kernel said: {:?}", resp);
+            Sleepy::new(Duration::from_secs(2)).await;
+        }
+        println!("[ST2] subtask done!");
     }).await;
 
     loop {
-        println!("Hi, I'm aman!");
+        println!("[MT] Hi, I'm aman!");
         Sleepy::new(Duration::from_secs(1)).await;
     }
 }

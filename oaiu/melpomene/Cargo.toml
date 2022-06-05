@@ -12,3 +12,7 @@ path = "../abi"
 
 [dependencies.mnemos-std]
 path = "../mstd"
+
+[dependencies.postcard]
+version = "0.7.3"
+default-features = false

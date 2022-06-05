@@ -65,13 +65,12 @@ pub fn spawn_allocated<F: Future + 'static>(task: HeapBox<Task<F>>) -> () {
 impl Terpsichore {
     pub fn run(
         &'static self,
-        _u2k: &mut FrameProducer,
-        _k2u: &mut FrameConsumer,
     ) {
         // Process timer
         crate::executor::time::CHRONOS.poll();
 
         // TODO: Process messages
+        crate::executor::mailbox::MAILBOX.poll();
 
         // TODO: Process heap allocations
 
