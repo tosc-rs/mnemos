@@ -2,8 +2,8 @@
 //!
 //! [mycelium]: https://github.com/hawkw/mycelium
 
-// pub mod task;
 pub mod time;
+pub mod mailbox;
 
 use maitake::{self, scheduler::{StaticScheduler, TaskStub}, task::Storage};
 use maitake::task::Task as MaitakeTask;
@@ -13,8 +13,6 @@ use core::{future::Future, ptr::NonNull};
 use crate::alloc::HeapBox;
 
 use abi::bbqueue_ipc::framed::{FrameProducer, FrameConsumer};
-
-// https://main--magnificent-halva-1c2bb0.netlify.app/cordyceps/mpsc_queue/struct.mpscqueue
 
 #[repr(transparent)]
 pub struct Task<F: Future + 'static>(MaitakeTask<&'static StaticScheduler, F, HBStorage>);
@@ -34,7 +32,7 @@ pub static EXECUTOR: Terpsichore = Terpsichore {
     scheduler: unsafe { StaticScheduler::new_with_static_stub(&TASK_STUB) },
 };
 
-pub struct HBStorage;
+struct HBStorage;
 
 
 impl<F: Future + 'static> Storage<&'static StaticScheduler, F> for HBStorage {

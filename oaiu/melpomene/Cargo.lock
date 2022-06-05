@@ -89,7 +89,7 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 [[package]]
 name = "cordyceps"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=d9060ecf5112134fedef49e5d3bfb847fbb27664#d9060ecf5112134fedef49e5d3bfb847fbb27664"
+source = "git+https://github.com/hawkw/mycelium.git?rev=4eda47f064a0d2246f6c123fb53fbfdb36ca70a6#4eda47f064a0d2246f6c123fb53fbfdb36ca70a6"
 dependencies = [
  "loom",
 ]
@@ -247,7 +247,7 @@ dependencies = [
 [[package]]
 name = "maitake"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=d9060ecf5112134fedef49e5d3bfb847fbb27664#d9060ecf5112134fedef49e5d3bfb847fbb27664"
+source = "git+https://github.com/hawkw/mycelium.git?rev=4eda47f064a0d2246f6c123fb53fbfdb36ca70a6#4eda47f064a0d2246f6c123fb53fbfdb36ca70a6"
 dependencies = [
  "cordyceps",
  "mycelium-bitfield",
@@ -302,12 +302,12 @@ dependencies = [
 [[package]]
 name = "mycelium-bitfield"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=d9060ecf5112134fedef49e5d3bfb847fbb27664#d9060ecf5112134fedef49e5d3bfb847fbb27664"
+source = "git+https://github.com/hawkw/mycelium.git?rev=4eda47f064a0d2246f6c123fb53fbfdb36ca70a6#4eda47f064a0d2246f6c123fb53fbfdb36ca70a6"
 
 [[package]]
 name = "mycelium-util"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=d9060ecf5112134fedef49e5d3bfb847fbb27664#d9060ecf5112134fedef49e5d3bfb847fbb27664"
+source = "git+https://github.com/hawkw/mycelium.git?rev=4eda47f064a0d2246f6c123fb53fbfdb36ca70a6#4eda47f064a0d2246f6c123fb53fbfdb36ca70a6"
 dependencies = [
  "cordyceps",
  "loom",
@@ -318,7 +318,7 @@ dependencies = [
 [[package]]
 name = "mycotest"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=d9060ecf5112134fedef49e5d3bfb847fbb27664#d9060ecf5112134fedef49e5d3bfb847fbb27664"
+source = "git+https://github.com/hawkw/mycelium.git?rev=4eda47f064a0d2246f6c123fb53fbfdb36ca70a6#4eda47f064a0d2246f6c123fb53fbfdb36ca70a6"
 dependencies = [
  "tracing 0.1.34",
 ]
