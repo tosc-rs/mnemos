@@ -1,7 +1,21 @@
-use std::{sync::atomic::{Ordering, compiler_fence, AtomicBool}, thread::{spawn, yield_now, sleep}, time::{Duration, Instant}, ops::Deref, future::Future, task::Poll, collections::VecDeque};
+use std::{
+    sync::atomic::{Ordering, compiler_fence, AtomicBool},
+    thread::{spawn, yield_now, sleep},
+    time::{Duration, Instant},
+    future::Future,
+    task::Poll,
+    collections::VecDeque,
+};
 
-use abi::{bbqueue_ipc::BBBuffer, HEAP_PTR, syscall::{success::SysCallSuccess, request::{SysCallRequest, TimeRequest}}};
-use mstd::executor::{Task, mailbox::{Rings, MAILBOX}};
+use abi::{
+    bbqueue_ipc::BBBuffer,
+    syscall::{
+        UserRequest, KernelResponse, KernelResponseBody,
+        KernelResponseHeader, UserRequestBody,
+        serial::SerialRequest, KernelMsg,
+    },
+};
+use mstd::executor::mailbox::{Rings, MAILBOX};
 
 const RING_SIZE: usize = 4096;
 const HEAP_SIZE: usize = 192 * 1024;
@@ -67,7 +81,7 @@ fn kernel_entry() {
 
     struct DelayMsg {
         rx: Instant,
-        msg: Vec<u8>,
+        msg: UserRequest,
     }
 
     let mut msgs: VecDeque<DelayMsg> = VecDeque::new();
@@ -79,9 +93,10 @@ fn kernel_entry() {
 
         // Here I would do kernel things, IF I HAD ANY
         while let Some(msg) = u2k.read() {
+            let req = postcard::from_bytes(&msg).unwrap();
             msgs.push_back(DelayMsg {
                 rx: Instant::now(),
-                msg: msg.to_vec(),
+                msg: req,
             });
             msg.release();
         }
@@ -89,10 +104,17 @@ fn kernel_entry() {
         // Loop back userspace messages, delayed one second
         while let Some(msg) = msgs.pop_front() {
             if msg.rx.elapsed() > Duration::from_secs(1) {
-                if let Ok(mut wgr) = k2u.grant(msg.msg.len()) {
-                    wgr[..4].copy_from_slice(&msg.msg[..4]);
-                    let used = postcard::to_slice(&Result::<SysCallSuccess, ()>::Ok(SysCallSuccess::TodoLoopback), &mut wgr[4..]).unwrap().len();
-                    wgr.commit(4 + used);
+                if let Ok(mut wgr) = k2u.grant(128) {
+                    let used = postcard::to_slice(
+                        &KernelMsg::Response(
+                            KernelResponse {
+                                header: KernelResponseHeader { nonce: msg.msg.header.nonce },
+                                body: KernelResponseBody::TodoLoopback,
+                            },
+                        ),
+                        &mut wgr
+                    ).unwrap().len();
+                    wgr.commit(used);
                 } else {
                     // No receive space, put it back
                     msgs.push_front(msg);
@@ -166,7 +188,7 @@ async fn aman() -> Result<(), ()> {
 
     mstd::executor::spawn(async {
         for _ in 0..3 {
-            let msg = SysCallRequest::Time(TimeRequest::SleepMicros { us: 123 });
+            let msg = UserRequestBody::Serial(SerialRequest::Flush);
             println!("[ST2] Sending to kernel: {:?}", msg);
             let resp = MAILBOX.send(msg).await;
             println!("[ST2] Kernel said: {:?}", resp);
@@ -178,28 +200,6 @@ async fn aman() -> Result<(), ()> {
     loop {
         println!("[MT] Hi, I'm aman!");
         Sleepy::new(Duration::from_secs(1)).await;
-    }
-}
-
-fn ayield_now() -> Yield {
-    Yield { once: false }
-}
-
-struct Yield {
-    once: bool,
-}
-
-impl Future for Yield {
-    type Output = ();
-
-    fn poll(mut self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
-        if !self.once {
-            self.once = true;
-            cx.waker().wake_by_ref();
-            Poll::Pending
-        } else {
-            Poll::Ready(())
-        }
     }
 }
 

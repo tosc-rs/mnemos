@@ -42,7 +42,7 @@ use core::{
 
 use abi::{
     bbqueue_ipc::framed::{FrameConsumer, FrameProducer},
-    syscall::{request::SysCallRequest, success::SysCallSuccess},
+    syscall::{UserRequestBody, KernelResponseBody, UserRequest, UserRequestHeader, KernelMsg, KernelResponse},
 };
 use heapless::LinearMap;
 use maitake::wait::WaitQueue;
@@ -58,7 +58,7 @@ pub struct MailBox {
     send_wait: WaitQueue,
     recv_wait: WaitQueue,
     rings: OnceRings,
-    received: ArfCell<LinearMap<u32, Result<SysCallSuccess, ()>, 32>>,
+    received: ArfCell<LinearMap<u32, KernelResponseBody, 32>>,
 }
 
 impl MailBox {
@@ -86,19 +86,16 @@ impl MailBox {
         'process: while recv.len() < recv.capacity() {
             match rings.k2u.read() {
                 Some(msg) => {
-                    assert!(msg.len() >= 4);
-                    let (nonce, msgb) = msg.split_at(4);
-                    let mut nonce_b = [0u8; 4];
-                    nonce_b.copy_from_slice(nonce);
-                    let nonce = u32::from_le_bytes(nonce_b);
-
-                    match postcard::from_bytes::<Result<SysCallSuccess, ()>>(msgb) {
-                        Ok(dec_msg) => {
-                            recv.insert(nonce, dec_msg).ok();
+                    match postcard::from_bytes::<KernelMsg>(&msg) {
+                        Ok(KernelMsg::Response(KernelResponse { header, body })) => {
+                            recv.insert(header.nonce, body).ok();
                             any = true;
                         }
+                        Ok(_) => todo!(),
                         Err(_) => {
-                            // todo: print something?
+                            // todo: print something? Relax this panic later with a graceful
+                            // warning
+                            panic!("Decoded bad message from kernel?");
                         }
                     }
 
@@ -121,19 +118,21 @@ impl MailBox {
         }
     }
 
-    pub async fn send(&'static self, msg: SysCallRequest) -> Result<SysCallSuccess, ()> {
+    pub async fn send(&'static self, msg: UserRequestBody) -> Result<KernelResponseBody, ()> {
         let nonce = self.nonce.fetch_add(1, Ordering::AcqRel);
         let rings = self.rings.get();
+        let outgoing = UserRequest {
+            header: UserRequestHeader { nonce },
+            body: msg,
+        };
 
         // Wait for a successful send
         loop {
             if !self.inhibit_send.load(Ordering::Acquire) {
+                // TODO: Max Size
                 if let Ok(mut wgr) = rings.u2k.grant(128) {
-                    // TODO: Max Size
-                    let (num, rest) = wgr.split_at_mut(4);
-                    num.copy_from_slice(&nonce.to_le_bytes());
-                    let used = postcard::to_slice(&msg, rest).map_err(drop)?.len();
-                    wgr.commit(used + 4);
+                    let used = postcard::to_slice(&outgoing, &mut wgr).map_err(drop)?.len();
+                    wgr.commit(used);
                     break;
                 } else {
                     // Inhibit further sending until there is room, in order to prevent
@@ -151,7 +150,7 @@ impl MailBox {
 
             if let Ok(mut rxg) = self.received.borrow_mut() {
                 if let Some(rx) = rxg.remove(&nonce) {
-                    return rx;
+                    return Ok(rx);
                 }
             }
         }

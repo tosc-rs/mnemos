@@ -12,8 +12,6 @@ use maitake::task::Task as MaitakeTask;
 use core::{future::Future, ptr::NonNull};
 use crate::alloc::HeapBox;
 
-use abi::bbqueue_ipc::framed::{FrameProducer, FrameConsumer};
-
 #[repr(transparent)]
 pub struct Task<F: Future + 'static>(MaitakeTask<&'static StaticScheduler, F, HBStorage>);
 

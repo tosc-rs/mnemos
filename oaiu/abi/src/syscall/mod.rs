@@ -22,248 +22,61 @@
 //! moment. If this is important to you, pin the exact `common` crate version
 //! you plan to support, or open an issue to discuss changing this policy.
 
+pub mod serial;
+
 use serde::{Serialize, Deserialize};
 
-/// The kind of a given block
-///
-/// This lives outside of the Request/Success blocks as it used by both.
-#[derive(Serialize, Deserialize, Eq, PartialEq, Copy, Clone, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 #[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
-pub enum BlockKind {
-    Unused,
-    Storage,
-    Program,
+pub struct UserRequest {
+    pub header: UserRequestHeader,
+    pub body: UserRequestBody,
 }
 
-/// Types used in syscall requests - from userspace to kernel
-pub mod request {
-    use crate::boxes::SysCallFutureBytes;
-
-    use super::*;
-
-    /// The top level SysCallRequest type. This is the type expected by the
-    /// kernel when triggering a syscall.
-    #[derive(Serialize, Deserialize, Debug)]
-    pub enum SysCallRequest {
-        Serial(SerialRequest),
-        Time(TimeRequest),
-    //     BlockStore(BlockRequest<'a>),
-    //     System(SystemRequest<'a>),
-        Gpio(GpioRequest),
-    //     PcmSink(PcmSinkRequest),
-    }
-
-    #[derive(Serialize, Deserialize, Debug)]
-    pub enum GpioMode {
-        Disabled,
-        InputFloating,
-        InputPullUp,
-        InputPullDown,
-        OutputPushPull {
-            is_high: bool
-        },
-    }
-
-    #[derive(Serialize, Deserialize, Debug)]
-    pub enum GpioRequest {
-        SetMode {
-            pin: u8,
-            mode: GpioMode,
-        },
-        ReadInput {
-            pin: u8,
-        },
-        WriteOutput {
-            pin: u8,
-            is_high: bool,
-        }
-    }
-
-    impl GpioRequest {
-        pub fn pin(&self) -> u8 {
-            match self {
-                GpioRequest::SetMode { pin, .. } => *pin,
-                GpioRequest::ReadInput { pin } => *pin,
-                GpioRequest::WriteOutput { pin, .. } => *pin,
-            }
-        }
-    }
-
-    // /// Requests associated with system control.
-    // #[derive(Serialize, Deserialize)]
-    // pub enum SystemRequest<'a> {
-    //     SetBootBlock {
-    //         block: u32
-    //     },
-    //     Reset,
-    //     FreeFutureBox {
-    //         fb_ptr: u32,
-    //         payload_size: u32,
-    //         payload_align: u32,
-    //     },
-    //     Panic,
-    //     RandFill {
-    //         dest: SysCallSliceMut<'a>
-    //     },
-    // }
-
-    /// Requests associated with Virtual Serial Port operations.
-    #[derive(Serialize, Deserialize, Debug)]
-    pub enum SerialRequest {
-        SerialOpenPort {
-            port: u16,
-        },
-        SerialReceive {
-            port: u16,
-            dest_buf: SysCallFutureBytes,
-        },
-        SerialSend {
-            port: u16,
-            src_buf: SysCallFutureBytes,
-        },
-    }
-
-    /// Requests associated with time.
-    #[derive(Serialize, Deserialize, Debug)]
-    pub enum TimeRequest {
-        SleepMicros {
-            us: u32,
-        }
-    }
-
-    // /// Requests associated with the Block Storage device.
-    // #[derive(Serialize, Deserialize)]
-    // pub enum BlockRequest<'a> {
-    //     StoreInfo,
-    //     BlockInfo {
-    //         block_idx: u32,
-    //         name_buf: SysCallSliceMut<'a>
-    //     },
-    //     BlockOpen {
-    //         block_idx: u32,
-    //     },
-    //     BlockRead {
-    //         block_idx: u32,
-    //         offset: u32,
-    //         dest_buf: SysCallSliceMut<'a>,
-    //     },
-    //     BlockWrite {
-    //         block_idx: u32,
-    //         offset: u32,
-    //         src_buf: SysCallSlice<'a>,
-    //     },
-    //     BlockClose {
-    //         block_idx: u32,
-    //         name: SysCallSlice<'a>,
-    //         len: u32,
-    //         kind: BlockKind,
-    //     }
-    // }
-
-    // #[derive(Serialize, Deserialize)]
-    // pub enum PcmSinkRequest {
-    //     Enable,
-    //     Disable,
-    //     AllocateSampleBuffer {
-    //         count: u32,
-    //     }
-    // }
+#[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+pub struct UserRequestHeader {
+    pub nonce: u32,
 }
 
-/// Types used in syscall responses - from kernel to userspace
-pub mod success {
-    use super::*;
-
-    /// The top level SysCallRequest type. This is the type expected by the
-    /// userspace when obtaining the result of a successful system call.
-    #[derive(Serialize, Deserialize, Debug)]
-    pub enum SysCallSuccess {
-        Serial(SerialSuccess),
-        Time(TimeSuccess),
-        // BlockStore(BlockSuccess<'a>),
-        // System(SystemSuccess<'a>),
-        Gpio(GpioSuccess),
-        // PcmSink(PcmSinkSuccess),
-        TodoLoopback,
-    }
-
-    #[derive(Serialize, Deserialize, Debug)]
-    pub enum GpioSuccess {
-        ModeSet,
-        ReadInput {
-            is_high: bool,
-        },
-        OutputWritten,
-    }
-
-    // /// Success type for System level requests
-    // #[derive(Serialize, Deserialize)]
-    // pub enum SystemSuccess<'a> {
-    //     BootBlockSet,
-    //     Freed,
-    //     RandFilled {
-    //         dest: SysCallSliceMut<'a>
-    //     }
-    // }
-
-    /// Success type for Virtual Serial Port requests
-    #[derive(Serialize, Deserialize, Debug)]
-    pub enum SerialSuccess {
-        PortOpened,
-    }
-
-    /// Success type for time related requests
-    #[derive(Serialize, Deserialize, Debug)]
-    pub enum TimeSuccess {
-        SleptMicros {
-            us: u32,
-        },
-    }
-
-    // /// Information about a single Block Storage Device block
-    // #[derive(Serialize, Deserialize)]
-    // pub struct BlockInfo<'a>{
-    //     pub length: u32,
-    //     pub capacity: u32,
-    //     pub kind: BlockKind,
-    //     pub status: BlockStatus,
-    //     pub name: Option<SysCallSlice<'a>>,
-    // }
-
-    // /// The current status of a given Block Storage Device block
-    // #[derive(Serialize, Deserialize, Copy, Clone, PartialEq, Eq, Debug)]
-    // pub enum BlockStatus {
-    //     Idle,
-    //     OpenNoWrites,
-    //     OpenWritten,
-    // }
-
-    // /// Information about a Block Storage Device
-    // #[derive(Serialize, Deserialize)]
-    // pub struct StoreInfo {
-    //     pub blocks: u32,
-    //     pub capacity: u32,
-    // }
-
-    // /// Success type for Block Storage Device related requests
-    // #[derive(Serialize, Deserialize)]
-    // pub enum BlockSuccess<'a> {
-    //     StoreInfo(StoreInfo),
-    //     BlockInfo(BlockInfo<'a>),
-    //     BlockOpened,
-    //     BlockRead {
-    //         dest_buf: SysCallSliceMut<'a>,
-    //     },
-    //     BlockWritten,
-    //     BlockClosed,
-    // }
-
-    // #[derive(Serialize, Deserialize)]
-    // pub enum PcmSinkSuccess {
-    //     Enabled,
-    //     Disabled,
-    //     SampleBuffer {
-    //         fut: SysCallFuture,
-    //     }
-    // }
+#[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+pub enum UserRequestBody {
+    Serial(serial::SerialRequest),
 }
+
+#[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+pub enum KernelMsg {
+    Timestamp(u64),
+    Dealloc(ByteBoxWire),
+    Response(KernelResponse),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+pub struct KernelResponse {
+    pub header: KernelResponseHeader,
+    pub body: KernelResponseBody,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+pub struct KernelResponseHeader {
+    pub nonce: u32,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+pub enum KernelResponseBody {
+    Serial(Result<serial::SerialResponse, serial::SerialError>),
+    TodoLoopback,
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+#[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
+pub struct ByteBoxWire {
+    pub ptr: usize,
+    pub len: usize,
+}
+
