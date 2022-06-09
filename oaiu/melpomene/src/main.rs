@@ -190,7 +190,7 @@ async fn aman() -> Result<(), ()> {
         for _ in 0..3 {
             let msg = UserRequestBody::Serial(SerialRequest::Flush);
             println!("[ST2] Sending to kernel: {:?}", msg);
-            let resp = MAILBOX.send(msg).await;
+            let resp = MAILBOX.request(msg).await;
             println!("[ST2] Kernel said: {:?}", resp);
             Sleepy::new(Duration::from_secs(2)).await;
         }

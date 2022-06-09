@@ -118,7 +118,7 @@ impl MailBox {
         }
     }
 
-    pub async fn send(&'static self, msg: UserRequestBody) -> Result<KernelResponseBody, ()> {
+    pub async fn send(&'static self, msg: UserRequestBody) -> Result<ReceiveHdl, ()> {
         let nonce = self.nonce.fetch_add(1, Ordering::AcqRel);
         let rings = self.rings.get();
         let outgoing = UserRequest {
@@ -143,16 +143,32 @@ impl MailBox {
             self.send_wait.wait().await.map_err(drop)?;
         }
 
+        Ok(ReceiveHdl { nonce })
+    }
+
+    pub async fn request(&'static self, msg: UserRequestBody) -> Result<KernelResponseBody, ()> {
+        let rx = self.send(msg).await?;
+        // Wait, we won't be immediately ready
+        self.recv_wait.wait().await.map_err(drop)?;
+        rx.receive().await
+    }
+}
+
+pub struct ReceiveHdl {
+    nonce: u32,
+}
+
+impl ReceiveHdl {
+    pub async fn receive(self) -> Result<KernelResponseBody, ()> {
         // Wait for successful receive
         loop {
-            // Wait first, the message won't already be there (unless we got REALLY lucky)
-            self.recv_wait.wait().await.map_err(drop)?;
-
-            if let Ok(mut rxg) = self.received.borrow_mut() {
-                if let Some(rx) = rxg.remove(&nonce) {
+            if let Ok(mut rxg) = MAILBOX.received.borrow_mut() {
+                if let Some(rx) = rxg.remove(&self.nonce) {
                     return Ok(rx);
                 }
             }
+
+            MAILBOX.recv_wait.wait().await.map_err(drop)?;
         }
     }
 }
