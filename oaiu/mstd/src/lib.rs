@@ -7,6 +7,7 @@ pub use abi;
 pub mod alloc;
 pub mod executor;
 pub mod utils;
+pub mod serial;
 
 // The user must provide a `no_mangle` entrypoint.
 extern "Rust" {

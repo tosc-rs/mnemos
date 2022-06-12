@@ -18,16 +18,17 @@ name = "mstd"
 
 [dependencies]
 # defmt = "0.3.0"
+futures-util = "0.3"
 
 [dependencies.cordyceps]
-git = "https://github.com/hawkw/mycelium.git"
-rev = "4eda47f064a0d2246f6c123fb53fbfdb36ca70a6"
+git = "https://github.com/jamesmunns/mycelium.git"
+rev = "ef646e72fdaaede9b2743419c8cfdbd939014d50"
 features = ["no-cache-pad"]
 default-features = false
 
 [dependencies.maitake]
-git = "https://github.com/hawkw/mycelium.git"
-rev = "4eda47f064a0d2246f6c123fb53fbfdb36ca70a6"
+git = "https://github.com/jamesmunns/mycelium.git"
+rev = "ef646e72fdaaede9b2743419c8cfdbd939014d50"
 default-features = false
 
 [dependencies.abi]

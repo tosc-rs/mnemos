@@ -44,21 +44,18 @@ use abi::{
     bbqueue_ipc::framed::{FrameConsumer, FrameProducer},
     syscall::{UserRequestBody, KernelResponseBody, UserRequest, UserRequestHeader, KernelMsg, KernelResponse},
 };
-use heapless::LinearMap;
-use maitake::wait::WaitQueue;
-
-use crate::utils::ArfCell;
+use maitake::wait::{WaitQueue, WaitMap};
+use futures_util::pin_mut;
 
 pub static MAILBOX: MailBox = MailBox::new();
 
-// TODO: There's a LOT of mutexes going on here.
+// TODO: There's a bit of mutexing going on here. `send_wait` and `recv_wait` BOTH have
 pub struct MailBox {
     nonce: AtomicU32,
     inhibit_send: AtomicBool,
     send_wait: WaitQueue,
-    recv_wait: WaitQueue,
+    recv_wait: WaitMap<u32, KernelResponseBody>,
     rings: OnceRings,
-    received: ArfCell<LinearMap<u32, KernelResponseBody, 32>>,
 }
 
 impl MailBox {
@@ -67,9 +64,8 @@ impl MailBox {
             nonce: AtomicU32::new(0),
             inhibit_send: AtomicBool::new(false),
             send_wait: WaitQueue::new(),
-            recv_wait: WaitQueue::new(),
+            recv_wait: WaitMap::new(),
             rings: OnceRings::new(),
-            received: ArfCell::new(LinearMap::new()),
         }
     }
 
@@ -79,37 +75,22 @@ impl MailBox {
 
     pub fn poll(&self) {
         let rings = self.rings.get();
-        let mut recv = self.received.borrow_mut().unwrap();
 
-        let mut any = false;
-
-        'process: while recv.len() < recv.capacity() {
-            match rings.k2u.read() {
-                Some(msg) => {
-                    match postcard::from_bytes::<KernelMsg>(&msg) {
-                        Ok(KernelMsg::Response(KernelResponse { header, body })) => {
-                            recv.insert(header.nonce, body).ok();
-                            any = true;
-                        }
-                        Ok(_) => todo!(),
-                        Err(_) => {
-                            // todo: print something? Relax this panic later with a graceful
-                            // warning
-                            panic!("Decoded bad message from kernel?");
-                        }
-                    }
-
-                    msg.release();
+        while let Some(msg) = rings.k2u.read() {
+            match postcard::from_bytes::<KernelMsg>(&msg) {
+                Ok(KernelMsg::Response(KernelResponse { header, body })) => {
+                    // Attempt to wake a relevant waiting task, OR drop the response
+                    self.recv_wait.wake(&header.nonce, body);
                 }
-                None => {
-                    // All done!
-                    break 'process;
+                Ok(_) => todo!(),
+                Err(_) => {
+                    // todo: print something? Relax this panic later with a graceful
+                    // warning
+                    panic!("Decoded bad message from kernel?");
                 }
             }
-        }
 
-        if any {
-            self.recv_wait.wake_all();
+            msg.release();
         }
 
         if self.inhibit_send.load(Ordering::Acquire) && rings.u2k.grant(128).is_ok() {
@@ -118,8 +99,7 @@ impl MailBox {
         }
     }
 
-    pub async fn send(&'static self, msg: UserRequestBody) -> Result<ReceiveHdl, ()> {
-        let nonce = self.nonce.fetch_add(1, Ordering::AcqRel);
+    async fn send_inner(&'static self, nonce: u32, msg: UserRequestBody) -> Result<(), ()> {
         let rings = self.rings.get();
         let outgoing = UserRequest {
             header: UserRequestHeader { nonce },
@@ -143,33 +123,28 @@ impl MailBox {
             self.send_wait.wait().await.map_err(drop)?;
         }
 
-        Ok(ReceiveHdl { nonce })
+        Ok(())
     }
 
+    /// Send a message to the kernel without waiting for a response
+    pub async fn send(&'static self, msg: UserRequestBody) -> Result<(), ()> {
+        let nonce = self.nonce.fetch_add(1, Ordering::AcqRel);
+        self.send_inner(nonce, msg).await
+    }
+
+
+
+    /// Send a message to the kernel, waiting for a response
     pub async fn request(&'static self, msg: UserRequestBody) -> Result<KernelResponseBody, ()> {
-        let rx = self.send(msg).await?;
-        // Wait, we won't be immediately ready
-        self.recv_wait.wait().await.map_err(drop)?;
-        rx.receive().await
-    }
-}
+        let nonce = self.nonce.fetch_add(1, Ordering::AcqRel);
 
-pub struct ReceiveHdl {
-    nonce: u32,
-}
+        // Start listening for the response BEFORE we send the request
+        let rx: maitake::wait::map::Wait<u32, KernelResponseBody> = MAILBOX.recv_wait.wait(nonce);
+        pin_mut!(rx);
+        rx.as_mut().enqueue().await.map_err(drop)?;
+        self.send_inner(nonce, msg).await?;
 
-impl ReceiveHdl {
-    pub async fn receive(self) -> Result<KernelResponseBody, ()> {
-        // Wait for successful receive
-        loop {
-            if let Ok(mut rxg) = MAILBOX.received.borrow_mut() {
-                if let Some(rx) = rxg.remove(&self.nonce) {
-                    return Ok(rx);
-                }
-            }
-
-            MAILBOX.recv_wait.wait().await.map_err(drop)?;
-        }
+        rx.await.map_err(drop)
     }
 }
 
