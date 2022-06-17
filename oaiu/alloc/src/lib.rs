@@ -1,3 +1,5 @@
+#![no_std]
+
 /// Allocation types for the Anachro PC.
 ///
 /// NOTE: This module makes STRONG assumptions that the allocator will be a singleton.
@@ -16,6 +18,7 @@ use heapless::mpmc::MpMcQueue;
 use linked_list_allocator::Heap;
 use maitake::wait::WaitQueue;
 
+// TODO: I probably don't want to make this a static. Whatever, it's fine for now.
 pub static HEAP: AHeap = AHeap::new();
 
 // TODO: I could replace the free queue with a cordyceps MpMcQueue for the cost of an extra pointer
@@ -232,6 +235,7 @@ pub struct HeapArray<T> {
     pub(crate) ptr: *mut T,
 }
 
+
 unsafe impl<T> Send for HeapArray<T> {}
 
 impl<T> Deref for HeapArray<T> {
@@ -284,6 +288,127 @@ impl<T> HeapArray<T> {
 impl<T> Drop for HeapArray<T> {
     fn drop(&mut self) {
         for i in 0..self.count {
+            unsafe {
+                self.ptr.add(i).drop_in_place();
+            }
+        }
+        // Calculate the pointer, size, and layout of this allocation
+        let free_box = unsafe { self.free_box() };
+        // defmt::println!("[ALLOC] dropping array: {=usize}", free_box.layout.size());
+        free_box.box_drop();
+    }
+}
+
+/// An Anachro Heap Array Type
+pub struct HeapFixedVec<T> {
+    pub(crate) len: usize,
+    pub(crate) capacity: usize,
+    pub(crate) ptr: *mut MaybeUninit<T>,
+}
+
+
+unsafe impl<T> Send for HeapFixedVec<T> {}
+
+impl<T> Deref for HeapFixedVec<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &Self::Target {
+        // SAFETY: We can assume that all items 0..len are initialized
+        unsafe { core::slice::from_raw_parts(self.ptr.cast::<T>(), self.len) }
+    }
+}
+
+impl<T> DerefMut for HeapFixedVec<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        // SAFETY: We can assume that all items 0..len are initialized
+        unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<T>(), self.len) }
+    }
+}
+
+impl<T> HeapFixedVec<T> {
+    pub fn push(&mut self, data: T) -> Result<(), T> {
+        if self.len >= self.capacity {
+            return Err(data);
+        }
+
+        unsafe {
+            self.ptr.add(self.len).write(MaybeUninit::new(data));
+        }
+        self.len += 1;
+
+        Ok(())
+    }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    #[inline]
+    pub fn pop(&mut self) -> Option<T> {
+        if self.len == 0 {
+            None
+        } else {
+            unsafe {
+                self.len -= 1;
+                Some(core::ptr::read(self.ptr.add(self.len()).cast::<T>()))
+            }
+        }
+    }
+
+    pub fn try_remove(&mut self, index: usize) -> Result<T, ()> {
+        let len = self.len();
+        if index > len {
+            return Err(());
+        }
+
+        unsafe {
+            // infallible
+            let ret;
+            {
+                // the place we are taking from.
+                let ptr = self.ptr.add(index);
+                // copy it out, unsafely having a copy of the value on
+                // the stack and in the vector at the same time.
+                ret = core::ptr::read(ptr.cast::<T>());
+
+                // Shift everything down to fill in that spot.
+                core::ptr::copy(ptr.offset(1), ptr, len - index - 1);
+            }
+            self.len -= 1;
+            Ok(ret)
+        }
+    }
+
+    /// Create a free_box, with location and layout information necessary
+    /// to free the box.
+    ///
+    /// SAFETY: This function creates aliasing pointers for the allocation. It
+    /// should ONLY be called in the destructor of the HeapBox when deallocation
+    /// is about to occur, and access to the Box will not be allowed again.
+    unsafe fn free_box(&mut self) -> FreeBox {
+        // SAFETY: If we allocated this item, it must have been small enough
+        // to properly construct a layout. Avoid Layout::array, as it only
+        // offers a checked method.
+        let layout = {
+            let array_size = size_of::<T>() * self.capacity;
+            Layout::from_size_align_unchecked(array_size, align_of::<T>())
+        };
+        FreeBox {
+            ptr: NonNull::new_unchecked(self.ptr.cast::<u8>()),
+            layout,
+        }
+    }
+}
+
+impl<T> Drop for HeapFixedVec<T> {
+    fn drop(&mut self) {
+        for i in 0..self.len {
             unsafe {
                 self.ptr.add(i).drop_in_place();
             }
@@ -437,6 +562,29 @@ impl HeapGuard {
         }
 
         Ok(HeapArray { ptr, count })
+    }
+
+    /// Attempt to allocate a HeapFixedVec using the allocator
+    ///
+    /// If space was available, the allocation will be returned. If not, an
+    /// error will be returned
+    pub fn alloc_fixed_vec<T>(
+        &mut self,
+        capacity: usize,
+    ) -> Result<HeapFixedVec<T>, ()> {
+        // Clean up any pending allocs
+        self.clean_allocs();
+
+        // Then figure out the layout of the requested array. This call fails
+        // if the total size exceeds ISIZE_MAX, which is exceedingly unlikely
+        // (unless the caller calculated something wrong)
+        let layout = Layout::array::<T>(capacity).map_err(drop)?;
+
+        // Then, attempt to allocate the requested T.
+        let nnu8 = self.deref_mut().allocate_first_fit(layout)?;
+        let ptr = nnu8.as_ptr().cast::<MaybeUninit<T>>();
+
+        Ok(HeapFixedVec { ptr, capacity, len: 0 })
     }
 }
 

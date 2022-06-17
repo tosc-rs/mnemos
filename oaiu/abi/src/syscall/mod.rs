@@ -26,6 +26,12 @@ pub mod serial;
 
 use serde::{Serialize, Deserialize};
 
+// TODO: This MUST be kept in sync with UserRequestBody!
+#[derive(PartialEq, Eq)]
+pub enum DriverKind {
+    Serial,
+}
+
 #[derive(Serialize, Deserialize, Debug)]
 #[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
 pub struct UserRequest {
@@ -43,6 +49,14 @@ pub struct UserRequestHeader {
 #[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
 pub enum UserRequestBody {
     Serial(serial::SerialRequest),
+}
+
+impl UserRequest {
+    pub fn driver_kind(&self) -> DriverKind {
+        match self.body {
+            UserRequestBody::Serial(_) => DriverKind::Serial,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug)]

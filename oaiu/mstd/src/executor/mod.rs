@@ -8,9 +8,8 @@ pub mod mailbox;
 use maitake::{self, scheduler::{StaticScheduler, TaskStub}, task::Storage};
 use maitake::task::Task as MaitakeTask;
 
-
 use core::{future::Future, ptr::NonNull};
-use crate::alloc::HeapBox;
+use mnemos_alloc::HeapBox;
 
 #[repr(transparent)]
 pub struct Task<F: Future + 'static>(MaitakeTask<&'static StaticScheduler, F, HBStorage>);
@@ -52,7 +51,7 @@ impl<F: Future + 'static> Storage<&'static StaticScheduler, F> for HBStorage {
 
 pub async fn spawn<F: Future + 'static>(fut: F) {
     let task = Task(MaitakeTask::new(&EXECUTOR.scheduler, fut));
-    let atask = crate::alloc::allocate(task).await;
+    let atask = mnemos_alloc::allocate(task).await;
     spawn_allocated(atask);
 }
 
@@ -71,7 +70,7 @@ impl Terpsichore {
         crate::executor::mailbox::MAILBOX.poll();
 
         // Process heap allocations
-        crate::alloc::HEAP.poll();
+        mnemos_alloc::HEAP.poll();
 
         self.scheduler.tick();
     }

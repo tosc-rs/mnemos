@@ -1,0 +1,50 @@
+[package]
+name = "mnemos"
+version = "0.1.0"
+description = "A tiny embedded operating system kernel"
+repository = "https://github.com/jamesmunns/pellegrino"
+authors = ["James Munns <james@onevariable.com>"]
+edition = "2021"
+readme = "./README.md"
+
+categories = [
+    "embedded",
+    "no-std",
+]
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "kernel"
+harness = false
+
+[dependencies]
+
+[dependencies.maitake]
+version = "0.1.0"
+default-features = false
+
+[dependencies.thingbuf]
+version = "0.1.3"
+default-features = false
+features = ["static"]
+
+[dependencies.mnemos-alloc]
+version = "0.1.0"
+path = "../alloc"
+
+[dependencies.heapless]
+version = "0.7.10"
+features = ["defmt-impl"]
+
+[dependencies.mnemos-abi]
+version = "0.1.0"
+path = "../abi"
+features = ["use-defmt"]
+
+[dependencies.serde]
+version = "1.0.136"
+default-features = false
+features = ["derive"]
+
+[dependencies.postcard]
+version = "0.7.3"

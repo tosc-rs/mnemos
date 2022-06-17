@@ -1,0 +1,16 @@
+[workspace]
+members = [
+    "kernel",
+    "abi",
+    "mstd",
+    "alloc",
+    "spitebuf",
+]
+
+[patch.crates-io.maitake]
+git = "https://github.com/jamesmunns/mycelium.git"
+rev = "833c343dcdf725b621ecdb6aae3873d984563a61"
+
+[patch.crates-io.cordyceps]
+git = "https://github.com/jamesmunns/mycelium.git"
+rev = "833c343dcdf725b621ecdb6aae3873d984563a61"

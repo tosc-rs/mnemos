@@ -4,7 +4,6 @@
 /// Common between the Kernel and Userspace
 pub use abi;
 
-pub mod alloc;
 pub mod executor;
 pub mod utils;
 pub mod serial;
