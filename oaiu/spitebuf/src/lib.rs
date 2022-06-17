@@ -104,6 +104,14 @@ impl<T, STO: Storage<T>> MpMcQueue<T, STO> {
 
 unsafe impl<T, STO: Storage<T>> Sync for MpMcQueue<T, STO> where T: Send {}
 
+impl<T, STO: Storage<T>> Drop for MpMcQueue<T, STO> {
+    fn drop(&mut self) {
+        while let Some(_) = self.dequeue_sync() {}
+        self.cons_wait.close();
+        self.prod_wait.close();
+    }
+}
+
 pub struct Cell<T> {
     data: MaybeUninit<T>,
     sequence: AtomicUsize,
