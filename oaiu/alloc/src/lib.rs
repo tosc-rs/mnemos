@@ -12,7 +12,7 @@ use core::{
     mem::{align_of, forget, size_of},
     ops::{Deref, DerefMut},
     ptr::NonNull,
-    sync::atomic::{AtomicU8, Ordering, AtomicBool}, pin::Pin,
+    sync::atomic::{AtomicU8, Ordering, AtomicBool, AtomicUsize}, pin::Pin,
 };
 use heapless::mpmc::MpMcQueue;
 use linked_list_allocator::Heap;
@@ -234,7 +234,6 @@ pub struct HeapArray<T> {
     pub(crate) count: usize,
     pub(crate) ptr: *mut T,
 }
-
 
 unsafe impl<T> Send for HeapArray<T> {}
 
@@ -542,6 +541,18 @@ impl HeapGuard {
         data: T,
         count: usize,
     ) -> Result<HeapArray<T>, ()> {
+        let f = || { data };
+        self.alloc_box_array_with(f, count)
+    }
+
+    pub fn alloc_box_array_with<T, F>(
+        &mut self,
+        f: F,
+        count: usize,
+    ) -> Result<HeapArray<T>, ()>
+    where
+        F: Fn() -> T,
+    {
         // Clean up any pending allocs
         self.clean_allocs();
 
@@ -557,11 +568,36 @@ impl HeapGuard {
         // And initialize it with the contents given to us
         unsafe {
             for i in 0..count {
-                ptr.add(i).write(data);
+                ptr.add(i).write((f)());
             }
         }
 
         Ok(HeapArray { ptr, count })
+    }
+
+    pub fn alloc_arc<T>(
+        &mut self,
+        data: T,
+    ) -> Result<HeapArc<T>, T> {
+        // Clean up any pending allocs
+        self.clean_allocs();
+
+        // Then, attempt to allocate the requested T.
+        let nnu8 = match self.deref_mut().allocate_first_fit(Layout::new::<HeapArcInner<T>>()) {
+            Ok(t) => t,
+            Err(_) => return Err(data),
+        };
+        let ptr = nnu8.cast::<HeapArcInner<T>>();
+
+        // And initialize it with the contents given to us
+        unsafe {
+            ptr.as_ptr().write(HeapArcInner {
+                refcount: AtomicUsize::new(1),
+                data,
+            });
+        }
+
+        Ok(HeapArc { inner: ptr })
     }
 
     /// Attempt to allocate a HeapFixedVec using the allocator
@@ -586,6 +622,63 @@ impl HeapGuard {
 
         Ok(HeapFixedVec { ptr, capacity, len: 0 })
     }
+}
+
+pub struct HeapArc<T> {
+    inner: NonNull<HeapArcInner<T>>,
+}
+
+impl<T> HeapArc<T> {
+    unsafe fn free_box(&mut self) -> FreeBox {
+        FreeBox {
+            ptr: NonNull::new_unchecked(self.inner.as_ptr().cast::<u8>()),
+            layout: Layout::new::<HeapArcInner<T>>(),
+        }
+    }
+}
+
+impl<T> Deref for HeapArc<T> {
+    type Target = T;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        unsafe {
+            &self.inner.as_ref().data
+        }
+    }
+}
+
+impl<T> Clone for HeapArc<T> {
+    fn clone(&self) -> Self {
+        let inner = unsafe { &self.inner.as_ref() };
+        inner.refcount.fetch_add(1, Ordering::Relaxed);
+        Self { inner: self.inner }
+    }
+}
+
+impl<T> Drop for HeapArc<T> {
+    fn drop(&mut self) {
+        let old = {
+            let inner = unsafe { &self.inner.as_ref() };
+            // TODO: I could do something more complicated, but it'll be okay for now
+            inner.refcount.fetch_sub(1, Ordering::SeqCst)
+        };
+
+        if old == 1 {
+            unsafe {
+                core::ptr::drop_in_place(self.inner.as_ptr());
+
+                // Calculate the pointer, size, and layout of this allocation
+                let free_box = self.free_box();
+                free_box.box_drop();
+            }
+        }
+    }
+}
+
+struct HeapArcInner<T> {
+    refcount: AtomicUsize,
+    data: T,
 }
 
 // Private HeapGuard methods.

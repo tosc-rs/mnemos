@@ -29,11 +29,10 @@ Okay, what does the kernel need to be?
 */
 
 use core::{sync::atomic::{AtomicUsize, Ordering}, mem::MaybeUninit, cell::UnsafeCell, ops::{Deref, DerefMut}};
-use mnemos_alloc::{HEAP, HeapFixedVec, HeapBox, HeapArray, AHeap};
+use mnemos_alloc::{HEAP, HeapFixedVec, HeapBox, HeapArray, AHeap, HeapArc};
 use abi::{bbqueue_ipc::{BBBuffer, framed::{FrameProducer, FrameConsumer}}, syscall::{DriverKind, UserRequest, KernelResponse}};
 use maitake::{self, scheduler::{StaticScheduler, TaskStub}, task::Storage};
 use maitake::task::Task as MaitakeTask;
-use thingbuf::StaticThingBuf;
 
 static TASK_STUB: TaskStub = TaskStub::new();
 static KERNEL: Kernel = Kernel {
@@ -50,15 +49,13 @@ pub struct KernelSettings {
     pub max_drivers: usize,
     pub k2u_size: usize,
     pub u2k_size: usize,
+    pub user_reply_max_ct: usize,
 }
 
 pub struct Message {
-    request: UserRequest,
-    response: &'static StaticThingBuf<KernelResponse, THINGBUF_CAP>,
+    pub request: UserRequest,
+    pub response: KChannel<KernelResponse>,
 }
-
-// TODO: Make it possible to heap allocate a thingbuf capacity
-pub const THINGBUF_CAP: usize = 32;
 
 pub struct Kernel {
     status: AtomicUsize,
@@ -76,16 +73,16 @@ unsafe impl Sync for Kernel {}
 pub struct DriverHandle {
     kind: DriverKind,
     // TODO: Some kind of HeapArc to better reference count this info
-    queue: &'static StaticThingBuf<Message, THINGBUF_CAP>
+    queue: KChannel<Message>,
 }
 
 pub struct KernelInner {
-    u2k_buf: HeapArray<u8>,
-    k2u_buf: HeapArray<u8>,
+    _u2k_buf: HeapArray<u8>,
+    _k2u_buf: HeapArray<u8>,
     u2k_ring: BBBuffer,
     k2u_ring: BBBuffer,
     scheduler: StaticScheduler,
-    user_reply: StaticThingBuf<KernelResponse, 32>,
+    user_reply: KChannel<KernelResponse>,
 }
 
 pub struct KernelInnerMut {
@@ -116,8 +113,8 @@ impl Kernel {
 
 
         let drivers = hr.alloc_fixed_vec(settings.max_drivers)?;
-        let mut u2k_buf = hr.alloc_box_array(0, settings.u2k_size)?;
-        let mut k2u_buf = hr.alloc_box_array(0, settings.k2u_size)?;
+        let mut _u2k_buf = hr.alloc_box_array(0, settings.u2k_size)?;
+        let mut _k2u_buf = hr.alloc_box_array(0, settings.k2u_size)?;
         let u2k_ring = BBBuffer::new();
         let k2u_ring = BBBuffer::new();
 
@@ -129,20 +126,20 @@ impl Kernel {
         // written into the static `inner` field. DO NOT create producers/consumers
         // until that has happened.
         unsafe {
-            u2k_ring.initialize(u2k_buf.as_mut_ptr(), u2k_buf.len());
-            k2u_ring.initialize(k2u_buf.as_mut_ptr(), k2u_buf.len());
+            u2k_ring.initialize(_u2k_buf.as_mut_ptr(), _u2k_buf.len());
+            k2u_ring.initialize(_k2u_buf.as_mut_ptr(), _k2u_buf.len());
         }
 
         // Safety: We only use the static stub once
         let scheduler = unsafe { StaticScheduler::new_with_static_stub(&TASK_STUB) };
 
         let inner = KernelInner {
-            u2k_buf,
-            k2u_buf,
+            _u2k_buf,
+            _k2u_buf,
             u2k_ring,
             k2u_ring,
             scheduler,
-            user_reply: StaticThingBuf::new(),
+            user_reply: KChannel::new(settings.user_reply_max_ct),
         };
         let inner_mut = KernelInnerMut {
             drivers,
@@ -160,8 +157,6 @@ impl Kernel {
             let u2k_ring: *mut BBBuffer = &mut inner.u2k_ring;
             self.u2k.get().write(MaybeUninit::new(BBBuffer::take_framed_consumer(u2k_ring)));
         }
-
-
 
         self.status.store(Self::INIT_IDLE, Ordering::SeqCst);
 
@@ -211,27 +206,46 @@ impl Kernel {
     }
 
     pub fn tick(&'static self) {
+        // Process heap allocations
         self.heap().poll();
 
-        // TODO: process mailbox messages
+        // process mailbox messages
         let inner = self.inner();
         let inner_mut = self.inner_mut().unwrap();
         let u2k = unsafe { (*self.u2k.get()).assume_init_ref() };
         let k2u = unsafe { (*self.k2u.get()).assume_init_ref() };
+
+        // Incoming messages
         while let Some(msg) = u2k.read() {
             match postcard::from_bytes::<UserRequest>(&msg) {
                 Ok(req) => {
                     let kind = req.driver_kind();
                     if let Some(drv) = inner_mut.drivers.iter().find(|drv| drv.kind == kind) {
-                        drv.queue.push(Message { request: req, response: &inner.user_reply }).map_err(drop).unwrap();
+                        drv.queue.enqueue_sync(Message {
+                            request: req,
+                            response: inner.user_reply.clone()
+                        }).map_err(drop).unwrap();
                     }
                 },
                 Err(_) => panic!(),
             }
-
             msg.release();
         }
 
+        // Outgoing messages
+        while let Ok(mut grant) = k2u.grant(256) {
+            match inner.user_reply.dequeue_sync() {
+                Some(msg) => {
+                    let used = postcard::to_slice(
+                        &msg,
+                        &mut grant
+                    ).unwrap().len();
+
+                    grant.commit(used);
+                },
+                None => break,
+            }
+        }
 
         inner.scheduler.tick();
 
@@ -303,3 +317,55 @@ pub async fn spawn<F: Future + 'static>(fut: F) {
 pub fn spawn_allocated<F: Future + 'static>(task: HeapBox<Task<F>>) -> () {
     KERNEL.inner().scheduler.spawn_allocated::<F, HBStorage>(task)
 }
+
+use spitebuf::MpMcQueue;
+
+mod sealed {
+    use super::*;
+
+    pub struct SpiteData<T> {
+        pub(crate) data: HeapArray<UnsafeCell<spitebuf::Cell<T>>>,
+    }
+
+    unsafe impl<T: Sized> spitebuf::Storage<T> for SpiteData<T> {
+        fn buf(&self) -> (*const UnsafeCell<spitebuf::Cell<T>>, usize) {
+            let ptr = self.data.as_ptr();
+            let len = self.data.len();
+            (ptr, len)
+        }
+    }
+}
+
+pub struct KChannel<T> {
+    q: HeapArc<MpMcQueue<T, sealed::SpiteData<T>>>,
+}
+
+impl<T> Clone for KChannel<T> {
+    fn clone(&self) -> Self {
+        Self {
+            q: self.q.clone(),
+        }
+    }
+}
+
+impl<T> Deref for KChannel<T> {
+    type Target = MpMcQueue<T, sealed::SpiteData<T>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.q
+    }
+}
+
+impl<T> KChannel<T> {
+    pub fn new(count: usize) -> Self {
+        let mut guard = KERNEL.heap().lock().unwrap();
+        let func = || {
+            UnsafeCell::new(spitebuf::single_cell::<T>())
+        };
+
+        let ba = guard.alloc_box_array_with(func, count).unwrap();
+        let q = MpMcQueue::new(sealed::SpiteData { data: ba });
+        Self { q: guard.alloc_arc(q).map_err(drop).unwrap() }
+    }
+}
+

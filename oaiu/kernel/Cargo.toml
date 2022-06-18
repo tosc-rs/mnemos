@@ -23,10 +23,8 @@ harness = false
 version = "0.1.0"
 default-features = false
 
-[dependencies.thingbuf]
-version = "0.1.3"
-default-features = false
-features = ["static"]
+[dependencies.spitebuf]
+path = "../spitebuf"
 
 [dependencies.mnemos-alloc]
 version = "0.1.0"
