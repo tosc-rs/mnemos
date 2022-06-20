@@ -9,6 +9,10 @@ categories = [
 ]
 license = "MIT OR Apache-2.0"
 
+[dependencies.cordyceps]
+version = "0.2"
+default-features = false
+
 [dependencies.maitake]
 version = "0.1"
 default-features = false

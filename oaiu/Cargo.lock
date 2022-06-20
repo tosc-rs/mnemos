@@ -321,6 +321,7 @@ dependencies = [
 name = "mnemos-alloc"
 version = "0.1.0"
 dependencies = [
+ "cordyceps",
  "heapless",
  "linked_list_allocator",
  "maitake",

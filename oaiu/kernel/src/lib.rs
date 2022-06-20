@@ -111,7 +111,6 @@ impl Kernel {
             settings.heap_size,
         )?;
 
-
         let drivers = hr.alloc_fixed_vec(settings.max_drivers)?;
         let mut _u2k_buf = hr.alloc_box_array(0, settings.u2k_size)?;
         let mut _k2u_buf = hr.alloc_box_array(0, settings.k2u_size)?;
