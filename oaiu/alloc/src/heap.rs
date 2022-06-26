@@ -1,7 +1,3 @@
-
-// TODO
-#![allow(unused_imports, dead_code, unreachable_code)]
-
 /// Allocation types for the Anachro PC.
 ///
 /// NOTE: This module makes STRONG assumptions that the allocator will be a singleton.
@@ -11,16 +7,14 @@ use core::{
     alloc::Layout,
     cell::UnsafeCell,
     mem::MaybeUninit,
-    mem::{align_of, forget, size_of},
-    ops::{Deref, DerefMut},
     ptr::NonNull,
-    sync::atomic::{AtomicU8, Ordering, AtomicBool, AtomicUsize}, pin::Pin,
+    sync::atomic::{AtomicU8, Ordering, AtomicBool}, marker::PhantomData,
 };
-use heapless::mpmc::MpMcQueue;
 use linked_list_allocator::Heap;
 use maitake::wait::WaitQueue;
-use cordyceps::{mpsc_queue::{MpscQueue, Links}, Linked};
-use crate::containers::{Recycle, NodeRef};
+use cordyceps::mpsc_queue::{MpscQueue, Links};
+use crate::{node::{Recycle, NodeRef, Node, Active, ActiveArr}, containers::HeapArray};
+use crate::containers::HeapBox;
 
 /// An Anachro Heap item
 pub struct AHeap {
@@ -103,9 +97,8 @@ impl AHeap {
 
             // Increment the cursor, as we use it for the heap initialization
             cursor = cursor.add(aheap_size);
-            let cursor = cursor as usize;
 
-            let heap = Heap::new(cursor, end - cursor);
+            let heap = Heap::new(cursor, end - (cursor as usize));
 
             aheap_ptr.write(Self {
                 freelist: MpscQueue::new_with_static_stub(&*stub_ptr),
@@ -122,8 +115,7 @@ impl AHeap {
 
         // Creating a mutable access to the inner heap is acceptable, as we
         // have marked ourselves with "BUSY_LOCKED", acting as a mutex.
-        let iheap = &mut *aheap.heap.get();
-        let guard = HeapGuard { heap: iheap };
+        let guard = HeapGuard { aheap };
 
         // Well that went great, I think!
         Ok((aheap, guard))
@@ -131,9 +123,9 @@ impl AHeap {
 
     pub(crate) unsafe fn release_node(&'static self, node: NonNull<Recycle>) {
         // Can we immediately lock the allocator, avoiding the free list?
-        if let Ok(guard) = self.lock() {
+        if let Ok(mut guard) = self.lock() {
             let layout: Layout = (*node.as_ptr()).node_layout;
-            guard.heap.deallocate(node.cast::<u8>(), layout);
+            guard.get_heap().deallocate(node.cast::<u8>(), layout);
             return;
         }
 
@@ -142,55 +134,23 @@ impl AHeap {
         self.freelist.enqueue(node_ref);
     }
 
-    // pub fn init_exclusive(&self, addr: usize, size: usize) -> Result<HeapGuard, ()> {
-    //     self.state
-    //         .compare_exchange(
-    //             Self::UNINIT,
-    //             Self::BUSY_LOCKED,
-    //             Ordering::SeqCst,
-    //             Ordering::SeqCst,
-    //         )
-    //         .map_err(drop)?;
+    pub fn poll(&'static self) {
+        let mut hg = self.lock().unwrap();
 
-    //     unsafe {
-    //         // Create a heap type from the given storage buffer
-    //         let mut heap = Heap::empty();
-    //         heap.init(addr, size);
+        // Clean any pending allocs
+        hg.clean_allocs();
 
-    //         // // Initialize the Free Queue
-    //         // FREE_Q.init();
-    //         todo!();
+        // Did we perform any deallocations?
+        if self.any_frees.swap(false, Ordering::SeqCst) {
+            // Clear the inhibit flag
+            self.inhibit_alloc.store(false, Ordering::SeqCst);
 
-    //         // Initialize the heap
-    //         (*self.heap.get()).write(heap);
-    //     }
+            // Wake any tasks waiting on alloc
+            self.heap_wait.wake_all();
+        }
+    }
 
-    //     self.inhibit_alloc.store(false, Ordering::Release);
-
-    //     // SAFETY: We are already in the BUSY_LOCKED state, we have exclusive access.
-    //     unsafe {
-    //         let heap = &mut *self.heap.get().cast();
-    //         Ok(HeapGuard { heap })
-    //     }
-    // }
-
-    // pub fn poll(&self) {
-    //     let mut hg = self.lock().unwrap();
-
-    //     // Clean any pending allocs
-    //     hg.clean_allocs();
-
-    //     // Did we perform any deallocations?
-    //     if self.any_frees.swap(false, Ordering::SeqCst) {
-    //         // Clear the inhibit flag
-    //         self.inhibit_alloc.store(false, Ordering::SeqCst);
-
-    //         // Wake any tasks waiting on alloc
-    //         self.heap_wait.wake_all();
-    //     }
-    // }
-
-    pub fn lock(&self) -> Result<HeapGuard, u8> {
+    pub fn lock(&'static self) -> Result<HeapGuard, u8> {
         self.state
             .compare_exchange(
                 Self::INIT_IDLE,
@@ -200,17 +160,14 @@ impl AHeap {
             )?;
 
         // SAFETY: We are already in the BUSY_LOCKED state, we have exclusive access.
-        unsafe {
-            let heap = &mut *self.heap.get().cast();
-            Ok(HeapGuard { heap })
-        }
+        Ok(HeapGuard { aheap: self })
     }
 }
 
 /// A guard type that provides mutually exclusive access to the allocator as
 /// long as the guard is held.
 pub struct HeapGuard {
-    heap: &'static mut Heap,
+    aheap: &'static AHeap,
 }
 
 // Public HeapGuard methods
@@ -230,53 +187,107 @@ impl HeapGuard {
 //         self.deref().used()
 //     }
 
-    fn clean_allocs(&mut self) {
-        todo!()
-//         // First, grab the Free Queue.
-//         //
-//         // SAFETY: A HeapGuard can only be created if the Heap, and by extension the
-//         // FreeQueue, has been previously initialized
-//         let free_q = unsafe { FREE_Q.get_unchecked() };
-
-//         let mut any = false;
-//         // Then, free all pending memory in order to maximize space available.
-//         while let Some(FreeBox { ptr, layout }) = free_q.dequeue() {
-//             // defmt::println!("[ALLOC] FREE: {=usize}", layout.size());
-//             // SAFETY: We have mutually exclusive access to the allocator, and
-//             // the pointer and layout are correctly calculated by the relevant
-//             // FreeBox types.
-//             unsafe {
-//                 self.deref_mut().deallocate(ptr, layout);
-//                 any = true;
-//             }
-//         }
-
-//         if any {
-//             HEAP.any_frees.store(true, Ordering::Relaxed);
-//         }
+    fn get_heap(&mut self) -> &mut Heap {
+        unsafe { &mut *self.aheap.heap.get() }
     }
 
-//     /// Attempt to allocate a HeapBox using the allocator
+    fn clean_allocs(&mut self) {
+        let mut any = false;
+        // Then, free all pending memory in order to maximize space available.
+        let free_list = &self.aheap.freelist;
+        let heap = self.get_heap();
+
+        while let Some(node_ref) = free_list.dequeue() {
+            // defmt::println!("[ALLOC] FREE: {=usize}", layout.size());
+            // SAFETY: We have mutually exclusive access to the allocator, and
+            // the pointer and layout are correctly calculated by the relevant
+            // FreeBox types.
+
+            let layout = unsafe { node_ref.node.as_ref().node_layout };
+            let ptr = node_ref.node.cast::<u8>();
+
+            unsafe {
+                heap.deallocate(ptr, layout);
+                any = true;
+            }
+        }
+
+        if any {
+            self.aheap.any_frees.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Attempt to allocate a HeapBox using the allocator
+    ///
+    /// If space was available, the allocation will be returned. If not, an
+    /// error will be returned
+    pub fn alloc_box<T>(&mut self, data: T) -> Result<HeapBox<T>, T> {
+        // Clean up any pending allocs
+        self.clean_allocs();
+
+        // Then, attempt to allocate the requested T.
+        let nnu8 = match self.get_heap().allocate_first_fit(Layout::new::<Node<T>>()) {
+            Ok(t) => t,
+            Err(_) => return Err(data),
+        };
+        let mut nn = nnu8.cast::<Active<T>>();
+
+
+        // And initialize it with the contents given to us
+        unsafe {
+            let active = nn.as_mut();
+            active.data.get().write(MaybeUninit::new(data));
+            active.heap = self.aheap;
+        }
+
+        Ok(HeapBox {
+            ptr: nn,
+            pd: PhantomData,
+        })
+    }
+
+    pub fn alloc_box_array_with<T, F>(
+        &mut self,
+        f: F,
+        count: usize,
+    ) -> Result<HeapArray<T>, ()>
+    where
+        F: Fn() -> T,
+    {
+        // Clean up any pending allocs
+        self.clean_allocs();
+
+        // Then figure out the layout of the requested array. This call fails
+        // if the total size exceeds ISIZE_MAX, which is exceedingly unlikely
+        // (unless the caller calculated something wrong)
+        let layout = unsafe { ActiveArr::<T>::layout_for_arr(count) };
+
+        // Then, attempt to allocate the requested T.
+        let nnu8 = self.get_heap().allocate_first_fit(layout)?;
+        let mut aa_ptr = nnu8.cast::<ActiveArr<T>>();
+
+        // And initialize it with the contents given to us
+        unsafe {
+            let start = aa_ptr.as_mut().data.get().cast::<T>();
+            for i in 0..count {
+                start.add(i).write((f)());
+            }
+        }
+
+        Ok(HeapArray { ptr: aa_ptr, pd: PhantomData })
+    }
+
+//     /// Attempt to allocate a HeapArray using the allocator
 //     ///
 //     /// If space was available, the allocation will be returned. If not, an
 //     /// error will be returned
-//     pub fn alloc_box<T>(&mut self, data: T) -> Result<HeapBox<T>, T> {
-//         // Clean up any pending allocs
-//         self.clean_allocs();
-
-//         // Then, attempt to allocate the requested T.
-//         let nnu8 = match self.deref_mut().allocate_first_fit(Layout::new::<T>()) {
-//             Ok(t) => t,
-//             Err(_) => return Err(data),
-//         };
-//         let ptr = nnu8.as_ptr().cast::<T>();
-
-//         // And initialize it with the contents given to us
-//         unsafe {
-//             ptr.write(data);
-//         }
-
-//         Ok(HeapBox { ptr })
+//     pub fn alloc_box_array<T: Copy + ?Sized>(
+//         &mut self,
+//         data: T,
+//         count: usize,
+//     ) -> Result<HeapArray<T>, ()> {
+//         let f = || { data };
+//         self.alloc_box_array_with(f, count)
 //     }
 
 //     pub fn alloc_pin_box<T: Unpin>(&mut self, data: T) -> Result<Pin<HeapBox<T>>, T> {
@@ -304,35 +315,7 @@ impl HeapGuard {
 //         self.alloc_box_array_with(f, count)
 //     }
 
-//     pub fn alloc_box_array_with<T, F>(
-//         &mut self,
-//         f: F,
-//         count: usize,
-//     ) -> Result<HeapArray<T>, ()>
-//     where
-//         F: Fn() -> T,
-//     {
-//         // Clean up any pending allocs
-//         self.clean_allocs();
 
-//         // Then figure out the layout of the requested array. This call fails
-//         // if the total size exceeds ISIZE_MAX, which is exceedingly unlikely
-//         // (unless the caller calculated something wrong)
-//         let layout = Layout::array::<T>(count).map_err(drop)?;
-
-//         // Then, attempt to allocate the requested T.
-//         let nnu8 = self.deref_mut().allocate_first_fit(layout)?;
-//         let ptr = nnu8.as_ptr().cast::<T>();
-
-//         // And initialize it with the contents given to us
-//         unsafe {
-//             for i in 0..count {
-//                 ptr.add(i).write((f)());
-//             }
-//         }
-
-//         Ok(HeapArray { ptr, count })
-//     }
 
 //     pub fn alloc_arc<T>(
 //         &mut self,
@@ -381,4 +364,10 @@ impl HeapGuard {
 
 //         Ok(HeapFixedVec { ptr, capacity, len: 0 })
 //     }
+}
+
+impl Drop for HeapGuard {
+    fn drop(&mut self) {
+        self.aheap.state.store(AHeap::INIT_IDLE, Ordering::SeqCst)
+    }
 }

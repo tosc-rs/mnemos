@@ -14,3 +14,7 @@ rev = "833c343dcdf725b621ecdb6aae3873d984563a61"
 [patch.crates-io.cordyceps]
 git = "https://github.com/jamesmunns/mycelium.git"
 rev = "833c343dcdf725b621ecdb6aae3873d984563a61"
+
+[patch.crates-io.linked_list_allocator]
+git = "https://github.com/jamesmunns/linked-list-allocator"
+branch = "james-miri"
