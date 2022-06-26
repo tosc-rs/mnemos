@@ -233,7 +233,13 @@ checksum = "349d5a591cd28b49e1d1037471617a32ddcda5731b99419008085f72d5a53836"
 [[package]]
 name = "linked_list_allocator"
 version = "0.9.1"
-source = "git+https://github.com/jamesmunns/linked-list-allocator?branch=james-miri#6129afaa626edae18dff45f25e8b819bfba5f674"
+source = "git+https://github.com/jamesmunns/linked-list-allocator?branch=james-miri#085c26426f06909560a7069f72253192440bdef4"
+
+[[package]]
+name = "linked_list_allocator"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "222d00bf23b303e0c82c7a4d5f04dc90f33a58b26a3adb1a09c6fbcf56cbd2a9"
 
 [[package]]
 name = "lock_api"
@@ -319,10 +325,11 @@ dependencies = [
 [[package]]
 name = "mnemos-alloc"
 version = "0.1.0"
+source = "git+https://github.com/tosc-rs/mnemos-alloc?rev=e960ed90595cf76e916de47f2f9d9f24ab1be30e#e960ed90595cf76e916de47f2f9d9f24ab1be30e"
 dependencies = [
  "cordyceps",
  "heapless",
- "linked_list_allocator",
+ "linked_list_allocator 0.10.0",
  "maitake",
 ]
 
@@ -330,9 +337,12 @@ dependencies = [
 name = "mnemos-std"
 version = "0.1.0"
 dependencies = [
+ "cordyceps",
  "futures-util",
  "heapless",
- "linked_list_allocator",
+ "linked_list_allocator 0.9.1",
+ "maitake",
+ "mnemos-abi",
  "mnemos-alloc",
  "postcard",
 ]
@@ -449,18 +459,18 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.39"
+version = "1.0.40"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c54b25569025b7fc9651de43004ae593a75ad88543b17178aa5e1b9c4f15f56f"
+checksum = "dd96a1e8ed2596c337f8eae5f24924ec83f5ad5ab21ea8e455d3566c69fbcaf7"
 dependencies = [
  "unicode-ident",
 ]
 
 [[package]]
 name = "quote"
-version = "1.0.18"
+version = "1.0.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a1feb54ed693b93a84e14094943b84b7c4eae204c512b7ccb95ab0c66d278ad1"
+checksum = "3bcdf212e9776fbcb2d23ab029360416bb1706b1aea2d1a5ba002727cbcab804"
 dependencies = [
  "proc-macro2",
 ]
@@ -527,14 +537,14 @@ version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bfa0f585226d2e68097d4f95d113b15b83a82e819ab25717ec0590d9584ef366"
 dependencies = [
- "semver 1.0.10",
+ "semver 1.0.11",
 ]
 
 [[package]]
 name = "rustversion"
-version = "1.0.6"
+version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2cc38e8fa666e2de3c4aba7edeb5ffc5246c1c2ed0e3d17e560aeeba736b23f"
+checksum = "a0a5f7c728f5d284929a1cccb5bc19884422bfe6ef4d6c409da2c41838983fcf"
 
 [[package]]
 name = "scoped-tls"
@@ -559,9 +569,9 @@ dependencies = [
 
 [[package]]
 name = "semver"
-version = "1.0.10"
+version = "1.0.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a41d061efea015927ac527063765e73601444cdc344ba855bc7bd44578b25e1c"
+checksum = "3d92beeab217753479be2f74e54187a6aed4c125ff0703a866c3147a02f0c6dd"
 
 [[package]]
 name = "semver-parser"
@@ -600,9 +610,9 @@ dependencies = [
 
 [[package]]
 name = "smallvec"
-version = "1.8.0"
+version = "1.8.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2dd574626839106c320a323308629dcb1acfc96e32a8cba364ddc61ac23ee83"
+checksum = "cc88c725d61fc6c3132893370cac4a0200e3fedf5da8331c570664b1987f5ca2"
 
 [[package]]
 name = "spin"
@@ -628,9 +638,9 @@ checksum = "a8f112729512f8e442d81f95a8a7ddf2b7c6b8a1a6f509a95864142b30cab2d3"
 
 [[package]]
 name = "syn"
-version = "1.0.96"
+version = "1.0.98"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0748dd251e24453cb8717f0354206b91557e4ec8703673a4b30208f2abaf1ebf"
+checksum = "c50aef8a904de4c23c788f104b7dddc7d6f79c647c7c8ce4cc8f73eb0ca773dd"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -655,13 +665,13 @@ dependencies = [
  "cfg-if",
  "pin-project-lite",
  "tracing-attributes 0.1.21",
- "tracing-core 0.1.27",
+ "tracing-core 0.1.28",
 ]
 
 [[package]]
 name = "tracing"
 version = "0.2.0"
-source = "git+https://github.com/tokio-rs/tracing#3046981cde3228f75ba1b8bbb270eb685896fd42"
+source = "git+https://github.com/tokio-rs/tracing#7a9e1e4569971859849cfd546cc8412d762386a8"
 dependencies = [
  "cfg-if",
  "pin-project-lite",
@@ -683,7 +693,7 @@ dependencies = [
 [[package]]
 name = "tracing-attributes"
 version = "0.2.0"
-source = "git+https://github.com/tokio-rs/tracing#3046981cde3228f75ba1b8bbb270eb685896fd42"
+source = "git+https://github.com/tokio-rs/tracing#7a9e1e4569971859849cfd546cc8412d762386a8"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -692,9 +702,9 @@ dependencies = [
 
 [[package]]
 name = "tracing-core"
-version = "0.1.27"
+version = "0.1.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7709595b8878a4965ce5e87ebf880a7d39c9afc6837721b21a5a816a8117d921"
+checksum = "7b7358be39f2f274f322d2aaed611acc57f382e8eb1e5b48cb9ae30933495ce7"
 dependencies = [
  "once_cell",
  "valuable",
@@ -703,7 +713,7 @@ dependencies = [
 [[package]]
 name = "tracing-core"
 version = "0.2.0"
-source = "git+https://github.com/tokio-rs/tracing#3046981cde3228f75ba1b8bbb270eb685896fd42"
+source = "git+https://github.com/tokio-rs/tracing#7a9e1e4569971859849cfd546cc8412d762386a8"
 
 [[package]]
 name = "tracing-log"
@@ -713,7 +723,7 @@ checksum = "78ddad33d2d10b1ed7eb9d1f518a5674713876e97e5bb9b7345a7984fbb4f922"
 dependencies = [
  "lazy_static",
  "log",
- "tracing-core 0.1.27",
+ "tracing-core 0.1.28",
 ]
 
 [[package]]
@@ -730,7 +740,7 @@ dependencies = [
  "smallvec",
  "thread_local",
  "tracing 0.1.35",
- "tracing-core 0.1.27",
+ "tracing-core 0.1.28",
  "tracing-log",
 ]
 

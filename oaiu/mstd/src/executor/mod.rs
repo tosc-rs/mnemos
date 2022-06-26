@@ -8,8 +8,11 @@ pub mod mailbox;
 use maitake::{self, scheduler::{StaticScheduler, TaskStub}, task::Storage};
 use maitake::task::Task as MaitakeTask;
 
-use core::{future::Future, ptr::NonNull};
-use mnemos_alloc::HeapBox;
+use core::{future::Future, ptr::NonNull, sync::atomic::{AtomicPtr, Ordering}};
+use mnemos_alloc::{
+    containers::HeapBox,
+    heap::AHeap,
+};
 
 #[repr(transparent)]
 pub struct Task<F: Future + 'static>(MaitakeTask<&'static StaticScheduler, F, HBStorage>);
@@ -22,41 +25,30 @@ impl<F: Future + 'static> Task<F> {
 
 pub struct Terpsichore {
     pub(crate) scheduler: StaticScheduler,
+    heap_ptr: AtomicPtr<AHeap>,
 }
 
 static TASK_STUB: TaskStub = TaskStub::new();
 pub static EXECUTOR: Terpsichore = Terpsichore {
     scheduler: unsafe { StaticScheduler::new_with_static_stub(&TASK_STUB) },
+    heap_ptr: AtomicPtr::new(core::ptr::null_mut()),
 };
 
 struct HBStorage;
 
-
 impl<F: Future + 'static> Storage<&'static StaticScheduler, F> for HBStorage {
     type StoredTask = HeapBox<Task<F>>;
 
-    fn into_raw(task: Self::StoredTask) -> NonNull<MaitakeTask<&'static StaticScheduler, F, Self>> {
-        unsafe {
-            let ptr = &mut task.leak().0 as *mut MaitakeTask<&'static StaticScheduler, F, HBStorage>;
-            NonNull::new_unchecked(ptr)
-        }
+    fn into_raw(task: HeapBox<Task<F>>) -> NonNull<MaitakeTask<&'static StaticScheduler, F, Self>> {
+        task.leak()
+            .cast::<MaitakeTask<&'static StaticScheduler, F, HBStorage>>()
     }
 
-    fn from_raw(ptr: NonNull<MaitakeTask<&'static StaticScheduler, F, Self>>) -> Self::StoredTask {
+    fn from_raw(ptr: NonNull<MaitakeTask<&'static StaticScheduler, F, Self>>) -> HeapBox<Task<F>> {
         unsafe {
-            HeapBox::from_leaked(ptr.as_ptr().cast())
+            HeapBox::from_leaked(ptr.cast::<Task<F>>())
         }
     }
-}
-
-pub async fn spawn<F: Future + 'static>(fut: F) {
-    let task = Task(MaitakeTask::new(&EXECUTOR.scheduler, fut));
-    let atask = mnemos_alloc::allocate(task).await;
-    spawn_allocated(atask);
-}
-
-pub fn spawn_allocated<F: Future + 'static>(task: HeapBox<Task<F>>) -> () {
-    EXECUTOR.scheduler.spawn_allocated::<F, HBStorage>(task)
 }
 
 impl Terpsichore {
@@ -70,8 +62,23 @@ impl Terpsichore {
         crate::executor::mailbox::MAILBOX.poll();
 
         // Process heap allocations
-        mnemos_alloc::HEAP.poll();
+        self.get_alloc().poll();
 
         self.scheduler.tick();
+    }
+
+    pub fn get_alloc(&'static self) -> &'static AHeap {
+        let cptr = self.heap_ptr.load(Ordering::Relaxed) as *const AHeap;
+        unsafe { cptr.as_ref() }.unwrap()
+    }
+
+    pub async fn spawn<F: Future + 'static>(&'static self, fut: F) {
+        let task = Task(MaitakeTask::new(&EXECUTOR.scheduler, fut));
+        let atask = self.get_alloc().allocate(task).await;
+        self.spawn_allocated(atask);
+    }
+
+    pub fn spawn_allocated<F: Future + 'static>(&'static self, task: HeapBox<Task<F>>) -> () {
+        self.scheduler.spawn_allocated::<F, HBStorage>(task)
     }
 }

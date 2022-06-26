@@ -28,19 +28,13 @@ Okay, what does the kernel need to be?
 
 */
 
-use core::{sync::atomic::{AtomicUsize, Ordering}, mem::MaybeUninit, cell::UnsafeCell, ops::{Deref, DerefMut}};
-use mnemos_alloc::{HEAP, HeapFixedVec, HeapBox, HeapArray, AHeap, HeapArc};
+use core::{sync::atomic::{AtomicUsize, Ordering}, cell::UnsafeCell, ops::{Deref, DerefMut}};
 use abi::{bbqueue_ipc::{BBBuffer, framed::{FrameProducer, FrameConsumer}}, syscall::{DriverKind, UserRequest, KernelResponse}};
 use maitake::{self, scheduler::{StaticScheduler, TaskStub}, task::Storage};
 use maitake::task::Task as MaitakeTask;
-
-static TASK_STUB: TaskStub = TaskStub::new();
-static KERNEL: Kernel = Kernel {
-    status: AtomicUsize::new(Kernel::UNINIT),
-    inner: UnsafeCell::new(MaybeUninit::uninit()),
-    inner_mut: UnsafeCell::new(MaybeUninit::uninit()),
-    u2k: UnsafeCell::new(MaybeUninit::uninit()),
-    k2u: UnsafeCell::new(MaybeUninit::uninit()),
+use mnemos_alloc::{
+    heap::{AHeap, HeapGuard},
+    containers::{HeapArray, HeapBox, HeapArc, HeapFixedVec},
 };
 
 pub struct KernelSettings {
@@ -61,11 +55,10 @@ pub struct Kernel {
     status: AtomicUsize,
     // Items that do not require a lock to access, and must only
     // be accessed with shared refs
-    inner: UnsafeCell<MaybeUninit<KernelInner>>,
+    inner: KernelInner,
     // Items that require mutex'd access, and allow mutable access
-    inner_mut: UnsafeCell<MaybeUninit<KernelInnerMut>>,
-    k2u: UnsafeCell<MaybeUninit<FrameProducer<'static>>>,
-    u2k: UnsafeCell<MaybeUninit<FrameConsumer<'static>>>,
+    inner_mut: UnsafeCell<KernelInnerMut>,
+    heap: NonNull<AHeap>,
 }
 
 unsafe impl Sync for Kernel {}
@@ -77,8 +70,6 @@ pub struct DriverHandle {
 }
 
 pub struct KernelInner {
-    _u2k_buf: HeapArray<u8>,
-    _k2u_buf: HeapArray<u8>,
     u2k_ring: BBBuffer,
     k2u_ring: BBBuffer,
     scheduler: StaticScheduler,
@@ -90,30 +81,21 @@ pub struct KernelInnerMut {
 }
 
 impl Kernel {
-    const UNINIT: usize = 0;
     const INITIALIZING: usize = 1;
     const INIT_IDLE: usize = 2;
     const INIT_LOCK: usize = 3;
 
-    pub fn initialize(
-        &'static self,
+    pub unsafe fn new(
+        mem_start: *mut u8,
+        mem_len: usize,
         settings: KernelSettings,
-    ) -> Result<(), ()> {
-        self.status.compare_exchange(
-            Self::UNINIT,
-            Self::INITIALIZING,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        ).map_err(drop)?;
+    ) -> Result<HeapBox<Self>, ()> {
 
-        let mut hr = HEAP.init_exclusive(
-            settings.heap_start,
-            settings.heap_size,
-        )?;
+        let (nn_heap, mut guard) = AHeap::bootstrap(mem_start, mem_len)?;
 
-        let drivers = hr.alloc_fixed_vec(settings.max_drivers)?;
-        let mut _u2k_buf = hr.alloc_box_array(0, settings.u2k_size)?;
-        let mut _k2u_buf = hr.alloc_box_array(0, settings.k2u_size)?;
+        let drivers = guard.alloc_fixed_vec(settings.max_drivers)?;
+        let (nn_u2k_buf, u2k_len) = guard.alloc_box_array_with(|| 0, settings.u2k_size)?.leak();
+        let (nn_k2u_buf, k2u_len) = guard.alloc_box_array_with(|| 0, settings.k2u_size)?.leak();
         let u2k_ring = BBBuffer::new();
         let k2u_ring = BBBuffer::new();
 
@@ -124,52 +106,37 @@ impl Kernel {
         // The BBBuffers themselves ONLY have a stable address AFTER they have been
         // written into the static `inner` field. DO NOT create producers/consumers
         // until that has happened.
-        unsafe {
-            u2k_ring.initialize(_u2k_buf.as_mut_ptr(), _u2k_buf.len());
-            k2u_ring.initialize(_k2u_buf.as_mut_ptr(), _k2u_buf.len());
-        }
+        u2k_ring.initialize(nn_u2k_buf.as_ptr(), u2k_len);
+        k2u_ring.initialize(nn_k2u_buf.as_ptr(), k2u_len);
 
         // Safety: We only use the static stub once
-        let scheduler = unsafe { StaticScheduler::new_with_static_stub(&TASK_STUB) };
+        let stub: &'static TaskStub = guard.alloc_box(TaskStub::new()).map_err(drop)?.leak().as_ref();
+        let scheduler = StaticScheduler::new_with_static_stub(stub);
 
         let inner = KernelInner {
-            _u2k_buf,
-            _k2u_buf,
             u2k_ring,
             k2u_ring,
             scheduler,
-            user_reply: KChannel::new(settings.user_reply_max_ct),
+            user_reply: KChannel::new(&mut guard, settings.user_reply_max_ct),
         };
         let inner_mut = KernelInnerMut {
             drivers,
         };
 
-        unsafe {
-            self.inner.get().write(MaybeUninit::new(inner));
-            self.inner_mut.get().write(MaybeUninit::new(inner_mut));
+        let new_kernel = guard.alloc_box(Kernel {
+            status: AtomicUsize::new(Kernel::INITIALIZING),
+            inner,
+            inner_mut: UnsafeCell::new(inner_mut),
+            heap: nn_heap,
+        }).map_err(drop)?;
 
-            let inner = &mut (*self.inner.get().cast::<KernelInner>());
+        new_kernel.status.store(Self::INIT_IDLE, Ordering::SeqCst);
 
-            let k2u_ring: *mut BBBuffer = &mut inner.k2u_ring;
-            self.k2u.get().write(MaybeUninit::new(BBBuffer::take_framed_producer(k2u_ring)));
-
-            let u2k_ring: *mut BBBuffer = &mut inner.u2k_ring;
-            self.u2k.get().write(MaybeUninit::new(BBBuffer::take_framed_consumer(u2k_ring)));
-        }
-
-        self.status.store(Self::INIT_IDLE, Ordering::SeqCst);
-
-        Ok(())
+        Ok(new_kernel)
     }
 
     fn inner(&'static self) -> &'static KernelInner {
-        let status = self.status.load(Ordering::SeqCst);
-        if status == Self::UNINIT {
-            panic!();
-        }
-        unsafe {
-            &*self.inner.get().cast::<KernelInner>()
-        }
+        &self.inner
     }
 
     fn inner_mut(&'static self) -> Result<KimGuard, ()> {
@@ -181,7 +148,7 @@ impl Kernel {
         ).map_err(drop)?;
 
         Ok(KimGuard {
-            kim: self.inner_mut.get().cast(),
+            kim: NonNull::new(self as *const Self as *mut Self).ok_or(())?,
         })
     }
 
@@ -199,9 +166,10 @@ impl Kernel {
         guard.drivers.push(hdl)
     }
 
-    // TODO: at some point I shouldn't make the heap a global static from the alloc crate.
     pub fn heap(&'static self) -> &'static AHeap {
-        &HEAP
+        unsafe {
+            self.heap.as_ref()
+        }
     }
 
     pub fn tick(&'static self) {
@@ -211,8 +179,10 @@ impl Kernel {
         // process mailbox messages
         let inner = self.inner();
         let inner_mut = self.inner_mut().unwrap();
-        let u2k = unsafe { (*self.u2k.get()).assume_init_ref() };
-        let k2u = unsafe { (*self.k2u.get()).assume_init_ref() };
+        let u2k_buf: *mut BBBuffer = &self.inner.u2k_ring as *const _ as *mut _;
+        let k2u_buf: *mut BBBuffer = &self.inner.k2u_ring as *const _ as *mut _;
+        let u2k: FrameConsumer<'static> = unsafe { BBBuffer::take_framed_consumer(u2k_buf) };
+        let k2u: FrameProducer<'static> = unsafe { BBBuffer::take_framed_producer(k2u_buf) };
 
         // Incoming messages
         while let Some(msg) = u2k.read() {
@@ -250,29 +220,45 @@ impl Kernel {
 
         // TODO: Send time to userspace?
     }
+
+    pub fn new_task<F: Future + 'static>(&'static self, fut: F) -> Task<F> {
+        Task(MaitakeTask::new(&self.inner.scheduler, fut))
+    }
+
+    // pub async fn spawn<F: Future + 'static>(&'static self, fut: F) {
+    //     let task = Task(MaitakeTask::new(&self.scheduler, fut));
+    //     let atask = self.get_alloc().allocate(task).await;
+    //     self.spawn_allocated(atask);
+    // }
+
+    // pub fn spawn_allocated<F: Future + 'static>(&'static self, task: HeapBox<Task<F>>) -> () {
+    //     self.scheduler.spawn_allocated::<F, HBStorage>(task)
+    // }
 }
 
 pub struct KimGuard {
-    kim: *mut KernelInnerMut,
+    kim: NonNull<Kernel>,
 }
 
 impl Deref for KimGuard {
     type Target = KernelInnerMut;
 
     fn deref(&self) -> &Self::Target {
-        unsafe { &*self.kim }
+        unsafe { &*self.kim.as_ref().inner_mut.get() }
     }
 }
 
 impl DerefMut for KimGuard {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *self.kim }
+        unsafe { &mut *self.kim.as_mut().inner_mut.get() }
     }
 }
 
 impl Drop for KimGuard {
     fn drop(&mut self) {
-        KERNEL.status.store(Kernel::INIT_IDLE, Ordering::SeqCst);
+        unsafe {
+            self.kim.as_ref().status.store(Kernel::INIT_IDLE, Ordering::SeqCst);
+        }
     }
 }
 
@@ -282,39 +268,21 @@ use core::{future::Future, ptr::NonNull};
 #[repr(transparent)]
 pub struct Task<F: Future + 'static>(MaitakeTask<&'static StaticScheduler, F, HBStorage>);
 
-impl<F: Future + 'static> Task<F> {
-    pub fn new(fut: F) -> Self {
-        Self(MaitakeTask::new(&KERNEL.inner().scheduler, fut))
-    }
-}
-
 struct HBStorage;
 
 impl<F: Future + 'static> Storage<&'static StaticScheduler, F> for HBStorage {
     type StoredTask = HeapBox<Task<F>>;
 
-    fn into_raw(task: Self::StoredTask) -> NonNull<MaitakeTask<&'static StaticScheduler, F, Self>> {
-        unsafe {
-            let ptr = &mut task.leak().0 as *mut MaitakeTask<&'static StaticScheduler, F, HBStorage>;
-            NonNull::new_unchecked(ptr)
-        }
+    fn into_raw(task: HeapBox<Task<F>>) -> NonNull<MaitakeTask<&'static StaticScheduler, F, Self>> {
+        task.leak()
+            .cast::<MaitakeTask<&'static StaticScheduler, F, HBStorage>>()
     }
 
-    fn from_raw(ptr: NonNull<MaitakeTask<&'static StaticScheduler, F, Self>>) -> Self::StoredTask {
+    fn from_raw(ptr: NonNull<MaitakeTask<&'static StaticScheduler, F, Self>>) -> HeapBox<Task<F>> {
         unsafe {
-            HeapBox::from_leaked(ptr.as_ptr().cast())
+            HeapBox::from_leaked(ptr.cast::<Task<F>>())
         }
     }
-}
-
-pub async fn spawn<F: Future + 'static>(fut: F) {
-    let task = Task(MaitakeTask::new(&KERNEL.inner().scheduler, fut));
-    let atask = mnemos_alloc::allocate(task).await;
-    spawn_allocated(atask);
-}
-
-pub fn spawn_allocated<F: Future + 'static>(task: HeapBox<Task<F>>) -> () {
-    KERNEL.inner().scheduler.spawn_allocated::<F, HBStorage>(task)
 }
 
 use spitebuf::MpMcQueue;
@@ -356,8 +324,7 @@ impl<T> Deref for KChannel<T> {
 }
 
 impl<T> KChannel<T> {
-    pub fn new(count: usize) -> Self {
-        let mut guard = KERNEL.heap().lock().unwrap();
+    pub fn new(guard: &mut HeapGuard, count: usize) -> Self {
         let func = || {
             UnsafeCell::new(spitebuf::single_cell::<T>())
         };
