@@ -61,7 +61,7 @@ then yes, there will be a bit of overhead, but why are you doing that?)
 
 Oh it is! Egregiously! See the reviews below:
 
-> "this code is like a fractal footgun forest
+> "this code is like a fractal footgun forest"
 >
 > - [@dirbaio]
 
