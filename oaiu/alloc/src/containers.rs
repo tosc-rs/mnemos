@@ -1,23 +1,11 @@
-// TODO
-#![allow(unused_imports, dead_code, unreachable_code)]
-
 use core::marker::PhantomData;
-use core::mem::ManuallyDrop;
+use core::ptr::drop_in_place;
+use core::slice::{from_raw_parts_mut, from_raw_parts};
 use core::{
-    alloc::Layout,
-    cell::UnsafeCell,
-    mem::MaybeUninit,
-    mem::{align_of, forget, size_of},
+    mem::forget,
     ops::{Deref, DerefMut},
     ptr::NonNull,
-    sync::atomic::{AtomicU8, Ordering, AtomicBool, AtomicUsize}, pin::Pin,
 };
-use heapless::mpmc::MpMcQueue;
-use linked_list_allocator::Heap;
-use maitake::wait::WaitQueue;
-use cordyceps::{mpsc_queue::{MpscQueue, Links}, Linked};
-
-use crate::heap::AHeap;
 use crate::node::{Active, ActiveArr};
 
 /// An Anachro Heap Box Type
@@ -41,8 +29,7 @@ impl<T> Deref for HeapBox<T> {
 
     fn deref(&self) -> &Self::Target {
         unsafe {
-            let act = self.ptr.as_ref();
-            &*act.data.get().cast::<T>()
+            &*Active::<T>::data(self.ptr).as_ptr()
         }
     }
 }
@@ -50,8 +37,7 @@ impl<T> Deref for HeapBox<T> {
 impl<T> DerefMut for HeapBox<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe {
-            let act = self.ptr.as_mut();
-            &mut *act.data.get().cast::<T>()
+            &mut *Active::<T>::data(self.ptr).as_ptr()
         }
     }
 }
@@ -63,7 +49,7 @@ impl<T> HeapBox<T> {
 
     /// Leak the contents of this box, never to be recovered (probably)
     pub fn leak(self) -> &'static mut T {
-        let mutref: &'static mut _ = unsafe { &mut *(*self.ptr.as_ptr()).data.get().cast::<T>() };
+        let mutref: &'static mut _ = unsafe { &mut *Active::<T>::data(self.ptr).as_ptr() };
         forget(self);
         mutref
     }
@@ -72,8 +58,8 @@ impl<T> HeapBox<T> {
 impl<T> Drop for HeapBox<T> {
     fn drop(&mut self) {
         unsafe {
-            let item_ptr = self.ptr.as_mut().data.get().cast::<T>();
-            core::ptr::drop_in_place(item_ptr);
+            let item_ptr = Active::<T>::data(self.ptr).as_ptr();
+            drop_in_place(item_ptr);
             Active::<T>::yeet(self.ptr);
         }
     }
@@ -88,9 +74,8 @@ impl<T> Deref for HeapArray<T> {
 
     fn deref(&self) -> &Self::Target {
         unsafe {
-            let count = self.ptr.as_ref().capacity;
-            let ptr = self.ptr.as_ref().data.get().cast::<T>();
-            core::slice::from_raw_parts(ptr, count)
+            let (nn_ptr, count) = ActiveArr::<T>::data(self.ptr);
+            from_raw_parts(nn_ptr.as_ptr(), count)
         }
     }
 }
@@ -98,9 +83,8 @@ impl<T> Deref for HeapArray<T> {
 impl<T> DerefMut for HeapArray<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         unsafe {
-            let count = self.ptr.as_mut().capacity;
-            let ptr = self.ptr.as_mut().data.get().cast::<T>();
-            core::slice::from_raw_parts_mut(ptr, count)
+            let (nn_ptr, count) = ActiveArr::<T>::data(self.ptr);
+            from_raw_parts_mut(nn_ptr.as_ptr(), count)
         }
     }
 }
@@ -111,25 +95,25 @@ impl<T> HeapArray<T> {
     // }
 
     /// Leak the contents of this box, never to be recovered (probably)
-    pub fn leak(mut self) -> &'static mut [T] {
+    pub fn leak(self) -> &'static mut [T] {
         unsafe {
-            let count = self.ptr.as_mut().capacity;
-            let ptr = self.ptr.as_mut().data.get().cast::<T>();
-            let mutref = unsafe { core::slice::from_raw_parts_mut(ptr, count) };
+            let (nn_ptr, count) = ActiveArr::<T>::data(self.ptr);
+            let mutref = from_raw_parts_mut(nn_ptr.as_ptr(), count);
             forget(self);
             mutref
         }
     }
 }
 
-// impl<T> Drop for HeapArray<T> {
-//     fn drop(&mut self) {
-
-//         unsafe {
-//             core::ptr::drop_in_place(self.ptr);
-//             Active::<T>::yeet(self.ptr);
-//         }
-
-//         todo!()
-//     }
-// }
+impl<T> Drop for HeapArray<T> {
+    fn drop(&mut self) {
+        unsafe {
+            let (start, count) = ActiveArr::<T>::data(self.ptr);
+            let start = start.as_ptr();
+            for i in 0..count {
+                drop_in_place(start.add(i));
+            }
+            ActiveArr::<T>::yeet(self.ptr);
+        }
+    }
+}

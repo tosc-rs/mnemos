@@ -6,7 +6,6 @@
 use core::{
     alloc::Layout,
     cell::UnsafeCell,
-    mem::MaybeUninit,
     ptr::NonNull,
     sync::atomic::{AtomicU8, Ordering, AtomicBool}, marker::PhantomData,
 };
@@ -32,9 +31,6 @@ pub struct AHeap {
 unsafe impl Sync for AHeap {}
 
 impl AHeap {
-    /// The AHeap is uninitialized. This is the default state.
-    const UNINIT: u8 = 0;
-
     /// The AHeap is initialized, and no `HeapGuard`s are active.
     const INIT_IDLE: u8 = 1;
 
@@ -172,21 +168,6 @@ pub struct HeapGuard {
 
 // Public HeapGuard methods
 impl HeapGuard {
-//     pub unsafe fn free_raw(&mut self, ptr: NonNull<u8>, layout: Layout) {
-//         self.deref_mut().deallocate(ptr, layout);
-//         HEAP.any_frees.store(true, Ordering::Relaxed);
-//     }
-
-//     /// The free space (in bytes) available to the allocator
-//     pub fn free_space(&self) -> usize {
-//         self.deref().free()
-//     }
-
-//     /// The used space (in bytes) available to the allocator
-//     pub fn used_space(&self) -> usize {
-//         self.deref().used()
-//     }
-
     fn get_heap(&mut self) -> &mut Heap {
         unsafe { &mut *self.aheap.heap.get() }
     }
@@ -230,14 +211,12 @@ impl HeapGuard {
             Ok(t) => t,
             Err(_) => return Err(data),
         };
-        let mut nn = nnu8.cast::<Active<T>>();
-
+        let nn = nnu8.cast::<Active<T>>();
 
         // And initialize it with the contents given to us
         unsafe {
-            let active = nn.as_mut();
-            active.data.get().write(MaybeUninit::new(data));
-            active.heap = self.aheap;
+            Active::<T>::write_heap(nn, self.aheap);
+            Active::<T>::data(nn).as_ptr().write(data);
         }
 
         Ok(HeapBox {
@@ -264,11 +243,13 @@ impl HeapGuard {
 
         // Then, attempt to allocate the requested T.
         let nnu8 = self.get_heap().allocate_first_fit(layout)?;
-        let mut aa_ptr = nnu8.cast::<ActiveArr<T>>();
+        let aa_ptr = nnu8.cast::<ActiveArr<T>>();
 
         // And initialize it with the contents given to us
         unsafe {
-            let start = aa_ptr.as_mut().data.get().cast::<T>();
+            ActiveArr::<T>::write_heap(aa_ptr, self.aheap);
+            let (start, count) = ActiveArr::<T>::data(aa_ptr);
+            let start = start.as_ptr();
             for i in 0..count {
                 start.add(i).write((f)());
             }
@@ -276,94 +257,6 @@ impl HeapGuard {
 
         Ok(HeapArray { ptr: aa_ptr, pd: PhantomData })
     }
-
-//     /// Attempt to allocate a HeapArray using the allocator
-//     ///
-//     /// If space was available, the allocation will be returned. If not, an
-//     /// error will be returned
-//     pub fn alloc_box_array<T: Copy + ?Sized>(
-//         &mut self,
-//         data: T,
-//         count: usize,
-//     ) -> Result<HeapArray<T>, ()> {
-//         let f = || { data };
-//         self.alloc_box_array_with(f, count)
-//     }
-
-//     pub fn alloc_pin_box<T: Unpin>(&mut self, data: T) -> Result<Pin<HeapBox<T>>, T> {
-//         Ok(Pin::new(self.alloc_box(data)?))
-//     }
-
-//     pub fn leak_send<T>(&mut self, inp: T) -> Result<&'static mut T, T>
-//     where
-//         T: Send + Sized + 'static,
-//     {
-//         let boxed = self.alloc_box(inp)?;
-//         Ok(boxed.leak())
-//     }
-
-//     /// Attempt to allocate a HeapArray using the allocator
-//     ///
-//     /// If space was available, the allocation will be returned. If not, an
-//     /// error will be returned
-//     pub fn alloc_box_array<T: Copy + ?Sized>(
-//         &mut self,
-//         data: T,
-//         count: usize,
-//     ) -> Result<HeapArray<T>, ()> {
-//         let f = || { data };
-//         self.alloc_box_array_with(f, count)
-//     }
-
-
-
-//     pub fn alloc_arc<T>(
-//         &mut self,
-//         data: T,
-//     ) -> Result<HeapArc<T>, T> {
-//         // Clean up any pending allocs
-//         self.clean_allocs();
-
-//         // Then, attempt to allocate the requested T.
-//         let nnu8 = match self.deref_mut().allocate_first_fit(Layout::new::<HeapArcInner<T>>()) {
-//             Ok(t) => t,
-//             Err(_) => return Err(data),
-//         };
-//         let ptr = nnu8.cast::<HeapArcInner<T>>();
-
-//         // And initialize it with the contents given to us
-//         unsafe {
-//             ptr.as_ptr().write(HeapArcInner {
-//                 refcount: AtomicUsize::new(1),
-//                 data,
-//             });
-//         }
-
-//         Ok(HeapArc { inner: ptr })
-//     }
-
-//     /// Attempt to allocate a HeapFixedVec using the allocator
-//     ///
-//     /// If space was available, the allocation will be returned. If not, an
-//     /// error will be returned
-//     pub fn alloc_fixed_vec<T>(
-//         &mut self,
-//         capacity: usize,
-//     ) -> Result<HeapFixedVec<T>, ()> {
-//         // Clean up any pending allocs
-//         self.clean_allocs();
-
-//         // Then figure out the layout of the requested array. This call fails
-//         // if the total size exceeds ISIZE_MAX, which is exceedingly unlikely
-//         // (unless the caller calculated something wrong)
-//         let layout = Layout::array::<T>(capacity).map_err(drop)?;
-
-//         // Then, attempt to allocate the requested T.
-//         let nnu8 = self.deref_mut().allocate_first_fit(layout)?;
-//         let ptr = nnu8.as_ptr().cast::<MaybeUninit<T>>();
-
-//         Ok(HeapFixedVec { ptr, capacity, len: 0 })
-//     }
 }
 
 impl Drop for HeapGuard {
