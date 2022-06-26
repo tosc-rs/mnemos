@@ -1,0 +1,38 @@
+[package]
+name = "mnemos-alloc"
+version = "0.1.0"
+edition = "2021"
+
+categories = [
+    "embedded",
+    "no-std",
+]
+license = "MIT OR Apache-2.0"
+
+[dependencies.cordyceps]
+version = "0.2"
+default-features = false
+
+[dependencies.maitake]
+version = "0.1"
+default-features = false
+
+[dependencies.heapless]
+version = "0.7.10"
+features = ["defmt-impl"]
+
+[dependencies.linked_list_allocator]
+version = "0.9.1"
+default-features = false
+
+[patch.crates-io.maitake]
+git = "https://github.com/jamesmunns/mycelium.git"
+rev = "833c343dcdf725b621ecdb6aae3873d984563a61"
+
+[patch.crates-io.cordyceps]
+git = "https://github.com/jamesmunns/mycelium.git"
+rev = "833c343dcdf725b621ecdb6aae3873d984563a61"
+
+[patch.crates-io.linked_list_allocator]
+git = "https://github.com/jamesmunns/linked-list-allocator"
+branch = "james-miri"
