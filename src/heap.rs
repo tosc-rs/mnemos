@@ -50,7 +50,7 @@ impl AHeap {
     /// Additionally, we must semantically have exclusive access to this region
     /// of memory: There must be no other live references, or pointers to this
     /// region that are dereferenced after this call.
-    pub unsafe fn bootstrap(addr: *mut u8, size: usize) -> Result<(&'static Self, HeapGuard), ()> {
+    pub unsafe fn bootstrap(addr: *mut u8, size: usize) -> Result<(NonNull<Self>, HeapGuard), ()> {
         // First, we go all bump-allocator to emplace ourselves within this region
         let mut cursor = addr;
         let end = (addr as usize).checked_add(size).ok_or(())?;
@@ -110,12 +110,13 @@ impl AHeap {
             });
         }
 
-        // Everything is now our allocation space.
-        let aheap: &'static Self = &*aheap_ptr;
+        // Everything else is now our allocation space.
+        let aheap = NonNull::new_unchecked(aheap_ptr);
+        let aheap_ref: &'static AHeap = aheap.as_ref();
 
-        // Creating a mutable access to the inner heap is acceptable, as we
+        // Creating exclusive access to the inner heap is acceptable, as we
         // have marked ourselves with "BUSY_LOCKED", acting as a mutex.
-        let guard = HeapGuard { aheap };
+        let guard = HeapGuard { aheap: aheap_ref };
 
         // Well that went great, I think!
         Ok((aheap, guard))
