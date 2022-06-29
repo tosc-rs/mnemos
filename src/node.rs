@@ -12,7 +12,8 @@
 //! within this module as much as is reasonably possible.
 
 use cordyceps::{mpsc_queue::Links, Linked};
-use core::mem::ManuallyDrop;
+use core::mem::{ManuallyDrop, MaybeUninit};
+use core::ptr::{addr_of, null};
 use core::{alloc::Layout, ptr::NonNull};
 
 use crate::heap::AHeap;
@@ -123,6 +124,26 @@ impl<T> Active<T> {
         });
 
         (*heap).release_node(ptr);
+    }
+
+    #[inline(always)]
+    fn data_offset() -> isize {
+        let dummy: Active<MaybeUninit<T>> = Active {
+            heap: null(),
+            data: MaybeUninit::uninit(),
+        };
+        let data_ptr = addr_of!(dummy.data);
+        let dummy_ptr: *const Active<MaybeUninit<T>> = &dummy;
+        unsafe { dummy_ptr.cast::<u8>().offset_from(data_ptr.cast::<u8>()) }
+    }
+
+    pub(crate) unsafe fn from_leaked_ptr(data: NonNull<T>) -> NonNull<Active<T>> {
+        let ptr = data
+            .cast::<u8>()
+            .as_ptr()
+            .offset(Self::data_offset())
+            .cast::<Active<T>>();
+        NonNull::new_unchecked(ptr)
     }
 
     /// Set the heap pointer contained within the given Active<T>.

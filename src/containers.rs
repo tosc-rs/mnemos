@@ -39,15 +39,18 @@ impl<T> DerefMut for HeapBox<T> {
 }
 
 impl<T> HeapBox<T> {
-    // pub unsafe fn from_leaked(ptr: *mut T) -> Self {
-    //     Self { ptr: ptr.cast::<Active<T>>() }
-    // }
+    pub unsafe fn from_leaked(ptr: NonNull<T>) -> Self {
+        Self {
+            ptr: Active::<T>::from_leaked_ptr(ptr),
+            pd: PhantomData,
+        }
+    }
 
     /// Leak the contents of this box, never to be recovered (probably)
-    pub fn leak(self) -> &'static mut T {
-        let mutref: &'static mut _ = unsafe { &mut *Active::<T>::data(self.ptr).as_ptr() };
+    pub fn leak(self) -> NonNull<T> {
+        let nn = unsafe { Active::<T>::data(self.ptr) };
         forget(self);
-        mutref
+        nn
     }
 }
 
