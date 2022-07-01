@@ -28,13 +28,27 @@ Okay, what does the kernel need to be?
 
 */
 
-use core::{sync::atomic::{AtomicUsize, Ordering}, cell::UnsafeCell, ops::{Deref, DerefMut}};
-use abi::{bbqueue_ipc::{BBBuffer, framed::{FrameProducer, FrameConsumer}}, syscall::{DriverKind, UserRequest, KernelResponse}};
-use maitake::{self, scheduler::{StaticScheduler, TaskStub}, task::Storage};
+use abi::{
+    bbqueue_ipc::{
+        framed::{FrameConsumer, FrameProducer},
+        BBBuffer,
+    },
+    syscall::{DriverKind, KernelResponse, UserRequest},
+};
+use core::{
+    cell::UnsafeCell,
+    ops::{Deref, DerefMut},
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use maitake::task::Task as MaitakeTask;
+use maitake::{
+    self,
+    scheduler::{StaticScheduler, TaskStub},
+    task::Storage,
+};
 use mnemos_alloc::{
+    containers::{HeapArc, HeapArray, HeapBox, HeapFixedVec},
     heap::{AHeap, HeapGuard},
-    containers::{HeapArray, HeapBox, HeapArc, HeapFixedVec},
 };
 
 pub struct KernelSettings {
@@ -90,7 +104,6 @@ impl Kernel {
         mem_len: usize,
         settings: KernelSettings,
     ) -> Result<HeapBox<Self>, ()> {
-
         let (nn_heap, mut guard) = AHeap::bootstrap(mem_start, mem_len)?;
 
         let drivers = guard.alloc_fixed_vec(settings.max_drivers)?;
@@ -110,7 +123,11 @@ impl Kernel {
         k2u_ring.initialize(nn_k2u_buf.as_ptr(), k2u_len);
 
         // Safety: We only use the static stub once
-        let stub: &'static TaskStub = guard.alloc_box(TaskStub::new()).map_err(drop)?.leak().as_ref();
+        let stub: &'static TaskStub = guard
+            .alloc_box(TaskStub::new())
+            .map_err(drop)?
+            .leak()
+            .as_ref();
         let scheduler = StaticScheduler::new_with_static_stub(stub);
 
         let inner = KernelInner {
@@ -119,16 +136,16 @@ impl Kernel {
             scheduler,
             user_reply: KChannel::new(&mut guard, settings.user_reply_max_ct),
         };
-        let inner_mut = KernelInnerMut {
-            drivers,
-        };
+        let inner_mut = KernelInnerMut { drivers };
 
-        let new_kernel = guard.alloc_box(Kernel {
-            status: AtomicUsize::new(Kernel::INITIALIZING),
-            inner,
-            inner_mut: UnsafeCell::new(inner_mut),
-            heap: nn_heap,
-        }).map_err(drop)?;
+        let new_kernel = guard
+            .alloc_box(Kernel {
+                status: AtomicUsize::new(Kernel::INITIALIZING),
+                inner,
+                inner_mut: UnsafeCell::new(inner_mut),
+                heap: nn_heap,
+            })
+            .map_err(drop)?;
 
         new_kernel.status.store(Self::INIT_IDLE, Ordering::SeqCst);
 
@@ -140,12 +157,14 @@ impl Kernel {
     }
 
     fn inner_mut(&'static self) -> Result<KimGuard, ()> {
-        self.status.compare_exchange(
-            Self::INIT_IDLE,
-            Self::INIT_LOCK,
-            Ordering::SeqCst,
-            Ordering::SeqCst,
-        ).map_err(drop)?;
+        self.status
+            .compare_exchange(
+                Self::INIT_IDLE,
+                Self::INIT_LOCK,
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .map_err(drop)?;
 
         Ok(KimGuard {
             kim: NonNull::new(self as *const Self as *mut Self).ok_or(())?,
@@ -167,9 +186,7 @@ impl Kernel {
     }
 
     pub fn heap(&'static self) -> &'static AHeap {
-        unsafe {
-            self.heap.as_ref()
-        }
+        unsafe { self.heap.as_ref() }
     }
 
     pub fn tick(&'static self) {
@@ -190,12 +207,15 @@ impl Kernel {
                 Ok(req) => {
                     let kind = req.driver_kind();
                     if let Some(drv) = inner_mut.drivers.iter().find(|drv| drv.kind == kind) {
-                        drv.queue.enqueue_sync(Message {
-                            request: req,
-                            response: inner.user_reply.clone()
-                        }).map_err(drop).unwrap();
+                        drv.queue
+                            .enqueue_sync(Message {
+                                request: req,
+                                response: inner.user_reply.clone(),
+                            })
+                            .map_err(drop)
+                            .unwrap();
                     }
-                },
+                }
                 Err(_) => panic!(),
             }
             msg.release();
@@ -205,13 +225,10 @@ impl Kernel {
         while let Ok(mut grant) = k2u.grant(256) {
             match inner.user_reply.dequeue_sync() {
                 Some(msg) => {
-                    let used = postcard::to_slice(
-                        &msg,
-                        &mut grant
-                    ).unwrap().len();
+                    let used = postcard::to_slice(&msg, &mut grant).unwrap().len();
 
                     grant.commit(used);
-                },
+                }
                 None => break,
             }
         }
@@ -257,7 +274,10 @@ impl DerefMut for KimGuard {
 impl Drop for KimGuard {
     fn drop(&mut self) {
         unsafe {
-            self.kim.as_ref().status.store(Kernel::INIT_IDLE, Ordering::SeqCst);
+            self.kim
+                .as_ref()
+                .status
+                .store(Kernel::INIT_IDLE, Ordering::SeqCst);
         }
     }
 }
@@ -279,9 +299,7 @@ impl<F: Future + 'static> Storage<&'static StaticScheduler, F> for HBStorage {
     }
 
     fn from_raw(ptr: NonNull<MaitakeTask<&'static StaticScheduler, F, Self>>) -> HeapBox<Task<F>> {
-        unsafe {
-            HeapBox::from_leaked(ptr.cast::<Task<F>>())
-        }
+        unsafe { HeapBox::from_leaked(ptr.cast::<Task<F>>()) }
     }
 }
 
@@ -309,9 +327,7 @@ pub struct KChannel<T> {
 
 impl<T> Clone for KChannel<T> {
     fn clone(&self) -> Self {
-        Self {
-            q: self.q.clone(),
-        }
+        Self { q: self.q.clone() }
     }
 }
 
@@ -325,13 +341,12 @@ impl<T> Deref for KChannel<T> {
 
 impl<T> KChannel<T> {
     pub fn new(guard: &mut HeapGuard, count: usize) -> Self {
-        let func = || {
-            UnsafeCell::new(spitebuf::single_cell::<T>())
-        };
+        let func = || UnsafeCell::new(spitebuf::single_cell::<T>());
 
         let ba = guard.alloc_box_array_with(func, count).unwrap();
         let q = MpMcQueue::new(sealed::SpiteData { data: ba });
-        Self { q: guard.alloc_arc(q).map_err(drop).unwrap() }
+        Self {
+            q: guard.alloc_arc(q).map_err(drop).unwrap(),
+        }
     }
 }
-
