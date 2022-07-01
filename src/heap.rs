@@ -1,9 +1,11 @@
-use crate::containers::HeapBox;
+use crate::containers::{HeapBox, ArcInner, HeapArc, HeapFixedVec};
 use crate::{
     containers::HeapArray,
     node::{Active, ActiveArr, Node, NodeRef, Recycle},
 };
 use cordyceps::mpsc_queue::{Links, MpscQueue};
+use core::mem::MaybeUninit;
+use core::sync::atomic::AtomicUsize;
 /// Allocation types for the Anachro PC.
 ///
 /// NOTE: This module makes STRONG assumptions that the allocator will be a singleton.
@@ -162,6 +164,34 @@ impl AHeap {
         // SAFETY: We are already in the BUSY_LOCKED state, we have exclusive access.
         Ok(HeapGuard { aheap: self })
     }
+
+    pub async fn allocate<T>(&'static self, mut item: T) -> HeapBox<T> {
+        loop {
+            // Is the heap inhibited?
+            if !self.inhibit_alloc.load(Ordering::Acquire) {
+                // Can we get an exclusive heap handle?
+                if let Ok(mut hg) = self.lock() {
+                    // Can we allocate our item?
+                    match hg.alloc_box(item) {
+                        Ok(hb) => {
+                            // Yes! Return our allocated item
+                            return hb;
+                        }
+                        Err(it) => {
+                            // Nope, the allocation failed.
+                            item = it;
+                        }
+                    }
+                }
+                // We weren't inhibited before, but something failed. Inhibit
+                // further allocations to prevent starving waiting allocations
+                self.inhibit_alloc.store(true, Ordering::Release);
+            }
+
+            // Didn't succeed, wait until we've done some de-allocations
+            self.heap_wait.wait().await.unwrap();
+        }
+    }
 }
 
 /// A guard type that provides mutually exclusive access to the allocator as
@@ -229,6 +259,33 @@ impl HeapGuard {
         })
     }
 
+    /// Attempt to allocate a HeapArc using the allocator
+    ///
+    /// If space was available, the allocation will be returned. If not, an
+    /// error will be returned
+    pub fn alloc_arc<T>(&mut self, data: T) -> Result<HeapArc<T>, T> {
+        // Clean up any pending allocs
+        self.clean_allocs();
+
+        // Then, attempt to allocate the requested T.
+        let nnu8 = match self.get_heap().allocate_first_fit(Layout::new::<Node<ArcInner<T>>>()) {
+            Ok(t) => t,
+            Err(_) => return Err(data),
+        };
+        let nn = nnu8.cast::<Active<ArcInner<T>>>();
+
+        // And initialize it with the contents given to us
+        unsafe {
+            Active::<ArcInner<T>>::write_heap(nn, self.aheap);
+            Active::<ArcInner<T>>::data(nn).as_ptr().write(ArcInner { data, refcnt: AtomicUsize::new(1) });
+        }
+
+        Ok(HeapArc {
+            ptr: nn,
+            pd: PhantomData,
+        })
+    }
+
     pub fn alloc_box_array_with<T, F>(&mut self, f: F, count: usize) -> Result<HeapArray<T>, ()>
     where
         F: Fn() -> T,
@@ -258,6 +315,37 @@ impl HeapGuard {
         Ok(HeapArray {
             ptr: aa_ptr,
             pd: PhantomData,
+        })
+    }
+
+    pub fn alloc_fixed_vec<T>(&mut self, capacity: usize) -> Result<HeapFixedVec<T>, ()>
+    {
+        // Clean up any pending allocs
+        self.clean_allocs();
+
+        // Then figure out the layout of the requested array. This call fails
+        // if the total size exceeds ISIZE_MAX, which is exceedingly unlikely
+        // (unless the caller calculated something wrong)
+        let layout = unsafe { ActiveArr::<MaybeUninit<T>>::layout_for_arr(capacity) };
+
+        // Then, attempt to allocate the requested T.
+        let nnu8 = self.get_heap().allocate_first_fit(layout)?;
+        let aa_ptr = nnu8.cast::<ActiveArr<MaybeUninit<T>>>();
+
+        // And initialize it with the contents given to us
+        unsafe {
+            ActiveArr::<MaybeUninit<T>>::write_heap(aa_ptr, self.aheap);
+            let (start, count) = ActiveArr::<MaybeUninit<T>>::data(aa_ptr);
+            let start = start.as_ptr();
+            for i in 0..count {
+                start.add(i).write(MaybeUninit::uninit());
+            }
+        }
+
+        Ok(HeapFixedVec {
+            ptr: aa_ptr,
+            pd: PhantomData,
+            len: 0,
         })
     }
 }
