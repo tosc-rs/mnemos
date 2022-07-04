@@ -51,8 +51,13 @@ use mnemos_alloc::{
     heap::{AHeap, HeapGuard},
 };
 
+pub struct Rings {
+    pub u2k: NonNull<BBBuffer>,
+    pub k2u: NonNull<BBBuffer>,
+}
+
 pub struct KernelSettings {
-    pub heap_start: usize,
+    pub heap_start: *mut u8,
     pub heap_size: usize,
     pub max_drivers: usize,
     pub k2u_size: usize,
@@ -100,11 +105,9 @@ impl Kernel {
     const INIT_LOCK: usize = 3;
 
     pub unsafe fn new(
-        mem_start: *mut u8,
-        mem_len: usize,
         settings: KernelSettings,
     ) -> Result<HeapBox<Self>, ()> {
-        let (nn_heap, mut guard) = AHeap::bootstrap(mem_start, mem_len)?;
+        let (nn_heap, mut guard) = AHeap::bootstrap(settings.heap_start, settings.heap_size)?;
 
         let drivers = guard.alloc_fixed_vec(settings.max_drivers)?;
         let (nn_u2k_buf, u2k_len) = guard.alloc_box_array_with(|| 0, settings.u2k_size)?.leak();
@@ -154,6 +157,15 @@ impl Kernel {
 
     fn inner(&'static self) -> &'static KernelInner {
         &self.inner
+    }
+
+    pub fn rings(&'static self) -> Rings {
+        unsafe {
+            Rings {
+                u2k: NonNull::new_unchecked(&self.inner.u2k_ring as *const _ as *mut _),
+                k2u: NonNull::new_unchecked(&self.inner.k2u_ring as *const _ as *mut _),
+            }
+        }
     }
 
     fn inner_mut(&'static self) -> Result<KimGuard, ()> {
@@ -242,15 +254,15 @@ impl Kernel {
         Task(MaitakeTask::new(&self.inner.scheduler, fut))
     }
 
-    // pub async fn spawn<F: Future + 'static>(&'static self, fut: F) {
-    //     let task = Task(MaitakeTask::new(&self.scheduler, fut));
-    //     let atask = self.get_alloc().allocate(task).await;
-    //     self.spawn_allocated(atask);
-    // }
+    pub async fn spawn<F: Future + 'static>(&'static self, fut: F) {
+        let task = Task(MaitakeTask::new(&self.inner.scheduler, fut));
+        let atask = self.heap().allocate(task).await;
+        self.spawn_allocated(atask);
+    }
 
-    // pub fn spawn_allocated<F: Future + 'static>(&'static self, task: HeapBox<Task<F>>) -> () {
-    //     self.scheduler.spawn_allocated::<F, HBStorage>(task)
-    // }
+    pub fn spawn_allocated<F: Future + 'static>(&'static self, task: HeapBox<Task<F>>) -> () {
+        self.inner.scheduler.spawn_allocated::<F, HBStorage>(task)
+    }
 }
 
 pub struct KimGuard {

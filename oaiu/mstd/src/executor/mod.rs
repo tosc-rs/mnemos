@@ -52,6 +52,19 @@ impl<F: Future + 'static> Storage<&'static StaticScheduler, F> for HBStorage {
 }
 
 impl Terpsichore {
+    // TODO: This is *probably* something that needs to be called by the entrypoint, which
+    // might be provided per-platform.
+    //
+    // You must ALSO initialize the mailbox.
+    pub unsafe fn initialize(
+        &'static self,
+        heap_start: *mut u8,
+        heap_len: usize,
+    ) {
+        let (hptr, _guard) = AHeap::bootstrap(heap_start, heap_len).unwrap();
+        EXECUTOR.heap_ptr.store(hptr.as_ptr(), Ordering::Release);
+    }
+
     pub fn run(
         &'static self,
     ) {

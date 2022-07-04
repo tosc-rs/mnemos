@@ -29,6 +29,7 @@ pub struct MpMcQueue<T, STO: Storage<T>> {
 
 impl<T, STO: Storage<T>> MpMcQueue<T, STO> {
     /// Creates an empty queue
+    #[track_caller]
     pub fn new(storage: STO) -> Self {
         let (ptr, len) = storage.buf();
         assert_eq!(len, len.next_power_of_two());
