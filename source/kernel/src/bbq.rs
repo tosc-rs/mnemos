@@ -4,7 +4,7 @@
 //! can expect a "single executor" async operation. At some point, this
 //! may inform later design around user-to-kernel bbqueue communication.
 
-use core::{mem::MaybeUninit, ptr::{NonNull, addr_of_mut}, ops::{Deref, DerefMut}};
+use core::{mem::MaybeUninit, ops::{Deref, DerefMut}};
 
 use mnemos_alloc::{containers::HeapArc, heap::AHeap};
 use abi::bbqueue_ipc::{BBBuffer, Producer, Consumer};
@@ -23,14 +23,19 @@ struct BBQStorage {
     b_wait: BBQWaitCells,
 }
 
+#[derive(Clone, Copy)]
+enum Side {
+    ASide,
+    BSide,
+}
+
 pub struct BBQBidiHandle {
     producer: Producer<'static>,
     consumer: Consumer<'static>,
-    our_waitcells: NonNull<BBQWaitCells>,
-    other_waitcells: NonNull<BBQWaitCells>,
+    side: Side,
 
-    // SAFETY: all above items are ONLY valid for the lifetime of `_storage`
-    _storage: HeapArc<BBQStorage>,
+    // SAFETY: all above items are ONLY valid for the lifetime of `storage`
+    storage: HeapArc<BBQStorage>,
 }
 
 pub async fn new_bidi_channel(
@@ -72,9 +77,8 @@ pub async fn new_bidi_channel(
         BBQBidiHandle {
             producer: a_prod,
             consumer: b_cons,
-            our_waitcells: NonNull::from(&storage.a_wait),
-            other_waitcells: NonNull::from(&storage.b_wait),
-            _storage: storage.clone(),
+            side: Side::ASide,
+            storage: storage.clone(),
         }
     };
 
@@ -86,9 +90,8 @@ pub async fn new_bidi_channel(
         BBQBidiHandle {
             producer: b_prod,
             consumer: a_cons,
-            our_waitcells: NonNull::from(&storage.b_wait),
-            other_waitcells: NonNull::from(&storage.a_wait),
-            _storage: storage.clone(),
+            side: Side::BSide,
+            storage: storage.clone(),
         }
     };
 
@@ -110,8 +113,8 @@ use abi::bbqueue_ipc::{
 
 pub struct GrantW {
     grant: InnerGrantW<'static>,
-    // When we commit, we trigger OUR commit waitcell
-    our_commit: NonNull<WaitCell>,
+    storage: HeapArc<BBQStorage>,
+    side: Side,
 }
 
 impl Deref for GrantW {
@@ -135,16 +138,18 @@ impl GrantW {
         self.grant.commit(used);
         // If we freed up any space, notify the waker on the reader side
         if used != 0 {
-            unsafe {
-                self.our_commit.as_ref().notify();
-            }
+            match self.side {
+                Side::ASide => &self.storage.a_wait,
+                Side::BSide => &self.storage.b_wait,
+            }.commit_waitcell.notify();
         }
     }
 }
 
 pub struct GrantR {
     grant: InnerGrantR<'static>,
-    our_release: NonNull<WaitCell>,
+    storage: HeapArc<BBQStorage>,
+    side: Side,
 }
 
 impl Deref for GrantR {
@@ -168,9 +173,10 @@ impl GrantR {
         self.grant.release(used);
         // If we freed up any space, notify the waker on the reader side
         if used != 0 {
-            unsafe {
-                self.our_release.as_ref().notify();
-            }
+            match self.side {
+                Side::ASide => &self.storage.a_wait,
+                Side::BSide => &self.storage.b_wait,
+            }.release_waitcell.notify();
         }
     }
 }
@@ -187,21 +193,21 @@ impl BBQBidiHandle {
                         max = max,
                         "Got bbqueue max write grant",
                     );
-                    let waker = unsafe {
-                        let ptr = addr_of_mut!((*self.our_waitcells.as_ptr()).commit_waitcell);
-                        NonNull::new_unchecked(ptr)
-                    };
                     return GrantW {
                         grant: wgr,
-                        our_commit: waker,
+                        side: self.side,
+                        storage: self.storage.clone(),
                     }
                 },
                 Err(_) => {
                     trace!("awaiting bbqueue max write grant");
                     // Uh oh! Couldn't get a send grant. We need to wait for the OTHER reader
                     // to release some bytes first.
-                    let waker = unsafe { &self.other_waitcells.as_ref().release_waitcell };
-                    waker.wait().await.unwrap();
+                    match self.side {
+                        Side::ASide => &self.storage.b_wait,
+                        Side::BSide => &self.storage.a_wait,
+                    }.release_waitcell.wait().await.unwrap();
+
                     trace!("awoke for bbqueue max write grant");
                 },
             }
@@ -216,21 +222,20 @@ impl BBQBidiHandle {
                         size = size,
                         "Got bbqueue exact write grant",
                     );
-                    let waker = unsafe {
-                        let ptr = addr_of_mut!((*self.our_waitcells.as_ptr()).commit_waitcell);
-                        NonNull::new_unchecked(ptr)
-                    };
                     return GrantW {
                         grant: wgr,
-                        our_commit: waker,
+                        side: self.side,
+                        storage: self.storage.clone(),
                     }
                 },
                 Err(_) => {
                     trace!("awaiting bbqueue exact write grant");
                     // Uh oh! Couldn't get a send grant. We need to wait for the OTHER reader
                     // to release some bytes first.
-                    let waker = unsafe { &self.other_waitcells.as_ref().release_waitcell };
-                    waker.wait().await.unwrap();
+                    match self.side {
+                        Side::ASide => &self.storage.b_wait,
+                        Side::BSide => &self.storage.a_wait,
+                    }.release_waitcell.wait().await.unwrap();
                     trace!("awoke for bbqueue exact write grant");
                 },
             }
@@ -245,21 +250,20 @@ impl BBQBidiHandle {
                         size = rgr.len(),
                         "Got bbqueue read grant",
                     );
-                    let waker = unsafe {
-                        let ptr = addr_of_mut!((*self.our_waitcells.as_ptr()).release_waitcell);
-                        NonNull::new_unchecked(ptr)
-                    };
                     return GrantR {
                         grant: rgr,
-                        our_release: waker,
+                        side: self.side,
+                        storage: self.storage.clone(),
                     }
                 },
                 Err(_) => {
                     trace!("awaiting bbqueue read grant");
                     // Uh oh! Couldn't get a read grant. We need to wait for the OTHER writer
                     // to commit some bytes first.
-                    let waker = unsafe { &self.other_waitcells.as_ref().commit_waitcell };
-                    waker.wait().await.unwrap();
+                    match self.side {
+                        Side::ASide => &self.storage.b_wait.commit_waitcell,
+                        Side::BSide => &self.storage.a_wait.commit_waitcell,
+                    }.wait().await.unwrap();
                     trace!("awoke for bbqueue read grant");
                 },
             }
