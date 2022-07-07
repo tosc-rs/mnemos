@@ -1,10 +1,11 @@
 use crate::node::{Active, ActiveArr};
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
-use core::ptr::{drop_in_place, addr_of};
+use core::ptr::{addr_of, drop_in_place};
 use core::slice::{from_raw_parts, from_raw_parts_mut};
-use core::sync::atomic::{Ordering, AtomicUsize};
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::{
+    fmt,
     mem::forget,
     ops::{Deref, DerefMut},
     ptr::NonNull,
@@ -132,6 +133,27 @@ impl<T> Clone for HeapArc<T> {
     }
 }
 
+impl<T: fmt::Display> fmt::Display for HeapArc<T> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&**self, f)
+    }
+}
+
+impl<T: fmt::Debug> fmt::Debug for HeapArc<T> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&**self, f)
+    }
+}
+
+impl<T> fmt::Pointer for HeapArc<T> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Pointer::fmt(&self.ptr, f)
+    }
+}
+
 // === impl HeapArray ===
 
 unsafe impl<T> Send for HeapArray<T> {}
@@ -184,6 +206,23 @@ impl<T> Drop for HeapArray<T> {
     }
 }
 
+impl<T> fmt::Debug for HeapArray<T>
+where
+    [T]: fmt::Debug,
+{
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&**self, f)
+    }
+}
+
+impl<T> fmt::Pointer for HeapArray<T> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Pointer::fmt(&self.ptr, f)
+    }
+}
+
 // === impl HeapFixedVec ===
 
 unsafe impl<T> Send for HeapFixedVec<T> {}
@@ -232,5 +271,22 @@ impl<T> Drop for HeapFixedVec<T> {
             }
             ActiveArr::<MaybeUninit<T>>::yeet(self.ptr);
         }
+    }
+}
+
+impl<T> fmt::Debug for HeapFixedVec<T>
+where
+    [T]: fmt::Debug,
+{
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(&**self, f)
+    }
+}
+
+impl<T> fmt::Pointer for HeapFixedVec<T> {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Pointer::fmt(&self.ptr, f)
     }
 }
