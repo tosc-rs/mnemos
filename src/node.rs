@@ -203,6 +203,12 @@ impl<T> ActiveArr<T> {
         core::ptr::addr_of_mut!((*ptr).heap).write(heap);
     }
 
+    #[inline(always)]
+    pub(crate) unsafe fn write_capacity(this: NonNull<ActiveArr<T>>, capacity: usize) {
+        let ptr = this.as_ptr();
+        core::ptr::addr_of_mut!((*ptr).capacity).write(capacity);
+    }
+
     /// Obtain a pointer to the start of the array storage, as well as the length of the array
     ///
     /// NOTE: This VERY CAREFULLY avoids issues of provenance due to accessing "out of bounds"

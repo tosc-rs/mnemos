@@ -1,23 +1,19 @@
-use crate::containers::{HeapBox, ArcInner, HeapArc, HeapFixedVec};
-use crate::{
-    containers::HeapArray,
-    node::{Active, ActiveArr, Node, NodeRef, Recycle},
-};
-use cordyceps::mpsc_queue::{Links, MpscQueue};
-use core::mem::MaybeUninit;
-use core::sync::atomic::AtomicUsize;
-/// Allocation types for the Anachro PC.
-///
-/// NOTE: This module makes STRONG assumptions that the allocator will be a singleton.
-/// This is currently fine, but it is not allowed to make multiple instances of the
-/// types within.
+///! Allocation types for the Anachro PC.
 use core::{
     alloc::Layout,
     cell::UnsafeCell,
     marker::PhantomData,
     ptr::NonNull,
-    sync::atomic::{AtomicBool, AtomicU8, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, AtomicU8, Ordering},
+    mem::MaybeUninit,
 };
+
+use crate::{
+    containers::{HeapArray, HeapBox, ArcInner, HeapArc, HeapFixedVec},
+    node::{Active, ActiveArr, Node, NodeRef, Recycle},
+};
+
+use cordyceps::mpsc_queue::{Links, MpscQueue};
 use linked_list_allocator::Heap;
 use maitake::wait::WaitQueue;
 
@@ -305,6 +301,7 @@ impl HeapGuard {
         // And initialize it with the contents given to us
         unsafe {
             ActiveArr::<T>::write_heap(aa_ptr, self.aheap);
+            ActiveArr::<T>::write_capacity(aa_ptr, count);
             let (start, count) = ActiveArr::<T>::data(aa_ptr);
             let start = start.as_ptr();
             for i in 0..count {
@@ -335,6 +332,7 @@ impl HeapGuard {
         // And initialize it with the contents given to us
         unsafe {
             ActiveArr::<MaybeUninit<T>>::write_heap(aa_ptr, self.aheap);
+            ActiveArr::<MaybeUninit<T>>::write_capacity(aa_ptr, capacity);
             let (start, count) = ActiveArr::<MaybeUninit<T>>::data(aa_ptr);
             let start = start.as_ptr();
             for i in 0..count {
