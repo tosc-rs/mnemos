@@ -1,6 +1,7 @@
 use abi::syscall::{UserRequestBody, serial::{SerialRequest, SerialError, SerialResponse}, KernelResponseBody};
 use crate::executor::mailbox::MAILBOX;
 
+#[allow(dead_code)]
 pub struct SerialPort {
     port: u16,
 }

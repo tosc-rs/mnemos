@@ -4,23 +4,38 @@
 //! can expect a "single executor" async operation. At some point, this
 //! may inform later design around user-to-kernel bbqueue communication.
 
-use core::mem::MaybeUninit;
+use core::{mem::MaybeUninit, ops::{Deref, DerefMut}};
 
 use mnemos_alloc::{containers::HeapArc, heap::AHeap};
 use abi::bbqueue_ipc::{BBBuffer, Producer, Consumer};
-use tracing::{error, info};
+use tracing::{error, info, trace};
+use maitake::wait::WaitCell;
+
+struct BBQWaitCells {
+    commit_waitcell: WaitCell,
+    release_waitcell: WaitCell,
+}
 
 struct BBQStorage {
     _ring_a: BBBuffer,
     _ring_b: BBBuffer,
+    a_wait: BBQWaitCells,
+    b_wait: BBQWaitCells,
+}
+
+#[derive(Clone, Copy)]
+enum Side {
+    ASide,
+    BSide,
 }
 
 pub struct BBQBidiHandle {
     producer: Producer<'static>,
     consumer: Consumer<'static>,
+    side: Side,
 
-    // SAFETY: `producer` and `consumer` are only valid for the lifetime of `_storage`
-    _storage: HeapArc<BBQStorage>,
+    // SAFETY: all above items are ONLY valid for the lifetime of `storage`
+    storage: HeapArc<BBQStorage>,
 }
 
 pub async fn new_bidi_channel(
@@ -44,7 +59,12 @@ pub async fn new_bidi_channel(
         ring_b.initialize(sto_b_ptr.as_ptr().cast(), capacity_b_tx);
     }
 
-    let storage = alloc.allocate_arc(BBQStorage { _ring_a: ring_a, _ring_b: ring_b }).await;
+    let storage = alloc.allocate_arc(BBQStorage {
+        _ring_a: ring_a,
+        _ring_b: ring_b,
+        a_wait: BBQWaitCells { commit_waitcell: WaitCell::new(), release_waitcell: WaitCell::new() },
+        b_wait: BBQWaitCells { commit_waitcell: WaitCell::new(), release_waitcell: WaitCell::new() },
+    }).await;
 
     let a_bbbuffer = &storage._ring_a as *const BBBuffer as *mut BBBuffer;
     let b_bbbuffer = &storage._ring_b as *const BBBuffer as *mut BBBuffer;
@@ -57,7 +77,8 @@ pub async fn new_bidi_channel(
         BBQBidiHandle {
             producer: a_prod,
             consumer: b_cons,
-            _storage: storage.clone(),
+            side: Side::ASide,
+            storage: storage.clone(),
         }
     };
 
@@ -69,7 +90,8 @@ pub async fn new_bidi_channel(
         BBQBidiHandle {
             producer: b_prod,
             consumer: a_cons,
-            _storage: storage.clone(),
+            side: Side::BSide,
+            storage: storage.clone(),
         }
     };
 
@@ -84,14 +106,167 @@ impl Drop for BBQStorage {
     }
 }
 
-impl BBQBidiHandle {
-    #[inline(always)]
-    pub fn producer(&self) -> &Producer<'static> {
-        &self.producer
-    }
+use abi::bbqueue_ipc::{
+    GrantR as InnerGrantR,
+    GrantW as InnerGrantW,
+};
+
+pub struct GrantW {
+    grant: InnerGrantW<'static>,
+    storage: HeapArc<BBQStorage>,
+    side: Side,
+}
+
+impl Deref for GrantW {
+    type Target = [u8];
 
     #[inline(always)]
-    pub fn consumer(&self) -> &Consumer<'static> {
-        &self.consumer
+    fn deref(&self) -> &Self::Target {
+        self.grant.deref()
+    }
+}
+
+impl DerefMut for GrantW {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.grant.deref_mut()
+    }
+}
+
+impl GrantW {
+    pub fn commit(self, used: usize) {
+        self.grant.commit(used);
+        // If we freed up any space, notify the waker on the reader side
+        if used != 0 {
+            match self.side {
+                Side::ASide => &self.storage.a_wait,
+                Side::BSide => &self.storage.b_wait,
+            }.commit_waitcell.notify();
+        }
+    }
+}
+
+pub struct GrantR {
+    grant: InnerGrantR<'static>,
+    storage: HeapArc<BBQStorage>,
+    side: Side,
+}
+
+impl Deref for GrantR {
+    type Target = [u8];
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        self.grant.deref()
+    }
+}
+
+impl DerefMut for GrantR {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.grant.deref_mut()
+    }
+}
+
+impl GrantR {
+    pub fn release(self, used: usize) {
+        self.grant.release(used);
+        // If we freed up any space, notify the waker on the reader side
+        if used != 0 {
+            match self.side {
+                Side::ASide => &self.storage.a_wait,
+                Side::BSide => &self.storage.b_wait,
+            }.release_waitcell.notify();
+        }
+    }
+}
+
+impl BBQBidiHandle {
+    // async fn send_grant(buf_len: usize) -> GrantW
+    // async fn read_grant() -> GrantR
+    pub async fn send_grant_max(&self, max: usize) -> GrantW {
+        loop {
+            match self.producer.grant_max_remaining(max) {
+                Ok(wgr) => {
+                    trace!(
+                        size = wgr.len(),
+                        max = max,
+                        "Got bbqueue max write grant",
+                    );
+                    return GrantW {
+                        grant: wgr,
+                        side: self.side,
+                        storage: self.storage.clone(),
+                    }
+                },
+                Err(_) => {
+                    trace!("awaiting bbqueue max write grant");
+                    // Uh oh! Couldn't get a send grant. We need to wait for the OTHER reader
+                    // to release some bytes first.
+                    match self.side {
+                        Side::ASide => &self.storage.b_wait,
+                        Side::BSide => &self.storage.a_wait,
+                    }.release_waitcell.wait().await.unwrap();
+
+                    trace!("awoke for bbqueue max write grant");
+                },
+            }
+        }
+    }
+
+    pub async fn send_grant_exact(&self, size: usize) -> GrantW {
+        loop {
+            match self.producer.grant_exact(size) {
+                Ok(wgr) => {
+                    trace!(
+                        size = size,
+                        "Got bbqueue exact write grant",
+                    );
+                    return GrantW {
+                        grant: wgr,
+                        side: self.side,
+                        storage: self.storage.clone(),
+                    }
+                },
+                Err(_) => {
+                    trace!("awaiting bbqueue exact write grant");
+                    // Uh oh! Couldn't get a send grant. We need to wait for the OTHER reader
+                    // to release some bytes first.
+                    match self.side {
+                        Side::ASide => &self.storage.b_wait,
+                        Side::BSide => &self.storage.a_wait,
+                    }.release_waitcell.wait().await.unwrap();
+                    trace!("awoke for bbqueue exact write grant");
+                },
+            }
+        }
+    }
+
+    pub async fn read_grant(&self) -> GrantR {
+        loop {
+            match self.consumer.read() {
+                Ok(rgr) => {
+                    trace!(
+                        size = rgr.len(),
+                        "Got bbqueue read grant",
+                    );
+                    return GrantR {
+                        grant: rgr,
+                        side: self.side,
+                        storage: self.storage.clone(),
+                    }
+                },
+                Err(_) => {
+                    trace!("awaiting bbqueue read grant");
+                    // Uh oh! Couldn't get a read grant. We need to wait for the OTHER writer
+                    // to commit some bytes first.
+                    match self.side {
+                        Side::ASide => &self.storage.b_wait.commit_waitcell,
+                        Side::BSide => &self.storage.a_wait.commit_waitcell,
+                    }.wait().await.unwrap();
+                    trace!("awoke for bbqueue read grant");
+                },
+            }
+        }
     }
 }
