@@ -1,5 +1,7 @@
 #![no_std]
 
+pub mod bbq;
+
 use abi::{
     bbqueue_ipc::{
         framed::{FrameConsumer, FrameProducer},
@@ -56,9 +58,8 @@ pub struct Kernel {
 unsafe impl Sync for Kernel {}
 
 pub struct DriverHandle {
-    kind: DriverKind,
-    // TODO: Some kind of HeapArc to better reference count this info
-    queue: KChannel<Message>,
+    pub kind: DriverKind,
+    pub queue: KChannel<Message>,
 }
 
 pub struct KernelInner {

@@ -26,10 +26,16 @@ pub mod serial;
 
 use serde::{Serialize, Deserialize};
 
+// This is SUPPOSED to be used to route incoming userspace requests to the proper
+// kernelspace driver. I'm not sure this is the right abstraction.
+//
 // TODO: This MUST be kept in sync with UserRequestBody!
 #[derive(PartialEq, Eq)]
 pub enum DriverKind {
     Serial,
+
+    // I'm not sure if I actually want to keep the "driverkind" paradigm.
+    Todo,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

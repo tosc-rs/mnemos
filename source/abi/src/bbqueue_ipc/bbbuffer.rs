@@ -95,6 +95,18 @@ impl<'a> BBBuffer {
     }
 
     #[inline]
+    pub unsafe fn take_producer(me: *mut Self) -> Producer<'static> {
+        let nn_me = NonNull::new_unchecked(me);
+        Producer { bbq: nn_me, pd: PhantomData }
+    }
+
+    #[inline]
+    pub unsafe fn take_consumer(me: *mut Self) -> Consumer<'static> {
+        let nn_me = NonNull::new_unchecked(me);
+        Consumer { bbq: nn_me, pd: PhantomData }
+    }
+
+    #[inline]
     pub unsafe fn take_framed_producer(me: *mut Self) -> FrameProducer<'static> {
         let nn_me = NonNull::new_unchecked(me);
         FrameProducer {
@@ -190,7 +202,7 @@ impl BBBuffer {
 ///
 /// See [this github issue](https://github.com/jamesmunns/bbqueue/issues/38) for a
 /// discussion of grant methods that could be added in the future.
-pub(crate) struct Producer<'a> {
+pub struct Producer<'a> {
     bbq: NonNull<BBBuffer>,
     pd: PhantomData<&'a ()>,
 }
@@ -398,7 +410,7 @@ impl<'a> Producer<'a> {
 }
 
 /// `Consumer` is the primary interface for reading data from a `BBBuffer`.
-pub(crate) struct Consumer<'a> {
+pub struct Consumer<'a> {
     bbq: NonNull<BBBuffer>,
     pd: PhantomData<&'a ()>,
 }

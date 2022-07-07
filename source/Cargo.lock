@@ -437,6 +437,7 @@ dependencies = [
  "mnemos-abi",
  "mnemos-std",
  "postcard",
+ "tracing 0.1.35",
  "tracing-modality",
  "tracing-subscriber",
 ]
@@ -505,7 +506,7 @@ dependencies = [
 [[package]]
 name = "mnemos-alloc"
 version = "0.1.0"
-source = "git+https://github.com/tosc-rs/mnemos-alloc?rev=9aa7bf59c85d7d02f179f5b5171dae4cff00affd#9aa7bf59c85d7d02f179f5b5171dae4cff00affd"
+source = "git+https://github.com/tosc-rs/mnemos-alloc?rev=a035705e42e925d1c99b59211f274f7ecfdc0de6#a035705e42e925d1c99b59211f274f7ecfdc0de6"
 dependencies = [
  "cordyceps",
  "heapless",

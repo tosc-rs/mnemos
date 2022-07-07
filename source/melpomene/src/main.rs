@@ -6,8 +6,8 @@ use std::{
     task::Poll,
 };
 
-use abi::bbqueue_ipc::BBBuffer;
-use mnemos_kernel::{Kernel, KernelSettings};
+use abi::{bbqueue_ipc::BBBuffer, syscall::DriverKind};
+use mnemos_kernel::{Kernel, KernelSettings, DriverHandle, KChannel};
 use melpomene::sim_tracing::setup_tracing;
 
 const HEAP_SIZE: usize = 192 * 1024;
@@ -63,6 +63,36 @@ fn kernel_entry() {
     };
 
     let k = unsafe { Kernel::new(settings).unwrap().leak().as_ref() };
+    {
+        let mut guard = k.heap().lock().unwrap();
+
+        // First let's make a dummy driver just to make sure some stuff happens
+        let dummy_chan = KChannel::new(&mut guard, 16);
+
+        k.register_driver(DriverHandle {
+            kind: DriverKind::Todo,
+            queue: dummy_chan.clone(),
+        }).map_err(drop).unwrap();
+
+        let dummy_fut = async move {
+            let _ = dummy_chan;
+
+            loop {
+                Sleepy::new(Duration::from_secs(1)).await;
+                tracing::warn!("Dummy tick...");
+            }
+        };
+        let dummy_task = k.new_task(dummy_fut);
+        let boxed_dummy = guard.alloc_box(dummy_task).map_err(drop).unwrap();
+        k.spawn_allocated(boxed_dummy);
+    }
+
+
+    //////////////////////////////////////////////////////////////////////////////
+    // TODO: Userspace doesn't really do anything yet! Simulate initialization of
+    // the userspace structures, and just periodically wake the kernel for now.
+    //////////////////////////////////////////////////////////////////////////////
+
     let rings = k.rings();
     unsafe {
         let urings = mstd::executor::mailbox::Rings {
