@@ -4,12 +4,15 @@
 //! can expect a "single executor" async operation. At some point, this
 //! may inform later design around user-to-kernel bbqueue communication.
 
-use core::{mem::MaybeUninit, ops::{Deref, DerefMut}};
+use core::{
+    mem::MaybeUninit,
+    ops::{Deref, DerefMut},
+};
 
-use mnemos_alloc::{containers::HeapArc, heap::AHeap};
-use abi::bbqueue_ipc::{BBBuffer, Producer, Consumer};
-use tracing::{error, info, trace};
+use abi::bbqueue_ipc::{BBBuffer, Consumer, Producer};
 use maitake::wait::WaitCell;
+use mnemos_alloc::{containers::HeapArc, heap::AHeap};
+use tracing::{error, info, trace};
 
 struct BBQWaitCells {
     commit_waitcell: WaitCell,
@@ -23,7 +26,7 @@ struct BBQStorage {
     b_wait: BBQWaitCells,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 enum Side {
     ASide,
     BSide,
@@ -48,8 +51,14 @@ pub async fn new_bidi_channel(
         b_capacity = capacity_b_tx,
         "Creating new bidirectional BBQueue channel"
     );
-    let (sto_a_ptr, _) = alloc.allocate_array_with(MaybeUninit::<u8>::uninit, capacity_a_tx).await.leak();
-    let (sto_b_ptr, _) = alloc.allocate_array_with(MaybeUninit::<u8>::uninit, capacity_b_tx).await.leak();
+    let (sto_a_ptr, _) = alloc
+        .allocate_array_with(MaybeUninit::<u8>::uninit, capacity_a_tx)
+        .await
+        .leak();
+    let (sto_b_ptr, _) = alloc
+        .allocate_array_with(MaybeUninit::<u8>::uninit, capacity_b_tx)
+        .await
+        .leak();
 
     let ring_a = BBBuffer::new();
     let ring_b = BBBuffer::new();
@@ -59,12 +68,20 @@ pub async fn new_bidi_channel(
         ring_b.initialize(sto_b_ptr.as_ptr().cast(), capacity_b_tx);
     }
 
-    let storage = alloc.allocate_arc(BBQStorage {
-        _ring_a: ring_a,
-        _ring_b: ring_b,
-        a_wait: BBQWaitCells { commit_waitcell: WaitCell::new(), release_waitcell: WaitCell::new() },
-        b_wait: BBQWaitCells { commit_waitcell: WaitCell::new(), release_waitcell: WaitCell::new() },
-    }).await;
+    let storage = alloc
+        .allocate_arc(BBQStorage {
+            _ring_a: ring_a,
+            _ring_b: ring_b,
+            a_wait: BBQWaitCells {
+                commit_waitcell: WaitCell::new(),
+                release_waitcell: WaitCell::new(),
+            },
+            b_wait: BBQWaitCells {
+                commit_waitcell: WaitCell::new(),
+                release_waitcell: WaitCell::new(),
+            },
+        })
+        .await;
 
     let a_bbbuffer = &storage._ring_a as *const BBBuffer as *mut BBBuffer;
     let b_bbbuffer = &storage._ring_b as *const BBBuffer as *mut BBBuffer;
@@ -106,10 +123,7 @@ impl Drop for BBQStorage {
     }
 }
 
-use abi::bbqueue_ipc::{
-    GrantR as InnerGrantR,
-    GrantW as InnerGrantW,
-};
+use abi::bbqueue_ipc::{GrantR as InnerGrantR, GrantW as InnerGrantW};
 
 pub struct GrantW {
     grant: InnerGrantW<'static>,
@@ -141,7 +155,9 @@ impl GrantW {
             match self.side {
                 Side::ASide => &self.storage.a_wait,
                 Side::BSide => &self.storage.b_wait,
-            }.commit_waitcell.notify();
+            }
+            .commit_waitcell
+            .notify();
         }
     }
 }
@@ -176,7 +192,9 @@ impl GrantR {
             match self.side {
                 Side::ASide => &self.storage.a_wait,
                 Side::BSide => &self.storage.b_wait,
-            }.release_waitcell.notify();
+            }
+            .release_waitcell
+            .notify();
         }
     }
 }
@@ -184,21 +202,23 @@ impl GrantR {
 impl BBQBidiHandle {
     // async fn send_grant(buf_len: usize) -> GrantW
     // async fn read_grant() -> GrantR
+    #[tracing::instrument(
+        name = "BBQueue::send_grant_max",
+        level = "trace",
+        skip(self),
+        fields(side = ?self.side),
+    )]
     pub async fn send_grant_max(&self, max: usize) -> GrantW {
         loop {
             match self.producer.grant_max_remaining(max) {
                 Ok(wgr) => {
-                    trace!(
-                        size = wgr.len(),
-                        max = max,
-                        "Got bbqueue max write grant",
-                    );
+                    trace!(size = wgr.len(), "Got bbqueue max write grant");
                     return GrantW {
                         grant: wgr,
                         side: self.side,
                         storage: self.storage.clone(),
-                    }
-                },
+                    };
+                }
                 Err(_) => {
                     trace!("awaiting bbqueue max write grant");
                     // Uh oh! Couldn't get a send grant. We need to wait for the OTHER reader
@@ -206,28 +226,35 @@ impl BBQBidiHandle {
                     match self.side {
                         Side::ASide => &self.storage.b_wait,
                         Side::BSide => &self.storage.a_wait,
-                    }.release_waitcell.wait().await.unwrap();
+                    }
+                    .release_waitcell
+                    .wait()
+                    .await
+                    .unwrap();
 
                     trace!("awoke for bbqueue max write grant");
-                },
+                }
             }
         }
     }
 
+    #[tracing::instrument(
+        name = "BBQueue::send_grant_exact",
+        level = "trace",
+        skip(self),
+        fields(side = ?self.side),
+    )]
     pub async fn send_grant_exact(&self, size: usize) -> GrantW {
         loop {
             match self.producer.grant_exact(size) {
                 Ok(wgr) => {
-                    trace!(
-                        size = size,
-                        "Got bbqueue exact write grant",
-                    );
+                    trace!("Got bbqueue exact write grant",);
                     return GrantW {
                         grant: wgr,
                         side: self.side,
                         storage: self.storage.clone(),
-                    }
-                },
+                    };
+                }
                 Err(_) => {
                     trace!("awaiting bbqueue exact write grant");
                     // Uh oh! Couldn't get a send grant. We need to wait for the OTHER reader
@@ -235,27 +262,34 @@ impl BBQBidiHandle {
                     match self.side {
                         Side::ASide => &self.storage.b_wait,
                         Side::BSide => &self.storage.a_wait,
-                    }.release_waitcell.wait().await.unwrap();
+                    }
+                    .release_waitcell
+                    .wait()
+                    .await
+                    .unwrap();
                     trace!("awoke for bbqueue exact write grant");
-                },
+                }
             }
         }
     }
 
+    #[tracing::instrument(
+        name = "BBQueue::read_grant",
+        level = "trace",
+        skip(self),
+        fields(side = ?self.side),
+    )]
     pub async fn read_grant(&self) -> GrantR {
         loop {
             match self.consumer.read() {
                 Ok(rgr) => {
-                    trace!(
-                        size = rgr.len(),
-                        "Got bbqueue read grant",
-                    );
+                    trace!(size = rgr.len(), "Got bbqueue read grant",);
                     return GrantR {
                         grant: rgr,
                         side: self.side,
                         storage: self.storage.clone(),
-                    }
-                },
+                    };
+                }
                 Err(_) => {
                     trace!("awaiting bbqueue read grant");
                     // Uh oh! Couldn't get a read grant. We need to wait for the OTHER writer
@@ -263,9 +297,12 @@ impl BBQBidiHandle {
                     match self.side {
                         Side::ASide => &self.storage.b_wait.commit_waitcell,
                         Side::BSide => &self.storage.a_wait.commit_waitcell,
-                    }.wait().await.unwrap();
+                    }
+                    .wait()
+                    .await
+                    .unwrap();
                     trace!("awoke for bbqueue read grant");
-                },
+                }
             }
         }
     }
