@@ -1,33 +1,5 @@
 #![no_std]
 
-/*
-
-Okay, what does the kernel need to be?
-
-* It needs to allocate some global resources:
-    * U2K and K2U rings
-        * I guess these could be heap allocated
-    * Some space to store driver handles
-    * A (bump) allocator for drivers?
-        * bump allocator means no hotplug
-* It should probably be a single static object
-* Users should probably boot, then:
-    * Initalize(?) the kernel
-    * Initialize and create the drivers
-        * More on this later
-        * Provides the following in a handle:
-            * The driver task (alloc'd, not running)
-                * Maybe this is just a separate call to spawn?
-                * What if drivers want multiple tasks?
-            * A Thingbuf producer handle
-            * A function that does the NAK-on-full behavior
-            * Some way to determine which messages to handle
-    * Register them with the kernel
-    * Begin operation
-* There needs to be some way of launching programs
-
-*/
-
 use abi::{
     bbqueue_ipc::{
         framed::{FrameConsumer, FrameProducer},
@@ -50,6 +22,7 @@ use mnemos_alloc::{
     containers::{HeapArc, HeapArray, HeapBox, HeapFixedVec},
     heap::{AHeap, HeapGuard},
 };
+use tracing::info;
 
 pub struct Rings {
     pub u2k: NonNull<BBBuffer>,
@@ -107,6 +80,11 @@ impl Kernel {
     pub unsafe fn new(
         settings: KernelSettings,
     ) -> Result<HeapBox<Self>, ()> {
+        info!(
+            start = settings.heap_start as usize,
+            size = settings.heap_size,
+            "Initializing heap"
+        );
         let (nn_heap, mut guard) = AHeap::bootstrap(settings.heap_start, settings.heap_size)?;
 
         let drivers = guard.alloc_fixed_vec(settings.max_drivers)?;

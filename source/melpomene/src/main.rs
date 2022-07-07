@@ -8,11 +8,14 @@ use std::{
 
 use abi::bbqueue_ipc::BBBuffer;
 use mnemos_kernel::{Kernel, KernelSettings};
+use melpomene::sim_tracing::setup_tracing;
 
 const HEAP_SIZE: usize = 192 * 1024;
 static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
 
 fn main() {
+    setup_tracing();
+
     println!("========================================");
     let kernel = spawn(move || {
         kernel_entry();
