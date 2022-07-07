@@ -1,31 +1,38 @@
 use std::{
-    sync::atomic::{Ordering, AtomicBool},
-    thread::{spawn, yield_now, sleep},
-    time::{Duration, Instant},
     future::Future,
-    task::Poll, ops::Deref,
+    ops::Deref,
+    sync::atomic::{AtomicBool, Ordering},
+    task::Poll,
+    thread::{sleep, spawn, yield_now},
+    time::{Duration, Instant},
 };
 
 use abi::{bbqueue_ipc::BBBuffer, syscall::DriverKind};
-use mnemos_kernel::{Kernel, KernelSettings, DriverHandle, KChannel, bbq::{new_bidi_channel, BBQBidiHandle}, Message};
 use melpomene::sim_tracing::setup_tracing;
+use mnemos_kernel::{
+    bbq::{new_bidi_channel, BBQBidiHandle},
+    DriverHandle, KChannel, Kernel, KernelSettings, Message,
+};
 
 const HEAP_SIZE: usize = 192 * 1024;
 static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
 
 fn main() {
     setup_tracing();
+    let _span = tracing::info_span!("Melpo").entered();
 
     println!("========================================");
     let kernel = spawn(move || {
         kernel_entry();
     });
-    println!("[Melpo]: Kernel started.");
+    tracing::info!("Kernel started.");
 
     // Wait for the kernel to complete initialization...
     while KERNEL_LOCK.load(Ordering::Acquire) {
         yield_now();
     }
+
+    tracing::debug!("Kernel initialized.");
 
     // let userspace = spawn(move || {
     //     userspace_entry();
@@ -40,14 +47,14 @@ fn main() {
 
     let kj = kernel.join();
     sleep(Duration::from_millis(50));
-    println!("[Melpo]: Kernel ended:    {:?}", kj);
-
+    tracing::info!("Kernel ended:    {:?}", kj);
 
     println!("========================================");
 
-    println!("[Melpo]: You've met with a terrible fate, haven't you?");
+    tracing::error!("You've met with a terrible fate, haven't you?");
 }
 
+#[tracing::instrument(name = "Kernel", level = "info")]
 fn kernel_entry() {
     // First, we'll do some stuff that later the linker script will do...
     let kernel_heap = Box::into_raw(Box::new([0u8; HEAP_SIZE]));
@@ -75,12 +82,12 @@ fn kernel_entry() {
 
             let dummy_fut = async move {
                 Sleepy::new(Duration::from_secs(1)).await;
-                let (a_ring, b_ring) = new_bidi_channel(
-                    k.heap(),
-                    32,
-                    16,
-                ).await;
-                dummy_chan.enqueue_async(b_ring).await.map_err(drop).unwrap();
+                let (a_ring, b_ring) = new_bidi_channel(k.heap(), 32, 16).await;
+                dummy_chan
+                    .enqueue_async(b_ring)
+                    .await
+                    .map_err(drop)
+                    .unwrap();
 
                 let mut i = 0u32;
                 loop {
@@ -141,7 +148,6 @@ fn kernel_entry() {
         }
     }
 
-
     //////////////////////////////////////////////////////////////////////////////
     // TODO: Userspace doesn't really do anything yet! Simulate initialization of
     // the userspace structures, and just periodically wake the kernel for now.
@@ -158,6 +164,7 @@ fn kernel_entry() {
     }
 
     let _userspace = spawn(|| {
+        let _span = tracing::info_span!("userspace").entered();
         loop {
             while KERNEL_LOCK.load(Ordering::Acquire) {
                 sleep(Duration::from_millis(10));
@@ -167,7 +174,6 @@ fn kernel_entry() {
             KERNEL_LOCK.store(true, Ordering::Release);
         }
     });
-
 
     loop {
         while !KERNEL_LOCK.load(Ordering::Acquire) {
@@ -211,8 +217,6 @@ fn kernel_entry() {
 //         k2u,
 //     };
 //     mstd::executor::mailbox::MAILBOX.set_rings(rings);
-
-
 
 //     let start = Instant::now();
 //     loop {
@@ -269,7 +273,10 @@ impl Sleepy {
 impl Future for Sleepy {
     type Output = ();
 
-    fn poll(self: std::pin::Pin<&mut Self>, cx: &mut std::task::Context<'_>) -> std::task::Poll<Self::Output> {
+    fn poll(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
         cx.waker().wake_by_ref();
         if self.start.elapsed() < self.dur {
             Poll::Pending

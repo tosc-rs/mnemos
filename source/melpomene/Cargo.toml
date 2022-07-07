@@ -30,8 +30,12 @@ path = "../mstd"
 version = "0.7.3"
 default-features = false
 
+[dependencies.atty]
+version = "0.2"
+optional = true
+
 [features]
-trace-fmt = ["tracing-subscriber"]
+trace-fmt = ["tracing-subscriber", "atty"]
 # Note, the "trace-modality" feature requires the use of the Auxon modality tool.
 # More information: https://auxon.io/products/modality
 trace-modality = ["tracing-modality"]

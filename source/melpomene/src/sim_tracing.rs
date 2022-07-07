@@ -1,9 +1,31 @@
-#[cfg(feature = "trace-fmt")]
-pub fn setup_tracing() {
-    tracing_subscriber::fmt::init();
-}
+const ENV_FILTER: &str = "MELPOMENE_TRACE";
 
-#[cfg(feature = "trace-modality")]
 pub fn setup_tracing() {
-    tracing_modality::TracingModality::init().expect("init");
+    use tracing_subscriber::prelude::*;
+
+    let subscriber = tracing_subscriber::registry();
+
+    // if `trace-fmt` is enabled, add a `tracing-subscriber::fmt` layer along
+    // with an `EnvFilter`
+    #[cfg(feature = "trace-fmt")]
+    let subscriber = {
+        use tracing_subscriber::{filter, fmt};
+
+        let filter = filter::EnvFilter::builder()
+            .with_default_directive(filter::LevelFilter::INFO.into())
+            .with_env_var(ENV_FILTER)
+            .from_env_lossy();
+
+        let fmt = fmt::layer()
+            .with_timer(fmt::time::uptime())
+            .with_ansi(atty::is(atty::Stream::Stdout))
+            .with_filter(filter);
+        subscriber.with(fmt)
+    };
+
+    // if `trace-modality` is enabled, add the Modality layer as well.
+    #[cfg(feature = "trace-modality")]
+    let subscriber = subscriber.with(tracing_modality::ModalityLayer::new());
+
+    subscriber.init();
 }
