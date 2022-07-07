@@ -110,7 +110,7 @@ fn kernel_entry() {
                     let len = rgr.len();
                     rgr.release(len);
                 }
-            };
+            }.instrument(tracing::info_span!("Driver A");
             let dummy_task = k.new_task(dummy_fut);
             let boxed_dummy = guard.alloc_box(dummy_task).map_err(drop).unwrap();
             k.spawn_allocated(boxed_dummy);
@@ -141,7 +141,7 @@ fn kernel_entry() {
                     let len = rgr.len();
                     rgr.release(len);
                 }
-            };
+            }.instrument(tracing::info_span!("Driver B"));
             let dummy_task = k.new_task(dummy_fut);
             let boxed_dummy = guard.alloc_box(dummy_task).map_err(drop).unwrap();
             k.spawn_allocated(boxed_dummy);
