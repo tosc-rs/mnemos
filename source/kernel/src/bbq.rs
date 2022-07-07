@@ -86,8 +86,8 @@ pub async fn new_bidi_channel(
         BBQBidiHandle {
             producer: b_prod,
             consumer: a_cons,
-            our_waitcells: NonNull::new_unchecked(&storage.b_wait),
-            other_waitcells: NonNull::new_unchecked(&storage.a_wait),
+            our_waitcells: NonNull::from(&storage.b_wait),
+            other_waitcells: NonNull::from(&storage.a_wait),
             _storage: storage.clone(),
         }
     };

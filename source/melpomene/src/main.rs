@@ -7,12 +7,14 @@ use std::{
     time::{Duration, Instant},
 };
 
-use abi::{bbqueue_ipc::BBBuffer, syscall::DriverKind};
+use abi::bbqueue_ipc::BBBuffer;
 use melpomene::sim_tracing::setup_tracing;
 use mnemos_kernel::{
     bbq::{new_bidi_channel, BBQBidiHandle},
-    DriverHandle, KChannel, Kernel, KernelSettings, Message,
+    KChannel, Kernel, KernelSettings,
 };
+
+use tracing::Instrument;
 
 const HEAP_SIZE: usize = 192 * 1024;
 static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
@@ -110,7 +112,9 @@ fn kernel_entry() {
                     let len = rgr.len();
                     rgr.release(len);
                 }
-            }.instrument(tracing::info_span!("Driver A");
+            }
+            .instrument(tracing::info_span!("Driver A"));
+
             let dummy_task = k.new_task(dummy_fut);
             let boxed_dummy = guard.alloc_box(dummy_task).map_err(drop).unwrap();
             k.spawn_allocated(boxed_dummy);
@@ -141,7 +145,8 @@ fn kernel_entry() {
                     let len = rgr.len();
                     rgr.release(len);
                 }
-            }.instrument(tracing::info_span!("Driver B"));
+            }
+            .instrument(tracing::info_span!("Driver B"));
             let dummy_task = k.new_task(dummy_fut);
             let boxed_dummy = guard.alloc_box(dummy_task).map_err(drop).unwrap();
             k.spawn_allocated(boxed_dummy);
