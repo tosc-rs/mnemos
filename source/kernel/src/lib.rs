@@ -78,11 +78,9 @@ impl Kernel {
     const INIT_IDLE: usize = 2;
     const INIT_LOCK: usize = 3;
 
-    pub unsafe fn new(
-        settings: KernelSettings,
-    ) -> Result<HeapBox<Self>, ()> {
+    pub unsafe fn new(settings: KernelSettings) -> Result<HeapBox<Self>, ()> {
         info!(
-            start = settings.heap_start as usize,
+            start = ?settings.heap_start,
             size = settings.heap_size,
             "Initializing heap"
         );
