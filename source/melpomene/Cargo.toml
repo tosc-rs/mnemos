@@ -5,8 +5,13 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies]
-tracing-subscriber = "0.3.14"
+[dependencies.tracing-subscriber]
+version = "0.3.14"
+optional = true
+
+[dependencies.tracing-modality]
+version = "0.1.1"
+optional = true
 
 [dependencies.mnemos-kernel]
 package = "mnemos"
@@ -21,3 +26,12 @@ path = "../mstd"
 [dependencies.postcard]
 version = "0.7.3"
 default-features = false
+
+[features]
+trace-fmt = ["tracing-subscriber"]
+# Note, the "trace-modality" feature requires the use of the Auxon modality tool.
+# More information: https://auxon.io/products/modality
+trace-modality = ["tracing-modality"]
+default = [
+    "trace-fmt",
+]
