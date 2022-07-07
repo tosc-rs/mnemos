@@ -16,11 +16,5 @@ git = "https://github.com/jamesmunns/mycelium.git"
 rev = "833c343dcdf725b621ecdb6aae3873d984563a61"
 
 [patch.crates-io.mnemos-alloc]
-# git = "https://github.com/tosc-rs/mnemos-alloc"
-# rev = "e960ed90595cf76e916de47f2f9d9f24ab1be30e"
-path = "/home/james/tosc/mnemos-alloc"
-
-[patch.crates-io.linked_list_allocator]
-git = "https://github.com/jamesmunns/linked-list-allocator"
-rev = "2878c054ad94f28a50aa74aa4ae2d2e0a7e448ee"
-# path = "/home/james/personal/linked-list-allocator"
+git = "https://github.com/tosc-rs/mnemos-alloc"
+rev = "9aa7bf59c85d7d02f179f5b5171dae4cff00affd"
