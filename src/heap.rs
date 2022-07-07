@@ -188,6 +188,67 @@ impl AHeap {
             self.heap_wait.wait().await.unwrap();
         }
     }
+
+    pub async fn allocate_arc<T>(&'static self, mut item: T) -> HeapArc<T> {
+        loop {
+            // Is the heap inhibited?
+            if !self.inhibit_alloc.load(Ordering::Acquire) {
+                // Can we get an exclusive heap handle?
+                if let Ok(mut hg) = self.lock() {
+                    // Can we allocate our item?
+                    match hg.alloc_arc(item) {
+                        Ok(hb) => {
+                            // Yes! Return our allocated item
+                            return hb;
+                        }
+                        Err(it) => {
+                            // Nope, the allocation failed.
+                            item = it;
+                        }
+                    }
+                }
+                // We weren't inhibited before, but something failed. Inhibit
+                // further allocations to prevent starving waiting allocations
+                self.inhibit_alloc.store(true, Ordering::Release);
+            }
+
+            // Didn't succeed, wait until we've done some de-allocations
+            self.heap_wait.wait().await.unwrap();
+        }
+    }
+
+    pub async fn allocate_array_with<F, T>(&'static self, f: F, count: usize) -> HeapArray<T>
+    where
+        F: Fn() -> T,
+    {
+        loop {
+            // Is the heap inhibited?
+            if !self.inhibit_alloc.load(Ordering::Acquire) {
+                // Can we get an exclusive heap handle?
+                if let Ok(mut hg) = self.lock() {
+                    // Can we allocate our item?
+                    //
+                    // NOTE: We borrow `f`, since `&Fn() -> T` still impls `Fn() -> T`, and allows
+                    // us to potentially call it multiple times.
+                    match hg.alloc_box_array_with(&f, count) {
+                        Ok(hb) => {
+                            // Yes! Return our allocated item
+                            return hb;
+                        }
+                        Err(_) => {
+                            // Nope, the allocation failed.
+                        }
+                    }
+                }
+                // We weren't inhibited before, but something failed. Inhibit
+                // further allocations to prevent starving waiting allocations
+                self.inhibit_alloc.store(true, Ordering::Release);
+            }
+
+            // Didn't succeed, wait until we've done some de-allocations
+            self.heap_wait.wait().await.unwrap();
+        }
+    }
 }
 
 /// A guard type that provides mutually exclusive access to the allocator as
