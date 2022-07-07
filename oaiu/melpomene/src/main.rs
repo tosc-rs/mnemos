@@ -1,24 +1,14 @@
 use std::{
-    sync::atomic::{Ordering, compiler_fence, AtomicBool},
+    sync::atomic::{Ordering, AtomicBool},
     thread::{spawn, yield_now, sleep},
     time::{Duration, Instant},
     future::Future,
     task::Poll,
-    collections::VecDeque,
 };
 
-use abi::{
-    bbqueue_ipc::BBBuffer,
-    syscall::{
-        UserRequest, KernelResponse, KernelResponseBody,
-        KernelResponseHeader, UserRequestBody,
-        serial::SerialRequest, KernelMsg,
-    },
-};
-use mstd::executor::mailbox::{Rings, MAILBOX};
+use abi::bbqueue_ipc::BBBuffer;
 use mnemos_kernel::{Kernel, KernelSettings};
 
-const RING_SIZE: usize = 4096;
 const HEAP_SIZE: usize = 192 * 1024;
 static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
 

@@ -8,10 +8,14 @@ pub enum SerialRequest {
         port: u16,
     },
     ProvideReceiveBuffer {
+        port: u16,
         buffer: ByteBoxWire
     },
-    Flush,
+    Flush {
+        port: u16,
+    },
     SendData {
+        port: u16,
         buffer: ByteBoxWire,
         used: usize,
     }
@@ -24,11 +28,15 @@ pub enum SerialResponse {
         port: u16,
     },
     ReceiveData {
+        port: u16,
         buffer: ByteBoxWire,
         used: usize,
     },
-    FlushAck,
+    FlushAck {
+        port: u16,
+    },
     SendComplete {
+        port: u16,
         buffer: ByteBoxWire,
     },
 }
