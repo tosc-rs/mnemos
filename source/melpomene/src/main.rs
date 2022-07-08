@@ -1,8 +1,11 @@
 use std::{
     future::Future,
     ops::Deref,
-    sync::atomic::{AtomicBool, Ordering},
-    task::Poll,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    task::{Poll, Waker},
     thread::{sleep, spawn, yield_now},
     time::{Duration, Instant},
 };
@@ -261,17 +264,32 @@ fn kernel_entry() {
 //     }
 // }
 
+struct SleepyInner {
+    done: bool,
+    waker: Option<Waker>,
+}
+
 struct Sleepy {
-    start: Instant,
-    dur: Duration,
+    inner: Arc<Mutex<SleepyInner>>,
 }
 
 impl Sleepy {
     fn new(dur: Duration) -> Self {
-        Self {
-            start: Instant::now(),
-            dur,
-        }
+        let data1 = Arc::new(Mutex::new(SleepyInner {
+            done: false,
+            waker: None,
+        }));
+        let data2 = data1.clone();
+        let _ = spawn(move || {
+            sleep(dur);
+            let mut guard = data2.lock().unwrap();
+            guard.done = true;
+            if let Some(waker) = guard.waker.take() {
+                waker.wake();
+            }
+        });
+
+        Self { inner: data1 }
     }
 }
 
@@ -282,11 +300,13 @@ impl Future for Sleepy {
         self: std::pin::Pin<&mut Self>,
         cx: &mut std::task::Context<'_>,
     ) -> std::task::Poll<Self::Output> {
-        cx.waker().wake_by_ref();
-        if self.start.elapsed() < self.dur {
-            Poll::Pending
-        } else {
+        let wake = cx.waker().clone();
+        let mut guard = self.inner.lock().unwrap();
+        if guard.done {
             Poll::Ready(())
+        } else {
+            guard.waker = Some(wake);
+            Poll::Pending
         }
     }
 }
