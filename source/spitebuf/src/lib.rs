@@ -105,7 +105,7 @@ unsafe impl<T, STO: Storage<T>> Sync for MpMcQueue<T, STO> where T: Send {}
 
 impl<T, STO: Storage<T>> Drop for MpMcQueue<T, STO> {
     fn drop(&mut self) {
-        while let Some(_) = self.dequeue_sync() {}
+        while self.dequeue_sync().is_some() {}
         self.cons_wait.close();
         self.prod_wait.close();
     }
