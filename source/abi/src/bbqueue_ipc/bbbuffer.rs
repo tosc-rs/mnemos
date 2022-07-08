@@ -277,27 +277,24 @@ impl<'a> Producer<'a> {
                 inner.write_in_progress.store(false, Release);
                 return Err(Error::InsufficientSize);
             }
+        } else if write + sz <= max {
+            // Non inverted condition
+            write
         } else {
-            if write + sz <= max {
-                // Non inverted condition
-                write
-            } else {
-                // Not inverted, but need to go inverted
+            // Not inverted, but need to go inverted
 
-                // NOTE: We check sz < read, NOT <=, because
-                // write must never == read in an inverted condition, since
-                // we will then not be able to tell if we are inverted or not
-                if sz < read {
-                    // Invertible situation
-                    0
-                } else {
-                    // Not invertible, no space
-                    inner.write_in_progress.store(false, Release);
-                    return Err(Error::InsufficientSize);
-                }
+            // NOTE: We check sz < read, NOT <=, because
+            // write must never == read in an inverted condition, since
+            // we will then not be able to tell if we are inverted or not
+            if sz < read {
+                // Invertible situation
+                0
+            } else {
+                // Not invertible, no space
+                inner.write_in_progress.store(false, Release);
+                return Err(Error::InsufficientSize);
             }
         };
-
         // Safe write, only viewed by this task
         inner.reserve.store(start + sz, Release);
 
