@@ -9,6 +9,7 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
+use crate::fmt;
 use abi::bbqueue_ipc::{BBBuffer, Consumer, Producer};
 use maitake::wait::WaitCell;
 use mnemos_alloc::{containers::HeapArc, heap::AHeap};
@@ -206,7 +207,7 @@ impl BBQBidiHandle {
         name = "BBQueue::send_grant_max",
         level = "trace",
         skip(self),
-        fields(side = ?self.side),
+        fields(queue = ?fmt::ptr(&self.storage), side = ?self.side),
     )]
     pub async fn send_grant_max(&self, max: usize) -> GrantW {
         loop {
@@ -242,7 +243,7 @@ impl BBQBidiHandle {
         name = "BBQueue::send_grant_exact",
         level = "trace",
         skip(self),
-        fields(side = ?self.side),
+        fields(queue = ?fmt::ptr(&self.storage), side = ?self.side),
     )]
     pub async fn send_grant_exact(&self, size: usize) -> GrantW {
         loop {
@@ -277,7 +278,7 @@ impl BBQBidiHandle {
         name = "BBQueue::read_grant",
         level = "trace",
         skip(self),
-        fields(side = ?self.side),
+        fields(queue = ?fmt::ptr(&self.storage), side = ?self.side),
     )]
     pub async fn read_grant(&self) -> GrantR {
         loop {
