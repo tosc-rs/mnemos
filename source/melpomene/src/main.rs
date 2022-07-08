@@ -273,6 +273,13 @@ struct Sleepy {
     inner: Arc<Mutex<SleepyInner>>,
 }
 
+impl Drop for Sleepy {
+    fn drop(&mut self) {
+        // Take the waker on drop, ensuring the sleep thread won't wake a dead future
+        let _ = self.inner.lock().unwrap().waker.take();
+    }
+}
+
 impl Sleepy {
     fn new(dur: Duration) -> Self {
         let data1 = Arc::new(Mutex::new(SleepyInner {
