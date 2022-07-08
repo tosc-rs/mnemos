@@ -237,7 +237,7 @@ impl Kernel {
         self.spawn_allocated(atask);
     }
 
-    pub fn spawn_allocated<F: Future + 'static>(&'static self, task: HeapBox<Task<F>>) -> () {
+    pub fn spawn_allocated<F: Future + 'static>(&'static self, task: HeapBox<Task<F>>) {
         self.inner.scheduler.spawn_allocated::<F, HBStorage>(task)
     }
 }
