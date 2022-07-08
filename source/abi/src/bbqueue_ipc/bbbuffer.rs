@@ -10,9 +10,8 @@ use core::{
     ptr::NonNull,
     slice::from_raw_parts_mut,
     sync::atomic::{
-        AtomicBool, AtomicUsize, AtomicPtr,
-        Ordering::{AcqRel, SeqCst, Acquire, Release, Relaxed},
-        compiler_fence,
+        compiler_fence, AtomicBool, AtomicPtr, AtomicUsize,
+        Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst},
     },
 };
 #[derive(Debug)]
@@ -97,20 +96,29 @@ impl<'a> BBBuffer {
     #[inline]
     pub unsafe fn take_producer(me: *mut Self) -> Producer<'static> {
         let nn_me = NonNull::new_unchecked(me);
-        Producer { bbq: nn_me, pd: PhantomData }
+        Producer {
+            bbq: nn_me,
+            pd: PhantomData,
+        }
     }
 
     #[inline]
     pub unsafe fn take_consumer(me: *mut Self) -> Consumer<'static> {
         let nn_me = NonNull::new_unchecked(me);
-        Consumer { bbq: nn_me, pd: PhantomData }
+        Consumer {
+            bbq: nn_me,
+            pd: PhantomData,
+        }
     }
 
     #[inline]
     pub unsafe fn take_framed_producer(me: *mut Self) -> FrameProducer<'static> {
         let nn_me = NonNull::new_unchecked(me);
         FrameProducer {
-            producer: Producer { bbq: nn_me, pd: PhantomData },
+            producer: Producer {
+                bbq: nn_me,
+                pd: PhantomData,
+            },
         }
     }
 
@@ -118,7 +126,10 @@ impl<'a> BBBuffer {
     pub unsafe fn take_framed_consumer(me: *mut Self) -> FrameConsumer<'static> {
         let nn_me = NonNull::new_unchecked(me);
         FrameConsumer {
-            consumer: Consumer { bbq: nn_me, pd: PhantomData },
+            consumer: Consumer {
+                bbq: nn_me,
+                pd: PhantomData,
+            },
         }
     }
 }

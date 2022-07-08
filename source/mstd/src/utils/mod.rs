@@ -1,5 +1,10 @@
-use core::{sync::atomic::{AtomicUsize, Ordering}, cell::UnsafeCell, marker::PhantomData, ops::{Deref, DerefMut}, ptr::NonNull};
-
+use core::{
+    cell::UnsafeCell,
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+    ptr::NonNull,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 /// Atomic ReFCell - ArfCell
 ///
@@ -21,17 +26,13 @@ impl<'a, T> Deref for MutArfGuard<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        unsafe {
-            &*self.cell.as_ref().item.get()
-        }
+        unsafe { &*self.cell.as_ref().item.get() }
     }
 }
 
 impl<'a, T> DerefMut for MutArfGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe {
-            self.cell.as_mut().item.get_mut()
-        }
+        unsafe { self.cell.as_mut().item.get_mut() }
     }
 }
 
@@ -52,9 +53,7 @@ impl<'a, T> Deref for ArfGuard<'a, T> {
     type Target = T;
 
     fn deref(&self) -> &Self::Target {
-        unsafe {
-            &*self.cell.as_ref().item.get()
-        }
+        unsafe { &*self.cell.as_ref().item.get() }
     }
 }
 
@@ -78,13 +77,15 @@ impl<T> ArfCell<T> {
     }
 
     pub fn borrow_mut<'a>(&'a self) -> Result<MutArfGuard<'a, T>, ()> {
-        self.state.compare_exchange(
-            0,
-            Self::MUTLOCK,
-            // TODO: Relax these
-            Ordering::SeqCst,
-            Ordering::SeqCst
-        ).map_err(drop)?;
+        self.state
+            .compare_exchange(
+                0,
+                Self::MUTLOCK,
+                // TODO: Relax these
+                Ordering::SeqCst,
+                Ordering::SeqCst,
+            )
+            .map_err(drop)?;
 
         Ok(MutArfGuard {
             cell: unsafe { NonNull::new_unchecked(self as *const Self as *mut Self) },

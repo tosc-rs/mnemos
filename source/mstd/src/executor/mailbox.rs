@@ -42,10 +42,13 @@ use core::{
 
 use abi::{
     bbqueue_ipc::framed::{FrameConsumer, FrameProducer},
-    syscall::{UserRequestBody, KernelResponseBody, UserRequest, UserRequestHeader, KernelMsg, KernelResponse},
+    syscall::{
+        KernelMsg, KernelResponse, KernelResponseBody, UserRequest, UserRequestBody,
+        UserRequestHeader,
+    },
 };
-use maitake::wait::{WaitQueue, WaitMap};
 use futures_util::pin_mut;
+use maitake::wait::{WaitMap, WaitQueue};
 
 pub static MAILBOX: MailBox = MailBox::new();
 
@@ -131,8 +134,6 @@ impl MailBox {
         let nonce = self.nonce.fetch_add(1, Ordering::AcqRel);
         self.send_inner(nonce, msg).await
     }
-
-
 
     /// Send a message to the kernel, waiting for a response
     pub async fn request(&'static self, msg: UserRequestBody) -> Result<KernelResponseBody, ()> {

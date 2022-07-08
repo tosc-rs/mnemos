@@ -1,9 +1,9 @@
 #![cfg_attr(not(test), no_std)]
 #![doc = include_str!("../README.md")]
 
-use core::sync::atomic::{AtomicPtr, AtomicUsize};
-use core::ptr::null_mut;
 use bbqueue_ipc::BBBuffer;
+use core::ptr::null_mut;
+use core::sync::atomic::{AtomicPtr, AtomicUsize};
 
 // TODO: Put this into a linker section
 pub static K2U_RING: AtomicPtr<BBBuffer> = AtomicPtr::new(null_mut());
@@ -13,9 +13,9 @@ pub static HEAP_LEN: AtomicUsize = AtomicUsize::new(0);
 
 // TODO: Move me to mstd
 // pub mod porcelain;
-pub mod syscall;
 pub mod bbqueue_ipc;
 pub mod boxes;
+pub mod syscall;
 
 // This will always live at the TOP of the user memory region, and will be
 // initialized by the kernel before

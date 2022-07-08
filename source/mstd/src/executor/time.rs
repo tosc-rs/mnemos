@@ -1,9 +1,13 @@
 use heapless::Vec;
 
 use crate::utils::ArfCell;
-use core::{ops::{Sub, Add, DerefMut}, future::Future, pin::Pin, task::{Context, Poll, Waker}};
 pub use core::time::Duration;
-
+use core::{
+    future::Future,
+    ops::{Add, DerefMut, Sub},
+    pin::Pin,
+    task::{Context, Poll, Waker},
+};
 
 // TODO: This is an `ArfCell` and not just a plain atomic in order to
 // support 32-bit targets. It might be worth specializing this to make it
@@ -11,14 +15,12 @@ pub use core::time::Duration;
 pub static CURRENT_TIME: ArfCell<u64> = ArfCell::new(0);
 const TICKS_PER_SEC: u64 = 1_000_000;
 pub(crate) static CHRONOS: Chronos = Chronos {
-    inner: ArfCell::new(ChronosInner {
-        shorts: Vec::new(),
-    }),
+    inner: ArfCell::new(ChronosInner { shorts: Vec::new() }),
 };
 
 #[derive(Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub struct Alarm {
-    tick: u64
+    tick: u64,
 }
 
 impl Alarm {
@@ -33,9 +35,7 @@ impl Alarm {
     }
 
     pub const fn never() -> Self {
-        Self {
-            tick: u64::MAX,
-        }
+        Self { tick: u64::MAX }
     }
 }
 
@@ -161,7 +161,7 @@ impl Chronos {
             Ok(()) => {
                 inner.shorts.deref_mut().sort_unstable();
                 return;
-            },
+            }
             Err(almd) => almd,
         };
 
@@ -183,4 +183,3 @@ impl Chronos {
         // self.purgatory.enqueue(todo!("HOW DO I A GET A `HEADER`???"));
     }
 }
-

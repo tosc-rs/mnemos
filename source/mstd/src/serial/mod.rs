@@ -1,5 +1,8 @@
-use abi::syscall::{UserRequestBody, serial::{SerialRequest, SerialError, SerialResponse}, KernelResponseBody};
 use crate::executor::mailbox::MAILBOX;
+use abi::syscall::{
+    serial::{SerialError, SerialRequest, SerialResponse},
+    KernelResponseBody, UserRequestBody,
+};
 
 #[allow(dead_code)]
 pub struct SerialPort {

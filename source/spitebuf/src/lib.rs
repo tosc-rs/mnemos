@@ -10,9 +10,13 @@
 //!
 //! [0]: http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue
 
-use core::{cell::UnsafeCell, mem::MaybeUninit, sync::atomic::{AtomicUsize, Ordering}};
-use std::marker::PhantomData;
+use core::{
+    cell::UnsafeCell,
+    mem::MaybeUninit,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use maitake::wait::{WaitCell, WaitQueue};
+use std::marker::PhantomData;
 
 pub unsafe trait Storage<T> {
     fn buf(&self) -> (*const UnsafeCell<Cell<T>>, usize);
@@ -35,7 +39,10 @@ impl<T, STO: Storage<T>> MpMcQueue<T, STO> {
         assert_eq!(len, len.next_power_of_two());
         let sli = unsafe { core::slice::from_raw_parts(ptr, len) };
         sli.iter().enumerate().for_each(|(i, slot)| unsafe {
-            slot.get().write(Cell { data: MaybeUninit::uninit(), sequence: AtomicUsize::new(i) });
+            slot.get().write(Cell {
+                data: MaybeUninit::uninit(),
+                sequence: AtomicUsize::new(i),
+            });
         });
 
         Self {
@@ -63,14 +70,7 @@ impl<T, STO: Storage<T>> MpMcQueue<T, STO> {
     /// Returns back the `item` if the queue is full
     pub fn enqueue_sync(&self, item: T) -> Result<(), T> {
         let (ptr, len) = self.storage.buf();
-        let res = unsafe {
-            enqueue(
-                (*ptr).get(),
-                &self.enqueue_pos,
-                len - 1,
-                item,
-            )
-        };
+        let res = unsafe { enqueue((*ptr).get(), &self.enqueue_pos, len - 1, item) };
         if res.is_ok() {
             self.cons_wait.notify();
         }
@@ -80,7 +80,7 @@ impl<T, STO: Storage<T>> MpMcQueue<T, STO> {
     pub async fn enqueue_async(&self, mut item: T) -> Result<(), T> {
         while let Err(eitem) = self.enqueue_sync(item) {
             match self.prod_wait.wait().await {
-                Ok(()) => {},
+                Ok(()) => {}
                 Err(_) => return Err(eitem),
             }
             item = eitem;
@@ -92,11 +92,9 @@ impl<T, STO: Storage<T>> MpMcQueue<T, STO> {
         loop {
             match self.dequeue_sync() {
                 Some(t) => return Ok(t),
-                None => {
-                    match self.cons_wait.wait().await {
-                        Ok(()) => {},
-                        Err(_) => return Err(())
-                    }
+                None => match self.cons_wait.wait().await {
+                    Ok(()) => {}
+                    Err(_) => return Err(()),
                 },
             }
         }
@@ -140,11 +138,7 @@ impl<T> Cell<T> {
     }
 }
 
-unsafe fn dequeue<T>(
-    buffer: *mut Cell<T>,
-    dequeue_pos: &AtomicUsize,
-    mask: usize,
-) -> Option<T> {
+unsafe fn dequeue<T>(buffer: *mut Cell<T>, dequeue_pos: &AtomicUsize, mask: usize) -> Option<T> {
     let mut pos = dequeue_pos.load(Ordering::Relaxed);
 
     let mut cell;

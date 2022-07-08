@@ -2,17 +2,22 @@
 //!
 //! [mycelium]: https://github.com/hawkw/mycelium
 
-pub mod time;
 pub mod mailbox;
+pub mod time;
 
-use maitake::{self, scheduler::{StaticScheduler, TaskStub}, task::Storage};
 use maitake::task::Task as MaitakeTask;
-
-use core::{future::Future, ptr::NonNull, sync::atomic::{AtomicPtr, Ordering}};
-use mnemos_alloc::{
-    containers::HeapBox,
-    heap::AHeap,
+use maitake::{
+    self,
+    scheduler::{StaticScheduler, TaskStub},
+    task::Storage,
 };
+
+use core::{
+    future::Future,
+    ptr::NonNull,
+    sync::atomic::{AtomicPtr, Ordering},
+};
+use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 
 #[repr(transparent)]
 pub struct Task<F: Future + 'static>(MaitakeTask<&'static StaticScheduler, F, HBStorage>);
@@ -45,9 +50,7 @@ impl<F: Future + 'static> Storage<&'static StaticScheduler, F> for HBStorage {
     }
 
     fn from_raw(ptr: NonNull<MaitakeTask<&'static StaticScheduler, F, Self>>) -> HeapBox<Task<F>> {
-        unsafe {
-            HeapBox::from_leaked(ptr.cast::<Task<F>>())
-        }
+        unsafe { HeapBox::from_leaked(ptr.cast::<Task<F>>()) }
     }
 }
 
@@ -56,18 +59,12 @@ impl Terpsichore {
     // might be provided per-platform.
     //
     // You must ALSO initialize the mailbox.
-    pub unsafe fn initialize(
-        &'static self,
-        heap_start: *mut u8,
-        heap_len: usize,
-    ) {
+    pub unsafe fn initialize(&'static self, heap_start: *mut u8, heap_len: usize) {
         let (hptr, _guard) = AHeap::bootstrap(heap_start, heap_len).unwrap();
         EXECUTOR.heap_ptr.store(hptr.as_ptr(), Ordering::Release);
     }
 
-    pub fn run(
-        &'static self,
-    ) {
+    pub fn run(&'static self) {
         // Process timers
         crate::executor::time::CHRONOS.poll();
 

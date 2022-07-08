@@ -1,5 +1,5 @@
-use serde::{Serialize, Deserialize};
 use super::ByteBoxWire;
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
 #[cfg_attr(feature = "use-defmt", derive(defmt::Format))]
@@ -9,7 +9,7 @@ pub enum SerialRequest {
     },
     ProvideReceiveBuffer {
         port: u16,
-        buffer: ByteBoxWire
+        buffer: ByteBoxWire,
     },
     Flush {
         port: u16,
@@ -18,7 +18,7 @@ pub enum SerialRequest {
         port: u16,
         buffer: ByteBoxWire,
         used: usize,
-    }
+    },
 }
 
 #[derive(Serialize, Deserialize, Debug)]

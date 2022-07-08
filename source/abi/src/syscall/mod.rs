@@ -24,7 +24,7 @@
 
 pub mod serial;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 // This is SUPPOSED to be used to route incoming userspace requests to the proper
 // kernelspace driver. I'm not sure this is the right abstraction.
@@ -99,4 +99,3 @@ pub struct ByteBoxWire {
     pub ptr: usize,
     pub len: usize,
 }
-

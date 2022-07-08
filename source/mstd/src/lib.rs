@@ -5,8 +5,8 @@
 pub use abi;
 
 pub mod executor;
-pub mod utils;
 pub mod serial;
+pub mod utils;
 
 // The user must provide a `no_mangle` entrypoint.
 extern "Rust" {
@@ -30,7 +30,6 @@ mod panic_handler {
     use core::panic::PanicInfo;
     use core::sync::atomic::{compiler_fence, Ordering};
 
-
     #[panic_handler]
     fn panic(_info: &PanicInfo) -> ! {
         // let mut sop = StdOut;
@@ -43,4 +42,3 @@ mod panic_handler {
         }
     }
 }
-

@@ -1,7 +1,7 @@
 use core::alloc::Layout;
-use core::sync::atomic::{AtomicU32, AtomicU8, AtomicBool, AtomicPtr};
 use core::ops::Deref;
-use serde::{Serialize, Deserialize};
+use core::sync::atomic::{AtomicBool, AtomicPtr, AtomicU32, AtomicU8};
+use serde::{Deserialize, Serialize};
 
 #[repr(C)]
 pub struct BoxBytes<const N: usize> {
@@ -21,12 +21,7 @@ impl<const N: usize> Deref for BoxBytes<N> {
 
 impl BoxBytes<0> {
     pub fn deref_dyn(&self) -> &[u8] {
-        unsafe {
-            core::slice::from_raw_parts(
-                self.payload.as_ptr(),
-                self.len as usize,
-            )
-        }
+        unsafe { core::slice::from_raw_parts(self.payload.as_ptr(), self.len as usize) }
     }
 
     // TODO: I think this is right?
@@ -37,12 +32,7 @@ impl BoxBytes<0> {
         // Round up to next
         // TODO: Replace with `next_multiple_of` once https://github.com/rust-lang/rust/issues/88581 lands
         let to_add = ((self.capacity as usize + align_add) / me_align) * me_align;
-        unsafe {
-            Layout::from_size_align_unchecked(
-                me.size() + to_add,
-                me.align(),
-            )
-        }
+        unsafe { Layout::from_size_align_unchecked(me.size() + to_add, me.align()) }
     }
 }
 
