@@ -1174,7 +1174,7 @@ dependencies = [
 [[package]]
 name = "tracing"
 version = "0.2.0"
-source = "git+https://github.com/tokio-rs/tracing#7a9e1e4569971859849cfd546cc8412d762386a8"
+source = "git+https://github.com/tokio-rs/tracing#2aa0cb010d8a7fa0de610413b5acd4557a00dd34"
 dependencies = [
  "cfg-if",
  "pin-project-lite",
@@ -1196,7 +1196,7 @@ dependencies = [
 [[package]]
 name = "tracing-attributes"
 version = "0.2.0"
-source = "git+https://github.com/tokio-rs/tracing#7a9e1e4569971859849cfd546cc8412d762386a8"
+source = "git+https://github.com/tokio-rs/tracing#2aa0cb010d8a7fa0de610413b5acd4557a00dd34"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1216,7 +1216,7 @@ dependencies = [
 [[package]]
 name = "tracing-core"
 version = "0.2.0"
-source = "git+https://github.com/tokio-rs/tracing#7a9e1e4569971859849cfd546cc8412d762386a8"
+source = "git+https://github.com/tokio-rs/tracing#2aa0cb010d8a7fa0de610413b5acd4557a00dd34"
 
 [[package]]
 name = "tracing-log"

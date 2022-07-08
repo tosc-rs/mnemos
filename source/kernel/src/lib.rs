@@ -1,6 +1,7 @@
 #![no_std]
 
 pub mod bbq;
+pub(crate) mod fmt;
 
 use abi::{
     bbqueue_ipc::{
