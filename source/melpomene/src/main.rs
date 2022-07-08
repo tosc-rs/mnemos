@@ -25,13 +25,13 @@ use tracing::Instrument;
 const HEAP_SIZE: usize = 192 * 1024;
 static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
 
-#[tokio::main(flavor = "current_thread")]
-async fn main() {
+fn main() {
     setup_tracing();
-    run_melpomene().await
+    let _span = tracing::info_span!("Melpo").entered();
+    run_melpomene();
 }
 
-#[tracing::instrument(name = "Melpo", level = "info")]
+#[tokio::main(flavor = "current_thread")]
 async fn run_melpomene() {
     println!("========================================");
     let kernel = task::spawn_blocking(move || {
