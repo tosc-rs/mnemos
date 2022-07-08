@@ -1,4 +1,5 @@
 #![no_std]
+#![allow(clippy::missing_safety_doc)]
 
 pub mod bbq;
 pub(crate) mod fmt;
@@ -79,17 +80,26 @@ impl Kernel {
     const INIT_IDLE: usize = 2;
     const INIT_LOCK: usize = 3;
 
-    pub unsafe fn new(settings: KernelSettings) -> Result<HeapBox<Self>, ()> {
+    pub unsafe fn new(settings: KernelSettings) -> Result<HeapBox<Self>, &'static str> {
         info!(
             start = ?settings.heap_start,
             size = settings.heap_size,
             "Initializing heap"
         );
-        let (nn_heap, mut guard) = AHeap::bootstrap(settings.heap_start, settings.heap_size)?;
+        let (nn_heap, mut guard) = AHeap::bootstrap(settings.heap_start, settings.heap_size)
+            .map_err(|_| "failed to initialize heap")?;
 
-        let drivers = guard.alloc_fixed_vec(settings.max_drivers)?;
-        let (nn_u2k_buf, u2k_len) = guard.alloc_box_array_with(|| 0, settings.u2k_size)?.leak();
-        let (nn_k2u_buf, k2u_len) = guard.alloc_box_array_with(|| 0, settings.k2u_size)?.leak();
+        let drivers = guard
+            .alloc_fixed_vec(settings.max_drivers)
+            .map_err(|_| "failed to allocate driver vec")?;
+        let (nn_u2k_buf, u2k_len) = guard
+            .alloc_box_array_with(|| 0, settings.u2k_size)
+            .map_err(|_| "failed to allocate u2k ring buf")?
+            .leak();
+        let (nn_k2u_buf, k2u_len) = guard
+            .alloc_box_array_with(|| 0, settings.k2u_size)
+            .map_err(|_| "failed to allocate k2u ring buf")?
+            .leak();
         let u2k_ring = BBBuffer::new();
         let k2u_ring = BBBuffer::new();
 
@@ -106,7 +116,7 @@ impl Kernel {
         // Safety: We only use the static stub once
         let stub: &'static TaskStub = guard
             .alloc_box(TaskStub::new())
-            .map_err(drop)?
+            .map_err(|_| "failed to allocate task stub")?
             .leak()
             .as_ref();
         let scheduler = StaticScheduler::new_with_static_stub(stub);
@@ -126,7 +136,7 @@ impl Kernel {
                 inner_mut: UnsafeCell::new(inner_mut),
                 heap: nn_heap,
             })
-            .map_err(drop)?;
+            .map_err(|_| "failed to allocate new kernel box")?;
 
         new_kernel.status.store(Self::INIT_IDLE, Ordering::SeqCst);
 
@@ -168,7 +178,7 @@ impl Kernel {
         };
 
         // TODO: for now we only support a single instance of each driver
-        if guard.drivers.iter().find(|d| d.kind == hdl.kind).is_some() {
+        if guard.drivers.iter().any(|d| d.kind == hdl.kind) {
             return Err(hdl);
         }
 
@@ -238,7 +248,7 @@ impl Kernel {
         self.spawn_allocated(atask);
     }
 
-    pub fn spawn_allocated<F: Future + 'static>(&'static self, task: HeapBox<Task<F>>) -> () {
+    pub fn spawn_allocated<F: Future + 'static>(&'static self, task: HeapBox<Task<F>>) {
         self.inner.scheduler.spawn_allocated::<F, HBStorage>(task)
     }
 }

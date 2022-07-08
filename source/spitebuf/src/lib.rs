@@ -10,6 +10,8 @@
 //!
 //! [0]: http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue
 
+#![allow(clippy::missing_safety_doc)]
+
 use core::{
     cell::UnsafeCell,
     mem::MaybeUninit,
@@ -105,7 +107,7 @@ unsafe impl<T, STO: Storage<T>> Sync for MpMcQueue<T, STO> where T: Send {}
 
 impl<T, STO: Storage<T>> Drop for MpMcQueue<T, STO> {
     fn drop(&mut self) {
-        while let Some(_) = self.dequeue_sync() {}
+        while self.dequeue_sync().is_some() {}
         self.cons_wait.close();
         self.prod_wait.close();
     }
@@ -143,26 +145,26 @@ unsafe fn dequeue<T>(buffer: *mut Cell<T>, dequeue_pos: &AtomicUsize, mask: usiz
 
     let mut cell;
     loop {
-        cell = buffer.add(usize::from(pos & mask));
+        cell = buffer.add(pos & mask);
         let seq = (*cell).sequence.load(Ordering::Acquire);
         let dif = (seq as i8).wrapping_sub((pos.wrapping_add(1)) as i8);
 
-        if dif == 0 {
-            if dequeue_pos
-                .compare_exchange_weak(
-                    pos,
-                    pos.wrapping_add(1),
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-            {
-                break;
+        match dif {
+            0 => {
+                if dequeue_pos
+                    .compare_exchange_weak(
+                        pos,
+                        pos.wrapping_add(1),
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+                {
+                    break;
+                }
             }
-        } else if dif < 0 {
-            return None;
-        } else {
-            pos = dequeue_pos.load(Ordering::Relaxed);
+            dif if dif < 0 => return None,
+            _ => pos = dequeue_pos.load(Ordering::Relaxed),
         }
     }
 
@@ -183,26 +185,26 @@ unsafe fn enqueue<T>(
 
     let mut cell;
     loop {
-        cell = buffer.add(usize::from(pos & mask));
+        cell = buffer.add(pos & mask);
         let seq = (*cell).sequence.load(Ordering::Acquire);
         let dif = (seq as i8).wrapping_sub(pos as i8);
 
-        if dif == 0 {
-            if enqueue_pos
-                .compare_exchange_weak(
-                    pos,
-                    pos.wrapping_add(1),
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-            {
-                break;
+        match dif {
+            0 => {
+                if enqueue_pos
+                    .compare_exchange_weak(
+                        pos,
+                        pos.wrapping_add(1),
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+                {
+                    break;
+                }
             }
-        } else if dif < 0 {
-            return Err(item);
-        } else {
-            pos = enqueue_pos.load(Ordering::Relaxed);
+            dif if dif < 0 => return Err(item),
+            _ => pos = enqueue_pos.load(Ordering::Relaxed),
         }
     }
 

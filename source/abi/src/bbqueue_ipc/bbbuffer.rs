@@ -277,35 +277,31 @@ impl<'a> Producer<'a> {
                 inner.write_in_progress.store(false, Release);
                 return Err(Error::InsufficientSize);
             }
+        } else if write + sz <= max {
+            // Non inverted condition
+            write
         } else {
-            if write + sz <= max {
-                // Non inverted condition
-                write
-            } else {
-                // Not inverted, but need to go inverted
+            // Not inverted, but need to go inverted
 
-                // NOTE: We check sz < read, NOT <=, because
-                // write must never == read in an inverted condition, since
-                // we will then not be able to tell if we are inverted or not
-                if sz < read {
-                    // Invertible situation
-                    0
-                } else {
-                    // Not invertible, no space
-                    inner.write_in_progress.store(false, Release);
-                    return Err(Error::InsufficientSize);
-                }
+            // NOTE: We check sz < read, NOT <=, because
+            // write must never == read in an inverted condition, since
+            // we will then not be able to tell if we are inverted or not
+            if sz < read {
+                // Invertible situation
+                0
+            } else {
+                // Not invertible, no space
+                inner.write_in_progress.store(false, Release);
+                return Err(Error::InsufficientSize);
             }
         };
-
         // Safe write, only viewed by this task
         inner.reserve.store(start + sz, Release);
 
         // This is sound, as UnsafeCell, MaybeUninit, and GenericArray
         // are all `#[repr(Transparent)]
         let start_of_buf_ptr = inner.buf.load(Relaxed);
-        let grant_slice =
-            unsafe { from_raw_parts_mut(start_of_buf_ptr.offset(start as isize), sz) };
+        let grant_slice = unsafe { from_raw_parts_mut(start_of_buf_ptr.add(start), sz) };
 
         Ok(GrantW {
             buf: grant_slice,
@@ -381,25 +377,23 @@ impl<'a> Producer<'a> {
                 inner.write_in_progress.store(false, Release);
                 return Err(Error::InsufficientSize);
             }
+        } else if write != max {
+            // Some (or all) room remaining in un-inverted case
+            sz = min(max - write, sz);
+            write
         } else {
-            if write != max {
-                // Some (or all) room remaining in un-inverted case
-                sz = min(max - write, sz);
-                write
-            } else {
-                // Not inverted, but need to go inverted
+            // Not inverted, but need to go inverted
 
-                // NOTE: We check read > 1, NOT read >= 1, because
-                // write must never == read in an inverted condition, since
-                // we will then not be able to tell if we are inverted or not
-                if read > 1 {
-                    sz = min(read - 1, sz);
-                    0
-                } else {
-                    // Not invertible, no space
-                    inner.write_in_progress.store(false, Release);
-                    return Err(Error::InsufficientSize);
-                }
+            // NOTE: We check read > 1, NOT read >= 1, because
+            // write must never == read in an inverted condition, since
+            // we will then not be able to tell if we are inverted or not
+            if read > 1 {
+                sz = min(read - 1, sz);
+                0
+            } else {
+                // Not invertible, no space
+                inner.write_in_progress.store(false, Release);
+                return Err(Error::InsufficientSize);
             }
         };
 
@@ -409,8 +403,7 @@ impl<'a> Producer<'a> {
         // This is sound, as UnsafeCell, MaybeUninit, and GenericArray
         // are all `#[repr(Transparent)]
         let start_of_buf_ptr = inner.buf.load(Relaxed);
-        let grant_slice =
-            unsafe { from_raw_parts_mut(start_of_buf_ptr.offset(start as isize), sz) };
+        let grant_slice = unsafe { from_raw_parts_mut(start_of_buf_ptr.add(start), sz) };
 
         Ok(GrantW {
             buf: grant_slice,
@@ -501,7 +494,7 @@ impl<'a> Consumer<'a> {
         // This is sound, as UnsafeCell, MaybeUninit, and GenericArray
         // are all `#[repr(Transparent)]
         let start_of_buf_ptr = inner.buf.load(Relaxed);
-        let grant_slice = unsafe { from_raw_parts_mut(start_of_buf_ptr.offset(read as isize), sz) };
+        let grant_slice = unsafe { from_raw_parts_mut(start_of_buf_ptr.add(read), sz) };
 
         Ok(GrantR {
             buf: grant_slice,
@@ -552,8 +545,7 @@ impl<'a> Consumer<'a> {
         }
 
         let start_of_buf_ptr = inner.buf.load(Relaxed);
-        let grant_slice1 =
-            unsafe { from_raw_parts_mut(start_of_buf_ptr.offset(read as isize), sz1) };
+        let grant_slice1 = unsafe { from_raw_parts_mut(start_of_buf_ptr.add(read), sz1) };
         let grant_slice2 = unsafe { from_raw_parts_mut(start_of_buf_ptr, sz2) };
 
         Ok(SplitGrantR {
