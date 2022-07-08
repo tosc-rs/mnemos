@@ -1,5 +1,6 @@
 #![cfg_attr(not(test), no_std)]
 #![doc = include_str!("../README.md")]
+#![allow(clippy::missing_safety_doc)]
 
 use bbqueue_ipc::BBBuffer;
 use core::ptr::null_mut;
