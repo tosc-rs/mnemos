@@ -167,7 +167,7 @@ impl Kernel {
         };
 
         // TODO: for now we only support a single instance of each driver
-        if guard.drivers.iter().find(|d| d.kind == hdl.kind).is_some() {
+        if guard.drivers.iter().any(|d| d.kind == hdl.kind) {
             return Err(hdl);
         }
 
