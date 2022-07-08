@@ -449,6 +449,7 @@ dependencies = [
  "mnemos-abi",
  "mnemos-std",
  "postcard",
+ "tokio",
  "tracing 0.1.35",
  "tracing-modality",
  "tracing-subscriber",
