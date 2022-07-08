@@ -304,8 +304,7 @@ impl<'a> Producer<'a> {
         // This is sound, as UnsafeCell, MaybeUninit, and GenericArray
         // are all `#[repr(Transparent)]
         let start_of_buf_ptr = inner.buf.load(Relaxed);
-        let grant_slice =
-            unsafe { from_raw_parts_mut(start_of_buf_ptr.offset(start as isize), sz) };
+        let grant_slice = unsafe { from_raw_parts_mut(start_of_buf_ptr.add(start), sz) };
 
         Ok(GrantW {
             buf: grant_slice,
@@ -409,8 +408,7 @@ impl<'a> Producer<'a> {
         // This is sound, as UnsafeCell, MaybeUninit, and GenericArray
         // are all `#[repr(Transparent)]
         let start_of_buf_ptr = inner.buf.load(Relaxed);
-        let grant_slice =
-            unsafe { from_raw_parts_mut(start_of_buf_ptr.offset(start as isize), sz) };
+        let grant_slice = unsafe { from_raw_parts_mut(start_of_buf_ptr.add(start), sz) };
 
         Ok(GrantW {
             buf: grant_slice,
@@ -501,7 +499,7 @@ impl<'a> Consumer<'a> {
         // This is sound, as UnsafeCell, MaybeUninit, and GenericArray
         // are all `#[repr(Transparent)]
         let start_of_buf_ptr = inner.buf.load(Relaxed);
-        let grant_slice = unsafe { from_raw_parts_mut(start_of_buf_ptr.offset(read as isize), sz) };
+        let grant_slice = unsafe { from_raw_parts_mut(start_of_buf_ptr.add(read), sz) };
 
         Ok(GrantR {
             buf: grant_slice,
@@ -552,8 +550,7 @@ impl<'a> Consumer<'a> {
         }
 
         let start_of_buf_ptr = inner.buf.load(Relaxed);
-        let grant_slice1 =
-            unsafe { from_raw_parts_mut(start_of_buf_ptr.offset(read as isize), sz1) };
+        let grant_slice1 = unsafe { from_raw_parts_mut(start_of_buf_ptr.add(read), sz1) };
         let grant_slice2 = unsafe { from_raw_parts_mut(start_of_buf_ptr, sz2) };
 
         Ok(SplitGrantR {
