@@ -158,7 +158,7 @@ impl GrantW {
                 Side::BSide => &self.storage.b_wait,
             }
             .commit_waitcell
-            .notify();
+            .wake();
         }
     }
 }
@@ -195,7 +195,7 @@ impl GrantR {
                 Side::BSide => &self.storage.b_wait,
             }
             .release_waitcell
-            .notify();
+            .wake();
         }
     }
 }

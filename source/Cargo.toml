@@ -8,12 +8,12 @@ members = [
 ]
 
 [patch.crates-io.maitake]
-git = "https://github.com/jamesmunns/mycelium.git"
-rev = "833c343dcdf725b621ecdb6aae3873d984563a61"
+git = "https://github.com/hawkw/mycelium.git"
+rev = "eb9974e22bb2e822a0ddad3c0488e331a494dea5"
 
 [patch.crates-io.cordyceps]
-git = "https://github.com/jamesmunns/mycelium.git"
-rev = "833c343dcdf725b621ecdb6aae3873d984563a61"
+git = "https://github.com/hawkw/mycelium.git"
+rev = "eb9974e22bb2e822a0ddad3c0488e331a494dea5"
 
 [patch.crates-io.mnemos-alloc]
 git = "https://github.com/tosc-rs/mnemos-alloc"

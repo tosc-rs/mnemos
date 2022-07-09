@@ -111,8 +111,17 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "cordyceps"
-version = "0.2.1"
-source = "git+https://github.com/jamesmunns/mycelium.git?rev=833c343dcdf725b621ecdb6aae3873d984563a61#833c343dcdf725b621ecdb6aae3873d984563a61"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "892250972504d59bc4b50232a38090c7670bf2fb9af653f7dbfbf15861a8ebe3"
+dependencies = [
+ "loom",
+]
+
+[[package]]
+name = "cordyceps"
+version = "0.3.0"
+source = "git+https://github.com/hawkw/mycelium.git?rev=eb9974e22bb2e822a0ddad3c0488e331a494dea5#eb9974e22bb2e822a0ddad3c0488e331a494dea5"
 dependencies = [
  "loom",
 ]
@@ -416,13 +425,12 @@ dependencies = [
 [[package]]
 name = "maitake"
 version = "0.1.0"
-source = "git+https://github.com/jamesmunns/mycelium.git?rev=833c343dcdf725b621ecdb6aae3873d984563a61#833c343dcdf725b621ecdb6aae3873d984563a61"
+source = "git+https://github.com/hawkw/mycelium.git?rev=eb9974e22bb2e822a0ddad3c0488e331a494dea5#eb9974e22bb2e822a0ddad3c0488e331a494dea5"
 dependencies = [
- "cordyceps",
+ "cordyceps 0.3.0",
  "mycelium-bitfield",
  "mycelium-util",
  "pin-project",
- "tracing 0.2.0",
 ]
 
 [[package]]
@@ -520,7 +528,7 @@ name = "mnemos-alloc"
 version = "0.1.0"
 source = "git+https://github.com/tosc-rs/mnemos-alloc?rev=a035705e42e925d1c99b59211f274f7ecfdc0de6#a035705e42e925d1c99b59211f274f7ecfdc0de6"
 dependencies = [
- "cordyceps",
+ "cordyceps 0.2.2",
  "heapless",
  "linked_list_allocator",
  "maitake",
@@ -530,7 +538,7 @@ dependencies = [
 name = "mnemos-std"
 version = "0.1.0"
 dependencies = [
- "cordyceps",
+ "cordyceps 0.2.2",
  "futures-util",
  "heapless",
  "maitake",
@@ -557,14 +565,14 @@ dependencies = [
 [[package]]
 name = "mycelium-bitfield"
 version = "0.1.0"
-source = "git+https://github.com/jamesmunns/mycelium.git?rev=833c343dcdf725b621ecdb6aae3873d984563a61#833c343dcdf725b621ecdb6aae3873d984563a61"
+source = "git+https://github.com/hawkw/mycelium.git?rev=eb9974e22bb2e822a0ddad3c0488e331a494dea5#eb9974e22bb2e822a0ddad3c0488e331a494dea5"
 
 [[package]]
 name = "mycelium-util"
 version = "0.1.0"
-source = "git+https://github.com/jamesmunns/mycelium.git?rev=833c343dcdf725b621ecdb6aae3873d984563a61#833c343dcdf725b621ecdb6aae3873d984563a61"
+source = "git+https://github.com/hawkw/mycelium.git?rev=eb9974e22bb2e822a0ddad3c0488e331a494dea5#eb9974e22bb2e822a0ddad3c0488e331a494dea5"
 dependencies = [
- "cordyceps",
+ "cordyceps 0.3.0",
  "loom",
  "mycelium-bitfield",
  "tracing 0.2.0",
