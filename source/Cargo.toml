@@ -16,6 +16,6 @@ git = "https://github.com/hawkw/mycelium.git"
 rev = "eb9974e22bb2e822a0ddad3c0488e331a494dea5"
 
 [patch.crates-io.mnemos-alloc]
-# git = "https://github.com/tosc-rs/mnemos-alloc"
-# rev = "a035705e42e925d1c99b59211f274f7ecfdc0de6"
-path = "/home/james/tosc/mnemos-alloc"
+git = "https://github.com/tosc-rs/mnemos-alloc"
+rev = "0dc1937550cb5e531cfdba7f1cc10806df85fb30"
+# path = "/home/james/tosc/mnemos-alloc"
