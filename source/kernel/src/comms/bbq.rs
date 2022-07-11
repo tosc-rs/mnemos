@@ -42,6 +42,22 @@ pub struct BBQBidiHandle {
     storage: HeapArc<BBQStorage>,
 }
 
+pub struct BidiProducer {
+    producer: Producer<'static>,
+    side: Side,
+
+    // SAFETY: all above items are ONLY valid for the lifetime of `storage`
+    storage: HeapArc<BBQStorage>,
+}
+
+pub struct BidiConsumer {
+    consumer: Consumer<'static>,
+    side: Side,
+
+    // SAFETY: all above items are ONLY valid for the lifetime of `storage`
+    storage: HeapArc<BBQStorage>,
+}
+
 pub async fn new_bidi_channel(
     alloc: &'static AHeap,
     capacity_a_tx: usize,
@@ -202,6 +218,20 @@ impl GrantR {
 
 // async methods
 impl BBQBidiHandle {
+    pub fn split(self) -> (BidiProducer, BidiConsumer) {
+        let prod = BidiProducer {
+            producer: self.producer,
+            side: self.side,
+            storage: self.storage.clone(),
+        };
+        let cons = BidiConsumer {
+            consumer: self.consumer,
+            side: self.side,
+            storage: self.storage,
+        };
+        (prod, cons)
+    }
+
     #[tracing::instrument(
         name = "BBQueue::send_grant_max",
         level = "trace",
@@ -308,6 +338,116 @@ impl BBQBidiHandle {
     }
 }
 
+// async methods
+impl BidiProducer {
+    #[tracing::instrument(
+        name = "BidiProducer::send_grant_max",
+        level = "trace",
+        skip(self),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
+    )]
+    pub async fn send_grant_max(&self, max: usize) -> GrantW {
+        loop {
+            match self.producer.grant_max_remaining(max) {
+                Ok(wgr) => {
+                    trace!(size = wgr.len(), "Got bbqueue max write grant");
+                    return GrantW {
+                        grant: wgr,
+                        side: self.side,
+                        storage: self.storage.clone(),
+                    };
+                }
+                Err(_) => {
+                    trace!("awaiting bbqueue max write grant");
+                    // Uh oh! Couldn't get a send grant. We need to wait for the OTHER reader
+                    // to release some bytes first.
+                    match self.side {
+                        Side::ASide => &self.storage.b_wait,
+                        Side::BSide => &self.storage.a_wait,
+                    }
+                    .release_waitcell
+                    .wait()
+                    .await
+                    .unwrap();
+
+                    trace!("awoke for bbqueue max write grant");
+                }
+            }
+        }
+    }
+
+    #[tracing::instrument(
+        name = "BidiProducer::send_grant_exact",
+        level = "trace",
+        skip(self),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
+    )]
+    pub async fn send_grant_exact(&self, size: usize) -> GrantW {
+        loop {
+            match self.producer.grant_exact(size) {
+                Ok(wgr) => {
+                    trace!("Got bbqueue exact write grant",);
+                    return GrantW {
+                        grant: wgr,
+                        side: self.side,
+                        storage: self.storage.clone(),
+                    };
+                }
+                Err(_) => {
+                    trace!("awaiting bbqueue exact write grant");
+                    // Uh oh! Couldn't get a send grant. We need to wait for the OTHER reader
+                    // to release some bytes first.
+                    match self.side {
+                        Side::ASide => &self.storage.b_wait,
+                        Side::BSide => &self.storage.a_wait,
+                    }
+                    .release_waitcell
+                    .wait()
+                    .await
+                    .unwrap();
+                    trace!("awoke for bbqueue exact write grant");
+                }
+            }
+        }
+    }
+}
+
+impl BidiConsumer {
+    #[tracing::instrument(
+        name = "BidiConsumer::read_grant",
+        level = "trace",
+        skip(self),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
+    )]
+    pub async fn read_grant(&self) -> GrantR {
+        loop {
+            match self.consumer.read() {
+                Ok(rgr) => {
+                    trace!(size = rgr.len(), "Got bbqueue read grant",);
+                    return GrantR {
+                        grant: rgr,
+                        side: self.side,
+                        storage: self.storage.clone(),
+                    };
+                }
+                Err(_) => {
+                    trace!("awaiting bbqueue read grant");
+                    // Uh oh! Couldn't get a read grant. We need to wait for the OTHER writer
+                    // to commit some bytes first.
+                    match self.side {
+                        Side::ASide => &self.storage.b_wait.commit_waitcell,
+                        Side::BSide => &self.storage.a_wait.commit_waitcell,
+                    }
+                    .wait()
+                    .await
+                    .unwrap();
+                    trace!("awoke for bbqueue read grant");
+                }
+            }
+        }
+    }
+}
+
 // sync methods
 impl BBQBidiHandle {
     #[tracing::instrument(
@@ -343,6 +483,57 @@ impl BBQBidiHandle {
 
     #[tracing::instrument(
         name = "BBQueue::read_grant_sync",
+        level = "trace",
+        skip(self),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
+    )]
+    pub fn read_grant_sync(&self) -> Option<GrantR> {
+        self.consumer.read().ok().map(|rgr| GrantR {
+            grant: rgr,
+            storage: self.storage.clone(),
+            side: self.side,
+        })
+    }
+}
+
+
+// sync methods
+impl BidiProducer {
+    #[tracing::instrument(
+        name = "BidiProducer::send_grant_max_sync",
+        level = "trace",
+        skip(self),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
+    )]
+    pub fn send_grant_max_sync(&self, max: usize) -> Option<GrantW> {
+        self.producer
+            .grant_max_remaining(max)
+            .ok()
+            .map(|wgr| GrantW {
+                grant: wgr,
+                storage: self.storage.clone(),
+                side: self.side,
+            })
+    }
+
+    #[tracing::instrument(
+        name = "BidiProducer::send_grant_exact_sync",
+        level = "trace",
+        skip(self),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
+    )]
+    pub fn send_grant_exact_sync(&self, size: usize) -> Option<GrantW> {
+        self.producer.grant_exact(size).ok().map(|wgr| GrantW {
+            grant: wgr,
+            storage: self.storage.clone(),
+            side: self.side,
+        })
+    }
+}
+
+impl BidiConsumer {
+    #[tracing::instrument(
+        name = "BidiConsumer::read_grant_sync",
         level = "trace",
         skip(self),
         fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
