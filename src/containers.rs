@@ -259,6 +259,11 @@ impl<T> HeapFixedVec<T> {
         }
         Ok(())
     }
+
+    pub fn is_full(&self) -> bool {
+        let (nn_ptr, count) = unsafe { ActiveArr::<MaybeUninit<T>>::data(self.ptr) };
+        count == self.len
+    }
 }
 
 impl<T> Drop for HeapFixedVec<T> {
