@@ -11,7 +11,7 @@ use std::{
 };
 
 use abi::bbqueue_ipc::BBBuffer;
-use melpomene::sim_tracing::setup_tracing;
+use melpomene::{sim_drivers::spawn_tcp_serial, sim_tracing::setup_tracing};
 use mnemos_kernel::{
     bbq::{new_bidi_channel, BBQBidiHandle},
     KChannel, Kernel, KernelSettings,
@@ -78,78 +78,36 @@ fn kernel_entry() {
     {
         let mut guard = k.heap().lock().unwrap();
 
-        let send_channel: KChannel<BBQBidiHandle>;
-
         {
             // First let's make a dummy driver just to make sure some stuff happens
-            let dummy_chan = KChannel::new(&mut guard, 16);
-            send_channel = dummy_chan.clone();
-
             let dummy_fut = async move {
                 Sleepy::new(Duration::from_secs(1)).await;
-                let (a_ring, b_ring) = new_bidi_channel(k.heap(), 32, 16).await;
-                dummy_chan
-                    .enqueue_async(b_ring)
-                    .await
-                    .map_err(drop)
-                    .unwrap();
+                let (a_ring, b_ring) = new_bidi_channel(k.heap(), 4096, 4096).await;
+                spawn_tcp_serial(b_ring);
 
-                let mut i = 0u32;
                 loop {
-                    tracing::info!("Driver A: Writing...");
-                    let mut wgr = a_ring.send_grant_exact(8).await;
-                    wgr.iter_mut().for_each(|b| *b = (i % 255) as u8);
-                    i = i.wrapping_add(1);
-                    let len = wgr.len();
-                    wgr.commit(len);
+                    let in_grant = a_ring.read_grant().await;
+                    println!("READ");
+                    let mut in_gr_slice: &[u8] = &in_grant;
 
-                    tracing::info!("Driver A: Sleeping...");
-                    Sleepy::new(Duration::from_secs(1)).await;
+                    while !in_gr_slice.is_empty() {
+                        println!("WRITE");
+                        let in_len = in_gr_slice.len();
+                        let mut out_grant = a_ring.send_grant_max(in_len).await;
+                        let out_len = out_grant.len();
+                        let len = in_len.min(out_len);
+                        let (now, later) = in_gr_slice.split_at(len);
+                        out_grant.copy_from_slice(now);
+                        in_gr_slice = later;
+                        out_grant.commit(len);
+                    }
 
-                    tracing::warn!("Driver A: Reading...");
-                    let rgr = a_ring.read_grant().await;
-                    tracing::warn!(
-                        buf = ?rgr.deref(),
-                        "Driver A: Got data"
-                    );
-                    let len = rgr.len();
-                    rgr.release(len);
+                    let len = in_grant.len();
+                    in_grant.release(len);
                 }
             }
-            .instrument(tracing::info_span!("Driver A"));
+            .instrument(tracing::info_span!("Loopback"));
 
-            let dummy_task = k.new_task(dummy_fut);
-            let boxed_dummy = guard.alloc_box(dummy_task).map_err(drop).unwrap();
-            k.spawn_allocated(boxed_dummy);
-        }
-
-        {
-            let dummy_fut = async move {
-                let b_ring = send_channel.dequeue_async().await.unwrap();
-
-                let mut i = u32::MAX;
-                loop {
-                    tracing::info!("Driver B: Writing...");
-                    let mut wgr = b_ring.send_grant_exact(4).await;
-                    wgr.iter_mut().for_each(|b| *b = (i % 255) as u8);
-                    i = i.wrapping_sub(1);
-                    let len = wgr.len();
-                    wgr.commit(len);
-
-                    tracing::info!("Driver B: Sleeping...");
-                    Sleepy::new(Duration::from_millis(500)).await;
-
-                    tracing::warn!("Driver B: Reading...");
-                    let rgr = b_ring.read_grant().await;
-                    tracing::warn!(
-                        buf = ?rgr.deref(),
-                        "Driver B: Got data"
-                    );
-                    let len = rgr.len();
-                    rgr.release(len);
-                }
-            }
-            .instrument(tracing::info_span!("Driver B"));
             let dummy_task = k.new_task(dummy_fut);
             let boxed_dummy = guard.alloc_box(dummy_task).map_err(drop).unwrap();
             k.spawn_allocated(boxed_dummy);
