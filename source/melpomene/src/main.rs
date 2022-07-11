@@ -87,11 +87,9 @@ fn kernel_entry() {
 
                 loop {
                     let in_grant = a_ring.read_grant().await;
-                    println!("READ");
                     let mut in_gr_slice: &[u8] = &in_grant;
 
                     while !in_gr_slice.is_empty() {
-                        println!("WRITE");
                         let in_len = in_gr_slice.len();
                         let mut out_grant = a_ring.send_grant_max(in_len).await;
                         let out_len = out_grant.len();
