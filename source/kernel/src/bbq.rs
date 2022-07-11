@@ -206,7 +206,7 @@ impl BBQBidiHandle {
         name = "BBQueue::send_grant_max",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(&self.storage), side = ?self.side),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
     )]
     pub async fn send_grant_max(&self, max: usize) -> GrantW {
         loop {
@@ -242,7 +242,7 @@ impl BBQBidiHandle {
         name = "BBQueue::send_grant_exact",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(&self.storage), side = ?self.side),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
     )]
     pub async fn send_grant_exact(&self, size: usize) -> GrantW {
         loop {
@@ -277,7 +277,7 @@ impl BBQBidiHandle {
         name = "BBQueue::read_grant",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(&self.storage), side = ?self.side),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
     )]
     pub async fn read_grant(&self) -> GrantR {
         loop {
