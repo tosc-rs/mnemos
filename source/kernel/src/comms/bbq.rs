@@ -317,9 +317,14 @@ impl BBQBidiHandle {
         fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
     )]
     pub fn send_grant_max_sync(&self, max: usize) -> Option<GrantW> {
-        self.producer.grant_max_remaining(max).ok().map(|wgr| {
-            GrantW { grant: wgr, storage: self.storage.clone(), side: self.side }
-        })
+        self.producer
+            .grant_max_remaining(max)
+            .ok()
+            .map(|wgr| GrantW {
+                grant: wgr,
+                storage: self.storage.clone(),
+                side: self.side,
+            })
     }
 
     #[tracing::instrument(
@@ -329,8 +334,10 @@ impl BBQBidiHandle {
         fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
     )]
     pub fn send_grant_exact_sync(&self, size: usize) -> Option<GrantW> {
-        self.producer.grant_exact(size).ok().map(|wgr| {
-            GrantW { grant: wgr, storage: self.storage.clone(), side: self.side }
+        self.producer.grant_exact(size).ok().map(|wgr| GrantW {
+            grant: wgr,
+            storage: self.storage.clone(),
+            side: self.side,
         })
     }
 
@@ -341,8 +348,10 @@ impl BBQBidiHandle {
         fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
     )]
     pub fn read_grant_sync(&self) -> Option<GrantR> {
-        self.consumer.read().ok().map(|rgr| {
-            GrantR { grant: rgr, storage: self.storage.clone(), side: self.side }
+        self.consumer.read().ok().map(|rgr| GrantR {
+            grant: rgr,
+            storage: self.storage.clone(),
+            side: self.side,
         })
     }
 }

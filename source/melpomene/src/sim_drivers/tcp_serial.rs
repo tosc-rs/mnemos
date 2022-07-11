@@ -1,4 +1,4 @@
-use mnemos_kernel::bbq::BBQBidiHandle;
+use mnemos_kernel::comms::bbq::BBQBidiHandle;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::thread::{sleep, spawn};

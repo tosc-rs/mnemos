@@ -9,7 +9,7 @@ use melpomene::{
     sim_drivers::{delay::Delay, tcp_serial::spawn_tcp_serial},
     sim_tracing::setup_tracing,
 };
-use mnemos_kernel::{bbq::new_bidi_channel, Kernel, KernelSettings};
+use mnemos_kernel::{comms::bbq::new_bidi_channel, Kernel, KernelSettings};
 
 use tracing::Instrument;
 
