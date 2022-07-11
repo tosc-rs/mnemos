@@ -6,6 +6,7 @@ use crate::{comms::{
     bbq::{BBQBidiHandle, new_bidi_channel, GrantW, GrantR},
     kchannel::{KChannel, KConsumer, KProducer},
 }, Kernel};
+use maitake::sync::Mutex;
 
 use futures::{select_biased, FutureExt, pin_mut};
 
