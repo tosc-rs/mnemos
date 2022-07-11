@@ -17,6 +17,9 @@ license = "MIT OR Apache-2.0"
 name = "kernel"
 harness = false
 
+[dependencies]
+futures = "0.3.21"
+
 [dependencies.tracing]
 version = "0.1.35"
 default-features = false
