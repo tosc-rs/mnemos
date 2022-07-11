@@ -1,21 +1,15 @@
 use std::{
-    future::Future,
-    ops::Deref,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
-    },
-    task::{Poll, Waker},
+    sync::atomic::{AtomicBool, Ordering},
     thread::{sleep, spawn, yield_now},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use abi::bbqueue_ipc::BBBuffer;
-use melpomene::{sim_drivers::spawn_tcp_serial, sim_tracing::setup_tracing};
-use mnemos_kernel::{
-    bbq::{new_bidi_channel, BBQBidiHandle},
-    KChannel, Kernel, KernelSettings,
+use melpomene::{
+    sim_drivers::{delay::Delay, tcp_serial::spawn_tcp_serial},
+    sim_tracing::setup_tracing,
 };
+use mnemos_kernel::{bbq::new_bidi_channel, Kernel, KernelSettings};
 
 use tracing::Instrument;
 
@@ -81,7 +75,7 @@ fn kernel_entry() {
         {
             // First let's make a dummy driver just to make sure some stuff happens
             let dummy_fut = async move {
-                Sleepy::new(Duration::from_secs(1)).await;
+                Delay::new(Duration::from_secs(1)).await;
                 let (a_ring, b_ring) = new_bidi_channel(k.heap(), 4096, 4096).await;
                 spawn_tcp_serial(b_ring);
 
@@ -219,57 +213,3 @@ fn kernel_entry() {
 //         Sleepy::new(Duration::from_secs(1)).await;
 //     }
 // }
-
-struct SleepyInner {
-    done: bool,
-    waker: Option<Waker>,
-}
-
-struct Sleepy {
-    inner: Arc<Mutex<SleepyInner>>,
-}
-
-impl Drop for Sleepy {
-    fn drop(&mut self) {
-        // Take the waker on drop, ensuring the sleep thread won't wake a dead future
-        let _ = self.inner.lock().unwrap().waker.take();
-    }
-}
-
-impl Sleepy {
-    fn new(dur: Duration) -> Self {
-        let data1 = Arc::new(Mutex::new(SleepyInner {
-            done: false,
-            waker: None,
-        }));
-        let data2 = data1.clone();
-        let _ = spawn(move || {
-            sleep(dur);
-            let mut guard = data2.lock().unwrap();
-            guard.done = true;
-            if let Some(waker) = guard.waker.take() {
-                waker.wake();
-            }
-        });
-
-        Self { inner: data1 }
-    }
-}
-
-impl Future for Sleepy {
-    type Output = ();
-
-    fn poll(
-        self: std::pin::Pin<&mut Self>,
-        cx: &mut std::task::Context<'_>,
-    ) -> std::task::Poll<Self::Output> {
-        let wake = cx.waker().clone();
-        let mut guard = self.inner.lock().unwrap();
-        if guard.done {
-            Poll::Ready(())
-        } else {
-            guard.waker = Some(wake);
-            Poll::Pending
-        }
-    }
-}
