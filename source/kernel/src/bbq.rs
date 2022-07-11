@@ -311,7 +311,7 @@ impl BBQBidiHandle {
 // sync methods
 impl BBQBidiHandle {
     #[tracing::instrument(
-        name = "BBQueue::send_grant_max",
+        name = "BBQueue::send_grant_max_sync",
         level = "trace",
         skip(self),
         fields(queue = ?fmt::ptr(&self.storage), side = ?self.side),
@@ -323,7 +323,7 @@ impl BBQBidiHandle {
     }
 
     #[tracing::instrument(
-        name = "BBQueue::send_grant_exact",
+        name = "BBQueue::send_grant_exact_sync",
         level = "trace",
         skip(self),
         fields(queue = ?fmt::ptr(&self.storage), side = ?self.side),
@@ -335,7 +335,7 @@ impl BBQBidiHandle {
     }
 
     #[tracing::instrument(
-        name = "BBQueue::read_grant",
+        name = "BBQueue::read_grant_sync",
         level = "trace",
         skip(self),
         fields(queue = ?fmt::ptr(&self.storage), side = ?self.side),
