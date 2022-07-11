@@ -314,7 +314,7 @@ impl BBQBidiHandle {
         name = "BBQueue::send_grant_max_sync",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(&self.storage), side = ?self.side),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
     )]
     pub fn send_grant_max_sync(&self, max: usize) -> Option<GrantW> {
         self.producer.grant_max_remaining(max).ok().map(|wgr| {
@@ -326,7 +326,7 @@ impl BBQBidiHandle {
         name = "BBQueue::send_grant_exact_sync",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(&self.storage), side = ?self.side),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
     )]
     pub fn send_grant_exact_sync(&self, size: usize) -> Option<GrantW> {
         self.producer.grant_exact(size).ok().map(|wgr| {
@@ -338,7 +338,7 @@ impl BBQBidiHandle {
         name = "BBQueue::read_grant_sync",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(&self.storage), side = ?self.side),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
     )]
     pub fn read_grant_sync(&self) -> Option<GrantR> {
         self.consumer.read().ok().map(|rgr| {
