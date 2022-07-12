@@ -261,7 +261,7 @@ impl<T> HeapFixedVec<T> {
     }
 
     pub fn is_full(&self) -> bool {
-        let (nn_ptr, count) = unsafe { ActiveArr::<MaybeUninit<T>>::data(self.ptr) };
+        let (_nn_ptr, count) = unsafe { ActiveArr::<MaybeUninit<T>>::data(self.ptr) };
         count == self.len
     }
 }
