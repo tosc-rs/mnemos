@@ -15,47 +15,28 @@ use maitake::wait::WaitCell;
 use mnemos_alloc::{containers::{HeapArc, HeapArray}, heap::AHeap};
 use tracing::{info, trace};
 use abi::bbqueue_ipc::{GrantR as InnerGrantR, GrantW as InnerGrantW};
-use maitake::sync::Mutex;
 
 struct BBQStorage {
     commit_waitcell: WaitCell,
     release_waitcell: WaitCell,
-    // note: producer lives here so we don't need a separate Arc just for the
-    // Mutex<Producer>. consumer is owned by the consumer handle. This is also
-    // a MaybeUninit, because the producer handle can't be created until AFTER
-    // the BBBuffer has been placed in it's final storage location. It will be
-    // updated at BBQStorage initialization, and is then valid for the remaining
-    // lifetime of the BBQStorage
-    producer: Mutex<MaybeUninit<Producer<'static>>>,
-
     ring: BBBuffer,
     _array: HeapArray<MaybeUninit<u8>>,
 }
 
-impl Drop for BBQStorage {
-    fn drop(&mut self) {
-        unsafe {
-            self.producer
-                .try_lock()
-                .unwrap()
-                .assume_init_drop();
-        }
-    }
-}
-
-pub struct MpscProducer {
+pub struct SpscProducer {
     storage: HeapArc<BBQStorage>,
+    producer: Producer<'static>,
 }
 
-pub struct MpscConsumer {
+pub struct SpscConsumer {
     storage: HeapArc<BBQStorage>,
     consumer: Consumer<'static>,
 }
 
-pub async fn new_mpsc_channel(
+pub async fn new_spsc_channel(
     alloc: &'static AHeap,
     capacity: usize,
-) -> (MpscProducer, MpscConsumer) {
+) -> (SpscProducer, SpscConsumer) {
     info!(
         capacity,
         "Creating new mpsc BBQueue channel"
@@ -74,7 +55,6 @@ pub async fn new_mpsc_channel(
         .allocate_arc(BBQStorage {
             commit_waitcell: WaitCell::new(),
             release_waitcell: WaitCell::new(),
-            producer: Mutex::new(MaybeUninit::uninit()),
             ring,
             _array,
         })
@@ -91,15 +71,11 @@ pub async fn new_mpsc_channel(
         (prod, cons)
     };
 
-    {
-        let mut p_guard = storage.producer.lock().await;
-        *p_guard = MaybeUninit::new(prod);
-    }
-
-    let prod = MpscProducer {
+    let prod = SpscProducer {
         storage: storage.clone(),
+        producer: prod,
     };
-    let cons = MpscConsumer {
+    let cons = SpscConsumer {
         storage,
         consumer: cons,
     };
@@ -179,19 +155,16 @@ impl GrantR {
 }
 
 // async methods
-impl MpscProducer {
+impl SpscProducer {
     #[tracing::instrument(
-        name = "MpscProducer::send_grant_max",
+        name = "SpscProducer::send_grant_max",
         level = "trace",
         skip(self),
         fields(queue = ?fmt::ptr(self.storage.deref())),
     )]
     pub async fn send_grant_max(&self, max: usize) -> GrantW {
-        let producer = self.storage.producer.lock().await;
-        let producer = unsafe { producer.assume_init_ref() };
-
         loop {
-            match producer.grant_max_remaining(max) {
+            match self.producer.grant_max_remaining(max) {
                 Ok(wgr) => {
                     trace!(size = wgr.len(), "Got bbqueue max write grant");
                     return GrantW {
@@ -217,17 +190,14 @@ impl MpscProducer {
     }
 
     #[tracing::instrument(
-        name = "MpscProducer::send_grant_exact",
+        name = "SpscProducer::send_grant_exact",
         level = "trace",
         skip(self),
         fields(queue = ?fmt::ptr(self.storage.deref())),
     )]
     pub async fn send_grant_exact(&self, size: usize) -> GrantW {
-        let producer = self.storage.producer.lock().await;
-        let producer = unsafe { producer.assume_init_ref() };
-
         loop {
-            match producer.grant_exact(size) {
+            match self.producer.grant_exact(size) {
                 Ok(wgr) => {
                     trace!("Got bbqueue exact write grant",);
                     return GrantW {
@@ -252,9 +222,9 @@ impl MpscProducer {
     }
 }
 
-impl MpscConsumer {
+impl SpscConsumer {
     #[tracing::instrument(
-        name = "MpscConsumer::read_grant",
+        name = "SpscConsumer::read_grant",
         level = "trace",
         skip(self),
         fields(queue = ?fmt::ptr(self.storage.deref())),

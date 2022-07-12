@@ -3,7 +3,7 @@ use core::ops::{Deref, DerefMut};
 use mnemos_alloc::containers::{HeapFixedVec, HeapArc};
 
 use crate::{comms::{
-    bbq::{BBQBidiHandle, GrantW, GrantR, BidiProducer, BidiConsumer, new_bidi_channel},
+    bbq::bidi::{BBQBidiHandle, GrantW, GrantR, new_bidi_channel},
     kchannel::{KChannel, KConsumer, KProducer},
 }, Kernel};
 use maitake::sync::Mutex;

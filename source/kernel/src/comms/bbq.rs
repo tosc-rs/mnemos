@@ -1,5 +1,6 @@
 pub mod bidi;
 pub mod mpsc;
+pub mod spsc;
 
 // Possible bbqueues:
 //

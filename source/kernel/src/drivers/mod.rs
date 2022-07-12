@@ -1,1 +1,1 @@
-// pub mod serial_mux;
+pub mod serial_mux;
