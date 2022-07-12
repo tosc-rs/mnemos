@@ -11,7 +11,7 @@ use melpomene::{
 };
 use mnemos_kernel::{
     comms::{bbq::new_bidi_channel, kchannel::KChannel},
-    drivers::serial_mux::{Message, Request, Response},
+    drivers::serial_mux::{Message, Request, Response, SerialMux},
     Kernel, KernelSettings,
 };
 
@@ -79,35 +79,61 @@ fn kernel_entry() {
         {
             // First let's make a dummy driver just to make sure some stuff happens
             let dummy_fut = async move {
+                // Delay for one second, just for funsies
                 Delay::new(Duration::from_secs(1)).await;
+
+                // Set up the bidirectional, async bbqueue channel between the TCP port
+                // (acting as a serial port) and the virtual serial port mux.
+                //
+                // Create the buffer, and spawn the worker task, giving it one of the
+                // queue handles
                 let (mux_ring, tcp_ring) = new_bidi_channel(k.heap(), 4096, 4096).await;
                 spawn_tcp_serial(tcp_ring);
 
+                // Now, right now this is a little awkward, but what I'm doing here is spawning
+                // a new virtual mux, and configuring it with:
+                // * Up to 4 virtual ports max
+                // * Framed messages up to 512 bytes max each
+                // * The other side of the async connection to the TCP "serial" port
+                //
+                // After spawning, it gives us back IT'S message passing handle, where we can
+                // send it configuration commands. Right now - that basically just is used for
+                // mapping new virtual ports.
+                let mux_hdl = SerialMux::new(k, 4, 512, mux_ring).await;
+
+                // To send a message to the Mux, we need a "return address". The message
+                // we send includes a Request, and a producer for the KChannel of the kind below.
+                //
+                // I still need to do some more work on the design of the message bus/types that
+                // will go on with this, or decide whether a mutex'd handle is better for non-userspace
+                // communications.
                 let (kprod, kcons) = KChannel::<Result<Response, ()>>::new_async(k, 4)
                     .await
                     .split();
 
-                let mux_hdl =
-                    mnemos_kernel::drivers::serial_mux::SerialMux::new(k, 4, 512, mux_ring).await;
+                // Map virtual port 0, with a maximum (incoming) buffer capacity of 1024 bytes.
+                let request = Request::RegisterPort { port_id: 0, capacity: 1024 };
 
+                // Send the Message with our request, and our KProducer handle. If we did this
+                // a bunch, we could clone the producer.
                 mux_hdl
                     .enqueue_async(Message {
-                        req: Request::RegisterPort {
-                            port_id: 0,
-                            capacity: 1024,
-                        },
+                        req: request,
                         resp: kprod,
                     })
                     .await
                     .map_err(drop)
                     .unwrap();
 
+                // Now we get back a message in our "return address", which SHOULD contain
+                // a confirmation that the port was registered.
                 let resp = kcons.dequeue_async().await.unwrap().unwrap();
 
                 let p = match resp {
                     Response::PortRegistered(p) => p,
                 };
 
+                // Now we juse send out data every second
                 loop {
                     Delay::new(Duration::from_secs(1)).await;
                     let mut wgr = p.producer().send_grant_exact(7).await;
@@ -121,6 +147,9 @@ fn kernel_entry() {
             let boxed_dummy = guard.alloc_box(dummy_task).map_err(drop).unwrap();
             k.spawn_allocated(boxed_dummy);
         }
+
+        // Make sure we don't accidentally give away the mutex guard
+        drop(guard);
     }
 
     //////////////////////////////////////////////////////////////////////////////
