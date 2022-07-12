@@ -1,12 +1,14 @@
-use mnemos_alloc::containers::{HeapFixedVec, HeapArc, HeapArray};
-use tracing::{warn, debug};
+use mnemos_alloc::containers::{HeapArc, HeapArray, HeapFixedVec};
+use tracing::{debug, warn};
 
-use crate::{comms::{
-    bbq,
-    kchannel::{KChannel, KConsumer, KProducer},
-}, Kernel};
+use crate::{
+    comms::{
+        bbq,
+        kchannel::{KChannel, KConsumer, KProducer},
+    },
+    Kernel,
+};
 use maitake::sync::Mutex;
-
 
 struct PortInfo {
     pub port: u16,
@@ -19,10 +21,7 @@ pub struct Message {
 }
 
 pub enum Request {
-    RegisterPort {
-        port_id: u16,
-        capacity: usize,
-    },
+    RegisterPort { port_id: u16, capacity: usize },
 }
 
 pub enum Response {
@@ -46,8 +45,11 @@ impl Commander {
                         let mut mux = self.mux.lock().await;
                         mux.register_port(port_id, capacity, &self.out).await
                     };
-                    resp.enqueue_async(res.map(|ph| Response::PortRegistered(ph))).await.map_err(drop).unwrap();
-                },
+                    resp.enqueue_async(res.map(|ph| Response::PortRegistered(ph)))
+                        .await
+                        .map_err(drop)
+                        .unwrap();
+                }
             }
         }
     }
@@ -59,13 +61,23 @@ pub struct SerialMux {
 }
 
 impl SerialMux {
-    async fn register_port(&mut self, port_id: u16, capacity: usize, outgoing: &bbq::MpscProducer) -> Result<PortHandle, ()> {
+    async fn register_port(
+        &mut self,
+        port_id: u16,
+        capacity: usize,
+        outgoing: &bbq::MpscProducer,
+    ) -> Result<PortHandle, ()> {
         if self.ports.is_full() || self.ports.iter().any(|p| p.port == port_id) {
             return Err(());
         }
         let (prod, cons) = bbq::new_spsc_channel(self.kernel.heap(), capacity).await;
 
-        self.ports.push(PortInfo { port: port_id, upstream: prod }).map_err(drop)?;
+        self.ports
+            .push(PortInfo {
+                port: port_id,
+                upstream: prod,
+            })
+            .map_err(drop)?;
 
         let ph = PortHandle {
             port: port_id,
@@ -134,7 +146,7 @@ impl SerialMuxer {
                     Err(_) => {
                         warn!("Cobs decode failed!");
                         continue;
-                    },
+                    }
                 };
 
                 let mut port = [0u8; 2];
@@ -193,7 +205,10 @@ impl SerialMux {
         let sprod = sprod.into_mpmc_producer().await;
 
         let ports = kernel.heap().allocate_fixed_vec(max_ports).await;
-        let imutex = kernel.heap().allocate_arc(Mutex::new(SerialMux { ports, kernel })).await;
+        let imutex = kernel
+            .heap()
+            .allocate_arc(Mutex::new(SerialMux { ports, kernel }))
+            .await;
         let (cmd_prod, cmd_cons) = KChannel::new_async(kernel, max_ports).await.split();
         let buf = kernel.heap().allocate_array_with(|| 0, max_frame).await;
         let commander = Commander {
@@ -201,15 +216,24 @@ impl SerialMux {
             out: sprod,
             mux: imutex.clone(),
         };
-        let muxer = SerialMuxer { incoming: scons, mux: imutex, buf, idx: 0 };
+        let muxer = SerialMuxer {
+            incoming: scons,
+            mux: imutex,
+            buf,
+            idx: 0,
+        };
 
-        kernel.spawn(async move {
-            commander.run().await;
-        }).await;
+        kernel
+            .spawn(async move {
+                commander.run().await;
+            })
+            .await;
 
-        kernel.spawn(async move {
-            muxer.run().await;
-        }).await;
+        kernel
+            .spawn(async move {
+                muxer.run().await;
+            })
+            .await;
 
         cmd_prod
     }

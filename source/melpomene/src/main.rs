@@ -9,7 +9,11 @@ use melpomene::{
     sim_drivers::{delay::Delay, tcp_serial::spawn_tcp_serial},
     sim_tracing::setup_tracing,
 };
-use mnemos_kernel::{comms::{bbq::new_bidi_channel, kchannel::KChannel}, Kernel, KernelSettings, drivers::serial_mux::{Request, Response, Message}};
+use mnemos_kernel::{
+    comms::{bbq::new_bidi_channel, kchannel::KChannel},
+    drivers::serial_mux::{Message, Request, Response},
+    Kernel, KernelSettings,
+};
 
 use tracing::Instrument;
 
@@ -79,22 +83,20 @@ fn kernel_entry() {
                 let (mux_ring, tcp_ring) = new_bidi_channel(k.heap(), 4096, 4096).await;
                 spawn_tcp_serial(tcp_ring);
 
-                let (kprod, kcons) = KChannel::<Result<Response, ()>>::new_async(k, 4).await.split();
+                let (kprod, kcons) = KChannel::<Result<Response, ()>>::new_async(k, 4)
+                    .await
+                    .split();
 
-                let mux_hdl = mnemos_kernel::drivers::serial_mux::SerialMux::new(
-                    k,
-                    4,
-                    512,
-                    mux_ring
-                ).await;
+                let mux_hdl =
+                    mnemos_kernel::drivers::serial_mux::SerialMux::new(k, 4, 512, mux_ring).await;
 
                 mux_hdl
                     .enqueue_async(Message {
                         req: Request::RegisterPort {
                             port_id: 0,
-                            capacity: 1024
+                            capacity: 1024,
                         },
-                        resp: kprod
+                        resp: kprod,
                     })
                     .await
                     .map_err(drop)

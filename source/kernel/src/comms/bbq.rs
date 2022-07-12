@@ -5,11 +5,14 @@ use core::{
 
 use crate::fmt;
 use abi::bbqueue_ipc::{BBBuffer, Consumer as InnerConsumer, Producer as InnerProducer};
-use maitake::wait::WaitCell;
-use mnemos_alloc::{containers::{HeapArc, HeapArray}, heap::AHeap};
-use tracing::{info, trace};
 use abi::bbqueue_ipc::{GrantR as InnerGrantR, GrantW as InnerGrantW};
 use maitake::sync::Mutex;
+use maitake::wait::WaitCell;
+use mnemos_alloc::{
+    containers::{HeapArc, HeapArray},
+    heap::AHeap,
+};
+use tracing::{info, trace};
 
 struct BBQStorage {
     commit_waitcell: WaitCell,
@@ -48,8 +51,14 @@ pub async fn new_bidi_channel(
 ) -> (BidiHandle, BidiHandle) {
     let (a_prod, a_cons) = new_spsc_channel(alloc, capacity_a).await;
     let (b_prod, b_cons) = new_spsc_channel(alloc, capacity_b).await;
-    let a = BidiHandle { producer: a_prod, consumer: b_cons };
-    let b = BidiHandle { producer: b_prod, consumer: a_cons };
+    let a = BidiHandle {
+        producer: a_prod,
+        consumer: b_cons,
+    };
+    let b = BidiHandle {
+        producer: b_prod,
+        consumer: a_cons,
+    };
     (a, b)
 }
 
@@ -76,14 +85,8 @@ impl SpscProducer {
     }
 }
 
-pub async fn new_spsc_channel(
-    alloc: &'static AHeap,
-    capacity: usize,
-) -> (SpscProducer, Consumer) {
-    info!(
-        capacity,
-        "Creating new mpsc BBQueue channel"
-    );
+pub async fn new_spsc_channel(alloc: &'static AHeap, capacity: usize) -> (SpscProducer, Consumer) {
+    info!(capacity, "Creating new mpsc BBQueue channel");
     let mut _array = alloc
         .allocate_array_with(MaybeUninit::<u8>::uninit, capacity)
         .await;
@@ -129,7 +132,6 @@ pub async fn new_spsc_channel(
     (prod, cons)
 }
 
-
 pub struct GrantW {
     grant: InnerGrantW<'static>,
     storage: HeapArc<BBQStorage>,
@@ -156,10 +158,7 @@ impl GrantW {
         self.grant.commit(used);
         // If we freed up any space, notify the waker on the reader side
         if used != 0 {
-            self
-            .storage
-            .commit_waitcell
-            .wake();
+            self.storage.commit_waitcell.wake();
         }
     }
 }
@@ -190,16 +189,17 @@ impl GrantR {
         self.grant.release(used);
         // If we freed up any space, notify the waker on the reader side
         if used != 0 {
-            self
-            .storage
-            .release_waitcell
-            .wake();
+            self.storage.release_waitcell.wake();
         }
     }
 }
 
 #[inline]
-async fn producer_send_grant_max(max: usize, producer: &InnerProducer<'static>, storage: &HeapArc<BBQStorage>) -> GrantW {
+async fn producer_send_grant_max(
+    max: usize,
+    producer: &InnerProducer<'static>,
+    storage: &HeapArc<BBQStorage>,
+) -> GrantW {
     loop {
         match producer.grant_max_remaining(max) {
             Ok(wgr) => {
@@ -213,11 +213,7 @@ async fn producer_send_grant_max(max: usize, producer: &InnerProducer<'static>, 
                 trace!("awaiting bbqueue max write grant");
                 // Uh oh! Couldn't get a send grant. We need to wait for the reader
                 // to release some bytes first.
-                storage
-                    .release_waitcell
-                    .wait()
-                    .await
-                    .unwrap();
+                storage.release_waitcell.wait().await.unwrap();
 
                 trace!("awoke for bbqueue max write grant");
             }
@@ -225,7 +221,11 @@ async fn producer_send_grant_max(max: usize, producer: &InnerProducer<'static>, 
     }
 }
 
-async fn producer_send_grant_exact(size: usize, producer: &InnerProducer<'static>, storage: &HeapArc<BBQStorage>) -> GrantW {
+async fn producer_send_grant_exact(
+    size: usize,
+    producer: &InnerProducer<'static>,
+    storage: &HeapArc<BBQStorage>,
+) -> GrantW {
     loop {
         match producer.grant_exact(size) {
             Ok(wgr) => {
@@ -239,11 +239,7 @@ async fn producer_send_grant_exact(size: usize, producer: &InnerProducer<'static
                 trace!("awaiting bbqueue exact write grant");
                 // Uh oh! Couldn't get a send grant. We need to wait for the reader
                 // to release some bytes first.
-                storage
-                    .release_waitcell
-                    .wait()
-                    .await
-                    .unwrap();
+                storage.release_waitcell.wait().await.unwrap();
                 trace!("awoke for bbqueue exact write grant");
             }
         }
@@ -320,12 +316,7 @@ impl Consumer {
                     trace!("awaiting bbqueue read grant");
                     // Uh oh! Couldn't get a read grant. We need to wait for the writer
                     // to commit some bytes first.
-                    self
-                    .storage
-                    .commit_waitcell
-                    .wait()
-                    .await
-                    .unwrap();
+                    self.storage.commit_waitcell.wait().await.unwrap();
                     trace!("awoke for bbqueue read grant");
                 }
             }
@@ -379,4 +370,3 @@ impl Consumer {
         })
     }
 }
-
