@@ -17,5 +17,5 @@ rev = "eb9974e22bb2e822a0ddad3c0488e331a494dea5"
 
 [patch.crates-io.mnemos-alloc]
 git = "https://github.com/tosc-rs/mnemos-alloc"
-rev = "0dc1937550cb5e531cfdba7f1cc10806df85fb30"
+rev = "43810d55c165666271f288373b48b821edc656d6"
 # path = "/home/james/tosc/mnemos-alloc"

@@ -9,7 +9,7 @@ use melpomene::{
     sim_drivers::{delay::Delay, tcp_serial::spawn_tcp_serial},
     sim_tracing::setup_tracing,
 };
-use mnemos_kernel::{comms::bbq::new_bidi_channel, Kernel, KernelSettings};
+use mnemos_kernel::{comms::{bbq::new_bidi_channel, kchannel::KChannel}, Kernel, KernelSettings, drivers::serial_mux::{Request, Response, Message}};
 
 use tracing::Instrument;
 
@@ -76,26 +76,41 @@ fn kernel_entry() {
             // First let's make a dummy driver just to make sure some stuff happens
             let dummy_fut = async move {
                 Delay::new(Duration::from_secs(1)).await;
-                let (a_ring, b_ring) = new_bidi_channel(k.heap(), 4096, 4096).await;
-                spawn_tcp_serial(b_ring);
+                let (mux_ring, tcp_ring) = new_bidi_channel(k.heap(), 4096, 4096).await;
+                spawn_tcp_serial(tcp_ring);
+
+                let (kprod, kcons) = KChannel::<Result<Response, ()>>::new_async(k, 4).await.split();
+
+                let mux_hdl = mnemos_kernel::drivers::serial_mux::SerialMux::new(
+                    k,
+                    4,
+                    512,
+                    mux_ring
+                ).await;
+
+                mux_hdl
+                    .enqueue_async(Message {
+                        req: Request::RegisterPort {
+                            port_id: 0,
+                            capacity: 1024
+                        },
+                        resp: kprod
+                    })
+                    .await
+                    .map_err(drop)
+                    .unwrap();
+
+                let resp = kcons.dequeue_async().await.unwrap().unwrap();
+
+                let p = match resp {
+                    Response::PortRegistered(p) => p,
+                };
 
                 loop {
-                    let in_grant = a_ring.read_grant().await;
-                    let mut in_gr_slice: &[u8] = &in_grant;
-
-                    while !in_gr_slice.is_empty() {
-                        let in_len = in_gr_slice.len();
-                        let mut out_grant = a_ring.send_grant_max(in_len).await;
-                        let out_len = out_grant.len();
-                        let len = in_len.min(out_len);
-                        let (now, later) = in_gr_slice.split_at(len);
-                        out_grant.copy_from_slice(now);
-                        in_gr_slice = later;
-                        out_grant.commit(len);
-                    }
-
-                    let len = in_grant.len();
-                    in_grant.release(len);
+                    Delay::new(Duration::from_secs(1)).await;
+                    let mut wgr = p.producer().send_grant_exact(7).await;
+                    wgr.copy_from_slice(b"hello\r\n");
+                    wgr.commit(7);
                 }
             }
             .instrument(tracing::info_span!("Loopback"));

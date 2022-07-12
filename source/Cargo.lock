@@ -197,6 +197,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
+name = "cobs"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67ba02a97a2bd10f4b59b25c7973101c79642302776489e030cd13cdab09ed15"
+
+[[package]]
 name = "console-api"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -913,6 +919,7 @@ dependencies = [
 name = "mnemos"
 version = "0.1.0"
 dependencies = [
+ "cobs",
  "futures",
  "heapless",
  "maitake",
@@ -936,7 +943,6 @@ dependencies = [
 [[package]]
 name = "mnemos-alloc"
 version = "0.1.0"
-source = "git+https://github.com/tosc-rs/mnemos-alloc?rev=0dc1937550cb5e531cfdba7f1cc10806df85fb30#0dc1937550cb5e531cfdba7f1cc10806df85fb30"
 dependencies = [
  "cordyceps 0.2.2",
  "heapless",
