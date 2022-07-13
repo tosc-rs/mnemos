@@ -10,7 +10,7 @@ categories = [
 license = "MIT OR Apache-2.0"
 
 [dependencies.cordyceps]
-version = "0.2"
+version = "0.3"
 default-features = false
 
 [dependencies.maitake]
@@ -26,9 +26,9 @@ version = "0.10.1"
 default-features = false
 
 [patch.crates-io.maitake]
-git = "https://github.com/jamesmunns/mycelium.git"
-rev = "833c343dcdf725b621ecdb6aae3873d984563a61"
+git = "https://github.com/hawkw/mycelium.git"
+rev = "23db951d19cf410e07ed4c2c47ead20d2b592d21"
 
 [patch.crates-io.cordyceps]
-git = "https://github.com/jamesmunns/mycelium.git"
-rev = "833c343dcdf725b621ecdb6aae3873d984563a61"
+git = "https://github.com/hawkw/mycelium.git"
+rev = "23db951d19cf410e07ed4c2c47ead20d2b592d21"
