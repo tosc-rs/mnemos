@@ -816,6 +816,7 @@ dependencies = [
  "mnemos-abi",
  "mnemos-std",
  "postcard",
+ "tokio",
  "tracing 0.1.35",
  "tracing-modality",
  "tracing-subscriber",
@@ -1805,7 +1806,7 @@ dependencies = [
 [[package]]
 name = "tracing-modality"
 version = "0.1.0"
-source = "git+https://github.com/auxoncorp/modality-tracing-rs?branch=tokio-compat#aad3085536671a4fb551f059420d9d964c087605"
+source = "git+https://github.com/auxoncorp/modality-tracing-rs?rev=6c9944c688db834d78e3f85c7e385dca939460da#6c9944c688db834d78e3f85c7e385dca939460da"
 dependencies = [
  "anyhow",
  "dirs",
