@@ -2,9 +2,9 @@ use std::{
     future::Future,
     sync::{Arc, Mutex},
     task::{Poll, Waker},
-    thread::{sleep, spawn},
     time::Duration,
 };
+use tokio::{task, time};
 
 struct DelayInner {
     done: bool,
@@ -29,8 +29,8 @@ impl Delay {
             waker: None,
         }));
         let data2 = data1.clone();
-        let _ = spawn(move || {
-            sleep(dur);
+        let _ = task::spawn(async move {
+            time::sleep(dur).await;
             let mut guard = data2.lock().unwrap();
             guard.done = true;
             if let Some(waker) = guard.waker.take() {
