@@ -14,8 +14,10 @@ features = ["registry"]
 default-features = false
 
 [dependencies.tracing-modality]
-version = "0.1.1"
+# version = "0.1.1"
 optional = true
+git = "https://github.com/auxoncorp/modality-tracing-rs"
+branch = "tokio-compat"
 
 [dependencies.mnemos-kernel]
 package = "mnemos"
