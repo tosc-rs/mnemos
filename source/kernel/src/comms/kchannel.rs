@@ -17,9 +17,7 @@ pub struct KProducer<T> {
 
 impl<T> Clone for KProducer<T> {
     fn clone(&self) -> Self {
-        KProducer {
-            q: self.q.clone(),
-        }
+        KProducer { q: self.q.clone() }
     }
 }
 

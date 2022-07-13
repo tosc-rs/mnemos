@@ -119,8 +119,14 @@ fn kernel_entry() {
                     .split();
 
                 // Map virtual port 0, with a maximum (incoming) buffer capacity of 1024 bytes.
-                let request_0 = Request::RegisterPort { port_id: 0, capacity: 1024 };
-                let request_1 = Request::RegisterPort { port_id: 1, capacity: 1024 };
+                let request_0 = Request::RegisterPort {
+                    port_id: 0,
+                    capacity: 1024,
+                };
+                let request_1 = Request::RegisterPort {
+                    port_id: 1,
+                    capacity: 1024,
+                };
 
                 // Send the Message with our request, and our KProducer handle. If we did this
                 // a bunch, we could clone the producer.
@@ -160,7 +166,8 @@ fn kernel_entry() {
                         p0.send(&rgr).await;
                         rgr.release(len);
                     }
-                }).await;
+                })
+                .await;
 
                 // Now we juse send out data every second
                 loop {

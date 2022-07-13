@@ -222,7 +222,11 @@ impl SerialMux {
         let ports = kernel.heap().allocate_fixed_vec(max_ports).await;
         let imutex = kernel
             .heap()
-            .allocate_arc(Mutex::new(SerialMux { ports, kernel, max_frame }))
+            .allocate_arc(Mutex::new(SerialMux {
+                ports,
+                kernel,
+                max_frame,
+            }))
             .await;
         let (cmd_prod, cmd_cons) = KChannel::new_async(kernel, max_ports).await.split();
         let buf = kernel.heap().allocate_array_with(|| 0, max_frame).await;
