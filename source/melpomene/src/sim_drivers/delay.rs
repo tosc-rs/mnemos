@@ -9,7 +9,6 @@ use tokio::{task, time};
 struct DelayInner {
     done: bool,
     waker: Option<Waker>,
-
 }
 
 pub struct Delay {
