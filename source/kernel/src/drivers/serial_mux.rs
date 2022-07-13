@@ -58,6 +58,7 @@ impl Commander {
 pub struct SerialMux {
     kernel: &'static Kernel,
     ports: HeapFixedVec<PortInfo>,
+    max_frame: usize,
 }
 
 impl SerialMux {
@@ -83,6 +84,7 @@ impl SerialMux {
             port: port_id,
             cons,
             outgoing: outgoing.clone(),
+            max_frame: self.max_frame,
         };
 
         Ok(ph)
@@ -178,6 +180,7 @@ pub struct PortHandle {
     port: u16,
     cons: bbq::Consumer,
     outgoing: bbq::MpscProducer,
+    max_frame: usize,
 }
 
 impl PortHandle {
@@ -189,8 +192,20 @@ impl PortHandle {
         &self.cons
     }
 
-    pub fn producer(&self) -> &bbq::MpscProducer {
-        &self.outgoing
+    pub async fn send(&self, data: &[u8]) {
+        // This is lazy, and could probably be done with bigger chunks.
+        let msg_chunk = self.max_frame / 2;
+
+        for chunk in data.chunks(msg_chunk) {
+            let enc_chunk = cobs::max_encoding_length(chunk.len() + 2);
+            let mut wgr = self.outgoing.send_grant_exact(enc_chunk + 1).await;
+            let mut encoder = cobs::CobsEncoder::new(&mut wgr);
+            encoder.push(&self.port.to_le_bytes()).unwrap();
+            encoder.push(chunk).unwrap();
+            let used = encoder.finalize().unwrap();
+            wgr[used] = 0;
+            wgr.commit(used + 1);
+        }
     }
 }
 
@@ -207,7 +222,7 @@ impl SerialMux {
         let ports = kernel.heap().allocate_fixed_vec(max_ports).await;
         let imutex = kernel
             .heap()
-            .allocate_arc(Mutex::new(SerialMux { ports, kernel }))
+            .allocate_arc(Mutex::new(SerialMux { ports, kernel, max_frame }))
             .await;
         let (cmd_prod, cmd_cons) = KChannel::new_async(kernel, max_ports).await.split();
         let buf = kernel.heap().allocate_array_with(|| 0, max_frame).await;

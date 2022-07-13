@@ -11,9 +11,16 @@ pub struct KChannel<T> {
     q: HeapArc<MpMcQueue<T, sealed::SpiteData<T>>>,
 }
 
-#[derive(Clone)]
 pub struct KProducer<T> {
     q: HeapArc<MpMcQueue<T, sealed::SpiteData<T>>>,
+}
+
+impl<T> Clone for KProducer<T> {
+    fn clone(&self) -> Self {
+        KProducer {
+            q: self.q.clone(),
+        }
+    }
 }
 
 pub struct KConsumer<T> {

@@ -119,14 +119,23 @@ fn kernel_entry() {
                     .split();
 
                 // Map virtual port 0, with a maximum (incoming) buffer capacity of 1024 bytes.
-                let request = Request::RegisterPort { port_id: 0, capacity: 1024 };
+                let request_0 = Request::RegisterPort { port_id: 0, capacity: 1024 };
+                let request_1 = Request::RegisterPort { port_id: 1, capacity: 1024 };
 
                 // Send the Message with our request, and our KProducer handle. If we did this
                 // a bunch, we could clone the producer.
                 mux_hdl
                     .enqueue_async(Message {
-                        req: request,
-                        resp: kprod,
+                        req: request_0,
+                        resp: kprod.clone(),
+                    })
+                    .await
+                    .map_err(drop)
+                    .unwrap();
+                mux_hdl
+                    .enqueue_async(Message {
+                        req: request_1,
+                        resp: kprod.clone(),
                     })
                     .await
                     .map_err(drop)
@@ -134,18 +143,29 @@ fn kernel_entry() {
 
                 // Now we get back a message in our "return address", which SHOULD contain
                 // a confirmation that the port was registered.
-                let resp = kcons.dequeue_async().await.unwrap().unwrap();
+                let resp_0 = kcons.dequeue_async().await.unwrap().unwrap();
+                let resp_1 = kcons.dequeue_async().await.unwrap().unwrap();
 
-                let p = match resp {
+                let p0 = match resp_0 {
                     Response::PortRegistered(p) => p,
                 };
+                let p1 = match resp_1 {
+                    Response::PortRegistered(p) => p,
+                };
+
+                k.spawn(async move {
+                    loop {
+                        let rgr = p0.consumer().read_grant().await;
+                        let len = rgr.len();
+                        p0.send(&rgr).await;
+                        rgr.release(len);
+                    }
+                }).await;
 
                 // Now we juse send out data every second
                 loop {
                     Delay::new(Duration::from_secs(1)).await;
-                    let mut wgr = p.producer().send_grant_exact(7).await;
-                    wgr.copy_from_slice(b"hello\r\n");
-                    wgr.commit(7);
+                    p1.send(b"hello\r\n").await;
                 }
             }
             .instrument(tracing::info_span!("Loopback"));
