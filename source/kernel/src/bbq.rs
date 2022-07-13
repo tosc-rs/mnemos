@@ -158,7 +158,7 @@ impl GrantW {
                 Side::BSide => &self.storage.b_wait,
             }
             .commit_waitcell
-            .notify();
+            .wake();
         }
     }
 }
@@ -195,19 +195,18 @@ impl GrantR {
                 Side::BSide => &self.storage.b_wait,
             }
             .release_waitcell
-            .notify();
+            .wake();
         }
     }
 }
 
+// async methods
 impl BBQBidiHandle {
-    // async fn send_grant(buf_len: usize) -> GrantW
-    // async fn read_grant() -> GrantR
     #[tracing::instrument(
         name = "BBQueue::send_grant_max",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(&self.storage), side = ?self.side),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
     )]
     pub async fn send_grant_max(&self, max: usize) -> GrantW {
         loop {
@@ -243,7 +242,7 @@ impl BBQBidiHandle {
         name = "BBQueue::send_grant_exact",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(&self.storage), side = ?self.side),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
     )]
     pub async fn send_grant_exact(&self, size: usize) -> GrantW {
         loop {
@@ -278,7 +277,7 @@ impl BBQBidiHandle {
         name = "BBQueue::read_grant",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(&self.storage), side = ?self.side),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
     )]
     pub async fn read_grant(&self) -> GrantR {
         loop {
@@ -306,5 +305,44 @@ impl BBQBidiHandle {
                 }
             }
         }
+    }
+}
+
+// sync methods
+impl BBQBidiHandle {
+    #[tracing::instrument(
+        name = "BBQueue::send_grant_max_sync",
+        level = "trace",
+        skip(self),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
+    )]
+    pub fn send_grant_max_sync(&self, max: usize) -> Option<GrantW> {
+        self.producer.grant_max_remaining(max).ok().map(|wgr| {
+            GrantW { grant: wgr, storage: self.storage.clone(), side: self.side }
+        })
+    }
+
+    #[tracing::instrument(
+        name = "BBQueue::send_grant_exact_sync",
+        level = "trace",
+        skip(self),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
+    )]
+    pub fn send_grant_exact_sync(&self, size: usize) -> Option<GrantW> {
+        self.producer.grant_exact(size).ok().map(|wgr| {
+            GrantW { grant: wgr, storage: self.storage.clone(), side: self.side }
+        })
+    }
+
+    #[tracing::instrument(
+        name = "BBQueue::read_grant_sync",
+        level = "trace",
+        skip(self),
+        fields(queue = ?fmt::ptr(self.storage.deref()), side = ?self.side),
+    )]
+    pub fn read_grant_sync(&self) -> Option<GrantR> {
+        self.consumer.read().ok().map(|rgr| {
+            GrantR { grant: rgr, storage: self.storage.clone(), side: self.side }
+        })
     }
 }

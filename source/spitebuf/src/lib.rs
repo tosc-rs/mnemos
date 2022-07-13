@@ -74,7 +74,7 @@ impl<T, STO: Storage<T>> MpMcQueue<T, STO> {
         let (ptr, len) = self.storage.buf();
         let res = unsafe { enqueue((*ptr).get(), &self.enqueue_pos, len - 1, item) };
         if res.is_ok() {
-            self.cons_wait.notify();
+            self.cons_wait.wake();
         }
         res
     }

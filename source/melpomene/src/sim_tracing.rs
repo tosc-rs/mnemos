@@ -23,9 +23,17 @@ pub fn setup_tracing() {
         subscriber.with(fmt)
     };
 
+    // if `trace-console` is enabled, add a `console-subscriber` layer.
+    #[cfg(feature = "trace-console")]
+    let subscriber = subscriber.with(console_subscriber::spawn());
+
     // if `trace-modality` is enabled, add the Modality layer as well.
     #[cfg(feature = "trace-modality")]
-    let subscriber = subscriber.with(tracing_modality::ModalityLayer::new());
+    let subscriber = {
+        let options = tracing_modality::Options::new().with_name("melpomene");
+        let layer = tracing_modality::ModalityLayer::init_with_options(options).unwrap();
+        subscriber.with(layer)
+    };
 
     subscriber.init();
 }
