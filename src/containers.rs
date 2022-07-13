@@ -42,7 +42,8 @@ pub struct HeapFixedVec<T> {
 
 // === impl HeapBox ===
 
-unsafe impl<T> Send for HeapBox<T> {}
+unsafe impl<T: Send> Send for HeapBox<T> {}
+unsafe impl<T: Sync> Sync for HeapBox<T> {}
 
 impl<T> Deref for HeapBox<T> {
     type Target = T;
@@ -86,7 +87,10 @@ impl<T> Drop for HeapBox<T> {
 
 // === impl HeapArc ===
 
-unsafe impl<T> Send for HeapArc<T> {}
+// These require the same bounds as `alloc::sync::Arc`'s `Send` and `Sync`
+// impls.
+unsafe impl<T: Send + Sync> Send for HeapArc<T> {}
+unsafe impl<T: Send + Sync> Sync for HeapArc<T> {}
 
 impl<T> Deref for HeapArc<T> {
     type Target = T;
@@ -156,7 +160,8 @@ impl<T> fmt::Pointer for HeapArc<T> {
 
 // === impl HeapArray ===
 
-unsafe impl<T> Send for HeapArray<T> {}
+unsafe impl<T: Send> Send for HeapArray<T> {}
+unsafe impl<T: Sync> Sync for HeapArray<T> {}
 
 impl<T> Deref for HeapArray<T> {
     type Target = [T];
@@ -225,7 +230,8 @@ impl<T> fmt::Pointer for HeapArray<T> {
 
 // === impl HeapFixedVec ===
 
-unsafe impl<T> Send for HeapFixedVec<T> {}
+unsafe impl<T: Send> Send for HeapFixedVec<T> {}
+unsafe impl<T: Sync> Sync for HeapFixedVec<T> {}
 
 impl<T> Deref for HeapFixedVec<T> {
     type Target = [T];
