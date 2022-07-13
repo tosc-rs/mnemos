@@ -42,11 +42,8 @@ version = "0.1.6"
 optional = true
 
 [dependencies.tokio]
-version = "1.0"
-# Note, works around a missing feature set in tracing-modality, can
-# be changed later
-features = ["rt", "net", "sync"]
-optional = true
+version = "1.19"
+features = ["rt", "time", "macros"]
 
 # Melpomene does not use any APIs from `maitake` directly. This dependency is
 # instead required in order to enable `maitake`'s support for `tracing` 0.1.x,
@@ -62,7 +59,13 @@ trace-console = ["console-subscriber"]
 trace-fmt = ["tracing-subscriber/fmt", "atty"]
 # Note, the "trace-modality" feature requires the use of the Auxon modality tool.
 # More information: https://auxon.io/products/modality
-trace-modality = ["tracing-modality", "tokio"]
+trace-modality = [
+    "tracing-modality",
+    # Note, works around a missing feature set in tracing-modality, can
+    # be changed later
+    "tokio/net",
+    "tokio/sync",
+]
 default = [
     "trace-console",
     "trace-fmt",

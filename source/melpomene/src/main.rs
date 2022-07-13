@@ -1,7 +1,6 @@
 use std::{
     sync::atomic::{AtomicBool, Ordering},
-    thread::{sleep, spawn, yield_now},
-    time::Duration,
+    thread::{sleep, spawn},
 };
 
 use abi::bbqueue_ipc::BBBuffer;
@@ -10,7 +9,10 @@ use melpomene::{
     sim_tracing::setup_tracing,
 };
 use mnemos_kernel::{bbq::new_bidi_channel, Kernel, KernelSettings};
-
+use tokio::{
+    task,
+    time::{self, Duration},
+};
 use tracing::Instrument;
 
 const HEAP_SIZE: usize = 192 * 1024;
@@ -19,16 +21,20 @@ static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
 fn main() {
     setup_tracing();
     let _span = tracing::info_span!("Melpo").entered();
+    run_melpomene();
+}
 
+#[tokio::main(flavor = "current_thread")]
+async fn run_melpomene() {
     println!("========================================");
-    let kernel = spawn(move || {
+    let kernel = task::spawn_blocking(move || {
         kernel_entry();
     });
     tracing::info!("Kernel started.");
 
     // Wait for the kernel to complete initialization...
     while KERNEL_LOCK.load(Ordering::Acquire) {
-        yield_now();
+        task::yield_now().await;
     }
 
     tracing::debug!("Kernel initialized.");
@@ -41,11 +47,11 @@ fn main() {
 
     // let uj = userspace.join();
     println!("========================================");
-    sleep(Duration::from_millis(50));
+    time::sleep(Duration::from_millis(50)).await;
     // println!("[Melpo]: Userspace ended: {:?}", uj);
 
-    let kj = kernel.join();
-    sleep(Duration::from_millis(50));
+    let kj = kernel.await;
+    time::sleep(Duration::from_millis(50)).await;
     tracing::info!("Kernel ended:    {:?}", kj);
 
     println!("========================================");
