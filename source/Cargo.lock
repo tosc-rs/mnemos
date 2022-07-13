@@ -816,6 +816,7 @@ dependencies = [
  "mnemos-abi",
  "mnemos-std",
  "postcard",
+ "tokio",
  "tracing 0.1.35",
  "tracing-modality",
  "tracing-subscriber",
@@ -1011,16 +1012,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "num_cpus"
-version = "1.13.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19e64526ebdee182341572e50e9ad03965aa510cd94427a4549448f285e957a1"
-dependencies = [
- "hermit-abi",
- "libc",
-]
-
-[[package]]
 name = "once_cell"
 version = "1.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1069,29 +1060,6 @@ dependencies = [
  "libc",
  "pkg-config",
  "vcpkg",
-]
-
-[[package]]
-name = "parking_lot"
-version = "0.12.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3742b2c103b9f06bc9fff0a37ff4912935851bee6d36f3c02bcc755bcfec228f"
-dependencies = [
- "lock_api",
- "parking_lot_core",
-]
-
-[[package]]
-name = "parking_lot_core"
-version = "0.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "09a279cbf25cb0757810394fbc1e359949b59e348145c643a939a525692e6929"
-dependencies = [
- "cfg-if",
- "libc",
- "redox_syscall",
- "smallvec",
- "windows-sys",
 ]
 
 [[package]]
@@ -1479,15 +1447,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "signal-hook-registry"
-version = "1.4.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e51e73328dc4ac0c7ccbda3a494dfa03df1de2f46018127f60c693f2648455b0"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "slab"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1616,11 +1575,8 @@ dependencies = [
  "libc",
  "memchr",
  "mio",
- "num_cpus",
  "once_cell",
- "parking_lot",
  "pin-project-lite",
- "signal-hook-registry",
  "socket2",
  "tokio-macros",
  "tracing 0.1.35",
@@ -1849,25 +1805,8 @@ dependencies = [
 
 [[package]]
 name = "tracing-modality"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e0ee22771ce5472bbc22226f76431080c55c336eaf4c1924944a27912553260"
-dependencies = [
- "anyhow",
- "serde_json",
- "thiserror",
- "tokio",
- "tracing 0.1.35",
- "tracing-core 0.1.28",
- "tracing-serde-modality-ingest",
- "tracing-serde-subscriber",
-]
-
-[[package]]
-name = "tracing-serde-modality-ingest"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d53bf3e60c64cddc2f33cce3d47caf0c790e6aed4a282f2adae90594bf3a97da"
+version = "0.1.0"
+source = "git+https://github.com/auxoncorp/modality-tracing-rs?rev=6c9944c688db834d78e3f85c7e385dca939460da#6c9944c688db834d78e3f85c7e385dca939460da"
 dependencies = [
  "anyhow",
  "dirs",
@@ -1877,49 +1816,11 @@ dependencies = [
  "serde_json",
  "thiserror",
  "tokio",
- "tracing-serde-structured",
- "tracing-serde-wire",
- "url",
-]
-
-[[package]]
-name = "tracing-serde-structured"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b78e18e43cb156e570d8eca4a89a359d315d98429979b4b6b353d9445d14fb4"
-dependencies = [
- "hash32",
- "heapless",
- "serde",
+ "tracing 0.1.35",
  "tracing-core 0.1.28",
-]
-
-[[package]]
-name = "tracing-serde-subscriber"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9ace8fe29f8c1d09b9ef551f0cc44d7bf9312cbc94680f03aeee545fe21ea574"
-dependencies = [
- "anyhow",
- "once_cell",
- "parking_lot",
- "tokio",
- "tracing-core 0.1.28",
- "tracing-serde-modality-ingest",
- "tracing-serde-structured",
- "tracing-serde-wire",
  "tracing-subscriber",
+ "url",
  "uuid 1.1.2",
-]
-
-[[package]]
-name = "tracing-serde-wire"
-version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f488a684ad879c074d875365fd01d1eef37e469329565f9fecebe172578cc494"
-dependencies = [
- "serde",
- "tracing-serde-structured",
 ]
 
 [[package]]
