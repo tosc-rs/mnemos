@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{Sender, Receiver, channel};
 use std::time::Duration;
 use std::thread::{sleep, spawn, JoinHandle};
@@ -13,36 +13,39 @@ pub struct Chunk {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let mut dport = None;
+    // let mut dport = None;
 
-    for port in serialport::available_ports().unwrap() {
-        if let serialport::SerialPortType::UsbPort(serialport::UsbPortInfo {
-            serial_number: Some(sn),
-            ..
-        }) = &port.port_type
-        {
-            if sn.as_str() == "ajm001" {
-                dport = Some(port.clone());
-                break;
-            }
-        }
-    }
+    // for port in serialport::available_ports().unwrap() {
+    //     if let serialport::SerialPortType::UsbPort(serialport::UsbPortInfo {
+    //         serial_number: Some(sn),
+    //         ..
+    //     }) = &port.port_type
+    //     {
+    //         if sn.as_str() == "ajm001" {
+    //             dport = Some(port.clone());
+    //             break;
+    //         }
+    //     }
+    // }
 
-    let dport = if let Some(port) = dport {
-        port
-    } else {
-        eprintln!("Error: No `Pellegrino` connected!");
-        return Ok(());
-    };
+    // let dport = if let Some(port) = dport {
+    //     port
+    // } else {
+    //     eprintln!("Error: No `Pellegrino` connected!");
+    //     return Ok(());
+    // };
 
-    let mut port = serialport::new(dport.port_name, 115200)
-        .timeout(Duration::from_millis(5))
-        .open()
-        .map_err(|_| "Error: failed to create port")?;
+    // let mut port = serialport::new(dport.port_name, 115200)
+    //     .timeout(Duration::from_millis(5))
+    //     .open()
+    //     .map_err(|_| "Error: failed to create port")?;
 
     let mut carry = Vec::new();
 
-    port.set_timeout(Duration::from_millis(10)).ok();
+    let mut port = TcpStream::connect("127.0.0.1:9999").unwrap();
+
+    // port.set_timeout(Duration::from_millis(10)).ok();
+    port.set_read_timeout(Some(Duration::from_millis(10))).ok();
 
     let mut manager = TcpManager {
         workers: HashMap::new(),
@@ -137,12 +140,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         for (port_idx, hdl) in manager.workers.iter_mut() {
             if let Ok(msg) = hdl.inp.try_recv() {
-                let mlen = msg.len();
-                assert!(mlen <= 128);
-                let cmsg = Chunk { port: *port_idx, buf: msg };
-                let smsg = postcard::to_stdvec_cobs(&cmsg).unwrap();
-                println!("Sending {} bytes to port {}", mlen, port_idx);
-                port.write_all(&smsg)?;
+                let mut nmsg = Vec::new();
+                nmsg.extend_from_slice(&port_idx.to_le_bytes());
+                nmsg.extend_from_slice(&msg);
+                let mut enc_msg = cobs::encode_vec(&mut nmsg);
+                enc_msg.push(0);
+                println!("Sending {} bytes to port {}", enc_msg.len(), port_idx);
+                port.write_all(&enc_msg)?;
             }
         }
 
@@ -157,10 +161,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         while let Some(pos) = carry.iter().position(|b| *b == 0) {
             let new_chunk = carry.split_off(pos + 1);
-            if let Ok((msg, _)) = postcard::take_from_bytes_cobs::<Chunk>(&mut carry) {
-                if let Some(hdl) = manager.workers.get_mut(&msg.port) {
-                    println!("Got {} bytes from port {}", msg.buf.len(), msg.port);
-                    hdl.out.send(msg.buf.to_vec()).ok();
+            if let Ok(used) = cobs::decode_in_place(&mut carry) {
+                let mut bytes = [0u8; 2];
+                let (port, remain) = carry[..used].split_at(2);
+                bytes.copy_from_slice(port);
+                let port = u16::from_le_bytes(bytes);
+
+                if let Some(hdl) = manager.workers.get_mut(&port) {
+                    println!("Got {} bytes from port {}", remain.len(), port);
+                    hdl.out.send(remain.to_vec()).ok();
                 }
             } else {
                 println!("Bad decode!");

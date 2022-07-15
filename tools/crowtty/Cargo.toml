@@ -8,9 +8,8 @@ edition = "2021"
 [dependencies]
 serialport = "4.0.1"
 
-[dependencies.postcard]
-version = "0.7.3"
-features = ["use-std"]
+[dependencies.cobs]
+version = "0.2"
 
 [dependencies.serde]
 version = "1.0"
