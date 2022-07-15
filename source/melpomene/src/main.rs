@@ -6,7 +6,7 @@ use std::{
 use abi::bbqueue_ipc::BBBuffer;
 use clap::Parser;
 use melpomene::{
-    cli,
+    cli::{self, MelpomeneOptions},
     sim_drivers::{delay::Delay, tcp_serial::spawn_tcp_serial},
 };
 use mnemos_kernel::{
@@ -28,14 +28,14 @@ fn main() {
     let args = cli::Args::parse();
     args.tracing.setup_tracing();
     let _span = tracing::info_span!("Melpo").entered();
-    run_melpomene();
+    run_melpomene(args.melpomene);
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn run_melpomene() {
+async fn run_melpomene(opts: cli::MelpomeneOptions) {
     println!("========================================");
     let kernel = task::spawn_blocking(move || {
-        kernel_entry();
+        kernel_entry(opts);
     });
     tracing::info!("Kernel started.");
 
@@ -66,8 +66,8 @@ async fn run_melpomene() {
     tracing::error!("You've met with a terrible fate, haven't you?");
 }
 
-#[tracing::instrument(name = "Kernel", level = "info")]
-fn kernel_entry() {
+#[tracing::instrument(name = "Kernel", level = "info", skip(opts))]
+fn kernel_entry(opts: MelpomeneOptions) {
     // First, we'll do some stuff that later the linker script will do...
     let kernel_heap = Box::into_raw(Box::new([0u8; HEAP_SIZE]));
     let user_heap = Box::into_raw(Box::new([0u8; HEAP_SIZE]));
@@ -97,7 +97,7 @@ fn kernel_entry() {
                 // Create the buffer, and spawn the worker task, giving it one of the
                 // queue handles
                 let (mux_ring, tcp_ring) = new_bidi_channel(k.heap(), 4096, 4096).await;
-                spawn_tcp_serial(tcp_ring).await;
+                spawn_tcp_serial(opts.serial_addr, tcp_ring).await;
 
                 // Now, right now this is a little awkward, but what I'm doing here is spawning
                 // a new virtual mux, and configuring it with:
