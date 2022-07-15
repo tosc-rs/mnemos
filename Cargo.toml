@@ -1,10 +1,15 @@
 [workspace]
 members = [
-    "kernel",
-    "abi",
-    "mstd",
-    "spitebuf",
-    "melpomene",
+    # mnemOS source
+    "source/kernel",
+    "source/abi",
+    "source/mstd",
+    "source/spitebuf",
+    "source/melpomene",
+
+    # tools
+    "tools/crowtty",
+    "tools/dumbloader",
 ]
 
 [patch.crates-io.maitake]
