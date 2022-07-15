@@ -1,3 +1,7 @@
+[alias]
+melpomene = "run --bin melpomene --"
+melpo = "melpomene"
+
 [build]
 # Currently needed for `tokio-console` support.
 rustflags = ["--cfg", "tokio_unstable"]
