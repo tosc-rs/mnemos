@@ -95,7 +95,7 @@ fn kernel_entry() {
                 // Create the buffer, and spawn the worker task, giving it one of the
                 // queue handles
                 let (mux_ring, tcp_ring) = new_bidi_channel(k.heap(), 4096, 4096).await;
-                spawn_tcp_serial(tcp_ring);
+                spawn_tcp_serial(tcp_ring).await;
 
                 // Now, right now this is a little awkward, but what I'm doing here is spawning
                 // a new virtual mux, and configuring it with:
