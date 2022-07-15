@@ -4,9 +4,10 @@ use std::{
 };
 
 use abi::bbqueue_ipc::BBBuffer;
+use clap::Parser;
 use melpomene::{
+    cli,
     sim_drivers::{delay::Delay, tcp_serial::spawn_tcp_serial},
-    sim_tracing::setup_tracing,
 };
 use mnemos_kernel::{
     comms::{bbq::new_bidi_channel, kchannel::KChannel},
@@ -24,7 +25,8 @@ const HEAP_SIZE: usize = 192 * 1024;
 static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
 
 fn main() {
-    setup_tracing();
+    let args = cli::Args::parse();
+    args.tracing.setup_tracing();
     let _span = tracing::info_span!("Melpo").entered();
     run_melpomene();
 }
