@@ -9,14 +9,6 @@ use tracing_subscriber::filter;
     group = clap::ArgGroup::new("tracing-opts")
 )]
 pub struct TracingOpts {
-    /// Address of `modalityd or a modality reflector where trace data should be sent.
-    ///
-    /// This requires that Melpomene be built with the "trace-modality" feature
-    /// flag enabled.
-    #[cfg(feature = "trace-modality")]
-    #[clap(long)]
-    modality_addr: Option<SocketAddr>,
-
     /// Trace filter for `tracing-subscriber::fmt`.
     ///
     /// This requires that Melpomene be built with the "trace-fmt" feature flag
@@ -30,12 +22,43 @@ pub struct TracingOpts {
     )]
     env_filter: filter::EnvFilter,
 
+    #[cfg(feature = "trace-modality")]
+    #[clap(flatten)]
+    modality: ModalityOpts,
+
+    #[cfg(feature = "trace-console")]
+    #[clap(flatten)]
+    console: ConsoleOpts,
+}
+
+#[cfg(feature = "trace-modality")]
+#[derive(Debug, clap::Args)]
+#[clap(
+    next_help_heading = "TRACING OPTIONS (MODALITY)",
+    group = clap::ArgGroup::new("modality-opts")
+)]
+struct ModalityOpts {
+    /// Address of `modalityd or a modality reflector where trace data should be sent.
+    ///
+    /// This requires that Melpomene be built with the "trace-modality" feature
+    /// flag enabled.
+    #[clap(long = "modality-addr")]
+    addr: Option<SocketAddr>,
+}
+
+#[cfg(feature = "trace-console")]
+#[derive(Debug, clap::Args)]
+#[clap(
+    next_help_heading = "TRACING OPTIONS (TOKIO-CONSOLE)",
+    group = clap::ArgGroup::new("console-opts")
+)]
+struct ConsoleOpts {
     /// Address to bind the `tokio-console` listener on.
     ///
     /// This requires that Melpomene be built with the "trace-console" feature
     /// flag enabled.
-    #[clap(long, env = "TOKIO_CONSOLE_BIND", default_value_t = default_console_addr())]
-    console_addr: SocketAddr,
+    #[clap(long = "console-addr", env = "TOKIO_CONSOLE_BIND", default_value_t = default_console_addr())]
+    addr: SocketAddr,
 
     /// The interval between publishing updates to connected `tokio-console`
     /// clients.
@@ -43,22 +66,22 @@ pub struct TracingOpts {
     /// This requires that Melpomene be built with the "trace-console" feature
     /// flag enabled.
     #[clap(
-        long,
+        long = "console-publish-interval",
         env = "TOKIO_CONSOLE_PUBLISH_INTERVAL",
         default_value_t = duration_secs(1),
     )]
-    console_publish_interval: humantime::Duration,
+    publish_interval: humantime::Duration,
 
     /// How long to retain `tokio-console` data for completed tasks.
     ///
     /// This requires that Melpomene be built with the "trace-console" feature
     /// flag enabled.
     #[clap(
-        long,
+        long = "console-retention",
         env = "TOKIO_CONSOLE_RETENTION",
         default_value_t = duration_secs(3600),
     )]
-    console_retention: humantime::Duration,
+    retention: humantime::Duration,
 
     /// A file path to save a `tokio-console` recording to.
     ///
@@ -67,8 +90,8 @@ pub struct TracingOpts {
     ///
     /// This requires that Melpomene be built with the "trace-console" feature
     /// flag enabled.
-    #[clap(long, env = "TOKIO_CONSOLE_RECORD_PATH", value_hint = clap::ValueHint::FilePath)]
-    console_record_path: Option<PathBuf>,
+    #[clap(long = "console-record-path", env = "TOKIO_CONSOLE_RECORD_PATH", value_hint = clap::ValueHint::FilePath)]
+    record_path: Option<PathBuf>,
 }
 
 #[cfg(feature = "trace-fmt")]
@@ -117,12 +140,12 @@ impl TracingOpts {
         #[cfg(feature = "trace-console")]
         let subscriber = {
             let mut console = console_subscriber::ConsoleLayer::builder()
-                .publish_interval(self.console_publish_interval.into())
-                .retention(self.console_retention.into())
-                .server_addr(self.console_addr);
-            eprintln!("Serving tokio-console on {}", self.console_addr);
+                .publish_interval(self.console.publish_interval.into())
+                .retention(self.console.retention.into())
+                .server_addr(self.console.addr);
+            eprintln!("Serving tokio-console on {}", self.console.addr);
 
-            if let Some(path) = self.console_record_path.take() {
+            if let Some(path) = self.console.record_path.take() {
                 eprintln!("Saving tokio-console recording to {}", path.display());
                 console = console.recording_path(path);
             }
@@ -135,7 +158,7 @@ impl TracingOpts {
         let subscriber = {
             let mut options = tracing_modality::Options::new().with_name("melpomene");
 
-            if let Some(addr) = self.modality_addr {
+            if let Some(addr) = self.modality.addr {
                 eprintln!("Sending traces to Modality at {addr}");
                 options.set_server_address(addr);
             } else {
@@ -149,5 +172,3 @@ impl TracingOpts {
         subscriber.init();
     }
 }
-
-pub fn setup_tracing() {}
