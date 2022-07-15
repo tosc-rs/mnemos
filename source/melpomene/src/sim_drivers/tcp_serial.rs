@@ -1,9 +1,8 @@
 use mnemos_kernel::comms::bbq::BidiHandle;
 use std::net::SocketAddr;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
+    io::{self, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    time,
 };
 use tracing::{info_span, trace, warn, Instrument};
 
@@ -21,9 +20,7 @@ pub async fn spawn_tcp_serial(handle: BidiHandle) {
                             .await
                     }
                     Err(error) => {
-                        warn!(%error,
-                            "error accepting incoming TCP connection"
-                        );
+                        warn!(%error, "Error accepting incoming TCP connection");
                         return;
                     }
                 };
@@ -34,11 +31,11 @@ pub async fn spawn_tcp_serial(handle: BidiHandle) {
 }
 
 async fn process_stream(handle: &mut BidiHandle, mut stream: TcpStream) {
-    const READ_TIMEOUT: time::Duration = time::Duration::from_millis(25);
     loop {
-        // TODO(eliza): it would be nice to have separate tasks waiting for
-        // reads/writes...
+        // Wait until either the socket has data to read, or the other end of
+        // the BBQueue has data to write.
         tokio::select! {
+            // The kernel wants to write something.
             outmsg = handle.consumer().read_grant() => {
                 trace!(len = outmsg.len(), "Got outgoing message",);
                 let wall = stream.write_all(&outmsg);
@@ -46,28 +43,33 @@ async fn process_stream(handle: &mut BidiHandle, mut stream: TcpStream) {
                 let len = outmsg.len();
                 outmsg.release(len);
             }
-            mut in_grant = handle.producer().send_grant_max(256) => {
-                match time::timeout(READ_TIMEOUT, stream.read(&mut in_grant)).await {
-                    Ok(Ok(used)) if used == 0 => {
+            // The socket has more bytes to read.
+            _ = stream.readable() => {
+                let mut in_grant = handle.producer().send_grant_max(256).await;
+
+                // Try to read data, this may still fail with `WouldBlock`
+                // if the readiness event is a false positive.
+                match stream.try_read(&mut in_grant) {
+                    Ok(used) if used == 0 => {
                         warn!("Empty read, socket probably closed.");
                         return;
-                    }
-                    Ok(Ok(used)) => {
+                    },
+                    Ok(used) => {
                         trace!(len = used, "Got incoming message",);
                         in_grant.commit(used);
-                    }
-                    // The outer error indicates a timeout; that's fine, just
-                    // nothing to read right now.
-                    Err(_) => {
-                        trace!("read timed out after {:?}", READ_TIMEOUT);
-                    }
-                    // The inner error indicates that the read actually failed.
-                    Ok(Err(error)) => {
-                        warn!(%error, "error reading from TCP stream");
+                    },
+                    // WouldBlock here indicates that the `readable()` event was
+                    // spurious. That's fine, just continue waiting for the
+                    // sender to become ready or the socket to be readable again.
+                    Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                        continue;
+                    },
+                    // Other errors indicate something is actually wrong.
+                    Err(error) => {
+                        warn!(%error, "Error reading from TCP stream");
                         return;
-                    }
+                    },
                 }
-
             }
         }
     }
