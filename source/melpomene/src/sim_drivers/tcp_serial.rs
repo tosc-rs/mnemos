@@ -6,9 +6,10 @@ use tokio::{
 };
 use tracing::{info_span, trace, warn, Instrument};
 
-pub async fn spawn_tcp_serial(handle: BidiHandle) {
-    let ip = SocketAddr::from(([127, 0, 0, 1], 9999));
+pub async fn spawn_tcp_serial(ip: SocketAddr, handle: BidiHandle) {
     let listener = TcpListener::bind(ip).await.unwrap();
+    tracing::info!("TCP serial port driver listening on {ip}");
+
     let _ = tokio::spawn(
         async move {
             let mut handle = handle;
@@ -28,6 +29,10 @@ pub async fn spawn_tcp_serial(handle: BidiHandle) {
         }
         .instrument(info_span!("TCP Serial", ?ip)),
     );
+}
+
+pub(crate) fn default_addr() -> SocketAddr {
+    SocketAddr::from(([127, 0, 0, 1], 9999))
 }
 
 async fn process_stream(handle: &mut BidiHandle, mut stream: TcpStream) {
