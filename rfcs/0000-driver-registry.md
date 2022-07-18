@@ -111,10 +111,7 @@ Something like:
 
 ```rust
 // This is opaque to the driver
-enum ReplyTo<U>
-where
-    U: Serialize,
-{
+enum ReplyTo<U> {
     Kernel(KChannel<Result<U>>),
     Userspace {
         nonce: u32,
