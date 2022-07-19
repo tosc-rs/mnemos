@@ -63,7 +63,6 @@ impl Commander {
 }
 
 pub struct FrameChunk {
-    kernel: &'static Kernel,
     display: SimulatorDisplay::<BinaryColor>,
     buffer: HeapArray<MaybeUninit<u8>>,
 }
@@ -89,17 +88,19 @@ pub struct WindowHandle {
 }
 
 impl FrameChunk {
-    pub async fn new( 
+    pub async fn new(
         kernel: &'static Kernel,
-        display: SimulatorDisplay::<BinaryColor> 
+        width: u32,
+        height: u32,
     ) -> KProducer<Msg> {
-        let buffer = kernel.heap().allocate_array_with(MaybeUninit::<u8>::uninit, FRAME_BUFFER_SIZE).await;
+        let buffer_size = (width * height * 2) as usize;
+        let display = SimulatorDisplay::<BinaryColor>::new(Size::new(width, height));
+        let buffer = kernel.heap().allocate_array_with(MaybeUninit::<u8>::uninit, buffer_size).await;
         let imutex = kernel
             .heap()
-            .allocate_arc(Mutex::new(FrameChunk {
-                kernel,
-                display,
-                buffer,
+            .allocate_arc(Mutex::new(FrameChunk { 
+                display, 
+                buffer, 
             }))
             .await;
         let (cmd_prod, cmd_cons) = KChannel::new_async(kernel, NUM_WINDOWS).await.split();

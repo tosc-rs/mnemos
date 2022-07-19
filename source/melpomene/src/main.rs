@@ -104,14 +104,13 @@ fn kernel_entry(opts: MelpomeneOptions) {
                 
                 // Create a virtual display that the graphics driver will talk to. For now I've left it at 320 x 240. Later number of rows and columns 
                 // can be made configurable. 
-                let mut display = SimulatorDisplay::<BinaryColor>::new(Size::new(320, 240));
-
+                //
                 // The virtual display is passed to FrameChunk, which after spawning returns a KProducer which we use to send commands
                 // For now, we use it just open a window, and display some text.
-                let new_frame = FrameChunk::new(k, display).await;
+                let fprod  = FrameChunk::new(k, 320, 240).await;
 
                 // Kproducer to send requests to the graphics driver
-                let (eprod, econs) = KChannel::<Result<Resp, ()>>::new_async(k, 1)
+                let (mprod, mcons) = KChannel::<Result<Resp, ()>>::new_async(k, 1)
                     .await
                     .split();
 
@@ -119,16 +118,16 @@ fn kernel_entry(opts: MelpomeneOptions) {
                 let win_req = Req::OpenWindow;
 
                 // Send the request with the KProducer handle received above
-                new_frame.enqueue_async( Msg{
+                fprod.enqueue_async( Msg{
                     req: win_req,
-                    resp: eprod.clone(),
+                    resp: mprod.clone(),
                 }).await
                 .map_err(drop)
                 .unwrap();
 
                 // Response from driver confirms whether the window as opened or not.
                 // At this point a window with some text should have opened
-                let win_handle = econs.dequeue_async().await.unwrap().unwrap();
+                let win_handle = mcons.dequeue_async().await.unwrap().unwrap();
 
                 let _wh = match win_handle {
                     Resp::WindowOpened(w) => w,
