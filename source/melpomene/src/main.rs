@@ -4,7 +4,7 @@ use std::{
 };
 
 use abi::bbqueue_ipc::BBBuffer;
-use clap::Parser;
+use clap::{Parser, Command};
 use melpomene::{
     cli::{self, MelpomeneOptions},
     sim_drivers::{delay::Delay, tcp_serial::spawn_tcp_serial},
@@ -12,6 +12,7 @@ use melpomene::{
 use mnemos_kernel::{
     comms::{bbq::new_bidi_channel, kchannel::KChannel},
     drivers::serial_mux::{Message, Request, Response, SerialMux},
+    drivers::graphics_driver::{Msg, Req, Resp, FrameChunk},
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -19,9 +20,19 @@ use tokio::{
     time::{self, Duration},
 };
 
+use embedded_graphics::{
+    pixelcolor::BinaryColor,
+    prelude::*,
+    primitives::{Circle, Line, Rectangle, PrimitiveStyle},
+    mono_font::{ascii::FONT_6X9, MonoTextStyle},
+    text::Text,
+};
+
+use embedded_graphics_simulator::{BinaryColorTheme, SimulatorDisplay, Window, OutputSettingsBuilder};
+
 use tracing::Instrument;
 
-const HEAP_SIZE: usize = 192 * 1024;
+const HEAP_SIZE: usize = 384 * 1024;
 static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
 
 fn main() {
@@ -90,6 +101,43 @@ fn kernel_entry(opts: MelpomeneOptions) {
             let dummy_fut = async move {
                 // Delay for one second, just for funsies
                 Delay::new(Duration::from_secs(1)).await;
+                
+                // Create a virtual display that the graphics driver will talk to. For now I've left it at 320 x 240. Later number of rows and columns 
+                // can be made configurable. 
+                let mut display = SimulatorDisplay::<BinaryColor>::new(Size::new(320, 240));
+
+                // The virtual display is passed to FrameChunk, which after spawning returns a KProducer which we use to send commands
+                // For now, we use it just open a window, and display some text.
+                let new_frame = FrameChunk::new(k, display).await;
+
+                // Kproducer to send requests to the graphics driver
+                let (eprod, econs) = KChannel::<Result<Resp, ()>>::new_async(k, 1)
+                    .await
+                    .split();
+
+                // Request a window. This serves as the display screen
+                let win_req = Req::OpenWindow;
+
+                // Send the request with the KProducer handle received above
+                new_frame.enqueue_async( Msg{
+                    req: win_req,
+                    resp: eprod.clone(),
+                }).await
+                .map_err(drop)
+                .unwrap();
+
+                // Response from driver confirms whether the window as opened or not.
+                // At this point a window with some text should have opened
+                let win_handle = econs.dequeue_async().await.unwrap().unwrap();
+
+                let _wh = match win_handle {
+                    Resp::WindowOpened(w) => w,
+                };
+
+                // TODO: implement methods to send update commands over the KChannel with above 
+                // window handle
+
+
 
                 // Set up the bidirectional, async bbqueue channel between the TCP port
                 // (acting as a serial port) and the virtual serial port mux.
@@ -171,11 +219,12 @@ fn kernel_entry(opts: MelpomeneOptions) {
                 })
                 .await;
 
-                // Now we juse send out data every second
                 loop {
                     Delay::new(Duration::from_secs(1)).await;
                     p1.send(b"hello\r\n").await;
                 }
+                
+
             }
             .instrument(tracing::info_span!("Loopback"));
 

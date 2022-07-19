@@ -8,6 +8,12 @@ edition = "2021"
 [dependencies.tracing]
 version = "0.1.35"
 
+[dependencies.embedded-graphics]
+version = "0.7.1"
+
+[dependencies.embedded-graphics-simulator]
+version = "0.3.0"
+
 [dependencies.tracing-subscriber]
 version = "0.3.14"
 features = ["registry"]
