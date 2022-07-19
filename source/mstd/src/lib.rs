@@ -13,12 +13,6 @@ extern "Rust" {
     fn entry() -> !;
 }
 
-#[link_section = ".anachro_table.entry_point"]
-#[no_mangle]
-#[used]
-#[doc(hidden)]
-pub static __ENTRY_POINT: unsafe fn() -> ! = entry;
-
 // Provide a basic panic handler. In the future, this will probably
 // change to one or both of:
 //
