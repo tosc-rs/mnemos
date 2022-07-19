@@ -28,19 +28,50 @@ This change proposes inntroducing a **registry** of drivers, maintained by the k
         * A pre-defined **UUID**, that uniquely defines a "service" that the driver fulfills, e.g. the ability to process a given command type
         * The `TypeId` of that message
     * The **Value** would be contain two things:
-        * a `KProducer<T>`, where `type_id::<T>()` matches the `TypeId` in the key
-        * Optionally, if the driver should process messages from userspace, it should provide a function with the signature `fn(&[u8]) -> Result<T>`, where `type_id::<T>()` matches the `TypeId` in the key
+        * A channel that can be used for sending requests TO a driver
+        * If the driver supports serializable/deserializable types, it will also contain a function that can be used to deserialize and send messages via the driver channel.
 * Drivers would be responsible for registering themselves at `init()` time
 * All `(Uuid, TypeId)` keys must be unique.
-* The registry would have the following APIs:
-    * `kernel.registry().set::<T>(&Uuid, &KProducer<T>) -> Result<()>`
-    * `kernel.registry().get::<T>(&Uuid) -> Option<KProducer<T>>`
-        * This should have a blocking version (that returns an Option)
-        * And also an async version (that just returns a KProducer)
+
+> **NOTE**: Large portions of this proposal were prototyped in the [`typed-poc`]
+> repository. Some details were approximated, as this was developed with the
+> standard library instead of MnemOS types for ease.
+
+[`typed-poc`]: https://github.com/jamesmunns/typeid-poc
 
 ## Details
 
 Some details about why parts of this proposal was chosen:
+
+### The Message Type
+
+All drivers will use a standardized message type with two generic parameters, `T` and `U`. `T` is the type of the **request** to the driver, while `U` is the type of the **response** from the driver.
+
+```rust
+struct Message<T, U> {
+    msg: T,
+    reply: ReplyTo<U>,
+}
+```
+
+This message type contains a `ReplyTo<U>` field, which can be used to reply to the sender of the **request**. This serves as the "return address" of a request. This enum will look roughly as follows:
+
+```rust
+enum ReplyTo<U> {
+    // This can be used to reply directly to another kernel entity,
+    // without a serialization step
+    Kernel(KProducer<U>),
+
+    // This can be used to reply to userspace. Responses are serialized
+    // and sent over the bbq::MpscProducer
+    Userspace {
+        nonce: u32,
+        outgoing: bbq::MpscProducer,
+    },
+}
+```
+
+The driver is responsible for definining the `T` and `U` request/response types associated with a given UUID.
 
 ### Using `Uuid`s to identify drivers
 
@@ -68,7 +99,7 @@ In order to avoid this, the `get` function ALSO takes a `TypeId`, which is a uni
 
 This WON'T necessarily work for userspace, or if MnemOS ever gets dynamically loaded drivers, which may be compiled with a different version of Rust, or potentially not Rust at all.
 
-For this reason, non-static users of these drivers will need to use the serialization interface instead. Userspace would send a serialized message to the expected UUID. The kernel would then use the associated `fn(&[u8]) -> Result<T>` to deserialize the message, and send it to the associated channel
+For this reason, non-static users of these drivers will need to use the serialization interface instead. Userspace would send a serialized message to the expected UUID. The kernel would then use the associated deserialization function to deserialize the message, and send it to the associated channel
 
 ### Uniqueness of drivers
 
@@ -88,53 +119,261 @@ Although there are other communication primitives available ready, such as the v
 * The client sends a "register port" message
 * On success, the client gets back a `bbq` channel handle from the driver
 
-This also ONLY provides a "one way" interface, however it is possible to define a KChannel message type that has a "reply address" by providing a `KProducer<Result<U>>` handle in the message itself. This is relatively low cost, because KChannel/KProducers are reference counted and heap allocated types.
+### Interfaces: Kernel Only
 
-# Wait, how do you respond to userspace?
+If a type used in the channel does NOT support serialization/deserialization, it is limited to only being usable in the kernel, where this step is not required.
 
-If the driver takes:
+The registry would provide two main functions in this case:
 
 ```rust
-struct Message {
-    inner: Inner,
-    reply: KProducer<Result<Response>>,
+impl Registry {
+    // Register a given KProducer for a (uuid, T, U) pair
+    fn set_konly<T, U>(
+        &mut self,
+        uuid: Uuid,
+        kch: &KProducer<Message<T, U>>,
+    ) -> Result<(), ()> { /* ... */ }
+
+    // Obtain a given KProducer for a (uuid, T, U) pair
+    fn get_konly<T, U>(
+        &self,
+        uuid: Uuid,
+    ) -> Option<KProducer<Message<T, U>>> { /* ... */ }
 }
 ```
 
-How does the reply channel "get" the response?
-
-Really, there needs to be some kind of task that does user <-> kernelspace translation.
-
-I need some kind of official reply mechanism.
-
-Something like:
+This code would be used as such:
 
 ```rust
-// This is opaque to the driver
-enum ReplyTo<U> {
-    Kernel(KChannel<Result<U>>),
-    Userspace {
-        nonce: u32,
-        ring_producer: MpscProducer,
+struct SerialPortReq {
+    // ...
+}
+
+struct SerialPortResp {
+    // ...
+}
+
+// We have a given "SerialPort" driver
+impl SerialPort {
+    type Request = SerialPortReq;
+    type Response = Result<SerialPortResp, ()>;
+    type Handle = KProducer<Message<Self::Request, Self::Response>>;
+    const UUID: Uuid = ...;
+}
+
+let serial_port = SerialPort::new();
+
+// In `init()`, the SerialPort is registered
+registry.set_konly::<SerialPort::Request, SerialPort::Response>(
+    SerialPort::UUID,
+    serial_port.producer(),
+).unwrap();
+
+// Later, in another driver, we attempt to retrieve this driver's handle
+struct SerialUser {
+    hdl: SerialPort::Handle,
+
+    // These are used for the "reply address"
+    resp_prod: KProducer<SerialPort::Response>,
+    resp_cons: KConsumer<SerialPort::Response>,
+}
+
+let user = SerialUser {
+    hdl: registry.get_konly(SerialPort::UUID).unwrap(),
+};
+
+// Send a message to the driver:
+user.hdl.enqueue_async(Message {
+    msg: SerialPortReq::get_port(0),
+    reply_to: ReplyTo::Kernel(user.resp_prod.clone()),
+}).await.unwrap();
+
+// Then get a reply:
+let resp = user.resp_cons.dequeue_async().await.unwrap();
+```
+
+## Interface: Userspace
+
+If a given type DOES implement Serialize/Deserialize, it can also be used for communication with userspace.
+
+The registry provides two additional functions in this case:
+
+```rust
+// This is a type that is capable of deserializing and processing
+// messages for a given UUID type
+impl UserspaceHandler {
+    fn process_msg(
+        &self,
+        user_msg: UserMessage<'_>,
+        user_ring: &bbq::MpscProducer,
+    ) -> Result<(), ()> { /* ... */ }
+}
+
+impl Registry {
+    // Register a given KProducer for a (uuid, T, U) pair
+    fn set<T, U>(
+        &mut self,
+        uuid: Uuid,
+        kch: &KProducer<Message<T, U>>,
+    ) -> Result<(), ()>
+    where
+        T: Serialize + DeserializeOwned,
+        U: Serialize + DeserializeOwned,
+    {
+        /* ... */
+    }
+
+    // Obtain a userspace handler for the given UUID
+    fn get_userspace_handler(
+        &self,
+        uuid: Uuid,
+    ) -> Option<UserspaceHandler>;
+}
+```
+
+The `get_userspace_handler()` function does NOT take the `T` and `U` types as parameters. If the registry entry for the given `uuid` was added through the `set_konly` instead of the `set` interface, the `get_userspace_handler()` function will never return a handler for that `uuid`.
+
+This code would be used as follows:
+
+```rust
+#[derive(Serialize, Deserialize)] // Added!
+struct SerialPortReq {
+    // ...
+}
+
+#[derive(Serialize, Deserialize)] // Added!
+struct SerialPortResp {
+    // ...
+}
+
+// We have a given "SerialPort" driver
+impl SerialPort {
+    type Request = SerialPortReq;
+    type Response = Result<SerialPortResp, ()>;
+    type Handle = KProducer<Message<Self::Request, Self::Response>>;
+    const UUID: Uuid = ...;
+}
+
+let serial_port = SerialPort::new();
+
+// In `init()`, the SerialPort is registered, this time with `set` instead
+// of `set_only`.
+registry.set::<SerialPort::Request, SerialPort::Response>(
+    SerialPort::UUID,
+    &serial_port.producer(),
+).unwrap();
+
+// This is generally the shape of user request messages "on the wire" between
+// userspace and kernel space.
+struct UserMessage<'a> {
+    uuid: Uuid,
+    nonce: u32,
+    payload: &'a [u8],
+}
+
+// Lets say that we have the User Ring worker
+impl UserRing {
+    async fn get_message<'a>(&'a self) -> UserMessage<'a> { /* ... */ }
+    fn producer(&self) -> &bbq::MpscProducer { /* ... */ }
+}
+
+let user_ring = UserRing::new();
+
+// okay, first we get a message off the wire
+let ser_request = user_ring.get_message().await;
+
+// Now we get the handler for the given uuid on the wire:
+let user_handler = registry.get_userspace_handler(ser_request.uuid).unwrap();
+
+// Now we use that handler to process the message:
+user_handler.process_msg(ser_request, user_ring.producer()).unwrap();
+
+// Once the user handler processes the message, it will send the serialized
+// response directly into the userspace buffer.
+```
+
+### Implementing the `UserspaceHandler`
+
+There is one main trick used to generate the `UserspaceHandler` described above is that the `set()` function is used to generate a monomorphized free function that can handle the deserialization.
+
+The contents of the `UserspaceHandler` will look roughly like this:
+
+```rust
+// This is the "guts" of a leaked `KProducer`. It has been type erased
+//   from: MpMcQueue<Message< T,  U>, sealed::SpiteData<Message< T,  U>>>
+//   into: MpMcQueue<Message<(), ()>, sealed::SpiteData<Message<(), ()>>>
+type ErasedKProducer = *const MpMcQueue<Message<(), ()>, sealed::SpiteData<Message<(), ()>>>;
+type TypedKProducer<T, U> = *const MpMcQueue<Message<T, U>, sealed::SpiteData<Message<T, U>>>;
+
+struct UserspaceHandler {
+    req_producer_leaked: ErasedKProducer
+    req_deser: unsafe fn(
+        UserMessage<'_>,
+        ErasedKProducer,
+        &bbq::MpscProducer,
+    ) -> Result<(), ()>,
+}
+```
+
+The `req_deser` function will look something like this:
+
+```rust
+type TypedKProducer<T, U> = *const MpMcQueue<Message<T, U>, sealed::SpiteData<Message<T, U>>>;
+
+unsafe fn map_deser<T, U>(
+    umsg: UserMessage<'_>,
+    req_tx: ErasedKProducer,
+    user_resp: &bbq::MpscProducer,
+) -> Result<(), ()>
+where
+    T: Serialize + DeserializeOwned + 'static,
+    U: Serialize + DeserializeOwned + 'static,
+{
+    // Un-type-erase the producer channel
+    let req_tx = req_tx.cast::<TypedKProducer<T, U>>();
+
+    // Deserialize the request, if it doesn't have the right contents, deserialization will fail.
+    let u_payload: T = postcard::from_bytes(umsg.req_bytes).map_err(drop)?;
+
+    // Create the message type to be sent on the channel
+    let msg: Message<T, U> = Message {
+        msg: u_payload,
+        reply: ReplyTo::Userspace {
+            nonce: umsg.nonce,
+            outgoing: user_resp.clone(),
+        },
+    };
+
+    // Send the message, and report any failures
+    (*req_tx).enqueue_sync(msg).map_err(drop)
+}
+```
+
+The fun trick here is that while `map_deser` is generic, once we turbofish it, it is no longer generic, because we've specified types! Using psuedo syntax:
+
+```rust
+// without the turbofish, `map_deser` as a function has the type (not real syntax):
+let _: fn<T, U>(UserMessage<'_>, ErasedKProducer, &bbq::MpscProducer) -> Result<(), ()> = map_deser;
+
+// WITH the turbofish, `map_deser` as a function has the type:
+let _: fn(UserMessage<'_>, ErasedKProducer, &bbq::MpscProducer) -> Result<(), ()> = map_deser::<T, U>;
+```
+
+This means we now have a type erased function handler, that still knows (internally) what types it should use! That means we can put a bunch of them
+into the same structure.
+
+With this, we can now implement the `process_msg()` function shown above:
+
+```rust
+impl UserspaceHandler {
+    fn process_msg(
+        &self,
+        user_msg: UserMessage<'_>,
+        user_ring: &bbq::MpscProducer,
+    ) -> Result<(), ()> {
+        unsafe {
+            self.req_deser(user_msg, self.req_producer_leaked, user_ring)
+        }
     }
 }
-
-impl<U> ReplyTo<U>
-where
-    U: Serialize,
-{
-    // Automatically handles the reply
-    async fn reply(self, reply: Result<U>);
-}
-
-impl<U> ReplyTo<U> {
-    // Replies to the kernel, sends a "not supported"
-    // error back to userspace
-    async fn reply_konly(self, reply: Result<U>);
-}
 ```
-
-But this isn't great, because it allows the driver to *receive* messages and process them, but not *reply*.
-
-How can I enforce that? Have two registries?
-
