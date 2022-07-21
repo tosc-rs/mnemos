@@ -11,7 +11,8 @@ use melpomene::{
 };
 use mnemos_kernel::{
     comms::{bbq::new_bidi_channel, kchannel::KChannel},
-    drivers::serial_mux::{Message, Request, Response, SerialMux},
+    drivers::serial_mux::{Request, Response, SerialMux},
+    registry::Message,
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -134,8 +135,8 @@ fn kernel_entry(opts: MelpomeneOptions) {
                 // a bunch, we could clone the producer.
                 mux_hdl
                     .enqueue_async(Message {
-                        req: request_0,
-                        resp: kprod.clone(),
+                        msg: request_0,
+                        reply: kprod.clone(),
                     })
                     .await
                     .map_err(drop)

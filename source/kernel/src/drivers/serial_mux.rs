@@ -1,23 +1,19 @@
 use mnemos_alloc::containers::{HeapArc, HeapArray, HeapFixedVec};
 use tracing::{debug, warn};
+use mnemos_registry::{RegisteredDriver, Uuid, uuid};
 
 use crate::{
     comms::{
         bbq,
-        kchannel::{KChannel, KConsumer, KProducer},
+        kchannel::{KChannel, KConsumer, KProducer}, rosc::Rosc,
     },
-    Kernel,
+    Kernel, registry::{Message, HMessage},
 };
 use maitake::sync::Mutex;
 
 struct PortInfo {
     pub port: u16,
     pub upstream: bbq::SpscProducer,
-}
-
-pub struct Message {
-    pub req: Request,
-    pub resp: KProducer<Result<Response, ()>>,
 }
 
 pub enum Request {
@@ -29,7 +25,7 @@ pub enum Response {
 }
 
 struct Commander {
-    cmd: KConsumer<Message>,
+    cmd: KConsumer<Message<SerialMux>>,
     out: bbq::MpscProducer,
     mux: HeapArc<Mutex<SerialMux>>,
 }
@@ -38,17 +34,14 @@ impl Commander {
     async fn run(self) {
         loop {
             let msg = self.cmd.dequeue_async().await.unwrap();
-            let Message { req, resp } = msg;
+            let Message { msg: req, reply } = msg;
             match req {
-                Request::RegisterPort { port_id, capacity } => {
+                HMessage { body: Request::RegisterPort { port_id, capacity } } => {
                     let res = {
                         let mut mux = self.mux.lock().await;
                         mux.register_port(port_id, capacity, &self.out).await
-                    };
-                    resp.enqueue_async(res.map(|ph| Response::PortRegistered(ph)))
-                        .await
-                        .map_err(drop)
-                        .unwrap();
+                    }.map(Response::PortRegistered);
+                    reply.reply_konly(res).await.unwrap();
                 }
             }
         }
@@ -209,13 +202,26 @@ impl PortHandle {
     }
 }
 
+impl RegisteredDriver for SerialMux {
+    type Request = Request;
+    type Response = Response;
+    const UUID: Uuid = uuid!("54c983fa-736f-4223-b90d-c4360a308647");
+}
+
+pub struct SerialMuxHandle {
+    prod: KProducer<Message<SerialMux>>,
+    reply: Rosc<Response>,
+}
+
 impl SerialMux {
-    pub async fn new(
+    pub async fn register(
         kernel: &'static Kernel,
         max_ports: usize,
         max_frame: usize,
+
+        // TODO: Replace with registry::get()
         serial_port: bbq::BidiHandle,
-    ) -> KProducer<Message> {
+    ) -> SerialMuxHandle {
         let (sprod, scons) = serial_port.split();
         let sprod = sprod.into_mpmc_producer().await;
 
@@ -254,6 +260,15 @@ impl SerialMux {
             })
             .await;
 
-        cmd_prod
+
+        kernel.with_registry(|reg| {
+            reg.set_konly::<SerialMux>(&cmd_prod)
+        }).await.expect("Only registered once");
+
+        SerialMuxHandle {
+            prod: cmd_prod,
+            reply: Rosc::new_async(kernel).await,
+        }
     }
 }
+

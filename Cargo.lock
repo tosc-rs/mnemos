@@ -299,6 +299,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "const_format"
+version = "0.2.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "939dc9e2eb9077e0679d2ce32de1ded8531779360b003b4a972a7a39ec263495"
+dependencies = [
+ "const_format_proc_macros",
+]
+
+[[package]]
+name = "const_format_proc_macros"
+version = "0.2.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef196d5d972878a48da7decb7686eded338b4858fbabeed513d63a7c98b2b82d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "unicode-xid",
+]
+
+[[package]]
 name = "cordyceps"
 version = "0.3.0"
 source = "git+https://github.com/hawkw/mycelium.git?rev=23db951d19cf410e07ed4c2c47ead20d2b592d21#23db951d19cf410e07ed4c2c47ead20d2b592d21"
@@ -437,7 +457,7 @@ dependencies = [
 name = "dumbloader"
 version = "0.1.0"
 dependencies = [
- "postcard",
+ "postcard 0.7.3",
  "serde",
 ]
 
@@ -963,7 +983,7 @@ dependencies = [
  "mnemos",
  "mnemos-abi",
  "mnemos-std",
- "postcard",
+ "postcard 0.7.3",
  "tokio",
  "tracing 0.1.35",
  "tracing-modality",
@@ -1039,7 +1059,8 @@ dependencies = [
  "maitake",
  "mnemos-abi",
  "mnemos-alloc",
- "postcard",
+ "mnemos-registry",
+ "postcard 1.0.1",
  "serde",
  "spitebuf",
  "tracing 0.1.35",
@@ -1050,7 +1071,7 @@ name = "mnemos-abi"
 version = "0.1.0"
 dependencies = [
  "defmt",
- "postcard",
+ "postcard 0.7.3",
  "serde",
 ]
 
@@ -1065,6 +1086,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "mnemos-registry"
+version = "0.1.0"
+dependencies = [
+ "uuid 1.1.2",
+]
+
+[[package]]
 name = "mnemos-std"
 version = "0.1.0"
 dependencies = [
@@ -1074,7 +1102,7 @@ dependencies = [
  "maitake",
  "mnemos-abi",
  "mnemos-alloc",
- "postcard",
+ "postcard 0.7.3",
 ]
 
 [[package]]
@@ -1284,10 +1312,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "postcard"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41f5465c5e5a38e04552d8fb53ebcf4f58124ab3bbd0c02add043b33f82792e5"
+dependencies = [
+ "cobs",
+ "const_format",
+ "heapless",
+ "postcard-derive",
+ "serde",
+]
+
+[[package]]
 name = "postcard-cobs"
 version = "0.1.5-pre"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7c68cb38ed13fd7bc9dd5db8f165b7c8d9c1a315104083a2b10f11354c2af97f"
+
+[[package]]
+name = "postcard-derive"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e9a87b20c0f64e4a835a7f006bff0bbcefed3bf67828fd4608579e6b51e1ebd0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
 
 [[package]]
 name = "ppv-lite86"
@@ -2074,6 +2126,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "unicode-xid"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "957e51f3646910546462e67d5f7599b9e4fb8acdd304b087a6494730f9eebf04"
+
+[[package]]
 name = "url"
 version = "2.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2101,6 +2159,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd6469f4314d5f1ffec476e05f17cc9a78bc7a27a6a857842170bdf8d6f98d2f"
 dependencies = [
  "getrandom",
+ "serde",
 ]
 
 [[package]]

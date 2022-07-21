@@ -14,19 +14,20 @@ use abi::{
     syscall::{DriverKind, KernelResponse, UserRequest},
 };
 use comms::kchannel::KChannel;
+use registry::Registry;
 use core::{
     cell::UnsafeCell,
     ops::{Deref, DerefMut},
     sync::atomic::{AtomicUsize, Ordering},
 };
-use maitake::task::Task as MaitakeTask;
+use maitake::{task::Task as MaitakeTask, sync::{Mutex, MutexGuard}};
 use maitake::{
     self,
     scheduler::{StaticScheduler, TaskStub},
     task::Storage,
 };
 use mnemos_alloc::{
-    containers::{HeapBox, HeapFixedVec},
+    containers::HeapBox,
     heap::AHeap,
 };
 use tracing::info;
@@ -51,21 +52,15 @@ pub struct Message {
 }
 
 pub struct Kernel {
-    status: AtomicUsize,
     // Items that do not require a lock to access, and must only
     // be accessed with shared refs
     inner: KernelInner,
     // Items that require mutex'd access, and allow mutable access
-    inner_mut: UnsafeCell<KernelInnerMut>,
+    registry: Mutex<Registry>,
     heap: NonNull<AHeap>,
 }
 
 unsafe impl Sync for Kernel {}
-
-pub struct DriverHandle {
-    pub kind: DriverKind,
-    pub queue: KChannel<Message>,
-}
 
 pub struct KernelInner {
     u2k_ring: BBBuffer,
@@ -74,15 +69,7 @@ pub struct KernelInner {
     user_reply: KChannel<KernelResponse>,
 }
 
-pub struct KernelInnerMut {
-    drivers: HeapFixedVec<DriverHandle>,
-}
-
 impl Kernel {
-    const INITIALIZING: usize = 1;
-    const INIT_IDLE: usize = 2;
-    const INIT_LOCK: usize = 3;
-
     pub unsafe fn new(settings: KernelSettings) -> Result<HeapBox<Self>, &'static str> {
         info!(
             start = ?settings.heap_start,
@@ -92,9 +79,7 @@ impl Kernel {
         let (nn_heap, mut guard) = AHeap::bootstrap(settings.heap_start, settings.heap_size)
             .map_err(|_| "failed to initialize heap")?;
 
-        let drivers = guard
-            .alloc_fixed_vec(settings.max_drivers)
-            .map_err(|_| "failed to allocate driver vec")?;
+        let registry = registry::Registry::new(&mut guard, settings.max_drivers);
         let (nn_u2k_buf, u2k_len) = guard
             .alloc_box_array_with(|| 0, settings.u2k_size)
             .map_err(|_| "failed to allocate u2k ring buf")?
@@ -130,18 +115,14 @@ impl Kernel {
             scheduler,
             user_reply: KChannel::new(&mut guard, settings.user_reply_max_ct),
         };
-        let inner_mut = KernelInnerMut { drivers };
 
         let new_kernel = guard
             .alloc_box(Kernel {
-                status: AtomicUsize::new(Kernel::INITIALIZING),
                 inner,
-                inner_mut: UnsafeCell::new(inner_mut),
+                registry: Mutex::new(registry),
                 heap: nn_heap,
             })
             .map_err(|_| "failed to allocate new kernel box")?;
-
-        new_kernel.status.store(Self::INIT_IDLE, Ordering::SeqCst);
 
         Ok(new_kernel)
     }
@@ -159,35 +140,6 @@ impl Kernel {
         }
     }
 
-    fn inner_mut(&'static self) -> Result<KimGuard, ()> {
-        self.status
-            .compare_exchange(
-                Self::INIT_IDLE,
-                Self::INIT_LOCK,
-                Ordering::SeqCst,
-                Ordering::SeqCst,
-            )
-            .map_err(drop)?;
-
-        Ok(KimGuard {
-            kim: NonNull::new(self as *const Self as *mut Self).ok_or(())?,
-        })
-    }
-
-    pub fn register_driver(&'static self, hdl: DriverHandle) -> Result<(), DriverHandle> {
-        let mut guard = match self.inner_mut() {
-            Ok(g) => g,
-            Err(_) => return Err(hdl),
-        };
-
-        // TODO: for now we only support a single instance of each driver
-        if guard.drivers.iter().any(|d| d.kind == hdl.kind) {
-            return Err(hdl);
-        }
-
-        guard.drivers.push(hdl)
-    }
-
     pub fn heap(&'static self) -> &'static AHeap {
         unsafe { self.heap.as_ref() }
     }
@@ -198,7 +150,7 @@ impl Kernel {
 
         // process mailbox messages
         let inner = self.inner();
-        let inner_mut = self.inner_mut().unwrap();
+        let registry = self.registry.try_lock().unwrap();
         let u2k_buf: *mut BBBuffer = &self.inner.u2k_ring as *const _ as *mut _;
         let k2u_buf: *mut BBBuffer = &self.inner.k2u_ring as *const _ as *mut _;
         let u2k: FrameConsumer<'static> = unsafe { BBBuffer::take_framed_consumer(u2k_buf) };
@@ -208,16 +160,17 @@ impl Kernel {
         while let Some(msg) = u2k.read() {
             match postcard::from_bytes::<UserRequest>(&msg) {
                 Ok(req) => {
-                    let kind = req.driver_kind();
-                    if let Some(drv) = inner_mut.drivers.iter().find(|drv| drv.kind == kind) {
-                        drv.queue
-                            .enqueue_sync(Message {
-                                request: req,
-                                response: inner.user_reply.clone(),
-                            })
-                            .map_err(drop)
-                            .unwrap();
-                    }
+                    // let kind = req.driver_kind();
+                    // if let Some(drv) = inner_mut.drivers.iter().find(|drv| drv.kind == kind) {
+                    //     drv.queue
+                    //         .enqueue_sync(Message {
+                    //             request: req,
+                    //             response: inner.user_reply.clone(),
+                    //         })
+                    //         .map_err(drop)
+                    //         .unwrap();
+                    // }
+                    todo!("Driver registry");
                 }
                 Err(_) => panic!(),
             }
@@ -251,37 +204,16 @@ impl Kernel {
         self.spawn_allocated(atask);
     }
 
+    pub async fn with_registry<F, R>(&'static self, f: F) -> R
+    where
+        F: FnOnce(&mut Registry) -> R,
+    {
+        let mut guard = self.registry.lock().await;
+        f(&mut guard)
+    }
+
     pub fn spawn_allocated<F: Future + 'static>(&'static self, task: HeapBox<Task<F>>) {
         self.inner.scheduler.spawn_allocated::<F, HBStorage>(task)
-    }
-}
-
-pub struct KimGuard {
-    kim: NonNull<Kernel>,
-}
-
-impl Deref for KimGuard {
-    type Target = KernelInnerMut;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*self.kim.as_ref().inner_mut.get() }
-    }
-}
-
-impl DerefMut for KimGuard {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *self.kim.as_mut().inner_mut.get() }
-    }
-}
-
-impl Drop for KimGuard {
-    fn drop(&mut self) {
-        unsafe {
-            self.kim
-                .as_ref()
-                .status
-                .store(Kernel::INIT_IDLE, Ordering::SeqCst);
-        }
     }
 }
 
