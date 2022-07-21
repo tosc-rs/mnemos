@@ -18,6 +18,15 @@ pub struct KProducer<T> {
 pub(crate) struct LeakedKProducer {
     erased_q: NonNull<MpMcQueue<(), sealed::SpiteData<()>>>,
     dropper: unsafe fn(NonNull<MpMcQueue<(), sealed::SpiteData<()>>>),
+    cloner: unsafe fn(&Self) -> Self,
+}
+
+impl Clone for LeakedKProducer {
+    fn clone(&self) -> Self {
+        unsafe {
+            (self.cloner)(&self)
+        }
+    }
 }
 
 impl<T> Clone for KProducer<T> {
@@ -61,7 +70,18 @@ impl<T> Deref for KChannel<T> {
 }
 
 impl LeakedKProducer {
-    pub(crate) unsafe fn clone_leaked<T>(&self) -> KProducer<T> {
+    pub(crate) unsafe fn clone_leaked<T>(&self) -> Self {
+        let typed_q: NonNull<MpMcQueue<T, sealed::SpiteData<T>>> = self.erased_q.cast();
+        HeapArc::increment_count(typed_q);
+
+        Self {
+            erased_q: self.erased_q,
+            dropper: self.dropper,
+            cloner: self.cloner,
+        }
+    }
+
+    pub(crate) unsafe fn clone_typed<T>(&self) -> KProducer<T> {
         let typed_q: NonNull<MpMcQueue<T, sealed::SpiteData<T>>> = self.erased_q.cast();
         let heap_arc = HeapArc::clone_from_leaked(typed_q);
         KProducer {
@@ -138,6 +158,7 @@ impl<T> KProducer<T> {
         LeakedKProducer {
             erased_q,
             dropper: LeakedKProducer::drop_leaked::<T>,
+            cloner: LeakedKProducer::clone_leaked::<T>,
         }
     }
 }
