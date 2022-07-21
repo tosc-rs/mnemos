@@ -1,4 +1,4 @@
-use core::{cell::UnsafeCell, ops::Deref};
+use core::{cell::UnsafeCell, ops::Deref, ptr::NonNull};
 use mnemos_alloc::{
     containers::{HeapArc, HeapArray},
     heap::HeapGuard,
@@ -15,6 +15,11 @@ pub struct KProducer<T> {
     q: HeapArc<MpMcQueue<T, sealed::SpiteData<T>>>,
 }
 
+pub(crate) struct LeakedKProducer {
+    erased_q: NonNull<MpMcQueue<(), sealed::SpiteData<()>>>,
+    dropper: unsafe fn(NonNull<MpMcQueue<(), sealed::SpiteData<()>>>),
+}
+
 impl<T> Clone for KProducer<T> {
     fn clone(&self) -> Self {
         KProducer { q: self.q.clone() }
@@ -25,7 +30,7 @@ pub struct KConsumer<T> {
     q: HeapArc<MpMcQueue<T, sealed::SpiteData<T>>>,
 }
 
-mod sealed {
+pub(crate) mod sealed {
     use super::*;
 
     pub struct SpiteData<T> {
@@ -52,6 +57,29 @@ impl<T> Deref for KChannel<T> {
 
     fn deref(&self) -> &Self::Target {
         &self.q
+    }
+}
+
+impl LeakedKProducer {
+    pub(crate) unsafe fn clone_leaked<T>(&self) -> KProducer<T> {
+        let typed_q: NonNull<MpMcQueue<T, sealed::SpiteData<T>>> = self.erased_q.cast();
+        let heap_arc = HeapArc::clone_from_leaked(typed_q);
+        KProducer {
+            q: heap_arc,
+        }
+    }
+
+    pub(crate) unsafe fn drop_leaked<T>(ptr: NonNull<MpMcQueue<(), sealed::SpiteData<()>>>) {
+        let ptr = ptr.cast::<MpMcQueue<T, sealed::SpiteData<T>>>();
+        let _ = HeapArc::from_leaked(ptr);
+    }
+}
+
+impl Drop for LeakedKProducer {
+    fn drop(&mut self) {
+        unsafe {
+            (self.dropper)(self.erased_q);
+        }
     }
 }
 
@@ -101,6 +129,16 @@ impl<T> KProducer<T> {
     #[inline(always)]
     pub async fn enqueue_async(&self, item: T) -> Result<(), T> {
         self.q.enqueue_async(item).await
+    }
+
+    pub(crate) fn leak_erased(self) -> LeakedKProducer {
+        let typed_q: NonNull<MpMcQueue<T, sealed::SpiteData<T>>> = self.q.leak();
+        let erased_q: NonNull<MpMcQueue<(), sealed::SpiteData<()>>> = typed_q.cast();
+
+        LeakedKProducer {
+            erased_q,
+            dropper: LeakedKProducer::drop_leaked::<T>,
+        }
     }
 }
 

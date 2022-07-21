@@ -3,6 +3,7 @@
 
 pub mod comms;
 pub mod drivers;
+pub mod registry;
 pub(crate) mod fmt;
 
 use abi::{
