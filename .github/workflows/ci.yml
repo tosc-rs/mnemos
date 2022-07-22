@@ -37,6 +37,8 @@ jobs:
     # if: needs.changed_paths.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
     steps:
+    - name: install libudev
+      run: apt-get update && apt-get install -y libudev-dev
     - name: install rust toolchain
       run: rustup show
     - uses: olix0r/cargo-action-fmt@ee1ef42932e44794821dab57ef1bf7a73df8b21f
