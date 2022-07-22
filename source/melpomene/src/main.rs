@@ -81,59 +81,54 @@ fn kernel_entry(opts: MelpomeneOptions) {
     };
 
     let k = unsafe { Kernel::new(settings).unwrap().leak().as_ref() };
-    {
-        {
-            // First let's make a dummy driver just to make sure some stuff happens
-            let dummy_fut = async move {
-                // Delay for one second, just for funsies
-                Delay::new(Duration::from_secs(1)).await;
 
-                // Set up the bidirectional, async bbqueue channel between the TCP port
-                // (acting as a serial port) and the virtual serial port mux.
-                //
-                // Create the buffer, and spawn the worker task, giving it one of the
-                // queue handles
-                spawn_tcp_serial(k, opts.serial_addr, 4096, 4096).await.unwrap();
+    // First let's make a dummy driver just to make sure some stuff happens
+    let initialization_future = async move {
+        // Delay for one second, just for funsies
+        Delay::new(Duration::from_secs(1)).await;
 
-                // Now, right now this is a little awkward, but what I'm doing here is spawning
-                // a new virtual mux, and configuring it with:
-                // * Up to 4 virtual ports max
-                // * Framed messages up to 512 bytes max each
-                // * The other side of the async connection to the TCP "serial" port
-                //
-                // After spawning, it gives us back IT'S message passing handle, where we can
-                // send it configuration commands. Right now - that basically just is used for
-                // mapping new virtual ports.
-                SerialMux::register(k, 4, 512).await.unwrap();
+        // Set up the bidirectional, async bbqueue channel between the TCP port
+        // (acting as a serial port) and the virtual serial port mux.
+        //
+        // Create the buffer, and spawn the worker task, giving it one of the
+        // queue handles
+        spawn_tcp_serial(k, opts.serial_addr, 4096, 4096).await.unwrap();
 
-                let mux_hdl = SerialMuxHandle::get_registry(k).await.unwrap();
-                let p0 = mux_hdl.register_port(0, 1024).await.unwrap();
-                let p1 = mux_hdl.register_port(1, 1024).await.unwrap();
+        // Now, right now this is a little awkward, but what I'm doing here is spawning
+        // a new virtual mux, and configuring it with:
+        // * Up to 4 virtual ports max
+        // * Framed messages up to 512 bytes max each
+        SerialMux::register(k, 4, 512).await.unwrap();
 
-                k.spawn(async move {
-                    loop {
-                        let rgr = p0.consumer().read_grant().await;
-                        let len = rgr.len();
-                        p0.send(&rgr).await;
-                        rgr.release(len);
-                    }
-                })
-                .await;
+        let mux_hdl = SerialMuxHandle::get_registry(k).await.unwrap();
+        let p0 = mux_hdl.register_port(0, 1024).await.unwrap();
+        let p1 = mux_hdl.register_port(1, 1024).await.unwrap();
+        drop(mux_hdl);
 
-                // Now we juse send out data every second
-                loop {
-                    Delay::new(Duration::from_secs(1)).await;
-                    p1.send(b"hello\r\n").await;
-                }
+        k.spawn(async move {
+            loop {
+                let rgr = p0.consumer().read_grant().await;
+                let len = rgr.len();
+                p0.send(&rgr).await;
+                rgr.release(len);
             }
-            .instrument(tracing::info_span!("Loopback"));
-
-            let mut guard = k.heap().lock().unwrap();
-            let dummy_task = k.new_task(dummy_fut);
-            let boxed_dummy = guard.alloc_box(dummy_task).map_err(drop).unwrap();
-            k.spawn_allocated(boxed_dummy);
         }
+        .instrument(tracing::info_span!("Loopback")))
+        .await;
+
+        // Now we just send out data every second
+        k.spawn(async move {
+            loop {
+                Delay::new(Duration::from_secs(1)).await;
+                p1.send(b"hello\r\n").await;
+            }
+        }
+        .instrument(tracing::info_span!("Hello Loop")))
+        .await;
     }
+    .instrument(tracing::info_span!("Initialize"));
+
+    k.initialize(initialization_future).unwrap();
 
     //////////////////////////////////////////////////////////////////////////////
     // TODO: Userspace doesn't really do anything yet! Simulate initialization of

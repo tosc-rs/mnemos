@@ -177,6 +177,16 @@ impl Kernel {
         // TODO: Send time to userspace?
     }
 
+    // TODO: This prooooobably should instead use a joinhandle, and poll on the initialize future
+    // to completion, to make sure that certain actions actually complete.
+    pub fn initialize<F: Future + 'static>(&'static self, fut: F) -> Result<(), ()> {
+        let task = self.new_task(fut);
+        let mut guard = self.heap().lock().map_err(drop)?;
+        let task_box = guard.alloc_box(task).map_err(drop)?;
+        self.spawn_allocated(task_box);
+        Ok(())
+    }
+
     pub fn new_task<F: Future + 'static>(&'static self, fut: F) -> Task<F> {
         Task(MaitakeTask::new(&self.inner.scheduler, fut))
     }
