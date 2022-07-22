@@ -292,7 +292,7 @@ pub mod simple_serial {
     }
 
     impl SimpleSerial {
-        pub async fn get_registry(kernel: &'static Kernel) -> Option<Self> {
+        pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
             let kprod = kernel.with_registry(|reg| {
                 reg.get::<SimpleSerial>()
             }).await?;

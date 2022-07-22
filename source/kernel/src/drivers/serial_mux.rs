@@ -213,7 +213,7 @@ pub struct SerialMuxHandle {
 }
 
 impl SerialMuxHandle {
-    pub async fn get_registry(kernel: &'static Kernel) -> Option<Self> {
+    pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
         let prod = kernel.with_registry(|reg| {
             reg.get::<SerialMux>()
         }).await?;
@@ -247,7 +247,7 @@ impl SerialMux {
         max_ports: usize,
         max_frame: usize,
     ) -> Result<(), ()> {
-        let serial_handle = SimpleSerial::get_registry(kernel).await.ok_or(())?;
+        let serial_handle = SimpleSerial::from_registry(kernel).await.ok_or(())?;
         let serial_port = serial_handle.get_port().await.ok_or(())?;
 
         let (sprod, scons) = serial_port.split();
