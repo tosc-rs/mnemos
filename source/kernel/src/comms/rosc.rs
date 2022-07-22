@@ -8,7 +8,11 @@
 //! depth of one. Many producers can be created over the lifecycle of a single consumer,
 //! however only zero or one producers can be live at any given time.
 
-use core::{cell::UnsafeCell, mem::MaybeUninit, sync::atomic::{AtomicU8, Ordering}};
+use core::{
+    cell::UnsafeCell,
+    mem::MaybeUninit,
+    sync::atomic::{AtomicU8, Ordering},
+};
 
 use maitake::wait::WaitCell;
 use mnemos_alloc::containers::HeapArc;
@@ -57,12 +61,15 @@ impl<T> Rosc<T> {
     ///
     /// This error can be cleared by awaiting [Rosc::receive].
     pub fn sender(&self) -> Result<Sender<T>, ()> {
-        self.inner.state.compare_exchange(
-            Inner::<T>::IDLE,
-            Inner::<T>::WAITING,
-            Ordering::AcqRel,
-            Ordering::Relaxed,
-        ).map_err(drop)?;
+        self.inner
+            .state
+            .compare_exchange(
+                Inner::<T>::IDLE,
+                Inner::<T>::WAITING,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            )
+            .map_err(drop)?;
 
         Ok(Sender {
             inner: self.inner.clone(),
@@ -90,7 +97,11 @@ impl<T> Rosc<T> {
                     // We just swapped from READY to READING, that's a success!
                     unsafe {
                         let mut ret = MaybeUninit::<T>::uninit();
-                        core::ptr::copy_nonoverlapping(self.inner.cell.get().cast(), ret.as_mut_ptr(), 1);
+                        core::ptr::copy_nonoverlapping(
+                            self.inner.cell.get().cast(),
+                            ret.as_mut_ptr(),
+                            1,
+                        );
                         self.inner.state.store(Inner::<T>::IDLE, Ordering::Release);
                         return Ok(ret.assume_init());
                     }
@@ -115,12 +126,15 @@ impl<T> Rosc<T> {
 impl<T> Sender<T> {
     /// Consume the sender, providing it with a reply.
     pub fn send(self, item: T) -> Result<(), ()> {
-        self.inner.state.compare_exchange(
-            Inner::<T>::WAITING,
-            Inner::<T>::WRITING,
-            Ordering::AcqRel,
-            Ordering::Relaxed,
-        ).map_err(drop)?;
+        self.inner
+            .state
+            .compare_exchange(
+                Inner::<T>::WAITING,
+                Inner::<T>::WRITING,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            )
+            .map_err(drop)?;
 
         unsafe { self.inner.cell.get().write(MaybeUninit::new(item)) };
         self.inner.state.store(Inner::<T>::READY, Ordering::Release);
@@ -145,8 +159,8 @@ impl<T> Drop for Sender<T> {
 
 // impl Inner
 
-unsafe impl<T: Send> Send for Inner<T> { }
-unsafe impl<T: Send> Sync for Inner<T> { }
+unsafe impl<T: Send> Send for Inner<T> {}
+unsafe impl<T: Send> Sync for Inner<T> {}
 
 // TODO: Should probably try to impl drop, at least if state == READY
 impl<T> Inner<T> {

@@ -170,9 +170,7 @@ impl<T> KConsumer<T> {
 
 impl Clone for LeakedKProducer {
     fn clone(&self) -> Self {
-        unsafe {
-            (self.cloner)(&self)
-        }
+        unsafe { (self.cloner)(&self) }
     }
 }
 
@@ -201,9 +199,7 @@ impl LeakedKProducer {
     pub(crate) unsafe fn clone_typed<T>(&self) -> KProducer<T> {
         let typed_q: NonNull<MpMcQueue<T, sealed::SpiteData<T>>> = self.erased_q.cast();
         let heap_arc = HeapArc::clone_from_leaked(typed_q);
-        KProducer {
-            q: heap_arc,
-        }
+        KProducer { q: heap_arc }
     }
 
     /// Drop the LeakedKProducer, while also re-typing the leaked [KProducer] type.

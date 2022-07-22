@@ -91,7 +91,9 @@ fn kernel_entry(opts: MelpomeneOptions) {
         //
         // Create the buffer, and spawn the worker task, giving it one of the
         // queue handles
-        TcpSerial::register(k, opts.serial_addr, 4096, 4096).await.unwrap();
+        TcpSerial::register(k, opts.serial_addr, 4096, 4096)
+            .await
+            .unwrap();
 
         // Now, right now this is a little awkward, but what I'm doing here is spawning
         // a new virtual mux, and configuring it with:
@@ -104,25 +106,29 @@ fn kernel_entry(opts: MelpomeneOptions) {
         let p1 = mux_hdl.open_port(1, 1024).await.unwrap();
         drop(mux_hdl);
 
-        k.spawn(async move {
-            loop {
-                let rgr = p0.consumer().read_grant().await;
-                let len = rgr.len();
-                p0.send(&rgr).await;
-                rgr.release(len);
+        k.spawn(
+            async move {
+                loop {
+                    let rgr = p0.consumer().read_grant().await;
+                    let len = rgr.len();
+                    p0.send(&rgr).await;
+                    rgr.release(len);
+                }
             }
-        }
-        .instrument(tracing::info_span!("Loopback")))
+            .instrument(tracing::info_span!("Loopback")),
+        )
         .await;
 
         // Now we just send out data every second
-        k.spawn(async move {
-            loop {
-                Delay::new(Duration::from_secs(1)).await;
-                p1.send(b"hello\r\n").await;
+        k.spawn(
+            async move {
+                loop {
+                    Delay::new(Duration::from_secs(1)).await;
+                    p1.send(b"hello\r\n").await;
+                }
             }
-        }
-        .instrument(tracing::info_span!("Hello Loop")))
+            .instrument(tracing::info_span!("Hello Loop")),
+        )
         .await;
     }
     .instrument(tracing::info_span!("Initialize"));

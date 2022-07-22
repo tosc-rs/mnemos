@@ -3,8 +3,8 @@
 
 pub mod comms;
 pub mod drivers;
-pub mod registry;
 pub(crate) mod fmt;
+pub mod registry;
 
 use abi::{
     bbqueue_ipc::{
@@ -14,17 +14,14 @@ use abi::{
     syscall::{KernelResponse, UserRequest},
 };
 use comms::kchannel::KChannel;
-use registry::Registry;
-use maitake::{task::Task as MaitakeTask, sync::Mutex};
 use maitake::{
     self,
     scheduler::{StaticScheduler, TaskStub},
     task::Storage,
 };
-use mnemos_alloc::{
-    containers::HeapBox,
-    heap::AHeap,
-};
+use maitake::{sync::Mutex, task::Task as MaitakeTask};
+use mnemos_alloc::{containers::HeapBox, heap::AHeap};
+use registry::Registry;
 use tracing::info;
 
 pub struct Rings {
@@ -200,7 +197,6 @@ impl Kernel {
     where
         F: FnOnce(&mut Registry) -> R,
     {
-
         let mut guard = self.registry.lock().await;
         f(&mut guard)
     }
