@@ -1,7 +1,7 @@
 use crate::node::{Active, ActiveArr};
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
-use core::ptr::{addr_of, drop_in_place};
+use core::ptr::{addr_of, drop_in_place, addr_of_mut};
 use core::slice::{from_raw_parts, from_raw_parts_mut};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::{
@@ -85,12 +85,74 @@ impl<T> Drop for HeapBox<T> {
     }
 }
 
+// === impl ArcInner ===
+
+impl<T> ArcInner<T> {
+    pub unsafe fn from_leaked_ptr(data: NonNull<T>) -> NonNull<ArcInner<T>> {
+        let ptr = data
+            .cast::<u8>()
+            .as_ptr()
+            .offset(Self::data_offset())
+            .cast::<ArcInner<T>>();
+        NonNull::new_unchecked(ptr)
+    }
+
+    #[inline(always)]
+    fn data_offset() -> isize {
+        let dummy: ArcInner<MaybeUninit<T>> = ArcInner {
+            data: MaybeUninit::uninit(),
+            refcnt: AtomicUsize::new(0),
+        };
+        let dummy_ptr: *const ArcInner<MaybeUninit<T>> = &dummy;
+        let data_ptr = unsafe {
+            addr_of!((*dummy_ptr).data)
+        };
+        unsafe { dummy_ptr.cast::<u8>().offset_from(data_ptr.cast::<u8>()) }
+    }
+}
+
 // === impl HeapArc ===
 
 // These require the same bounds as `alloc::sync::Arc`'s `Send` and `Sync`
 // impls.
 unsafe impl<T: Send + Sync> Send for HeapArc<T> {}
 unsafe impl<T: Send + Sync> Sync for HeapArc<T> {}
+
+impl<T> HeapArc<T> {
+    /// Leak the contents of this box, never to be recovered (probably)
+    pub fn leak(self) -> NonNull<T> {
+        unsafe {
+            let nn = Active::<ArcInner<T>>::data(self.ptr);
+            forget(self);
+            let data_ptr = addr_of_mut!((*nn.as_ptr()).data);
+            NonNull::new_unchecked(data_ptr)
+        }
+    }
+
+    /// Create a clone of a given leaked HeapArc<T>. DOES increase the refcount.
+    pub unsafe fn clone_from_leaked(ptr: NonNull<T>) -> Self {
+        let new = Self::from_leaked(ptr);
+
+        let aitem_nn = Active::<ArcInner<T>>::data(new.ptr);
+        aitem_nn.as_ref().refcnt.fetch_add(1, Ordering::SeqCst);
+
+        new
+    }
+
+    /// Re-takes ownership of a leaked HeapArc<T>. Does NOT increase the refcount.
+    pub unsafe fn from_leaked(ptr: NonNull<T>) -> Self {
+        let arc_inner_nn: NonNull<ArcInner<T>> = ArcInner::from_leaked_ptr(ptr);
+        Self {
+            ptr: Active::<ArcInner<T>>::from_leaked_ptr(arc_inner_nn),
+            pd: PhantomData,
+        }
+    }
+
+    pub unsafe fn increment_count(ptr: NonNull<T>) {
+        let arc_inner_nn: NonNull<ArcInner<T>> = ArcInner::from_leaked_ptr(ptr);
+        arc_inner_nn.as_ref().refcnt.fetch_add(1, Ordering::SeqCst);
+    }
+}
 
 impl<T> Deref for HeapArc<T> {
     type Target = T;
