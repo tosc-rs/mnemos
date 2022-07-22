@@ -35,7 +35,7 @@ path = "../abi"
 path = "../mstd"
 
 [dependencies.postcard]
-version = "0.7.3"
+version = "1.0.1"
 default-features = false
 
 [dependencies.atty]

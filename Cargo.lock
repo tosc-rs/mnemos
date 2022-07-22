@@ -983,7 +983,7 @@ dependencies = [
  "mnemos",
  "mnemos-abi",
  "mnemos-std",
- "postcard 0.7.3",
+ "postcard 1.0.1",
  "tokio",
  "tracing 0.1.35",
  "tracing-modality",
@@ -1072,7 +1072,7 @@ name = "mnemos-abi"
 version = "0.1.0"
 dependencies = [
  "defmt",
- "postcard 0.7.3",
+ "postcard 1.0.1",
  "serde",
 ]
 
@@ -1097,7 +1097,7 @@ dependencies = [
  "maitake",
  "mnemos-abi",
  "mnemos-alloc",
- "postcard 0.7.3",
+ "postcard 1.0.1",
 ]
 
 [[package]]
