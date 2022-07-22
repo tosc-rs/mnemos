@@ -100,8 +100,8 @@ fn kernel_entry(opts: MelpomeneOptions) {
         SerialMux::register(k, 4, 512).await.unwrap();
 
         let mux_hdl = SerialMuxHandle::from_registry(k).await.unwrap();
-        let p0 = mux_hdl.register_port(0, 1024).await.unwrap();
-        let p1 = mux_hdl.register_port(1, 1024).await.unwrap();
+        let p0 = mux_hdl.open_port(0, 1024).await.unwrap();
+        let p1 = mux_hdl.open_port(1, 1024).await.unwrap();
         drop(mux_hdl);
 
         k.spawn(async move {
