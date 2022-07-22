@@ -145,14 +145,14 @@ impl Kernel {
         let u2k_buf: *mut BBBuffer = &self.inner.u2k_ring as *const _ as *mut _;
         let k2u_buf: *mut BBBuffer = &self.inner.k2u_ring as *const _ as *mut _;
         let u2k: FrameConsumer<'static> = unsafe { BBBuffer::take_framed_consumer(u2k_buf) };
-        let k2u: FrameProducer<'static> = unsafe { BBBuffer::take_framed_producer(k2u_buf) };
+        let _k2u: FrameProducer<'static> = unsafe { BBBuffer::take_framed_producer(k2u_buf) };
 
         #[allow(unreachable_code)]
         if let Some(mut _reg) = self.registry.try_lock() {
             // Incoming messages
             while let Some(msg) = u2k.read() {
                 match postcard::from_bytes::<UserRequest>(&msg) {
-                    Ok(req) => {
+                    Ok(_req) => {
                         // let kind = req.driver_kind();
                         // if let Some(drv) = inner_mut.drivers.iter().find(|drv| drv.kind == kind) {
                         //     drv.queue

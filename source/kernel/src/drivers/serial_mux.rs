@@ -5,7 +5,7 @@ use crate::{
         rosc::Rosc,
     },
     registry::{
-        simple_serial::SimpleSerial, HMessage, KernelHandle, Message, RegisteredDriver, ReplyTo,
+        simple_serial::SimpleSerial, Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo,
     },
     Kernel,
 };
@@ -30,7 +30,7 @@ pub struct PortHandle {
 /// A SerialMuxHandle is the client interface of the [SerialMux].
 pub struct SerialMuxHandle {
     prod: KernelHandle<SerialMux>,
-    reply: Rosc<HMessage<Result<Response, ()>>>,
+    reply: Rosc<Envelope<Result<Response, ()>>>,
 }
 
 pub enum Request {
@@ -226,7 +226,7 @@ impl CommanderTask {
             let msg = self.cmd.dequeue_async().await.unwrap();
             let Message { msg: req, reply } = msg;
             match req {
-                HMessage {
+                Envelope {
                     body: Request::RegisterPort { port_id, capacity },
                 } => {
                     let res = {

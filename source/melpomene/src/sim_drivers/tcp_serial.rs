@@ -1,7 +1,7 @@
 use mnemos_kernel::{
     comms::{bbq::{BidiHandle, new_bidi_channel}, kchannel::KChannel},
     Kernel,
-    registry::{Message, HMessage, simple_serial::{SimpleSerial, Request, Response}},
+    registry::{Message, Envelope, simple_serial::{SimpleSerial, Request, Response}},
 };
 use std::net::SocketAddr;
 use tokio::{
@@ -29,11 +29,11 @@ impl TcpSerial {
 
         kernel.spawn(async move {
             let handle = b_ring;
-            let Message { msg: HMessage { body: Request::GetPort }, reply } = cons.dequeue_async().await.unwrap();
+            let Message { msg: Envelope { body: Request::GetPort }, reply } = cons.dequeue_async().await.unwrap();
             reply.reply_konly(Ok(Response::PortHandle { handle })).await.unwrap();
 
             loop {
-                let Message { msg: HMessage { body: Request::GetPort }, reply } = cons.dequeue_async().await.unwrap();
+                let Message { msg: Envelope { body: Request::GetPort }, reply } = cons.dequeue_async().await.unwrap();
                 reply.reply_konly(Err(())).await.unwrap();
             }
         }).await;

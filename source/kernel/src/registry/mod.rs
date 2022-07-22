@@ -11,6 +11,7 @@ use crate::comms::{
     rosc::Sender,
 };
 
+/// A partial list of known UUIDs of driver services
 pub static KNOWN_UUIDS: &[Uuid] = &[
     //
     // Kernel UUIDs
@@ -18,24 +19,33 @@ pub static KNOWN_UUIDS: &[Uuid] = &[
 
     // SerialMux
     uuid!("54c983fa-736f-4223-b90d-c4360a308647"),
-    //
-    // Simulator UUIDs
-    //
-
-    // Serial Port over TCP
+    // Simple Serial Port
     uuid!("f06aac01-2773-4266-8681-583ffe756554"),
 ];
 
+/// A marker trait designating a registerable driver service.
+///
+/// Typically used with [Registry::set] or [Registry::set_konly].
+/// Can typically be retrieved by [Registry::get] or [Registry::get_userspace]
+/// After the service has been registered.
 pub trait RegisteredDriver {
+    /// This is the type of the request sent TO the driver service
     type Request: 'static;
+
+    /// This is the type of the response sent FROM the driver service
     type Response: 'static;
+
+    /// This is the UUID of the driver service
     const UUID: Uuid;
 
+    /// Get the type_id used to make sure that driver instances are correctly typed.
+    /// Corresponds to the same type ID as `(Self::Request, Self::Response)`
     fn type_id() -> TypeId {
         TypeId::of::<(Self::Request, Self::Response)>()
     }
 }
 
+/// The driver registry used by the kernel.
 pub struct Registry {
     items: HeapFixedVec<RegistryItem>,
 }
@@ -59,21 +69,35 @@ pub struct UserResponse<U> {
     reply: Result<U, ()>,
 }
 
-pub struct HMessage<P> {
+/// A wrapper for a message TO and FROM a driver service.
+/// Used to be able to add additional message metadata without
+/// changing the fundamental message type.
+pub struct Envelope<P> {
     pub body: P,
 }
 
+/// The [Message] kind represents a full reply/response sequence to
+/// a driver service. This is the concrete type received by the driver
+/// service.
+///
+/// It contains the Request, e.g. [RegisteredDriver::Request], as well
+/// as a [ReplyTo] that allows the driver service to respond to a given
+/// request
 pub struct Message<RD: RegisteredDriver> {
-    pub msg: HMessage<RD::Request>,
+    pub msg: Envelope<RD::Request>,
     pub reply: ReplyTo<RD::Response>,
 }
 
+/// A `ReplyTo` is used to allow the CLIENT of a service to choose the
+/// way that the driver SERVICE replies to us. Essentially, this acts
+/// as a "self addressed stamped envelope" for the SERVICE to use to
+/// reply to the CLIENT.
 pub enum ReplyTo<U> {
     // This can be used to reply directly to another kernel entity,
     // without a serialization step
-    KChannel(KProducer<HMessage<Result<U, ()>>>),
+    KChannel(KProducer<Envelope<Result<U, ()>>>),
 
-    Rosc(Sender<HMessage<Result<U, ()>>>),
+    Rosc(Sender<Envelope<Result<U, ()>>>),
 
     // This can be used to reply to userspace. Responses are serialized
     // and sent over the bbq::MpscProducer
@@ -83,11 +107,17 @@ pub enum ReplyTo<U> {
     },
 }
 
+/// A UserspaceHandle is used to process incoming serialized messages from
+/// userspace. It contains a method that can be used to deserialize messages
+/// from a given UUID, and send that request (if the deserialization is
+/// successful) to a given driver service.
 pub struct UserspaceHandle {
     req_producer_leaked: LeakedKProducer,
     req_deser: ErasedDeserHandler,
 }
 
+/// A KernelHandle is used to send typed messages to a kernelspace Driver
+/// service.
 pub struct KernelHandle<RD: RegisteredDriver> {
     prod: KProducer<Message<RD>>,
 }
@@ -95,12 +125,19 @@ pub struct KernelHandle<RD: RegisteredDriver> {
 type ErasedDeserHandler =
     unsafe fn(UserRequest<'_>, &LeakedKProducer, &bbq::MpscProducer) -> Result<(), ()>;
 
+/// The payload of a registry item.
+///
+/// The typeid is stored here to allow the userspace handle to look up the UUID key
+/// without knowing the proper typeid. Kernel space drivers should always check that the
+/// tuple type id is correct.
 struct RegistryValue {
     req_resp_tuple_id: TypeId,
     req_prod_leaked: LeakedKProducer,
     req_deser: Option<ErasedDeserHandler>,
 }
 
+/// Right now we don't use a real HashMap, but rather a hand-rolled index map.
+/// Therefore our registry is basically a `Vec<RegistryItem>`.
 struct RegistryItem {
     key: Uuid,
     value: RegistryValue,
@@ -109,12 +146,19 @@ struct RegistryItem {
 // Registry
 
 impl Registry {
+    /// Create a new registry with room for up to `max_items` registered drivers.
     pub fn new(guard: &mut HeapGuard, max_items: usize) -> Self {
         Self {
             items: guard.alloc_fixed_vec(max_items).map_err(drop).unwrap(),
         }
     }
 
+    /// Register a driver service ONLY for use in the kernel, including drivers.
+    ///
+    /// Driver services registered with [Registry::set_konly] can NOT be queried
+    /// or interfaced with from Userspace. If a registered service has request
+    /// and response types that are serializable, it can instead be registered
+    /// with [Registry::set] which allows for userspace access.
     pub fn set_konly<RD: RegisteredDriver>(
         &mut self,
         kch: &KProducer<Message<RD>>,
@@ -134,6 +178,11 @@ impl Registry {
             .map_err(drop)
     }
 
+    /// Register a driver service for use in the kernel (including drivers) as
+    /// well as in userspace.
+    ///
+    /// See [Registry::set_konly] if the request and response types are not
+    /// serializable.
     pub fn set<RD>(&mut self, kch: &KProducer<Message<RD>>) -> Result<(), ()>
     where
         RD: RegisteredDriver,
@@ -155,6 +204,14 @@ impl Registry {
             .map_err(drop)
     }
 
+    /// Get a kernelspace (including drivers) handle of a given driver service.
+    ///
+    /// This can be used by drivers and tasks to interface with a registered driver
+    /// service.
+    ///
+    /// The driver service MUST have already been registered using [Registry::set] or
+    /// [Registry::set_konly] prior to making this call, otherwise no handle will
+    /// be returned.
     pub fn get<RD: RegisteredDriver>(&self) -> Option<KernelHandle<RD>> {
         let item = self.items.iter().find(|i| i.key == RD::UUID)?;
         if item.value.req_resp_tuple_id != RD::type_id() {
@@ -167,6 +224,14 @@ impl Registry {
         }
     }
 
+    /// Get a handle capable of processing serialized userspace messages to a
+    /// registered driver service.
+    ///
+    /// The driver service MUST have already been registered using [Registry::set] or
+    /// prior to making this call, otherwise no handle will be returned.
+    ///
+    /// Driver services registered with [Registry::set_konly] cannot be retrieved via
+    /// a call to [Registry::get_userspace].
     pub fn get_userspace<RD>(&mut self) -> Option<UserspaceHandle>
     where
         RD: RegisteredDriver,
@@ -193,7 +258,7 @@ impl<U: MaxSize> MaxSize for UserResponse<U> {
     };
 }
 
-// HMessage
+// Envelope
 
 // Message
 
@@ -201,7 +266,7 @@ impl<U: MaxSize> MaxSize for UserResponse<U> {
 
 impl<U> ReplyTo<U> {
     pub async fn reply_konly(self, payload: Result<U, ()>) -> Result<(), ()> {
-        let hmsg = HMessage { body: payload };
+        let hmsg = Envelope { body: payload };
         match self {
             ReplyTo::KChannel(kprod) => kprod.enqueue_async(hmsg).await.map_err(drop),
             ReplyTo::Rosc(sender) => sender.send(hmsg),
@@ -217,11 +282,11 @@ where
     pub async fn reply(self, uuid_source: Uuid, payload: Result<U, ()>) -> Result<(), ()> {
         match self {
             ReplyTo::KChannel(kprod) => {
-                let hmsg = HMessage { body: payload };
+                let hmsg = Envelope { body: payload };
                 kprod.enqueue_async(hmsg).await.map_err(drop)
             }
             ReplyTo::Rosc(sender) => {
-                let hmsg = HMessage { body: payload };
+                let hmsg = Envelope { body: payload };
                 sender.send(hmsg)
             }
             ReplyTo::Userspace { nonce, outgoing } => {
@@ -263,7 +328,7 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
     pub async fn send(&self, msg: RD::Request, reply: ReplyTo<RD::Response>) -> Result<(), ()> {
         self.prod
             .enqueue_async(Message {
-                msg: HMessage { body: msg },
+                msg: Envelope { body: msg },
                 reply,
             })
             .await
@@ -273,6 +338,9 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
 
 // -- other --
 
+/// A monomorphizable function that allows us to store the serialization type within
+/// the function itself, allowing for a type-erased function pointer to be stored
+/// inside of the registry.
 unsafe fn map_deser<RD>(
     umsg: UserRequest<'_>,
     req_tx: &LeakedKProducer,
@@ -298,7 +366,7 @@ where
 
     // Create the message type to be sent on the channel
     let msg: Message<RD> = Message {
-        msg: HMessage { body: u_payload },
+        msg: Envelope { body: u_payload },
         reply: ReplyTo::Userspace {
             nonce: umsg.nonce,
             outgoing: user_resp.clone(),
@@ -328,7 +396,7 @@ pub mod simple_serial {
 
     pub struct SimpleSerial {
         kprod: KernelHandle<SimpleSerial>,
-        rosc: Rosc<HMessage<Result<Response, ()>>>,
+        rosc: Rosc<Envelope<Result<Response, ()>>>,
     }
 
     impl SimpleSerial {
