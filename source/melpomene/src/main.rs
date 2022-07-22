@@ -77,7 +77,6 @@ fn kernel_entry(opts: MelpomeneOptions) {
         max_drivers: 16,
         k2u_size: 4096,
         u2k_size: 4096,
-        user_reply_max_ct: 32,
     };
 
     let k = unsafe { Kernel::new(settings).unwrap().leak().as_ref() };

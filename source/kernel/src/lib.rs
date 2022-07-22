@@ -38,7 +38,6 @@ pub struct KernelSettings {
     pub max_drivers: usize,
     pub k2u_size: usize,
     pub u2k_size: usize,
-    pub user_reply_max_ct: usize,
 }
 
 pub struct Message {
