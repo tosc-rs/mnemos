@@ -6,7 +6,6 @@ members = [
     "source/mstd",
     "source/spitebuf",
     "source/melpomene",
-    "source/registry",
 
     # tools
     "tools/crowtty",

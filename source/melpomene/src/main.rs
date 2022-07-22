@@ -10,9 +10,7 @@ use melpomene::{
     sim_drivers::{delay::Delay, tcp_serial::spawn_tcp_serial},
 };
 use mnemos_kernel::{
-    comms::{bbq::new_bidi_channel, kchannel::KChannel},
-    drivers::serial_mux::{Request, Response, SerialMux},
-    registry::Message,
+    drivers::serial_mux::{SerialMux, SerialMuxHandle},
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -84,8 +82,6 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
     let k = unsafe { Kernel::new(settings).unwrap().leak().as_ref() };
     {
-        let mut guard = k.heap().lock().unwrap();
-
         {
             // First let's make a dummy driver just to make sure some stuff happens
             let dummy_fut = async move {
@@ -97,8 +93,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
                 //
                 // Create the buffer, and spawn the worker task, giving it one of the
                 // queue handles
-                let (mux_ring, tcp_ring) = new_bidi_channel(k.heap(), 4096, 4096).await;
-                spawn_tcp_serial(opts.serial_addr, tcp_ring).await;
+                spawn_tcp_serial(k, opts.serial_addr, 4096, 4096).await.unwrap();
 
                 // Now, right now this is a little awkward, but what I'm doing here is spawning
                 // a new virtual mux, and configuring it with:
@@ -109,58 +104,11 @@ fn kernel_entry(opts: MelpomeneOptions) {
                 // After spawning, it gives us back IT'S message passing handle, where we can
                 // send it configuration commands. Right now - that basically just is used for
                 // mapping new virtual ports.
-                let mux_hdl = SerialMux::new(k, 4, 512, mux_ring).await;
+                SerialMux::register(k, 4, 512).await.unwrap();
 
-                // To send a message to the Mux, we need a "return address". The message
-                // we send includes a Request, and a producer for the KChannel of the kind below.
-                //
-                // I still need to do some more work on the design of the message bus/types that
-                // will go on with this, or decide whether a mutex'd handle is better for non-userspace
-                // communications.
-                let (kprod, kcons) = KChannel::<Result<Response, ()>>::new_async(k, 4)
-                    .await
-                    .split();
-
-                // Map virtual port 0, with a maximum (incoming) buffer capacity of 1024 bytes.
-                let request_0 = Request::RegisterPort {
-                    port_id: 0,
-                    capacity: 1024,
-                };
-                let request_1 = Request::RegisterPort {
-                    port_id: 1,
-                    capacity: 1024,
-                };
-
-                // Send the Message with our request, and our KProducer handle. If we did this
-                // a bunch, we could clone the producer.
-                mux_hdl
-                    .enqueue_async(Message {
-                        msg: request_0,
-                        reply: kprod.clone(),
-                    })
-                    .await
-                    .map_err(drop)
-                    .unwrap();
-                mux_hdl
-                    .enqueue_async(Message {
-                        req: request_1,
-                        resp: kprod.clone(),
-                    })
-                    .await
-                    .map_err(drop)
-                    .unwrap();
-
-                // Now we get back a message in our "return address", which SHOULD contain
-                // a confirmation that the port was registered.
-                let resp_0 = kcons.dequeue_async().await.unwrap().unwrap();
-                let resp_1 = kcons.dequeue_async().await.unwrap().unwrap();
-
-                let p0 = match resp_0 {
-                    Response::PortRegistered(p) => p,
-                };
-                let p1 = match resp_1 {
-                    Response::PortRegistered(p) => p,
-                };
+                let mux_hdl = SerialMuxHandle::get_registry(k).await.unwrap();
+                let p0 = mux_hdl.register_port(0, 1024).await.unwrap();
+                let p1 = mux_hdl.register_port(1, 1024).await.unwrap();
 
                 k.spawn(async move {
                     loop {
@@ -180,13 +128,11 @@ fn kernel_entry(opts: MelpomeneOptions) {
             }
             .instrument(tracing::info_span!("Loopback"));
 
+            let mut guard = k.heap().lock().unwrap();
             let dummy_task = k.new_task(dummy_fut);
             let boxed_dummy = guard.alloc_box(dummy_task).map_err(drop).unwrap();
             k.spawn_allocated(boxed_dummy);
         }
-
-        // Make sure we don't accidentally give away the mutex guard
-        drop(guard);
     }
 
     //////////////////////////////////////////////////////////////////////////////

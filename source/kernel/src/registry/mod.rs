@@ -1,9 +1,9 @@
 use core::any::TypeId;
 
 use mnemos_alloc::{containers::HeapFixedVec, heap::HeapGuard};
-use mnemos_registry::{RegisteredDriver, Uuid};
 use postcard::experimental::max_size::MaxSize;
 use serde::{Serialize, Deserialize, de::DeserializeOwned};
+use uuid::{uuid, Uuid};
 
 use crate::comms::{
     bbq,
@@ -149,8 +149,10 @@ where
             }
             ReplyTo::Userspace { nonce, outgoing } => {
                 let mut wgr = outgoing.send_grant_exact(<UserResponse<U> as MaxSize>::POSTCARD_MAX_SIZE).await;
-                postcard::to_slice(&UserResponse { uuid: uuid_source, nonce, reply: payload }, &mut wgr).map_err(drop)?;
-                todo!()
+                let used = postcard::to_slice(&UserResponse { uuid: uuid_source, nonce, reply: payload }, &mut wgr).map_err(drop)?;
+                let len = used.len();
+                wgr.commit(len);
+                Ok(())
             },
         }
     }
@@ -246,5 +248,82 @@ impl Registry {
             req_producer_leaked: item.value.req_prod_leaked.clone(),
             req_deser: item.value.req_deser?,
         })
+    }
+}
+
+pub trait RegisteredDriver {
+    type Request: 'static;
+    type Response: 'static;
+    const UUID: Uuid;
+
+    fn type_id() -> TypeId {
+        TypeId::of::<(Self::Request, Self::Response)>()
+    }
+}
+
+pub static KNOWN_UUIDS: &[Uuid] = &[
+    //
+    // Kernel UUIDs
+    //
+
+    // SerialMux
+    uuid!("54c983fa-736f-4223-b90d-c4360a308647"),
+
+
+    //
+    // Simulator UUIDs
+    //
+
+    // Serial Port over TCP
+    uuid!("f06aac01-2773-4266-8681-583ffe756554"),
+];
+
+pub mod simple_serial {
+    use crate::Kernel;
+    use crate::comms::bbq::BidiHandle;
+    use crate::comms::rosc::Rosc;
+    use super::*;
+
+    use super::RegisteredDriver;
+
+    pub struct SimpleSerial {
+        kprod: KernelHandle<SimpleSerial>,
+        rosc: Rosc<HMessage<Result<Response, ()>>>,
+    }
+
+    impl SimpleSerial {
+        pub async fn get_registry(kernel: &'static Kernel) -> Option<Self> {
+            let kprod = kernel.with_registry(|reg| {
+                reg.get::<SimpleSerial>()
+            }).await?;
+
+            Some(SimpleSerial {
+                kprod,
+                rosc: Rosc::new_async(kernel).await,
+            })
+        }
+
+        pub async fn get_port(&self) -> Option<BidiHandle> {
+            self.kprod.send(Request::GetPort, ReplyTo::Rosc(self.rosc.sender().ok()?)).await.ok()?;
+            let resp = self.rosc.receive().await.ok()?;
+
+            let Response::PortHandle { handle } = resp.body.ok()?;
+            Some(handle)
+        }
+    }
+
+    impl RegisteredDriver for SimpleSerial {
+        type Request = Request;
+        type Response = Response;
+
+        const UUID: Uuid = uuid!("f06aac01-2773-4266-8681-583ffe756554");
+    }
+
+    pub enum Request {
+        GetPort,
+    }
+
+    pub enum Response {
+        PortHandle { handle: BidiHandle },
     }
 }

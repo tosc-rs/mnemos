@@ -1,13 +1,12 @@
 use mnemos_alloc::containers::{HeapArc, HeapArray, HeapFixedVec};
 use tracing::{debug, warn};
-use mnemos_registry::{RegisteredDriver, Uuid, uuid};
-
+use uuid::{Uuid, uuid};
 use crate::{
     comms::{
         bbq,
-        kchannel::{KChannel, KConsumer, KProducer}, rosc::Rosc,
+        kchannel::{KChannel, KConsumer}, rosc::Rosc,
     },
-    Kernel, registry::{Message, HMessage},
+    Kernel, registry::{Message, HMessage, RegisteredDriver, simple_serial::SimpleSerial, KernelHandle, ReplyTo},
 };
 use maitake::sync::Mutex;
 
@@ -209,8 +208,37 @@ impl RegisteredDriver for SerialMux {
 }
 
 pub struct SerialMuxHandle {
-    prod: KProducer<Message<SerialMux>>,
-    reply: Rosc<Response>,
+    prod: KernelHandle<SerialMux>,
+    reply: Rosc<HMessage<Result<Response, ()>>>,
+}
+
+impl SerialMuxHandle {
+    pub async fn get_registry(kernel: &'static Kernel) -> Option<Self> {
+        let prod = kernel.with_registry(|reg| {
+            reg.get::<SerialMux>()
+        }).await?;
+
+        Some(SerialMuxHandle {
+            prod,
+            reply: Rosc::new_async(kernel).await,
+        })
+    }
+
+    pub async fn register_port(&self, port_id: u16, capacity: usize) -> Option<PortHandle> {
+        self.prod
+            .send(
+                Request::RegisterPort {port_id, capacity, },
+                ReplyTo::Rosc(self.reply.sender().ok()?),
+            )
+            .await
+            .ok()?;
+
+        let resp = self.reply.receive().await.ok()?;
+        let body = resp.body.ok()?;
+
+        let Response::PortRegistered(port) = body;
+        Some(port)
+    }
 }
 
 impl SerialMux {
@@ -218,10 +246,10 @@ impl SerialMux {
         kernel: &'static Kernel,
         max_ports: usize,
         max_frame: usize,
+    ) -> Result<(), ()> {
+        let serial_handle = SimpleSerial::get_registry(kernel).await.ok_or(())?;
+        let serial_port = serial_handle.get_port().await.ok_or(())?;
 
-        // TODO: Replace with registry::get()
-        serial_port: bbq::BidiHandle,
-    ) -> SerialMuxHandle {
         let (sprod, scons) = serial_port.split();
         let sprod = sprod.into_mpmc_producer().await;
 
@@ -265,10 +293,7 @@ impl SerialMux {
             reg.set_konly::<SerialMux>(&cmd_prod)
         }).await.expect("Only registered once");
 
-        SerialMuxHandle {
-            prod: cmd_prod,
-            reply: Rosc::new_async(kernel).await,
-        }
+        Ok(())
     }
 }
 

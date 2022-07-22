@@ -1,4 +1,8 @@
-use mnemos_kernel::comms::bbq::BidiHandle;
+use mnemos_kernel::{
+    comms::{bbq::{BidiHandle, new_bidi_channel}, kchannel::KChannel},
+    Kernel,
+    registry::{Message, HMessage, simple_serial::{SimpleSerial, Request, Response}},
+};
 use std::net::SocketAddr;
 use tokio::{
     io::{self, AsyncWriteExt},
@@ -6,13 +10,32 @@ use tokio::{
 };
 use tracing::{info_span, trace, warn, Instrument};
 
-pub async fn spawn_tcp_serial(ip: SocketAddr, handle: BidiHandle) {
+pub async fn spawn_tcp_serial(
+    kernel: &'static Kernel,
+    ip: SocketAddr,
+    incoming_size: usize,
+    outgoing_size: usize,
+) -> Result<(), ()> {
+    let (a_ring, b_ring) = new_bidi_channel(kernel.heap(), incoming_size, outgoing_size).await;
+    let (prod, cons) = KChannel::<Message<SimpleSerial>>::new_async(kernel, 2).await.split();
+
     let listener = TcpListener::bind(ip).await.unwrap();
     tracing::info!("TCP serial port driver listening on {ip}");
 
+    kernel.spawn(async move {
+        let handle = b_ring;
+        let Message { msg: HMessage { body: Request::GetPort }, reply } = cons.dequeue_async().await.unwrap();
+        reply.reply_konly(Ok(Response::PortHandle { handle })).await.unwrap();
+
+        loop {
+            let Message { msg: HMessage { body: Request::GetPort }, reply } = cons.dequeue_async().await.unwrap();
+            reply.reply_konly(Err(())).await.unwrap();
+        }
+    }).await;
+
     let _ = tokio::spawn(
         async move {
-            let mut handle = handle;
+            let mut handle = a_ring;
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
@@ -29,6 +52,10 @@ pub async fn spawn_tcp_serial(ip: SocketAddr, handle: BidiHandle) {
         }
         .instrument(info_span!("TCP Serial", ?ip)),
     );
+
+    kernel.with_registry(|reg| {
+        reg.set_konly::<SimpleSerial>(&prod)
+    }).await
 }
 
 pub(crate) fn default_addr() -> SocketAddr {

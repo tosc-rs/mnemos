@@ -11,16 +11,11 @@ use abi::{
         framed::{FrameConsumer, FrameProducer},
         BBBuffer,
     },
-    syscall::{DriverKind, KernelResponse, UserRequest},
+    syscall::{KernelResponse, UserRequest},
 };
 use comms::kchannel::KChannel;
 use registry::Registry;
-use core::{
-    cell::UnsafeCell,
-    ops::{Deref, DerefMut},
-    sync::atomic::{AtomicUsize, Ordering},
-};
-use maitake::{task::Task as MaitakeTask, sync::{Mutex, MutexGuard}};
+use maitake::{task::Task as MaitakeTask, sync::Mutex};
 use maitake::{
     self,
     scheduler::{StaticScheduler, TaskStub},
@@ -66,7 +61,6 @@ pub struct KernelInner {
     u2k_ring: BBBuffer,
     k2u_ring: BBBuffer,
     scheduler: StaticScheduler,
-    user_reply: KChannel<KernelResponse>,
 }
 
 impl Kernel {
@@ -113,7 +107,6 @@ impl Kernel {
             u2k_ring,
             k2u_ring,
             scheduler,
-            user_reply: KChannel::new(&mut guard, settings.user_reply_max_ct),
         };
 
         let new_kernel = guard
@@ -150,42 +143,32 @@ impl Kernel {
 
         // process mailbox messages
         let inner = self.inner();
-        let registry = self.registry.try_lock().unwrap();
         let u2k_buf: *mut BBBuffer = &self.inner.u2k_ring as *const _ as *mut _;
         let k2u_buf: *mut BBBuffer = &self.inner.k2u_ring as *const _ as *mut _;
         let u2k: FrameConsumer<'static> = unsafe { BBBuffer::take_framed_consumer(u2k_buf) };
         let k2u: FrameProducer<'static> = unsafe { BBBuffer::take_framed_producer(k2u_buf) };
 
-        // Incoming messages
-        while let Some(msg) = u2k.read() {
-            match postcard::from_bytes::<UserRequest>(&msg) {
-                Ok(req) => {
-                    // let kind = req.driver_kind();
-                    // if let Some(drv) = inner_mut.drivers.iter().find(|drv| drv.kind == kind) {
-                    //     drv.queue
-                    //         .enqueue_sync(Message {
-                    //             request: req,
-                    //             response: inner.user_reply.clone(),
-                    //         })
-                    //         .map_err(drop)
-                    //         .unwrap();
-                    // }
-                    todo!("Driver registry");
+        #[allow(unreachable_code)]
+        if let Some(mut _reg) = self.registry.try_lock() {
+            // Incoming messages
+            while let Some(msg) = u2k.read() {
+                match postcard::from_bytes::<UserRequest>(&msg) {
+                    Ok(req) => {
+                        // let kind = req.driver_kind();
+                        // if let Some(drv) = inner_mut.drivers.iter().find(|drv| drv.kind == kind) {
+                        //     drv.queue
+                        //         .enqueue_sync(Message {
+                        //             request: req,
+                        //             response: inner.user_reply.clone(),
+                        //         })
+                        //         .map_err(drop)
+                        //         .unwrap();
+                        // }
+                        todo!("Driver registry");
+                    }
+                    Err(_) => panic!(),
                 }
-                Err(_) => panic!(),
-            }
-            msg.release();
-        }
-
-        // Outgoing messages
-        while let Ok(mut grant) = k2u.grant(256) {
-            match inner.user_reply.dequeue_sync() {
-                Some(msg) => {
-                    let used = postcard::to_slice(&msg, &mut grant).unwrap().len();
-
-                    grant.commit(used);
-                }
-                None => break,
+                msg.release();
             }
         }
 
@@ -208,6 +191,7 @@ impl Kernel {
     where
         F: FnOnce(&mut Registry) -> R,
     {
+
         let mut guard = self.registry.lock().await;
         f(&mut guard)
     }
