@@ -70,6 +70,8 @@ jobs:
     # if: needs.changed_paths.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
     steps:
+    - name: install libudev
+      run: sudo apt-get update && sudo apt-get install -y libudev-dev
     - name: install rust toolchain
       run: rustup show
     - uses: actions/checkout@v2
