@@ -25,7 +25,7 @@ pub static __ENTRY_POINT: unsafe fn() -> ! = entry;
 // * Being behind a feature, so you can provide your own panic handler
 // * Attempt to print the panic to the stdout (e.g. serial port 0),
 //     then triggering a "halt" or "reboot" system call.
-#[cfg(feature = "panic-handler")]
+#[cfg(all(feature = "panic-handler", target_os = "none"))]
 mod panic_handler {
     use core::panic::PanicInfo;
     use core::sync::atomic::{compiler_fence, Ordering};

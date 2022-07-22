@@ -1,10 +1,10 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::sync::mpsc::{Sender, Receiver, channel};
-use std::time::Duration;
+use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{sleep, spawn, JoinHandle};
-use serde::{Serialize, Deserialize};
+use std::time::Duration;
 
 #[derive(Serialize, Deserialize)]
 pub struct Chunk {
@@ -75,7 +75,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Err(_) => {
                         println!("AAAARGH");
                         panic!()
-                    },
+                    }
                 };
 
                 println!("Listening to port {} ({})", 10_000 + work.port, work.port);
@@ -98,8 +98,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         break 'inner;
                     }
 
-
-
                     if let Ok(msg) = work.out.recv_timeout(Duration::from_millis(1)) {
                         match skt.write_all(&msg) {
                             Ok(_) => {}
@@ -112,18 +110,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     let mut buf = [0u8; 128];
                     match skt.read(&mut buf) {
-                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {},
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
                         Ok(0) | Err(_) => {
                             skt.shutdown(std::net::Shutdown::Both).ok();
                             break 'inner;
-                        },
+                        }
                         Ok(n) => {
                             println!("yey!");
                             work.inp.send(buf[..n].to_vec()).ok();
                         }
                     }
                 }
-
             }
         });
         let handle = WorkerHandle {

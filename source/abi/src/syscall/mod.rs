@@ -4,9 +4,9 @@
 //! and userspace.
 //!
 //! These types and functions are NOT generally used outside of creating
-//! [`porcelain`](crate::porcelain) functions, or within the kernel itself.
+//! `porcelain` functions, or within the kernel itself.
 //!
-//! Consider using the [`porcelain`](crate::porcelain) functions directly
+//! Consider using the `porcelain` functions directly
 //! instead when making userspace system calls.
 //!
 //! ## WARNING!
