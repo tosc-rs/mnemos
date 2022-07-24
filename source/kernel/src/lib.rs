@@ -43,10 +43,10 @@ pub struct Message {
 }
 
 pub struct Kernel {
-    // Items that do not require a lock to access, and must only
-    // be accessed with shared refs
+    /// Items that do not require a lock to access, and must only
+    /// be accessed with shared refs
     inner: KernelInner,
-    // Items that require mutex'd access, and allow mutable access
+    /// The run-time driver registry, accessed via an async Mutex
     registry: Mutex<Registry>,
     heap: NonNull<AHeap>,
 }

@@ -38,7 +38,7 @@ pub struct KConsumer<T> {
 ///
 /// It contains a VTable of functions necessary for operations while type-erased,
 /// namely cloning and dropping.
-pub(crate) struct LeakedKProducer {
+pub(crate) struct ErasedKProducer {
     erased_q: NonNull<MpMcQueue<(), sealed::SpiteData<()>>>,
     dropper: unsafe fn(NonNull<MpMcQueue<(), sealed::SpiteData<()>>>),
     cloner: unsafe fn(&Self) -> Self,
@@ -129,14 +129,14 @@ impl<T> KProducer<T> {
         self.q.enqueue_async(item).await
     }
 
-    pub(crate) fn leak_erased(self) -> LeakedKProducer {
+    pub(crate) fn type_erase(self) -> ErasedKProducer {
         let typed_q: NonNull<MpMcQueue<T, sealed::SpiteData<T>>> = self.q.leak();
         let erased_q: NonNull<MpMcQueue<(), sealed::SpiteData<()>>> = typed_q.cast();
 
-        LeakedKProducer {
+        ErasedKProducer {
             erased_q,
-            dropper: LeakedKProducer::drop_leaked::<T>,
-            cloner: LeakedKProducer::clone_leaked::<T>,
+            dropper: ErasedKProducer::drop_leaked::<T>,
+            cloner: ErasedKProducer::clone_leaked::<T>,
         }
     }
 }
@@ -168,13 +168,13 @@ impl<T> KConsumer<T> {
 
 // LeakedKProducer
 
-impl Clone for LeakedKProducer {
+impl Clone for ErasedKProducer {
     fn clone(&self) -> Self {
         unsafe { (self.cloner)(&self) }
     }
 }
 
-impl LeakedKProducer {
+impl ErasedKProducer {
     /// Clone the LeakedKProducer. The resulting LeakedKProducer will be for the same
     /// underlying [KChannel] and type.
     pub(crate) fn clone_leaked<T>(&self) -> Self {
@@ -214,7 +214,7 @@ impl LeakedKProducer {
     }
 }
 
-impl Drop for LeakedKProducer {
+impl Drop for ErasedKProducer {
     fn drop(&mut self) {
         unsafe {
             (self.dropper)(self.erased_q);

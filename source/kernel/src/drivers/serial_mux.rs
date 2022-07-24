@@ -121,7 +121,7 @@ impl SerialMux {
             .await;
 
         kernel
-            .with_registry(|reg| reg.set_konly::<SerialMux>(&cmd_prod))
+            .with_registry(|reg| reg.register_konly::<SerialMux>(&cmd_prod))
             .await
             .expect("Only registered once");
 

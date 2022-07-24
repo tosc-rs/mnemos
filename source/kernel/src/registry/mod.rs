@@ -7,7 +7,7 @@ use uuid::{uuid, Uuid};
 
 use crate::comms::{
     bbq,
-    kchannel::{KProducer, LeakedKProducer},
+    kchannel::{KProducer, ErasedKProducer},
     rosc::Sender,
 };
 
@@ -28,7 +28,7 @@ pub mod known_uuids {
 
 /// A marker trait designating a registerable driver service.
 ///
-/// Typically used with [Registry::set] or [Registry::set_konly].
+/// Typically used with [Registry::register] or [Registry::register_konly].
 /// Can typically be retrieved by [Registry::get] or [Registry::get_userspace]
 /// After the service has been registered.
 pub trait RegisteredDriver {
@@ -43,9 +43,15 @@ pub trait RegisteredDriver {
 
     /// Get the type_id used to make sure that driver instances are correctly typed.
     /// Corresponds to the same type ID as `(Self::Request, Self::Response)`
-    fn type_id() -> TypeId {
-        TypeId::of::<(Self::Request, Self::Response)>()
+    fn type_id() -> RegistryType {
+        RegistryType {
+            tuple_type_id: TypeId::of::<(Self::Request, Self::Response)>(),
+        }
     }
+}
+
+pub struct RegistryType {
+    tuple_type_id: TypeId,
 }
 
 /// The driver registry used by the kernel.
@@ -101,6 +107,8 @@ pub enum ReplyTo<U> {
     // without a serialization step
     KChannel(KProducer<Envelope<Result<U, ()>>>),
 
+    // This can be used to reply directly ONCE to another kernel entity,
+    // without a serialization step
     Rosc(Sender<Envelope<Result<U, ()>>>),
 
     // This can be used to reply to userspace. Responses are serialized
@@ -116,7 +124,7 @@ pub enum ReplyTo<U> {
 /// from a given UUID, and send that request (if the deserialization is
 /// successful) to a given driver service.
 pub struct UserspaceHandle {
-    req_producer_leaked: LeakedKProducer,
+    req_producer_leaked: ErasedKProducer,
     req_deser: ErasedDeserHandler,
 }
 
@@ -127,7 +135,7 @@ pub struct KernelHandle<RD: RegisteredDriver> {
 }
 
 type ErasedDeserHandler =
-    unsafe fn(UserRequest<'_>, &LeakedKProducer, &bbq::MpscProducer) -> Result<(), ()>;
+    unsafe fn(UserRequest<'_>, &ErasedKProducer, &bbq::MpscProducer) -> Result<(), ()>;
 
 /// The payload of a registry item.
 ///
@@ -136,7 +144,7 @@ type ErasedDeserHandler =
 /// tuple type id is correct.
 struct RegistryValue {
     req_resp_tuple_id: TypeId,
-    req_prod_leaked: LeakedKProducer,
+    req_prod: ErasedKProducer,
     req_deser: Option<ErasedDeserHandler>,
 }
 
@@ -145,6 +153,14 @@ struct RegistryValue {
 struct RegistryItem {
     key: Uuid,
     value: RegistryValue,
+}
+
+// RegistryType
+
+impl RegistryType {
+    pub fn type_of(&self) -> TypeId {
+        self.tuple_type_id
+    }
 }
 
 // Registry
@@ -159,11 +175,11 @@ impl Registry {
 
     /// Register a driver service ONLY for use in the kernel, including drivers.
     ///
-    /// Driver services registered with [Registry::set_konly] can NOT be queried
+    /// Driver services registered with [Registry::register_konly] can NOT be queried
     /// or interfaced with from Userspace. If a registered service has request
     /// and response types that are serializable, it can instead be registered
-    /// with [Registry::set] which allows for userspace access.
-    pub fn set_konly<RD: RegisteredDriver>(
+    /// with [Registry::register] which allows for userspace access.
+    pub fn register_konly<RD: RegisteredDriver>(
         &mut self,
         kch: &KProducer<Message<RD>>,
     ) -> Result<(), ()> {
@@ -174,8 +190,8 @@ impl Registry {
             .push(RegistryItem {
                 key: RD::UUID,
                 value: RegistryValue {
-                    req_resp_tuple_id: RD::type_id(),
-                    req_prod_leaked: kch.clone().leak_erased(),
+                    req_resp_tuple_id: RD::type_id().type_of(),
+                    req_prod: kch.clone().type_erase(),
                     req_deser: None,
                 },
             })
@@ -185,9 +201,9 @@ impl Registry {
     /// Register a driver service for use in the kernel (including drivers) as
     /// well as in userspace.
     ///
-    /// See [Registry::set_konly] if the request and response types are not
+    /// See [Registry::register_konly] if the request and response types are not
     /// serializable.
-    pub fn set<RD>(&mut self, kch: &KProducer<Message<RD>>) -> Result<(), ()>
+    pub fn register<RD>(&mut self, kch: &KProducer<Message<RD>>) -> Result<(), ()>
     where
         RD: RegisteredDriver,
         RD::Request: Serialize + DeserializeOwned,
@@ -200,8 +216,8 @@ impl Registry {
             .push(RegistryItem {
                 key: RD::UUID,
                 value: RegistryValue {
-                    req_resp_tuple_id: RD::type_id(),
-                    req_prod_leaked: kch.clone().leak_erased(),
+                    req_resp_tuple_id: RD::type_id().type_of(),
+                    req_prod: kch.clone().type_erase(),
                     req_deser: Some(map_deser::<RD>),
                 },
             })
@@ -213,17 +229,17 @@ impl Registry {
     /// This can be used by drivers and tasks to interface with a registered driver
     /// service.
     ///
-    /// The driver service MUST have already been registered using [Registry::set] or
-    /// [Registry::set_konly] prior to making this call, otherwise no handle will
+    /// The driver service MUST have already been registered using [Registry::register] or
+    /// [Registry::register_konly] prior to making this call, otherwise no handle will
     /// be returned.
     pub fn get<RD: RegisteredDriver>(&self) -> Option<KernelHandle<RD>> {
         let item = self.items.iter().find(|i| i.key == RD::UUID)?;
-        if item.value.req_resp_tuple_id != RD::type_id() {
+        if item.value.req_resp_tuple_id != RD::type_id().type_of() {
             return None;
         }
         unsafe {
             Some(KernelHandle {
-                prod: item.value.req_prod_leaked.clone_typed(),
+                prod: item.value.req_prod.clone_typed(),
             })
         }
     }
@@ -231,10 +247,10 @@ impl Registry {
     /// Get a handle capable of processing serialized userspace messages to a
     /// registered driver service.
     ///
-    /// The driver service MUST have already been registered using [Registry::set] or
+    /// The driver service MUST have already been registered using [Registry::register] or
     /// prior to making this call, otherwise no handle will be returned.
     ///
-    /// Driver services registered with [Registry::set_konly] cannot be retrieved via
+    /// Driver services registered with [Registry::register_konly] cannot be retrieved via
     /// a call to [Registry::get_userspace].
     pub fn get_userspace<RD>(&mut self) -> Option<UserspaceHandle>
     where
@@ -244,7 +260,7 @@ impl Registry {
     {
         let item = self.items.iter().find(|i| &i.key == &RD::UUID)?;
         Some(UserspaceHandle {
-            req_producer_leaked: item.value.req_prod_leaked.clone(),
+            req_producer_leaked: item.value.req_prod.clone(),
             req_deser: item.value.req_deser?,
         })
     }
@@ -347,7 +363,7 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
 /// inside of the registry.
 unsafe fn map_deser<RD>(
     umsg: UserRequest<'_>,
-    req_tx: &LeakedKProducer,
+    req_tx: &ErasedKProducer,
     user_resp: &bbq::MpscProducer,
 ) -> Result<(), ()>
 where

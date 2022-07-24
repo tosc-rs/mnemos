@@ -19,6 +19,17 @@ use mnemos_alloc::containers::HeapArc;
 
 use crate::Kernel;
 
+/// Not waiting for anything.
+const ROSC_IDLE: u8 = 0;
+/// A Sender has been created, but no writes have begun yet
+const ROSC_WAITING: u8 = 1;
+/// A Sender has begun writing, and will be dropped shortly.
+const ROSC_WRITING: u8 = 2;
+/// The Sender has been dropped and the message has been send
+const ROSC_READY: u8 = 3;
+/// Reading has already started
+const ROSC_READING: u8 = 4;
+
 /// A reusable One-Shot channel.
 ///
 /// A `Rosc<T>` can be used to hand out single-use [Sender] items, which can
@@ -64,8 +75,8 @@ impl<T> Rosc<T> {
         self.inner
             .state
             .compare_exchange(
-                Inner::<T>::IDLE,
-                Inner::<T>::WAITING,
+                ROSC_IDLE,
+                ROSC_WAITING,
                 Ordering::AcqRel,
                 Ordering::Relaxed,
             )
@@ -86,8 +97,8 @@ impl<T> Rosc<T> {
     pub async fn receive(&self) -> Result<T, ()> {
         loop {
             let swap = self.inner.state.compare_exchange(
-                Inner::<T>::READY,
-                Inner::<T>::READING,
+                ROSC_READY,
+                ROSC_READING,
                 Ordering::AcqRel,
                 Ordering::Relaxed,
             );
@@ -102,11 +113,11 @@ impl<T> Rosc<T> {
                             ret.as_mut_ptr(),
                             1,
                         );
-                        self.inner.state.store(Inner::<T>::IDLE, Ordering::Release);
+                        self.inner.state.store(ROSC_IDLE, Ordering::Release);
                         return Ok(ret.assume_init());
                     }
                 }
-                Err(Inner::<T>::WAITING | Inner::<T>::WRITING) => {
+                Err(ROSC_WAITING | ROSC_WRITING) => {
                     // We are still waiting for the Sender to start or complete.
                     self.inner.wait.wait().await.map_err(drop)?;
                 }
@@ -129,15 +140,15 @@ impl<T> Sender<T> {
         self.inner
             .state
             .compare_exchange(
-                Inner::<T>::WAITING,
-                Inner::<T>::WRITING,
+                ROSC_WAITING,
+                ROSC_WRITING,
                 Ordering::AcqRel,
                 Ordering::Relaxed,
             )
             .map_err(drop)?;
 
         unsafe { self.inner.cell.get().write(MaybeUninit::new(item)) };
-        self.inner.state.store(Inner::<T>::READY, Ordering::Release);
+        self.inner.state.store(ROSC_READY, Ordering::Release);
         self.inner.wait.wake();
         Ok(())
     }
@@ -148,8 +159,8 @@ impl<T> Drop for Sender<T> {
         // Attempt to move the state from WAITING to IDLE, and wake any
         // pending waiters. This will cause an Err(()) on the receive side.
         let _ = self.inner.state.compare_exchange(
-            Inner::<T>::WAITING,
-            Inner::<T>::IDLE,
+            ROSC_WAITING,
+            ROSC_IDLE,
             Ordering::AcqRel,
             Ordering::Relaxed,
         );
@@ -164,20 +175,9 @@ unsafe impl<T: Send> Sync for Inner<T> {}
 
 // TODO: Should probably try to impl drop, at least if state == READY
 impl<T> Inner<T> {
-    /// Not waiting for anything.
-    const IDLE: u8 = 0;
-    /// A Sender has been created, but no writes have begun yet
-    const WAITING: u8 = 1;
-    /// A Sender has begun writing, and will be dropped shortly.
-    const WRITING: u8 = 2;
-    /// The Sender has been dropped and the message has been send
-    const READY: u8 = 3;
-    /// Reading has already started
-    const READING: u8 = 4;
-
     fn new() -> Self {
         Self {
-            state: AtomicU8::new(Self::IDLE),
+            state: AtomicU8::new(ROSC_IDLE),
             cell: UnsafeCell::new(MaybeUninit::uninit()),
             wait: WaitCell::new(),
         }

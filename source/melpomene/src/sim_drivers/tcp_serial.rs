@@ -84,7 +84,7 @@ impl TcpSerial {
         );
 
         kernel
-            .with_registry(|reg| reg.set_konly::<SimpleSerial>(&prod))
+            .with_registry(|reg| reg.register_konly::<SimpleSerial>(&prod))
             .await
     }
 }
