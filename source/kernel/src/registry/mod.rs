@@ -7,23 +7,20 @@ use uuid::{uuid, Uuid};
 
 use crate::comms::{
     bbq,
-    kchannel::{KProducer, ErasedKProducer},
+    kchannel::{ErasedKProducer, KProducer},
     rosc::Sender,
 };
 
 /// A partial list of known UUIDs of driver services
 pub mod known_uuids {
-     /// Kernel UUIDs
-     pub mod kernel {
-         pub const SERIAL_MUX: Uuid = uuid!("54c983fa-736f-4223-b90d-c4360a308647");
-         pub const SIMPLE_SERIAL_PORT: Uuid = uuid!("f06aac01-2773-4266-8681-583ffe756554");
-     }
-     
-     // In case you need to iterate over every UUID
-     pub static ALL: &[Uuid] = &[
-         kernel::SERIAL_MUX,
-         kernel::SIMPLE_SERIAL_PORT,
-     ];
+    /// Kernel UUIDs
+    pub mod kernel {
+        pub const SERIAL_MUX: Uuid = uuid!("54c983fa-736f-4223-b90d-c4360a308647");
+        pub const SIMPLE_SERIAL_PORT: Uuid = uuid!("f06aac01-2773-4266-8681-583ffe756554");
+    }
+
+    // In case you need to iterate over every UUID
+    pub static ALL: &[Uuid] = &[kernel::SERIAL_MUX, kernel::SIMPLE_SERIAL_PORT];
 }
 
 /// A marker trait designating a registerable driver service.

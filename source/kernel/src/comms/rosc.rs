@@ -74,12 +74,7 @@ impl<T> Rosc<T> {
     pub fn sender(&self) -> Result<Sender<T>, ()> {
         self.inner
             .state
-            .compare_exchange(
-                ROSC_IDLE,
-                ROSC_WAITING,
-                Ordering::AcqRel,
-                Ordering::Relaxed,
-            )
+            .compare_exchange(ROSC_IDLE, ROSC_WAITING, Ordering::AcqRel, Ordering::Relaxed)
             .map_err(drop)?;
 
         Ok(Sender {
