@@ -7,13 +7,13 @@ use mnemos_alloc::{
     containers::{HeapArc, HeapArray},
     heap::HeapGuard,
 };
-use spitebuf::MpMcQueue;
+use spitebuf::{DequeueError, EnqueueError, MpScQueue};
 
 use crate::Kernel;
 
 /// A Kernel Channel
 pub struct KChannel<T> {
-    q: HeapArc<MpMcQueue<T, sealed::SpiteData<T>>>,
+    q: HeapArc<MpScQueue<T, sealed::SpiteData<T>>>,
 }
 
 /// A Producer for a [KChannel].
@@ -21,7 +21,7 @@ pub struct KChannel<T> {
 /// A `KProducer` can be cloned multiple times, as the backing [KChannel]
 /// is an MPSC queue.
 pub struct KProducer<T> {
-    q: HeapArc<MpMcQueue<T, sealed::SpiteData<T>>>,
+    q: HeapArc<MpScQueue<T, sealed::SpiteData<T>>>,
 }
 
 /// A Consumer for a [KChannel].
@@ -30,7 +30,7 @@ pub struct KProducer<T> {
 /// as it is an MPSC queue. A `KConsumer` can also be used to create a new
 /// [KProducer] instance.
 pub struct KConsumer<T> {
-    q: HeapArc<MpMcQueue<T, sealed::SpiteData<T>>>,
+    q: HeapArc<MpScQueue<T, sealed::SpiteData<T>>>,
 }
 
 /// A type-erased [KProducer]. This is currently used only for implementing
@@ -39,8 +39,8 @@ pub struct KConsumer<T> {
 /// It contains a VTable of functions necessary for operations while type-erased,
 /// namely cloning and dropping.
 pub(crate) struct ErasedKProducer {
-    erased_q: NonNull<MpMcQueue<(), sealed::SpiteData<()>>>,
-    dropper: unsafe fn(NonNull<MpMcQueue<(), sealed::SpiteData<()>>>),
+    erased_q: NonNull<MpScQueue<(), sealed::SpiteData<()>>>,
+    dropper: unsafe fn(NonNull<MpScQueue<(), sealed::SpiteData<()>>>),
     cloner: unsafe fn(&Self) -> Self,
 }
 
@@ -53,7 +53,7 @@ impl<T> Clone for KChannel<T> {
 }
 
 impl<T> Deref for KChannel<T> {
-    type Target = MpMcQueue<T, sealed::SpiteData<T>>;
+    type Target = MpScQueue<T, sealed::SpiteData<T>>;
 
     fn deref(&self) -> &Self::Target {
         &self.q
@@ -68,7 +68,7 @@ impl<T> KChannel<T> {
         let heap = kernel.heap();
 
         let ba = heap.allocate_array_with(func, count).await;
-        let q = MpMcQueue::new(sealed::SpiteData { data: ba });
+        let q = MpScQueue::new(sealed::SpiteData { data: ba });
         Self {
             q: heap.allocate_arc(q).await,
         }
@@ -80,7 +80,7 @@ impl<T> KChannel<T> {
         let func = || UnsafeCell::new(spitebuf::single_cell::<T>());
 
         let ba = guard.alloc_box_array_with(func, count).unwrap();
-        let q = MpMcQueue::new(sealed::SpiteData { data: ba });
+        let q = MpScQueue::new(sealed::SpiteData { data: ba });
         Self {
             q: guard.alloc_arc(q).map_err(drop).unwrap(),
         }
@@ -116,7 +116,7 @@ impl<T> KProducer<T> {
     ///
     /// Returns back the `item` if the queue is full
     #[inline(always)]
-    pub fn enqueue_sync(&self, item: T) -> Result<(), T> {
+    pub fn enqueue_sync(&self, item: T) -> Result<(), EnqueueError<T>> {
         self.q.enqueue_sync(item)
     }
 
@@ -125,13 +125,13 @@ impl<T> KProducer<T> {
     /// If the queue is full, this method will yield until there is space
     /// available.
     #[inline(always)]
-    pub async fn enqueue_async(&self, item: T) -> Result<(), T> {
+    pub async fn enqueue_async(&self, item: T) -> Result<(), EnqueueError<T>> {
         self.q.enqueue_async(item).await
     }
 
     pub(crate) fn type_erase(self) -> ErasedKProducer {
-        let typed_q: NonNull<MpMcQueue<T, sealed::SpiteData<T>>> = self.q.leak();
-        let erased_q: NonNull<MpMcQueue<(), sealed::SpiteData<()>>> = typed_q.cast();
+        let typed_q: NonNull<MpScQueue<T, sealed::SpiteData<T>>> = self.q.leak();
+        let erased_q: NonNull<MpScQueue<(), sealed::SpiteData<()>>> = typed_q.cast();
 
         ErasedKProducer {
             erased_q,
@@ -156,7 +156,7 @@ impl<T> KConsumer<T> {
     /// If no item is available, this function will yield until an item
     /// has been enqueued
     #[inline(always)]
-    pub async fn dequeue_async(&self) -> Result<T, ()> {
+    pub async fn dequeue_async(&self) -> Result<T, DequeueError> {
         self.q.dequeue_async().await
     }
 
@@ -178,7 +178,7 @@ impl ErasedKProducer {
     /// Clone the LeakedKProducer. The resulting LeakedKProducer will be for the same
     /// underlying [KChannel] and type.
     pub(crate) fn clone_leaked<T>(&self) -> Self {
-        let typed_q: NonNull<MpMcQueue<T, sealed::SpiteData<T>>> = self.erased_q.cast();
+        let typed_q: NonNull<MpScQueue<T, sealed::SpiteData<T>>> = self.erased_q.cast();
         unsafe {
             HeapArc::increment_count(typed_q);
         }
@@ -197,7 +197,7 @@ impl ErasedKProducer {
     /// The type `T` MUST be the same `T` that was used to create this LeakedKProducer,
     /// otherwise undefined behavior will occur.
     pub(crate) unsafe fn clone_typed<T>(&self) -> KProducer<T> {
-        let typed_q: NonNull<MpMcQueue<T, sealed::SpiteData<T>>> = self.erased_q.cast();
+        let typed_q: NonNull<MpScQueue<T, sealed::SpiteData<T>>> = self.erased_q.cast();
         let heap_arc = HeapArc::clone_from_leaked(typed_q);
         KProducer { q: heap_arc }
     }
@@ -208,8 +208,8 @@ impl ErasedKProducer {
     ///
     /// The type `T` MUST be the same `T` that was used to create this LeakedKProducer,
     /// otherwise undefined behavior will occur.
-    pub(crate) unsafe fn drop_leaked<T>(ptr: NonNull<MpMcQueue<(), sealed::SpiteData<()>>>) {
-        let ptr = ptr.cast::<MpMcQueue<T, sealed::SpiteData<T>>>();
+    pub(crate) unsafe fn drop_leaked<T>(ptr: NonNull<MpScQueue<(), sealed::SpiteData<()>>>) {
+        let ptr = ptr.cast::<MpScQueue<T, sealed::SpiteData<T>>>();
         let _ = HeapArc::from_leaked(ptr);
     }
 }

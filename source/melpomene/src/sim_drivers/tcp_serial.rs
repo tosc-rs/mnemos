@@ -4,7 +4,7 @@ use mnemos_kernel::{
         kchannel::KChannel,
     },
     registry::{
-        simple_serial::{Request, Response, SimpleSerial},
+        simple_serial::{Request, Response, SimpleSerial, SimpleSerialError},
         Envelope, Message,
     },
     Kernel,
@@ -45,10 +45,11 @@ impl TcpSerial {
                             ..
                         },
                     reply,
-                } = cons.dequeue_async().await.unwrap();
+                } = cons.dequeue_async().await.map_err(drop).unwrap();
                 reply
                     .reply_konly(Ok(Response::PortHandle { handle }))
                     .await
+                    .map_err(drop)
                     .unwrap();
 
                 loop {
@@ -59,8 +60,12 @@ impl TcpSerial {
                                 ..
                             },
                         reply,
-                    } = cons.dequeue_async().await.unwrap();
-                    reply.reply_konly(Err(())).await.unwrap();
+                    } = cons.dequeue_async().await.map_err(drop).unwrap();
+                    reply
+                        .reply_konly(Err(SimpleSerialError::AlreadyAssignedPort))
+                        .await
+                        .map_err(drop)
+                        .unwrap();
                 }
             })
             .await;

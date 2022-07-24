@@ -30,7 +30,7 @@ pub struct PortHandle {
 /// A SerialMuxHandle is the client interface of the [SerialMux].
 pub struct SerialMuxHandle {
     prod: KernelHandle<SerialMux>,
-    reply: Reusable<Envelope<Result<Response, ()>>>,
+    reply: Reusable<Envelope<Result<Response, SerialMuxError>>>,
 }
 
 pub enum Request {
@@ -39,6 +39,11 @@ pub enum Request {
 
 pub enum Response {
     PortRegistered(PortHandle),
+}
+
+pub enum SerialMuxError {
+    DuplicateItem,
+    RegistryFull,
 }
 
 struct PortInfo {
@@ -70,6 +75,7 @@ struct IncomingMuxerTask {
 impl RegisteredDriver for SerialMux {
     type Request = Request;
     type Response = Response;
+    type Error = SerialMuxError;
     const UUID: Uuid = uuid!("54c983fa-736f-4223-b90d-c4360a308647");
 }
 
@@ -194,9 +200,12 @@ impl MuxingInfo {
         port_id: u16,
         capacity: usize,
         outgoing: &bbq::MpscProducer,
-    ) -> Result<PortHandle, ()> {
-        if self.ports.is_full() || self.ports.iter().any(|p| p.port == port_id) {
-            return Err(());
+    ) -> Result<PortHandle, SerialMuxError> {
+        if self.ports.is_full() {
+            return Err(SerialMuxError::RegistryFull);
+        }
+        if self.ports.iter().any(|p| p.port == port_id) {
+            return Err(SerialMuxError::DuplicateItem);
         }
         let (prod, cons) = bbq::new_spsc_channel(self.kernel.heap(), capacity).await;
 
@@ -205,7 +214,7 @@ impl MuxingInfo {
                 port: port_id,
                 upstream: prod,
             })
-            .map_err(drop)?;
+            .map_err(|_| SerialMuxError::RegistryFull)?;
 
         let ph = PortHandle {
             port: port_id,
@@ -223,7 +232,7 @@ impl MuxingInfo {
 impl CommanderTask {
     async fn run(self) {
         loop {
-            let msg = self.cmd.dequeue_async().await.unwrap();
+            let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
             let Message { msg: req, reply } = msg;
             match req {
                 Envelope {
@@ -234,7 +243,7 @@ impl CommanderTask {
                         mux.register_port(port_id, capacity, &self.out).await
                     }
                     .map(Response::PortRegistered);
-                    reply.reply_konly(res).await.unwrap();
+                    reply.reply_konly(res).await.map_err(drop).unwrap();
                 }
             }
         }

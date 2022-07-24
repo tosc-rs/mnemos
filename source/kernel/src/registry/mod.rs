@@ -3,12 +3,13 @@ use core::any::TypeId;
 use mnemos_alloc::{containers::HeapFixedVec, heap::HeapGuard};
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use spitebuf::EnqueueError;
 use uuid::{uuid, Uuid};
 
 use crate::comms::{
     bbq,
     kchannel::{ErasedKProducer, KProducer},
-    oneshot::Sender,
+    oneshot::{ReusableError, Sender},
 };
 
 /// A partial list of known UUIDs of driver services
@@ -36,17 +37,20 @@ pub trait RegisteredDriver {
     /// This is the type of the request sent TO the driver service
     type Request: 'static;
 
-    /// This is the type of the response sent FROM the driver service
+    /// This is the type of a SUCCESSFUL response sent FROM the driver service
     type Response: 'static;
+
+    /// This is the type of an UNSUCCESSFUL response sent FROM the driver service
+    type Error: 'static;
 
     /// This is the UUID of the driver service
     const UUID: Uuid;
 
     /// Get the type_id used to make sure that driver instances are correctly typed.
-    /// Corresponds to the same type ID as `(Self::Request, Self::Response)`
+    /// Corresponds to the same type ID as `(Self::Request, Self::Response, Self::Error)`
     fn type_id() -> RegistryType {
         RegistryType {
-            tuple_type_id: TypeId::of::<(Self::Request, Self::Response)>(),
+            tuple_type_id: TypeId::of::<(Self::Request, Self::Response, Self::Error)>(),
         }
     }
 }
@@ -72,11 +76,11 @@ pub struct UserRequest<'a> {
 
 // TODO: This probably goes into the ABI crate, here is fine for now
 #[derive(Serialize, Deserialize)]
-pub struct UserResponse<U> {
+pub struct UserResponse<U, E> {
     // TODO: Maybe not the UUID, maybe pre-discover a shorter UID?
     uuid: Uuid,
     nonce: u32,
-    reply: Result<U, ()>,
+    reply: Result<U, E>,
 }
 
 /// A wrapper for a message TO and FROM a driver service.
@@ -96,21 +100,21 @@ pub struct Envelope<P> {
 /// request
 pub struct Message<RD: RegisteredDriver> {
     pub msg: Envelope<RD::Request>,
-    pub reply: ReplyTo<RD::Response>,
+    pub reply: ReplyTo<RD>,
 }
 
 /// A `ReplyTo` is used to allow the CLIENT of a service to choose the
 /// way that the driver SERVICE replies to us. Essentially, this acts
 /// as a "self addressed stamped envelope" for the SERVICE to use to
 /// reply to the CLIENT.
-pub enum ReplyTo<U> {
+pub enum ReplyTo<RD: RegisteredDriver> {
     // This can be used to reply directly to another kernel entity,
     // without a serialization step
-    KChannel(KProducer<Envelope<Result<U, ()>>>),
+    KChannel(KProducer<Envelope<Result<RD::Response, RD::Error>>>),
 
     // This can be used to reply directly ONCE to another kernel entity,
     // without a serialization step
-    OneShot(Sender<Envelope<Result<U, ()>>>),
+    OneShot(Sender<Envelope<Result<RD::Response, RD::Error>>>),
 
     // This can be used to reply to userspace. Responses are serialized
     // and sent over the bbq::MpscProducer
@@ -118,6 +122,32 @@ pub enum ReplyTo<U> {
         nonce: u32,
         outgoing: bbq::MpscProducer,
     },
+}
+
+pub enum ReplyError {
+    KOnlyUserspaceResponse,
+    ReplyChannelClosed,
+    UserspaceSerializationError,
+    InternalError,
+}
+
+impl From<ReusableError> for ReplyError {
+    fn from(err: ReusableError) -> Self {
+        match err {
+            ReusableError::ChannelClosed => ReplyError::ReplyChannelClosed,
+            _ => ReplyError::InternalError,
+        }
+    }
+}
+
+impl<T> From<EnqueueError<T>> for ReplyError {
+    fn from(enq: EnqueueError<T>) -> Self {
+        match enq {
+            // Should not be possible with async calls
+            EnqueueError::Full(_) => ReplyError::InternalError,
+            EnqueueError::Closed(_) => ReplyError::ReplyChannelClosed,
+        }
+    }
 }
 
 /// A UserspaceHandle is used to process incoming serialized messages from
@@ -271,11 +301,11 @@ impl Registry {
 
 // UserResponse
 
-impl<U: MaxSize> MaxSize for UserResponse<U> {
+impl<U: MaxSize, E: MaxSize> MaxSize for UserResponse<U, E> {
     const POSTCARD_MAX_SIZE: usize = {
         <[u8; 16] as MaxSize>::POSTCARD_MAX_SIZE
             + <u32 as MaxSize>::POSTCARD_MAX_SIZE
-            + <Result<U, ()> as MaxSize>::POSTCARD_MAX_SIZE
+            + <Result<U, E> as MaxSize>::POSTCARD_MAX_SIZE
     };
 }
 
@@ -291,34 +321,51 @@ impl<P> Envelope<P> {
 
 // ReplyTo
 
-impl<U> ReplyTo<U> {
-    pub async fn reply_konly(self, payload: Result<U, ()>) -> Result<(), ()> {
+impl<RD: RegisteredDriver> ReplyTo<RD> {
+    pub async fn reply_konly(
+        self,
+        payload: Result<RD::Response, RD::Error>,
+    ) -> Result<(), ReplyError> {
         let hmsg = Envelope { body: payload };
         match self {
-            ReplyTo::KChannel(kprod) => kprod.enqueue_async(hmsg).await.map_err(drop),
-            ReplyTo::OneShot(sender) => sender.send(hmsg),
-            ReplyTo::Userspace { .. } => Err(()),
+            ReplyTo::KChannel(kprod) => {
+                kprod.enqueue_async(hmsg).await?;
+            }
+            ReplyTo::OneShot(sender) => {
+                sender.send(hmsg)?;
+            }
+            ReplyTo::Userspace { .. } => return Err(ReplyError::KOnlyUserspaceResponse),
         }
+        Ok(())
     }
 }
 
-impl<U> ReplyTo<U>
+impl<RD: RegisteredDriver> ReplyTo<RD>
 where
-    U: Serialize + MaxSize,
+    RD::Response: Serialize + MaxSize,
+    RD::Error: Serialize + MaxSize,
 {
-    pub async fn reply(self, uuid_source: Uuid, payload: Result<U, ()>) -> Result<(), ()> {
+    pub async fn reply(
+        self,
+        uuid_source: Uuid,
+        payload: Result<RD::Response, RD::Error>,
+    ) -> Result<(), ReplyError> {
         match self {
             ReplyTo::KChannel(kprod) => {
                 let hmsg = Envelope { body: payload };
-                kprod.enqueue_async(hmsg).await.map_err(drop)
+                kprod.enqueue_async(hmsg).await?;
+                Ok(())
             }
             ReplyTo::OneShot(sender) => {
                 let hmsg = Envelope { body: payload };
-                sender.send(hmsg)
+                sender.send(hmsg)?;
+                Ok(())
             }
             ReplyTo::Userspace { nonce, outgoing } => {
                 let mut wgr = outgoing
-                    .send_grant_exact(<UserResponse<U> as MaxSize>::POSTCARD_MAX_SIZE)
+                    .send_grant_exact(
+                        <UserResponse<RD::Response, RD::Error> as MaxSize>::POSTCARD_MAX_SIZE,
+                    )
                     .await;
                 let used = postcard::to_slice(
                     &UserResponse {
@@ -328,7 +375,7 @@ where
                     },
                     &mut wgr,
                 )
-                .map_err(drop)?;
+                .map_err(|_| ReplyError::UserspaceSerializationError)?;
                 let len = used.len();
                 wgr.commit(len);
                 Ok(())
@@ -352,7 +399,7 @@ impl UserspaceHandle {
 // KernelHandle
 
 impl<RD: RegisteredDriver> KernelHandle<RD> {
-    pub async fn send(&self, msg: RD::Request, reply: ReplyTo<RD::Response>) -> Result<(), ()> {
+    pub async fn send(&self, msg: RD::Request, reply: ReplyTo<RD>) -> Result<(), ()> {
         self.prod
             .enqueue_async(Message {
                 msg: Envelope { body: msg },
@@ -423,7 +470,11 @@ pub mod simple_serial {
 
     pub struct SimpleSerial {
         kprod: KernelHandle<SimpleSerial>,
-        rosc: Reusable<Envelope<Result<Response, ()>>>,
+        rosc: Reusable<Envelope<Result<Response, SimpleSerialError>>>,
+    }
+
+    pub enum SimpleSerialError {
+        AlreadyAssignedPort,
     }
 
     impl SimpleSerial {
@@ -453,6 +504,7 @@ pub mod simple_serial {
     impl RegisteredDriver for SimpleSerial {
         type Request = Request;
         type Response = Response;
+        type Error = SimpleSerialError;
 
         const UUID: Uuid = uuid!("f06aac01-2773-4266-8681-583ffe756554");
     }
