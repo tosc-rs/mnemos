@@ -1,12 +1,9 @@
-//! Reusable One-Shot Channel
+//! One-Shot Channels
 //!
 //! Often, clients of drivers only want to process one "in-flight" message at
-//! a time. If request pipelining is not required, then a Reusable One-Shot Channel
+//! a time. If request pipelining is not required, then a One-Shot Channel
 //! is an easy way to perform an async/await request/response cycle.
-//!
-//! Essentially, a Rosc is a single producer, single consumer, channel, with a max
-//! depth of one. Many producers can be created over the lifecycle of a single consumer,
-//! however only zero or one producers can be live at any given time.
+
 
 use core::{
     cell::UnsafeCell,
@@ -32,18 +29,22 @@ const ROSC_READING: u8 = 4;
 
 /// A reusable One-Shot channel.
 ///
-/// A `Rosc<T>` can be used to hand out single-use [Sender] items, which can
+/// Essentially, a Reusable is a single producer, single consumer, channel, with a max
+/// depth of one. Many producers can be created over the lifecycle of a single consumer,
+/// however only zero or one producers can be live at any given time.
+///
+/// A `Reusable<T>` can be used to hand out single-use [Sender] items, which can
 /// be used to make a single reply.
 ///
-/// A given `Rosc<T>` can only ever have zero or one `Sender<T>`s live at any
-/// given time, and a response can be received through a call to [Rosc::receive].
-pub struct Rosc<T> {
+/// A given `Reusable<T>` can only ever have zero or one `Sender<T>`s live at any
+/// given time, and a response can be received through a call to [Reusable::receive].
+pub struct Reusable<T> {
     inner: HeapArc<Inner<T>>,
 }
 
 /// A single-use One-Shot channel sender
 ///
-/// It can be consumed to send a response back to the [Rosc] instance that created
+/// It can be consumed to send a response back to the [Reusable] instance that created
 /// the [Sender].
 pub struct Sender<T> {
     inner: HeapArc<Inner<T>>,
@@ -58,19 +59,19 @@ struct Inner<T> {
 
 // impl Rosc
 
-impl<T> Rosc<T> {
-    /// Create a new `Rosc<T>` using the heap from the given kernel
+impl<T> Reusable<T> {
+    /// Create a new `Reusable<T>` using the heap from the given kernel
     pub async fn new_async(kernel: &'static Kernel) -> Self {
         Self {
             inner: kernel.heap().allocate_arc(Inner::new()).await,
         }
     }
 
-    /// Create a sender for the given `Rosc<T>`. If a sender is already
+    /// Create a sender for the given `Reusable<T>`. If a sender is already
     /// active, or the previous response has not yet been retrieved, an
     /// error will be immediately returned.
     ///
-    /// This error can be cleared by awaiting [Rosc::receive].
+    /// This error can be cleared by awaiting [Reusable::receive].
     pub fn sender(&self) -> Result<Sender<T>, ()> {
         self.inner
             .state

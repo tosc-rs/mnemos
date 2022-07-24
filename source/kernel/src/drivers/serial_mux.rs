@@ -2,7 +2,7 @@ use crate::{
     comms::{
         bbq,
         kchannel::{KChannel, KConsumer},
-        rosc::Rosc,
+        oneshot::Reusable,
     },
     registry::{
         simple_serial::SimpleSerial, Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo,
@@ -30,7 +30,7 @@ pub struct PortHandle {
 /// A SerialMuxHandle is the client interface of the [SerialMux].
 pub struct SerialMuxHandle {
     prod: KernelHandle<SerialMux>,
-    reply: Rosc<Envelope<Result<Response, ()>>>,
+    reply: Reusable<Envelope<Result<Response, ()>>>,
 }
 
 pub enum Request {
@@ -165,7 +165,7 @@ impl SerialMuxHandle {
 
         Some(SerialMuxHandle {
             prod,
-            reply: Rosc::new_async(kernel).await,
+            reply: Reusable::new_async(kernel).await,
         })
     }
 
@@ -173,7 +173,7 @@ impl SerialMuxHandle {
         self.prod
             .send(
                 Request::RegisterPort { port_id, capacity },
-                ReplyTo::Rosc(self.reply.sender().ok()?),
+                ReplyTo::OneShot(self.reply.sender().ok()?),
             )
             .await
             .ok()?;

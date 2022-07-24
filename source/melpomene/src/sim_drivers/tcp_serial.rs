@@ -42,6 +42,7 @@ impl TcpSerial {
                     msg:
                         Envelope {
                             body: Request::GetPort,
+                            ..
                         },
                     reply,
                 } = cons.dequeue_async().await.unwrap();
@@ -55,6 +56,7 @@ impl TcpSerial {
                         msg:
                             Envelope {
                                 body: Request::GetPort,
+                                ..
                             },
                         reply,
                     } = cons.dequeue_async().await.unwrap();

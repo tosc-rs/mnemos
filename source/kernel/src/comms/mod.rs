@@ -2,4 +2,4 @@
 
 pub mod bbq;
 pub mod kchannel;
-pub mod rosc;
+pub mod oneshot;

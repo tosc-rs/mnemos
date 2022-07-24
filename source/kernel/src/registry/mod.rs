@@ -8,13 +8,17 @@ use uuid::{uuid, Uuid};
 use crate::comms::{
     bbq,
     kchannel::{ErasedKProducer, KProducer},
-    rosc::Sender,
+    oneshot::Sender,
 };
 
 /// A partial list of known UUIDs of driver services
 pub mod known_uuids {
+    use super::*;
+
     /// Kernel UUIDs
     pub mod kernel {
+        use super::*;
+
         pub const SERIAL_MUX: Uuid = uuid!("54c983fa-736f-4223-b90d-c4360a308647");
         pub const SIMPLE_SERIAL_PORT: Uuid = uuid!("f06aac01-2773-4266-8681-583ffe756554");
     }
@@ -106,7 +110,7 @@ pub enum ReplyTo<U> {
 
     // This can be used to reply directly ONCE to another kernel entity,
     // without a serialization step
-    Rosc(Sender<Envelope<Result<U, ()>>>),
+    OneShot(Sender<Envelope<Result<U, ()>>>),
 
     // This can be used to reply to userspace. Responses are serialized
     // and sent over the bbq::MpscProducer
@@ -277,6 +281,12 @@ impl<U: MaxSize> MaxSize for UserResponse<U> {
 
 // Envelope
 
+impl<P> Envelope<P> {
+    pub fn new(body: P) -> Self {
+        Envelope { body }
+    }
+}
+
 // Message
 
 // ReplyTo
@@ -286,7 +296,7 @@ impl<U> ReplyTo<U> {
         let hmsg = Envelope { body: payload };
         match self {
             ReplyTo::KChannel(kprod) => kprod.enqueue_async(hmsg).await.map_err(drop),
-            ReplyTo::Rosc(sender) => sender.send(hmsg),
+            ReplyTo::OneShot(sender) => sender.send(hmsg),
             ReplyTo::Userspace { .. } => Err(()),
         }
     }
@@ -302,7 +312,7 @@ where
                 let hmsg = Envelope { body: payload };
                 kprod.enqueue_async(hmsg).await.map_err(drop)
             }
-            ReplyTo::Rosc(sender) => {
+            ReplyTo::OneShot(sender) => {
                 let hmsg = Envelope { body: payload };
                 sender.send(hmsg)
             }
@@ -406,14 +416,14 @@ where
 pub mod simple_serial {
     use super::*;
     use crate::comms::bbq::BidiHandle;
-    use crate::comms::rosc::Rosc;
+    use crate::comms::oneshot::Reusable;
     use crate::Kernel;
 
     use super::RegisteredDriver;
 
     pub struct SimpleSerial {
         kprod: KernelHandle<SimpleSerial>,
-        rosc: Rosc<Envelope<Result<Response, ()>>>,
+        rosc: Reusable<Envelope<Result<Response, ()>>>,
     }
 
     impl SimpleSerial {
@@ -424,13 +434,13 @@ pub mod simple_serial {
 
             Some(SimpleSerial {
                 kprod,
-                rosc: Rosc::new_async(kernel).await,
+                rosc: Reusable::new_async(kernel).await,
             })
         }
 
         pub async fn get_port(&self) -> Option<BidiHandle> {
             self.kprod
-                .send(Request::GetPort, ReplyTo::Rosc(self.rosc.sender().ok()?))
+                .send(Request::GetPort, ReplyTo::OneShot(self.rosc.sender().ok()?))
                 .await
                 .ok()?;
             let resp = self.rosc.receive().await.ok()?;
