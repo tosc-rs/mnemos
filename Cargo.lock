@@ -2058,7 +2058,7 @@ dependencies = [
 [[package]]
 name = "tracing-modality"
 version = "0.1.0"
-source = "git+https://github.com/auxoncorp/modality-tracing-rs?rev=6c9944c688db834d78e3f85c7e385dca939460da#6c9944c688db834d78e3f85c7e385dca939460da"
+source = "git+https://github.com/auxoncorp/modality-tracing-rs?rev=9c23c188466357e7ad0c618b4edfe9514e9bf764#9c23c188466357e7ad0c618b4edfe9514e9bf764"
 dependencies = [
  "anyhow",
  "dirs",
