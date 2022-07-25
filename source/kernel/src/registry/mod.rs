@@ -101,15 +101,54 @@ impl<U: MaxSize, E: MaxSize> MaxSize for UserResponse<U, E> {
     };
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct ServiceId(pub(crate) u32);
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct ClientId(pub(crate) u32);
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct RequestResponseId(u32);
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum MessageKind {
+    Request,
+    Response,
+}
+
+impl RequestResponseId {
+    pub fn new(id: u32, kind: MessageKind) -> Self {
+        let bit = match kind {
+            MessageKind::Request => 0b1,
+            MessageKind::Response => 0b0,
+        };
+        Self((id << 1) | bit)
+    }
+
+    pub fn id(&self) -> u32 {
+        self.0 >> 1
+    }
+
+    pub fn kind(&self) -> MessageKind {
+        let bit = self.0 & 0b1;
+
+        if bit == 1 {
+            MessageKind::Request
+        } else {
+            MessageKind::Response
+        }
+    }
+}
+
 /// A wrapper for a message TO and FROM a driver service.
 /// Used to be able to add additional message metadata without
 /// changing the fundamental message type.
 #[non_exhaustive]
 pub struct Envelope<P> {
     pub body: P,
-    service_id: u32,
-    client_id: u32,
-    request_id: u32,
+    service_id: ServiceId,
+    client_id: ClientId,
+    request_id: RequestResponseId,
 }
 
 /// The [Message] kind represents a full reply/response sequence to
@@ -191,25 +230,25 @@ impl<T> From<EnqueueError<T>> for ReplyError {
 pub struct UserspaceHandle {
     req_producer_leaked: ErasedKProducer,
     req_deser: ErasedDeserHandler,
-    service_id: u32,
-    client_id: u32,
+    service_id: ServiceId,
+    client_id: ClientId,
 }
 
 /// A KernelHandle is used to send typed messages to a kernelspace Driver
 /// service.
 pub struct KernelHandle<RD: RegisteredDriver> {
     prod: KProducer<Message<RD>>,
-    service_id: u32,
-    client_id: u32,
-    request_id: u32,
+    service_id: ServiceId,
+    client_id: ClientId,
+    request_ctr: u32,
 }
 
 type ErasedDeserHandler = unsafe fn(
     UserRequest<'_>,
     &ErasedKProducer,
     &bbq::MpscProducer,
-    u32,
-    u32,
+    ServiceId,
+    ClientId,
 ) -> Result<(), UserHandlerError>;
 
 /// The payload of a registry item.
@@ -221,7 +260,7 @@ struct RegistryValue {
     req_resp_tuple_id: TypeId,
     req_prod: ErasedKProducer,
     req_deser: Option<ErasedDeserHandler>,
-    service_id: u32,
+    service_id: ServiceId,
 }
 
 /// Right now we don't use a real HashMap, but rather a hand-rolled index map.
@@ -277,7 +316,7 @@ impl Registry {
                     req_resp_tuple_id: RD::type_id().type_of(),
                     req_prod: kch.clone().type_erase(),
                     req_deser: None,
-                    service_id: self.counter,
+                    service_id: ServiceId(self.counter),
                 },
             })
             .map_err(|_| RegistrationError::RegistryFull)?;
@@ -314,7 +353,7 @@ impl Registry {
                     req_resp_tuple_id: RD::type_id().type_of(),
                     req_prod: kch.clone().type_erase(),
                     req_deser: Some(map_deser::<RD>),
-                    service_id: self.counter,
+                    service_id: ServiceId(self.counter),
                 },
             })
             .map_err(|_| RegistrationError::RegistryFull)?;
@@ -346,10 +385,10 @@ impl Registry {
             let res = Some(KernelHandle {
                 prod: item.value.req_prod.clone_typed(),
                 service_id: item.value.service_id,
-                client_id: self.counter,
-                request_id: 0,
+                client_id: ClientId(self.counter),
+                request_ctr: 0,
             });
-            info!(uuid = ?RD::UUID, service_id = item.value.service_id, client_id = self.counter, "Got KernelHandle from Registry");
+            info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
             self.counter = self.counter.wrapping_add(1);
             res
         }
@@ -377,13 +416,13 @@ impl Registry {
     {
         let item = self.items.iter().find(|i| &i.key == &RD::UUID)?;
         let client_id = self.counter;
-        info!(uuid = ?RD::UUID, service_id = item.value.service_id, client_id = self.counter, "Got KernelHandle from Registry");
+        info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
         self.counter = self.counter.wrapping_add(1);
         Some(UserspaceHandle {
             req_producer_leaked: item.value.req_prod.clone(),
             req_deser: item.value.req_deser?,
             service_id: item.value.service_id,
-            client_id,
+            client_id: ClientId(client_id),
         })
     }
 }
@@ -402,7 +441,7 @@ impl<P> Envelope<P> {
             body,
             service_id: self.service_id,
             client_id: self.client_id,
-            request_id: self.request_id + 1,
+            request_id: RequestResponseId::new(self.request_id.id(), MessageKind::Response),
         }
     }
 }
@@ -417,9 +456,9 @@ impl<RD: RegisteredDriver> ReplyTo<RD> {
         envelope: Envelope<Result<RD::Response, RD::Error>>,
     ) -> Result<(), ReplyError> {
         debug!(
-            service_id = envelope.service_id,
-            client_id = envelope.client_id,
-            response_id = envelope.request_id,
+            service_id = envelope.service_id.0,
+            client_id = envelope.client_id.0,
+            response_id = envelope.request_id.id(),
             "Replying KOnly",
         );
         match self {
@@ -446,9 +485,9 @@ where
         envelope: Envelope<Result<RD::Response, RD::Error>>,
     ) -> Result<(), ReplyError> {
         debug!(
-            service_id = envelope.service_id,
-            client_id = envelope.client_id,
-            response_id = envelope.request_id,
+            service_id = envelope.service_id.0,
+            client_id = envelope.client_id.0,
+            response_id = envelope.request_id.id(),
             "Replying",
         );
         match self {
@@ -507,8 +546,8 @@ impl UserspaceHandle {
 
 impl<RD: RegisteredDriver> KernelHandle<RD> {
     pub async fn send(&mut self, msg: RD::Request, reply: ReplyTo<RD>) -> Result<(), ()> {
-        let request_id = self.request_id;
-        self.request_id = self.request_id.wrapping_add(2);
+        let request_id = RequestResponseId::new(self.request_ctr, MessageKind::Request);
+        self.request_ctr = self.request_ctr.wrapping_add(1);
         let result = self
             .prod
             .enqueue_async(Message {
@@ -523,9 +562,9 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
             .await
             .map_err(drop)?;
         debug!(
-            service_id = self.service_id,
-            client_id = self.client_id,
-            request_id,
+            service_id = self.service_id.0,
+            client_id = self.client_id.0,
+            request_id = request_id.id(),
             "Sent Request"
         );
         Ok(result)
@@ -546,8 +585,8 @@ unsafe fn map_deser<RD>(
     umsg: UserRequest<'_>,
     req_tx: &ErasedKProducer,
     user_resp: &bbq::MpscProducer,
-    service_id: u32,
-    client_id: u32,
+    service_id: ServiceId,
+    client_id: ClientId,
 ) -> Result<(), UserHandlerError>
 where
     RD: RegisteredDriver,
@@ -574,7 +613,7 @@ where
             body: u_payload,
             service_id,
             client_id,
-            request_id: umsg.nonce,
+            request_id: RequestResponseId::new(umsg.nonce, MessageKind::Request),
         },
         reply: ReplyTo::Userspace {
             nonce: umsg.nonce,
