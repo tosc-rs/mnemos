@@ -43,24 +43,63 @@ This change proposes inntroducing a **registry** of drivers, maintained by the k
 
 Some details about why parts of this proposal was chosen:
 
-### The Message Type
+### The `RegisteredDriver` Trait
 
-All drivers will use a standardized message type with two generic parameters, `T` and `U`. `T` is the type of the **request** to the driver, while `U` is the type of the **response** from the driver.
+In order to collect all of the related types of a service, this RFC introduces a trait called `RegisteredDriver`. This is primarily a marker trait, and serves to collect types and constants used by a driver. It exists as follows:
 
 ```rust
-struct Message<T, U> {
-    msg: T,
-    reply: ReplyTo<U>,
+/// A marker trait designating a registerable driver service.
+pub trait RegisteredDriver {
+    /// This is the type of the request sent TO the driver service
+    type Request: 'static;
+
+    /// This is the type of a SUCCESSFUL response sent FROM the driver service
+    type Response: 'static;
+
+    /// This is the type of an UNSUCCESSFUL response sent FROM the driver service
+    type Error: 'static;
+
+    /// This is the UUID of the driver service
+    const UUID: Uuid;
+
+    /// Get the type_id used to make sure that driver instances are correctly typed.
+    /// Corresponds to the same type ID as `(Self::Request, Self::Response, Self::Error)`
+    fn type_id() -> RegistryType {
+        RegistryType {
+            tuple_type_id: TypeId::of::<(Self::Request, Self::Response, Self::Error)>(),
+        }
+    }
 }
 ```
 
-This message type contains a `ReplyTo<U>` field, which can be used to reply to the sender of the **request**. This serves as the "return address" of a request. This enum will look roughly as follows:
+The following types and interfaces will often be generic over the `RegisteredDriver` type, rather than one or more types, in order to provide a more consistent interface.
+
+### The Message Type
+
+All drivers will use a standardized message type which is generic over a `RegisteredDriver`. This includes the `msg`, which is the request TO the service, and the `reply`, which allows to service to reply with a `Result<RD::Response, RD::Error>` message.
 
 ```rust
-enum ReplyTo<U> {
+pub struct Message<RD: RegisteredDriver> {
+    pub msg: Envelope<RD::Request>,
+    pub reply: ReplyTo<RD>,
+}
+```
+
+This message type contains a `ReplyTo<RD>` field, which can be used to reply to the sender of the **request**. This serves as the "return address" of a request. This enum will look roughly as follows:
+
+```rust
+/// A `ReplyTo` is used to allow the CLIENT of a service to choose the
+/// way that the driver SERVICE replies to us. Essentially, this acts
+/// as a "self addressed stamped envelope" for the SERVICE to use to
+/// reply to the CLIENT.
+pub enum ReplyTo<RD: RegisteredDriver> {
     // This can be used to reply directly to another kernel entity,
     // without a serialization step
-    Kernel(KProducer<U>),
+    KChannel(KProducer<Envelope<Result<RD::Response, RD::Error>>>),
+
+    // This can be used to reply directly ONCE to another kernel entity,
+    // without a serialization step
+    OneShot(Sender<Envelope<Result<RD::Response, RD::Error>>>),
 
     // This can be used to reply to userspace. Responses are serialized
     // and sent over the bbq::MpscProducer
@@ -71,7 +110,7 @@ enum ReplyTo<U> {
 }
 ```
 
-The driver is responsible for definining the `T` and `U` request/response types associated with a given UUID.
+The driver is responsible for definining the `Request`, `Response`, and `Error` request/response types associated with a given UUID.
 
 ### Using `Uuid`s to identify drivers
 
@@ -128,17 +167,13 @@ The registry would provide two main functions in this case:
 ```rust
 impl Registry {
     // Register a given KProducer for a (uuid, T, U) pair
-    fn set_konly<T, U>(
+    pub fn register_konly<RD: RegisteredDriver>(
         &mut self,
-        uuid: Uuid,
-        kch: &KProducer<Message<T, U>>,
-    ) -> Result<(), ()> { /* ... */ }
+        kch: &KProducer<Message<RD>>,
+    ) -> Result<(), RegistrationError> { /* ... */ }
 
     // Obtain a given KProducer for a (uuid, T, U) pair
-    fn get_konly<T, U>(
-        &self,
-        uuid: Uuid,
-    ) -> Option<KProducer<Message<T, U>>> { /* ... */ }
+    pub fn get<RD: RegisteredDriver>(&self) -> Option<KernelHandle<RD>> { /* ... */ }
 }
 ```
 
@@ -153,25 +188,29 @@ struct SerialPortResp {
     // ...
 }
 
+enum SerialPortError {
+    // ...
+}
+
 // We have a given "SerialPort" driver
-impl SerialPort {
+impl RegisteredDriver for SerialPort {
     type Request = SerialPortReq;
-    type Response = Result<SerialPortResp, ()>;
-    type Handle = KProducer<Message<Self::Request, Self::Response>>;
+    type Response = SerialPortResp;
+    type Error = SerialPortError;
+
     const UUID: Uuid = ...;
 }
 
 let serial_port = SerialPort::new();
 
 // In `init()`, the SerialPort is registered
-registry.set_konly::<SerialPort::Request, SerialPort::Response>(
-    SerialPort::UUID,
+registry.register_konly::<SerialPort::Request, SerialPort::Response>(
     serial_port.producer(),
 ).unwrap();
 
 // Later, in another driver, we attempt to retrieve this driver's handle
 struct SerialUser {
-    hdl: SerialPort::Handle,
+    hdl: KernelHandle<SerialPort>,
 
     // These are used for the "reply address"
     resp_prod: KProducer<SerialPort::Response>,
@@ -211,14 +250,11 @@ impl UserspaceHandler {
 
 impl Registry {
     // Register a given KProducer for a (uuid, T, U) pair
-    fn set<T, U>(
-        &mut self,
-        uuid: Uuid,
-        kch: &KProducer<Message<T, U>>,
-    ) -> Result<(), ()>
+    pub fn register<RD>(&mut self, kch: &KProducer<Message<RD>>) -> Result<(), RegistrationError>
     where
-        T: Serialize + DeserializeOwned,
-        U: Serialize + DeserializeOwned,
+        RD: RegisteredDriver,
+        RD::Request: Serialize + DeserializeOwned,
+        RD::Response: Serialize + DeserializeOwned,
     {
         /* ... */
     }
@@ -231,7 +267,9 @@ impl Registry {
 }
 ```
 
-The `get_userspace_handler()` function does NOT take the `T` and `U` types as parameters. If the registry entry for the given `uuid` was added through the `set_konly` instead of the `set` interface, the `get_userspace_handler()` function will never return a handler for that `uuid`.
+The `get_userspace_handler()` function does NOT take the `T` and `U` types as parameters. If the registry entry for the given `uuid` was added through the `register_konly` instead of the `register` interface, the `get_userspace_handler()` function will never return a handler for that `uuid`.
+
+### Using the UserspaceHandler
 
 This code would be used as follows:
 
@@ -256,9 +294,9 @@ impl SerialPort {
 
 let serial_port = SerialPort::new();
 
-// In `init()`, the SerialPort is registered, this time with `set` instead
+// In `init()`, the SerialPort is registered, this time with `register` instead
 // of `set_only`.
-registry.set::<SerialPort::Request, SerialPort::Response>(
+registry.register::<SerialPort::Request, SerialPort::Response>(
     SerialPort::UUID,
     &serial_port.producer(),
 ).unwrap();
