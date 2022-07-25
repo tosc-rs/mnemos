@@ -12,7 +12,7 @@ use crate::{
 use maitake::sync::Mutex;
 use mnemos_alloc::containers::{HeapArc, HeapArray, HeapFixedVec};
 use tracing::{debug, warn};
-use uuid::{uuid, Uuid};
+use uuid::Uuid;
 
 /// SerialMux is the registered driver type
 pub struct SerialMux {
@@ -77,7 +77,7 @@ impl RegisteredDriver for SerialMux {
     type Request = Request;
     type Response = Response;
     type Error = SerialMuxError;
-    const UUID: Uuid = uuid!("54c983fa-736f-4223-b90d-c4360a308647");
+    const UUID: Uuid = crate::registry::known_uuids::kernel::SERIAL_MUX;
 }
 
 #[derive(Debug, Eq, PartialEq)]

@@ -135,8 +135,8 @@ impl<T> KProducer<T> {
 
         ErasedKProducer {
             erased_q,
-            dropper: ErasedKProducer::drop_leaked::<T>,
-            cloner: ErasedKProducer::clone_leaked::<T>,
+            dropper: ErasedKProducer::drop_erased::<T>,
+            cloner: ErasedKProducer::clone_erased::<T>,
         }
     }
 }
@@ -166,7 +166,7 @@ impl<T> KConsumer<T> {
     }
 }
 
-// LeakedKProducer
+// ErasedKProducer
 
 impl Clone for ErasedKProducer {
     fn clone(&self) -> Self {
@@ -175,9 +175,9 @@ impl Clone for ErasedKProducer {
 }
 
 impl ErasedKProducer {
-    /// Clone the LeakedKProducer. The resulting LeakedKProducer will be for the same
+    /// Clone the ErasedKProducer. The resulting ErasedKProducer will be for the same
     /// underlying [KChannel] and type.
-    pub(crate) fn clone_leaked<T>(&self) -> Self {
+    pub(crate) fn clone_erased<T>(&self) -> Self {
         let typed_q: NonNull<MpScQueue<T, sealed::SpiteData<T>>> = self.erased_q.cast();
         unsafe {
             HeapArc::increment_count(typed_q);
@@ -190,11 +190,11 @@ impl ErasedKProducer {
         }
     }
 
-    /// Clone the LeakedKProducer, while also re-typing to the unleaked [KProducer] type.
+    /// Clone the ErasedKProducer, while also re-typing to the unleaked [KProducer] type.
     ///
     /// SAFETY:
     ///
-    /// The type `T` MUST be the same `T` that was used to create this LeakedKProducer,
+    /// The type `T` MUST be the same `T` that was used to create this ErasedKProducer,
     /// otherwise undefined behavior will occur.
     pub(crate) unsafe fn clone_typed<T>(&self) -> KProducer<T> {
         let typed_q: NonNull<MpScQueue<T, sealed::SpiteData<T>>> = self.erased_q.cast();
@@ -202,13 +202,13 @@ impl ErasedKProducer {
         KProducer { q: heap_arc }
     }
 
-    /// Drop the LeakedKProducer, while also re-typing the leaked [KProducer] type.
+    /// Drop the ErasedKProducer, while also re-typing the leaked [KProducer] type.
     ///
     /// SAFETY:
     ///
-    /// The type `T` MUST be the same `T` that was used to create this LeakedKProducer,
+    /// The type `T` MUST be the same `T` that was used to create this ErasedKProducer,
     /// otherwise undefined behavior will occur.
-    pub(crate) unsafe fn drop_leaked<T>(ptr: NonNull<MpScQueue<(), sealed::SpiteData<()>>>) {
+    pub(crate) unsafe fn drop_erased<T>(ptr: NonNull<MpScQueue<(), sealed::SpiteData<()>>>) {
         let ptr = ptr.cast::<MpScQueue<T, sealed::SpiteData<T>>>();
         let _ = HeapArc::from_leaked(ptr);
     }

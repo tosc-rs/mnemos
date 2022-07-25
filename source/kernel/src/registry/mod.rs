@@ -431,6 +431,11 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
 /// A monomorphizable function that allows us to store the serialization type within
 /// the function itself, allowing for a type-erased function pointer to be stored
 /// inside of the registry.
+///
+/// SAFETY:
+///
+/// This function MUST be called with a `RegisteredDriver` type matching the type
+/// used to create the `ErasedKProducer`.
 unsafe fn map_deser<RD>(
     umsg: UserRequest<'_>,
     req_tx: &ErasedKProducer,
@@ -526,7 +531,7 @@ pub mod simple_serial {
         type Response = Response;
         type Error = SimpleSerialError;
 
-        const UUID: Uuid = uuid!("f06aac01-2773-4266-8681-583ffe756554");
+        const UUID: Uuid = known_uuids::kernel::SIMPLE_SERIAL_PORT;
     }
 
     pub enum Request {
