@@ -5,7 +5,7 @@ use mnemos_kernel::{
     },
     registry::{
         simple_serial::{Request, Response, SimpleSerial, SimpleSerialError},
-        Envelope, Message,
+        Message,
     },
     Kernel,
 };
@@ -38,31 +38,25 @@ impl TcpSerial {
         kernel
             .spawn(async move {
                 let handle = b_ring;
-                let Message {
-                    msg:
-                        Envelope {
-                            body: Request::GetPort,
-                            ..
-                        },
-                    reply,
-                } = cons.dequeue_async().await.map_err(drop).unwrap();
-                reply
-                    .reply_konly(Ok(Response::PortHandle { handle }))
+
+                // Reply to the first request, giving away the serial port
+                let req = cons.dequeue_async().await.map_err(drop).unwrap();
+                let Request::GetPort = req.msg.body;
+                let resp = req.msg.reply_with(Ok(Response::PortHandle { handle }));
+
+                req.reply
+                    .reply_konly(resp)
                     .await
                     .map_err(drop)
                     .unwrap();
 
+                // And deny all further requests after the first
                 loop {
-                    let Message {
-                        msg:
-                            Envelope {
-                                body: Request::GetPort,
-                                ..
-                            },
-                        reply,
-                    } = cons.dequeue_async().await.map_err(drop).unwrap();
-                    reply
-                        .reply_konly(Err(SimpleSerialError::AlreadyAssignedPort))
+                    let req = cons.dequeue_async().await.map_err(drop).unwrap();
+                    let Request::GetPort = req.msg.body;
+                    let resp = req.msg.reply_with(Err(SimpleSerialError::AlreadyAssignedPort));
+                    req.reply
+                        .reply_konly(resp)
                         .await
                         .map_err(drop)
                         .unwrap();

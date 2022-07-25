@@ -4,6 +4,7 @@ use mnemos_alloc::{containers::HeapFixedVec, heap::HeapGuard};
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use spitebuf::EnqueueError;
+use tracing::{info, debug};
 use uuid::{uuid, Uuid};
 
 use crate::comms::{
@@ -62,6 +63,7 @@ pub struct RegistryType {
 /// The driver registry used by the kernel.
 pub struct Registry {
     items: HeapFixedVec<RegistryItem>,
+    counter: u32,
 }
 
 // TODO: This probably goes into the ABI crate, here is fine for now
@@ -81,6 +83,22 @@ pub struct UserResponse<U, E> {
     uuid: Uuid,
     nonce: u32,
     reply: Result<U, E>,
+    //
+    // KEEP IN SYNC WITH POSTCARD_MAX_SIZE BELOW!
+    //
+}
+
+// UserResponse
+
+impl<U: MaxSize, E: MaxSize> MaxSize for UserResponse<U, E> {
+    //
+    // KEEP IN SYNC WITH STRUCT DEFINITION ABOVE!
+    //
+    const POSTCARD_MAX_SIZE: usize = {
+        <[u8; 16] as MaxSize>::POSTCARD_MAX_SIZE
+            + <u32 as MaxSize>::POSTCARD_MAX_SIZE
+            + <Result<U, E> as MaxSize>::POSTCARD_MAX_SIZE
+    };
 }
 
 /// A wrapper for a message TO and FROM a driver service.
@@ -89,6 +107,9 @@ pub struct UserResponse<U, E> {
 #[non_exhaustive]
 pub struct Envelope<P> {
     pub body: P,
+    service_id: u32,
+    client_id: u32,
+    request_id: u32,
 }
 
 /// The [Message] kind represents a full reply/response sequence to
@@ -170,18 +191,25 @@ impl<T> From<EnqueueError<T>> for ReplyError {
 pub struct UserspaceHandle {
     req_producer_leaked: ErasedKProducer,
     req_deser: ErasedDeserHandler,
+    service_id: u32,
+    client_id: u32,
 }
 
 /// A KernelHandle is used to send typed messages to a kernelspace Driver
 /// service.
 pub struct KernelHandle<RD: RegisteredDriver> {
     prod: KProducer<Message<RD>>,
+    service_id: u32,
+    client_id: u32,
+    request_id: u32,
 }
 
 type ErasedDeserHandler = unsafe fn(
     UserRequest<'_>,
     &ErasedKProducer,
     &bbq::MpscProducer,
+    u32,
+    u32,
 ) -> Result<(), UserHandlerError>;
 
 /// The payload of a registry item.
@@ -193,6 +221,7 @@ struct RegistryValue {
     req_resp_tuple_id: TypeId,
     req_prod: ErasedKProducer,
     req_deser: Option<ErasedDeserHandler>,
+    service_id: u32,
 }
 
 /// Right now we don't use a real HashMap, but rather a hand-rolled index map.
@@ -217,6 +246,7 @@ impl Registry {
     pub fn new(guard: &mut HeapGuard, max_items: usize) -> Self {
         Self {
             items: guard.alloc_fixed_vec(max_items).map_err(drop).unwrap(),
+            counter: 0,
         }
     }
 
@@ -226,6 +256,12 @@ impl Registry {
     /// or interfaced with from Userspace. If a registered service has request
     /// and response types that are serializable, it can instead be registered
     /// with [Registry::register] which allows for userspace access.
+    #[tracing::instrument(
+        name = "Registry::register_konly",
+        level = "debug",
+        skip(self, kch),
+        fields(uuid = ?RD::UUID),
+    )]
     pub fn register_konly<RD: RegisteredDriver>(
         &mut self,
         kch: &KProducer<Message<RD>>,
@@ -233,16 +269,20 @@ impl Registry {
         if self.items.iter().any(|i| i.key == RD::UUID) {
             return Err(RegistrationError::UuidAlreadyRegistered);
         }
-        self.items
+        let result = self.items
             .push(RegistryItem {
                 key: RD::UUID,
                 value: RegistryValue {
                     req_resp_tuple_id: RD::type_id().type_of(),
                     req_prod: kch.clone().type_erase(),
                     req_deser: None,
+                    service_id: self.counter,
                 },
             })
-            .map_err(|_| RegistrationError::RegistryFull)
+            .map_err(|_| RegistrationError::RegistryFull)?;
+        info!(uuid = ?RD::UUID, service_id = self.counter, "Registered KOnly");
+        self.counter = self.counter.wrapping_add(1);
+        Ok(result)
     }
 
     /// Register a driver service for use in the kernel (including drivers) as
@@ -250,6 +290,12 @@ impl Registry {
     ///
     /// See [Registry::register_konly] if the request and response types are not
     /// serializable.
+    #[tracing::instrument(
+        name = "Registry::register",
+        level = "debug",
+        skip(self, kch),
+        fields(uuid = ?RD::UUID),
+    )]
     pub fn register<RD>(&mut self, kch: &KProducer<Message<RD>>) -> Result<(), RegistrationError>
     where
         RD: RegisteredDriver,
@@ -259,16 +305,20 @@ impl Registry {
         if self.items.iter().any(|i| i.key == RD::UUID) {
             return Err(RegistrationError::UuidAlreadyRegistered);
         }
-        self.items
+        let result = self.items
             .push(RegistryItem {
                 key: RD::UUID,
                 value: RegistryValue {
                     req_resp_tuple_id: RD::type_id().type_of(),
                     req_prod: kch.clone().type_erase(),
                     req_deser: Some(map_deser::<RD>),
+                    service_id: self.counter,
                 },
             })
-            .map_err(|_| RegistrationError::RegistryFull)
+            .map_err(|_| RegistrationError::RegistryFull)?;
+        info!(uuid = ?RD::UUID, service_id = self.counter, "Registered");
+        self.counter = self.counter.wrapping_add(1);
+        Ok(result)
     }
 
     /// Get a kernelspace (including drivers) handle of a given driver service.
@@ -279,15 +329,27 @@ impl Registry {
     /// The driver service MUST have already been registered using [Registry::register] or
     /// [Registry::register_konly] prior to making this call, otherwise no handle will
     /// be returned.
-    pub fn get<RD: RegisteredDriver>(&self) -> Option<KernelHandle<RD>> {
+    #[tracing::instrument(
+        name = "Registry::get",
+        level = "debug",
+        skip(self),
+        fields(uuid = ?RD::UUID),
+    )]
+    pub fn get<RD: RegisteredDriver>(&mut self) -> Option<KernelHandle<RD>> {
         let item = self.items.iter().find(|i| i.key == RD::UUID)?;
         if item.value.req_resp_tuple_id != RD::type_id().type_of() {
             return None;
         }
         unsafe {
-            Some(KernelHandle {
+            let res = Some(KernelHandle {
                 prod: item.value.req_prod.clone_typed(),
-            })
+                service_id: item.value.service_id,
+                client_id: self.counter,
+                request_id: 0,
+            });
+            info!(uuid = ?RD::UUID, service_id = item.value.service_id, client_id = self.counter, "Got KernelHandle from Registry");
+            self.counter = self.counter.wrapping_add(1);
+            res
         }
     }
 
@@ -299,6 +361,12 @@ impl Registry {
     ///
     /// Driver services registered with [Registry::register_konly] cannot be retrieved via
     /// a call to [Registry::get_userspace].
+    #[tracing::instrument(
+        name = "Registry::get_userspace",
+        level = "debug",
+        skip(self),
+        fields(uuid = ?RD::UUID),
+    )]
     pub fn get_userspace<RD>(&mut self) -> Option<UserspaceHandle>
     where
         RD: RegisteredDriver,
@@ -306,30 +374,25 @@ impl Registry {
         RD::Response: Serialize + DeserializeOwned,
     {
         let item = self.items.iter().find(|i| &i.key == &RD::UUID)?;
+        let client_id = self.counter;
+        info!(uuid = ?RD::UUID, service_id = item.value.service_id, client_id = self.counter, "Got KernelHandle from Registry");
+        self.counter = self.counter.wrapping_add(1);
         Some(UserspaceHandle {
             req_producer_leaked: item.value.req_prod.clone(),
             req_deser: item.value.req_deser?,
+            service_id: item.value.service_id,
+            client_id,
         })
     }
 }
 
 // UserRequest
 
-// UserResponse
-
-impl<U: MaxSize, E: MaxSize> MaxSize for UserResponse<U, E> {
-    const POSTCARD_MAX_SIZE: usize = {
-        <[u8; 16] as MaxSize>::POSTCARD_MAX_SIZE
-            + <u32 as MaxSize>::POSTCARD_MAX_SIZE
-            + <Result<U, E> as MaxSize>::POSTCARD_MAX_SIZE
-    };
-}
-
 // Envelope
 
 impl<P> Envelope<P> {
-    pub fn new(body: P) -> Self {
-        Envelope { body }
+    pub fn new(body: P, service_id: u32, client_id: u32, request_id: u32) -> Self {
+        Envelope { body, service_id, client_id, request_id }
     }
 }
 
@@ -340,15 +403,20 @@ impl<P> Envelope<P> {
 impl<RD: RegisteredDriver> ReplyTo<RD> {
     pub async fn reply_konly(
         self,
-        payload: Result<RD::Response, RD::Error>,
+        envelope: Envelope<Result<RD::Response, RD::Error>>,
     ) -> Result<(), ReplyError> {
-        let hmsg = Envelope { body: payload };
+        debug!(
+            service_id = envelope.service_id,
+            client_id = envelope.client_id,
+            response_id = envelope.request_id,
+            "Replying KOnly",
+        );
         match self {
             ReplyTo::KChannel(kprod) => {
-                kprod.enqueue_async(hmsg).await?;
+                kprod.enqueue_async(envelope).await?;
             }
             ReplyTo::OneShot(sender) => {
-                sender.send(hmsg)?;
+                sender.send(envelope)?;
             }
             ReplyTo::Userspace { .. } => return Err(ReplyError::KOnlyUserspaceResponse),
         }
@@ -364,17 +432,21 @@ where
     pub async fn reply(
         self,
         uuid_source: Uuid,
-        payload: Result<RD::Response, RD::Error>,
+        envelope: Envelope<Result<RD::Response, RD::Error>>,
     ) -> Result<(), ReplyError> {
+        debug!(
+            service_id = envelope.service_id,
+            client_id = envelope.client_id,
+            response_id = envelope.request_id,
+            "Replying",
+        );
         match self {
             ReplyTo::KChannel(kprod) => {
-                let hmsg = Envelope { body: payload };
-                kprod.enqueue_async(hmsg).await?;
+                kprod.enqueue_async(envelope).await?;
                 Ok(())
             }
             ReplyTo::OneShot(sender) => {
-                let hmsg = Envelope { body: payload };
-                sender.send(hmsg)?;
+                sender.send(envelope)?;
                 Ok(())
             }
             ReplyTo::Userspace { nonce, outgoing } => {
@@ -387,7 +459,7 @@ where
                     &UserResponse {
                         uuid: uuid_source,
                         nonce,
-                        reply: payload,
+                        reply: envelope.body,
                     },
                     &mut wgr,
                 )
@@ -408,21 +480,36 @@ impl UserspaceHandle {
         user_msg: UserRequest<'_>,
         user_ring: &bbq::MpscProducer,
     ) -> Result<(), UserHandlerError> {
-        unsafe { (self.req_deser)(user_msg, &self.req_producer_leaked, user_ring) }
+        unsafe { (self.req_deser)(user_msg, &self.req_producer_leaked, user_ring, self.service_id, self.client_id) }
     }
 }
 
 // KernelHandle
 
 impl<RD: RegisteredDriver> KernelHandle<RD> {
-    pub async fn send(&self, msg: RD::Request, reply: ReplyTo<RD>) -> Result<(), ()> {
-        self.prod
+    pub async fn send(&mut self, msg: RD::Request, reply: ReplyTo<RD>) -> Result<(), ()> {
+        let request_id = self.request_id;
+        self.request_id = self.request_id.wrapping_add(2);
+        let result = self.prod
             .enqueue_async(Message {
-                msg: Envelope { body: msg },
+                msg: Envelope { body: msg, service_id: self.service_id, client_id: self.client_id, request_id },
                 reply,
             })
             .await
-            .map_err(drop)
+            .map_err(drop)?;
+        debug!(service_id = self.service_id, client_id = self.client_id, request_id, "Sent Request");
+        Ok(result)
+    }
+}
+
+impl<P> Envelope<P> {
+    pub fn reply_with<U>(&self, body: U) -> Envelope<U> {
+        Envelope {
+            body,
+            service_id: self.service_id,
+            client_id: self.client_id,
+            request_id: self.request_id + 1,
+        }
     }
 }
 
@@ -440,6 +527,8 @@ unsafe fn map_deser<RD>(
     umsg: UserRequest<'_>,
     req_tx: &ErasedKProducer,
     user_resp: &bbq::MpscProducer,
+    service_id: u32,
+    client_id: u32,
 ) -> Result<(), UserHandlerError>
 where
     RD: RegisteredDriver,
@@ -462,7 +551,7 @@ where
 
     // Create the message type to be sent on the channel
     let msg: Message<RD> = Message {
-        msg: Envelope { body: u_payload },
+        msg: Envelope { body: u_payload, service_id, client_id, request_id: umsg.nonce },
         reply: ReplyTo::Userspace {
             nonce: umsg.nonce,
             outgoing: user_resp.clone(),
@@ -514,7 +603,7 @@ pub mod simple_serial {
             })
         }
 
-        pub async fn get_port(&self) -> Option<BidiHandle> {
+        pub async fn get_port(&mut self) -> Option<BidiHandle> {
             self.kprod
                 .send(Request::GetPort, ReplyTo::OneShot(self.rosc.sender().ok()?))
                 .await
