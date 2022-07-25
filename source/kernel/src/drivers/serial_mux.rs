@@ -93,7 +93,7 @@ impl SerialMux {
         max_ports: usize,
         max_frame: usize,
     ) -> Result<(), RegistrationError> {
-        let serial_handle = SimpleSerial::from_registry(kernel)
+        let mut serial_handle = SimpleSerial::from_registry(kernel)
             .await
             .ok_or(RegistrationError::SerialPortNotFound)?;
         let serial_port = serial_handle
@@ -188,7 +188,7 @@ impl SerialMuxHandle {
         })
     }
 
-    pub async fn open_port(&self, port_id: u16, capacity: usize) -> Option<PortHandle> {
+    pub async fn open_port(&mut self, port_id: u16, capacity: usize) -> Option<PortHandle> {
         self.prod
             .send(
                 Request::RegisterPort { port_id, capacity },
@@ -247,16 +247,17 @@ impl CommanderTask {
         loop {
             let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
             let Message { msg: req, reply } = msg;
-            match req {
-                Envelope {
-                    body: Request::RegisterPort { port_id, capacity },
-                } => {
+            match req.body {
+                Request::RegisterPort { port_id, capacity } => {
                     let res = {
                         let mut mux = self.mux.lock().await;
                         mux.register_port(port_id, capacity, &self.out).await
                     }
                     .map(Response::PortRegistered);
-                    reply.reply_konly(res).await.map_err(drop).unwrap();
+
+                    let resp = req.reply_with(res);
+
+                    reply.reply_konly(resp).await.map_err(drop).unwrap();
                 }
             }
         }

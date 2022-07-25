@@ -101,7 +101,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
         // * Framed messages up to 512 bytes max each
         SerialMux::register(k, 4, 512).await.unwrap();
 
-        let mux_hdl = SerialMuxHandle::from_registry(k).await.unwrap();
+        let mut mux_hdl = SerialMuxHandle::from_registry(k).await.unwrap();
         let p0 = mux_hdl.open_port(0, 1024).await.unwrap();
         let p1 = mux_hdl.open_port(1, 1024).await.unwrap();
         drop(mux_hdl);
