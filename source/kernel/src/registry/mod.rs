@@ -4,7 +4,7 @@ use mnemos_alloc::{containers::HeapFixedVec, heap::HeapGuard};
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use spitebuf::EnqueueError;
-use tracing::{info, debug};
+use tracing::{debug, info};
 use uuid::{uuid, Uuid};
 
 use crate::comms::{
@@ -269,7 +269,8 @@ impl Registry {
         if self.items.iter().any(|i| i.key == RD::UUID) {
             return Err(RegistrationError::UuidAlreadyRegistered);
         }
-        let result = self.items
+        let result = self
+            .items
             .push(RegistryItem {
                 key: RD::UUID,
                 value: RegistryValue {
@@ -305,7 +306,8 @@ impl Registry {
         if self.items.iter().any(|i| i.key == RD::UUID) {
             return Err(RegistrationError::UuidAlreadyRegistered);
         }
-        let result = self.items
+        let result = self
+            .items
             .push(RegistryItem {
                 key: RD::UUID,
                 value: RegistryValue {
@@ -391,8 +393,17 @@ impl Registry {
 // Envelope
 
 impl<P> Envelope<P> {
-    pub fn new(body: P, service_id: u32, client_id: u32, request_id: u32) -> Self {
-        Envelope { body, service_id, client_id, request_id }
+    /// Create a response Envelope from a given request Envelope.
+    ///
+    /// Maintains the same Service ID and Client ID, and increments the
+    /// request ID by one.
+    pub fn reply_with<U>(&self, body: U) -> Envelope<U> {
+        Envelope {
+            body,
+            service_id: self.service_id,
+            client_id: self.client_id,
+            request_id: self.request_id + 1,
+        }
     }
 }
 
@@ -480,7 +491,15 @@ impl UserspaceHandle {
         user_msg: UserRequest<'_>,
         user_ring: &bbq::MpscProducer,
     ) -> Result<(), UserHandlerError> {
-        unsafe { (self.req_deser)(user_msg, &self.req_producer_leaked, user_ring, self.service_id, self.client_id) }
+        unsafe {
+            (self.req_deser)(
+                user_msg,
+                &self.req_producer_leaked,
+                user_ring,
+                self.service_id,
+                self.client_id,
+            )
+        }
     }
 }
 
@@ -490,26 +509,26 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
     pub async fn send(&mut self, msg: RD::Request, reply: ReplyTo<RD>) -> Result<(), ()> {
         let request_id = self.request_id;
         self.request_id = self.request_id.wrapping_add(2);
-        let result = self.prod
+        let result = self
+            .prod
             .enqueue_async(Message {
-                msg: Envelope { body: msg, service_id: self.service_id, client_id: self.client_id, request_id },
+                msg: Envelope {
+                    body: msg,
+                    service_id: self.service_id,
+                    client_id: self.client_id,
+                    request_id,
+                },
                 reply,
             })
             .await
             .map_err(drop)?;
-        debug!(service_id = self.service_id, client_id = self.client_id, request_id, "Sent Request");
+        debug!(
+            service_id = self.service_id,
+            client_id = self.client_id,
+            request_id,
+            "Sent Request"
+        );
         Ok(result)
-    }
-}
-
-impl<P> Envelope<P> {
-    pub fn reply_with<U>(&self, body: U) -> Envelope<U> {
-        Envelope {
-            body,
-            service_id: self.service_id,
-            client_id: self.client_id,
-            request_id: self.request_id + 1,
-        }
     }
 }
 
@@ -551,7 +570,12 @@ where
 
     // Create the message type to be sent on the channel
     let msg: Message<RD> = Message {
-        msg: Envelope { body: u_payload, service_id, client_id, request_id: umsg.nonce },
+        msg: Envelope {
+            body: u_payload,
+            service_id,
+            client_id,
+            request_id: umsg.nonce,
+        },
         reply: ReplyTo::Userspace {
             nonce: umsg.nonce,
             outgoing: user_resp.clone(),
