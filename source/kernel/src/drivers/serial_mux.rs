@@ -41,6 +41,7 @@ pub enum Response {
     PortRegistered(PortHandle),
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub enum SerialMuxError {
     DuplicateItem,
     RegistryFull,
@@ -79,14 +80,26 @@ impl RegisteredDriver for SerialMux {
     const UUID: Uuid = uuid!("54c983fa-736f-4223-b90d-c4360a308647");
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub enum RegistrationError {
+    SerialPortNotFound,
+    NoSerialPortAvailable,
+    MuxAlreadyRegistered,
+}
+
 impl SerialMux {
     pub async fn register(
         kernel: &'static Kernel,
         max_ports: usize,
         max_frame: usize,
-    ) -> Result<(), ()> {
-        let serial_handle = SimpleSerial::from_registry(kernel).await.ok_or(())?;
-        let serial_port = serial_handle.get_port().await.ok_or(())?;
+    ) -> Result<(), RegistrationError> {
+        let serial_handle = SimpleSerial::from_registry(kernel)
+            .await
+            .ok_or(RegistrationError::SerialPortNotFound)?;
+        let serial_port = serial_handle
+            .get_port()
+            .await
+            .ok_or(RegistrationError::NoSerialPortAvailable)?;
 
         let (sprod, scons) = serial_port.split();
         let sprod = sprod.into_mpmc_producer().await;
@@ -129,7 +142,7 @@ impl SerialMux {
         kernel
             .with_registry(|reg| reg.register_konly::<SerialMux>(&cmd_prod))
             .await
-            .expect("Only registered once");
+            .map_err(|_| RegistrationError::MuxAlreadyRegistered)?;
 
         Ok(())
     }

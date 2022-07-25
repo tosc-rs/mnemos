@@ -124,11 +124,24 @@ pub enum ReplyTo<RD: RegisteredDriver> {
     },
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub enum ReplyError {
     KOnlyUserspaceResponse,
     ReplyChannelClosed,
     UserspaceSerializationError,
     InternalError,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum UserHandlerError {
+    DeserializationFailed,
+    QueueFull,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum RegistrationError {
+    UuidAlreadyRegistered,
+    RegistryFull,
 }
 
 impl From<ReusableError> for ReplyError {
@@ -165,8 +178,11 @@ pub struct KernelHandle<RD: RegisteredDriver> {
     prod: KProducer<Message<RD>>,
 }
 
-type ErasedDeserHandler =
-    unsafe fn(UserRequest<'_>, &ErasedKProducer, &bbq::MpscProducer) -> Result<(), ()>;
+type ErasedDeserHandler = unsafe fn(
+    UserRequest<'_>,
+    &ErasedKProducer,
+    &bbq::MpscProducer,
+) -> Result<(), UserHandlerError>;
 
 /// The payload of a registry item.
 ///
@@ -213,9 +229,9 @@ impl Registry {
     pub fn register_konly<RD: RegisteredDriver>(
         &mut self,
         kch: &KProducer<Message<RD>>,
-    ) -> Result<(), ()> {
+    ) -> Result<(), RegistrationError> {
         if self.items.iter().any(|i| i.key == RD::UUID) {
-            return Err(());
+            return Err(RegistrationError::UuidAlreadyRegistered);
         }
         self.items
             .push(RegistryItem {
@@ -226,7 +242,7 @@ impl Registry {
                     req_deser: None,
                 },
             })
-            .map_err(drop)
+            .map_err(|_| RegistrationError::RegistryFull)
     }
 
     /// Register a driver service for use in the kernel (including drivers) as
@@ -234,14 +250,14 @@ impl Registry {
     ///
     /// See [Registry::register_konly] if the request and response types are not
     /// serializable.
-    pub fn register<RD>(&mut self, kch: &KProducer<Message<RD>>) -> Result<(), ()>
+    pub fn register<RD>(&mut self, kch: &KProducer<Message<RD>>) -> Result<(), RegistrationError>
     where
         RD: RegisteredDriver,
         RD::Request: Serialize + DeserializeOwned,
         RD::Response: Serialize + DeserializeOwned,
     {
         if self.items.iter().any(|i| i.key == RD::UUID) {
-            return Err(());
+            return Err(RegistrationError::UuidAlreadyRegistered);
         }
         self.items
             .push(RegistryItem {
@@ -252,7 +268,7 @@ impl Registry {
                     req_deser: Some(map_deser::<RD>),
                 },
             })
-            .map_err(drop)
+            .map_err(|_| RegistrationError::RegistryFull)
     }
 
     /// Get a kernelspace (including drivers) handle of a given driver service.
@@ -391,7 +407,7 @@ impl UserspaceHandle {
         &self,
         user_msg: UserRequest<'_>,
         user_ring: &bbq::MpscProducer,
-    ) -> Result<(), ()> {
+    ) -> Result<(), UserHandlerError> {
         unsafe { (self.req_deser)(user_msg, &self.req_producer_leaked, user_ring) }
     }
 }
@@ -419,7 +435,7 @@ unsafe fn map_deser<RD>(
     umsg: UserRequest<'_>,
     req_tx: &ErasedKProducer,
     user_resp: &bbq::MpscProducer,
-) -> Result<(), ()>
+) -> Result<(), UserHandlerError>
 where
     RD: RegisteredDriver,
     RD::Request: Serialize + DeserializeOwned,
@@ -436,7 +452,8 @@ where
     let req_prod = req_tx.clone_typed::<Message<RD>>();
 
     // Deserialize the request, if it doesn't have the right contents, deserialization will fail.
-    let u_payload: RD::Request = postcard::from_bytes(umsg.req_bytes).map_err(drop)?;
+    let u_payload: RD::Request = postcard::from_bytes(umsg.req_bytes)
+        .map_err(|_| UserHandlerError::DeserializationFailed)?;
 
     // Create the message type to be sent on the channel
     let msg: Message<RD> = Message {
@@ -448,7 +465,9 @@ where
     };
 
     // Send the message, and report any failures
-    req_prod.enqueue_sync(msg).map_err(drop)
+    req_prod
+        .enqueue_sync(msg)
+        .map_err(|_| UserHandlerError::QueueFull)
 }
 
 /// TODO: I don't really know what to do with this. This is essentially
@@ -473,6 +492,7 @@ pub mod simple_serial {
         rosc: Reusable<Envelope<Result<Response, SimpleSerialError>>>,
     }
 
+    #[derive(Debug, Eq, PartialEq)]
     pub enum SimpleSerialError {
         AlreadyAssignedPort,
     }

@@ -93,6 +93,7 @@ impl TcpSerial {
         kernel
             .with_registry(|reg| reg.register_konly::<SimpleSerial>(&prod))
             .await
+            .map_err(drop)
     }
 }
 

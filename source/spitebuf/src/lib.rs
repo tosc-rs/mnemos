@@ -35,11 +35,13 @@ pub struct MpScQueue<T, STO: Storage<T>> {
 }
 
 /// Represents a closed error
+#[derive(Debug, Eq, PartialEq)]
 pub enum EnqueueError<T> {
     Full(T),
     Closed(T),
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub enum DequeueError {
     Closed,
 }
