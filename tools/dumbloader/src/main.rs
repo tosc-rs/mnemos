@@ -1,22 +1,20 @@
-use std::{net::TcpStream, io::{Read, Write, ErrorKind}, time::Duration};
-use serde::{Serialize, Deserialize};
 use postcard::{CobsAccumulator, FeedResult};
-
+use serde::{Deserialize, Serialize};
+use std::{
+    io::{ErrorKind, Read, Write},
+    net::TcpStream,
+    time::Duration,
+};
 
 #[derive(Serialize, Deserialize)]
 enum Request {
-    Send {
-        offset: u32,
-    },
+    Send { offset: u32 },
     Done,
 }
 
 #[derive(Serialize, Deserialize)]
 enum Response {
-    Buffer {
-        start: u32,
-        data: Vec<u8>,
-    },
+    Buffer { start: u32, data: Vec<u8> },
     Done(u32),
     Retry,
 }
@@ -43,7 +41,8 @@ fn main() {
     let mut acc = CobsAccumulator::<256>::new();
     let mut rdbuf = [0u8; 256];
 
-    conn.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+    conn.set_read_timeout(Some(Duration::from_millis(100)))
+        .unwrap();
 
     'outer: loop {
         match conn.read(&mut rdbuf) {
@@ -53,17 +52,17 @@ fn main() {
                     match acc.feed::<Request>(window) {
                         FeedResult::Consumed => {
                             window = &[];
-                        },
+                        }
                         FeedResult::OverFull(rem) => {
                             window = rem;
                             let data = postcard::to_stdvec_cobs(&Response::Retry).unwrap();
                             conn.write_all(&data).unwrap();
-                        },
+                        }
                         FeedResult::DeserError(rem) => {
                             window = rem;
                             let data = postcard::to_stdvec_cobs(&Response::Retry).unwrap();
                             conn.write_all(&data).unwrap();
-                        },
+                        }
                         FeedResult::Success { data, remaining } => {
                             window = remaining;
                             match data {
@@ -76,20 +75,23 @@ fn main() {
                                         let data = postcard::to_stdvec_cobs(&Response::Buffer {
                                             start: offset,
                                             data,
-                                        }).unwrap();
+                                        })
+                                        .unwrap();
                                         conn.write_all(&data).unwrap();
                                     } else {
-                                        let data = postcard::to_stdvec_cobs(&Response::Done(contents.len() as u32)).unwrap();
+                                        let data = postcard::to_stdvec_cobs(&Response::Done(
+                                            contents.len() as u32,
+                                        ))
+                                        .unwrap();
                                         conn.write_all(&data).unwrap();
                                     }
-                                },
+                                }
                                 Request::Done => break 'outer,
                             }
-
-                        },
+                        }
                     }
                 }
-            },
+            }
             Ok(_) => {
                 let data = postcard::to_stdvec_cobs(&Response::Retry).unwrap();
                 conn.write_all(&data).unwrap();
