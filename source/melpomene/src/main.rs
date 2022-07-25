@@ -7,11 +7,10 @@ use abi::bbqueue_ipc::BBBuffer;
 use clap::Parser;
 use melpomene::{
     cli::{self, MelpomeneOptions},
-    sim_drivers::{delay::Delay, tcp_serial::spawn_tcp_serial},
+    sim_drivers::{delay::Delay, tcp_serial::TcpSerial},
 };
 use mnemos_kernel::{
-    comms::{bbq::new_bidi_channel, kchannel::KChannel},
-    drivers::serial_mux::{Message, Request, Response, SerialMux},
+    drivers::serial_mux::{SerialMux, SerialMuxHandle},
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -78,115 +77,63 @@ fn kernel_entry(opts: MelpomeneOptions) {
         max_drivers: 16,
         k2u_size: 4096,
         u2k_size: 4096,
-        user_reply_max_ct: 32,
     };
 
     let k = unsafe { Kernel::new(settings).unwrap().leak().as_ref() };
-    {
-        let mut guard = k.heap().lock().unwrap();
 
-        {
-            // First let's make a dummy driver just to make sure some stuff happens
-            let dummy_fut = async move {
-                // Delay for one second, just for funsies
-                Delay::new(Duration::from_secs(1)).await;
+    // First let's make a dummy driver just to make sure some stuff happens
+    let initialization_future = async move {
+        // Delay for one second, just for funsies
+        Delay::new(Duration::from_secs(1)).await;
 
-                // Set up the bidirectional, async bbqueue channel between the TCP port
-                // (acting as a serial port) and the virtual serial port mux.
-                //
-                // Create the buffer, and spawn the worker task, giving it one of the
-                // queue handles
-                let (mux_ring, tcp_ring) = new_bidi_channel(k.heap(), 4096, 4096).await;
-                spawn_tcp_serial(opts.serial_addr, tcp_ring).await;
+        // Set up the bidirectional, async bbqueue channel between the TCP port
+        // (acting as a serial port) and the virtual serial port mux.
+        //
+        // Create the buffer, and spawn the worker task, giving it one of the
+        // queue handles
+        TcpSerial::register(k, opts.serial_addr, 4096, 4096)
+            .await
+            .unwrap();
 
-                // Now, right now this is a little awkward, but what I'm doing here is spawning
-                // a new virtual mux, and configuring it with:
-                // * Up to 4 virtual ports max
-                // * Framed messages up to 512 bytes max each
-                // * The other side of the async connection to the TCP "serial" port
-                //
-                // After spawning, it gives us back IT'S message passing handle, where we can
-                // send it configuration commands. Right now - that basically just is used for
-                // mapping new virtual ports.
-                let mux_hdl = SerialMux::new(k, 4, 512, mux_ring).await;
+        // Now, right now this is a little awkward, but what I'm doing here is spawning
+        // a new virtual mux, and configuring it with:
+        // * Up to 4 virtual ports max
+        // * Framed messages up to 512 bytes max each
+        SerialMux::register(k, 4, 512).await.unwrap();
 
-                // To send a message to the Mux, we need a "return address". The message
-                // we send includes a Request, and a producer for the KChannel of the kind below.
-                //
-                // I still need to do some more work on the design of the message bus/types that
-                // will go on with this, or decide whether a mutex'd handle is better for non-userspace
-                // communications.
-                let (kprod, kcons) = KChannel::<Result<Response, ()>>::new_async(k, 4)
-                    .await
-                    .split();
+        let mux_hdl = SerialMuxHandle::from_registry(k).await.unwrap();
+        let p0 = mux_hdl.open_port(0, 1024).await.unwrap();
+        let p1 = mux_hdl.open_port(1, 1024).await.unwrap();
+        drop(mux_hdl);
 
-                // Map virtual port 0, with a maximum (incoming) buffer capacity of 1024 bytes.
-                let request_0 = Request::RegisterPort {
-                    port_id: 0,
-                    capacity: 1024,
-                };
-                let request_1 = Request::RegisterPort {
-                    port_id: 1,
-                    capacity: 1024,
-                };
+        k.spawn(
+            async move {
+                loop {
+                    let rgr = p0.consumer().read_grant().await;
+                    let len = rgr.len();
+                    p0.send(&rgr).await;
+                    rgr.release(len);
+                }
+            }
+            .instrument(tracing::info_span!("Loopback")),
+        )
+        .await;
 
-                // Send the Message with our request, and our KProducer handle. If we did this
-                // a bunch, we could clone the producer.
-                mux_hdl
-                    .enqueue_async(Message {
-                        req: request_0,
-                        resp: kprod.clone(),
-                    })
-                    .await
-                    .map_err(drop)
-                    .unwrap();
-                mux_hdl
-                    .enqueue_async(Message {
-                        req: request_1,
-                        resp: kprod.clone(),
-                    })
-                    .await
-                    .map_err(drop)
-                    .unwrap();
-
-                // Now we get back a message in our "return address", which SHOULD contain
-                // a confirmation that the port was registered.
-                let resp_0 = kcons.dequeue_async().await.unwrap().unwrap();
-                let resp_1 = kcons.dequeue_async().await.unwrap().unwrap();
-
-                let p0 = match resp_0 {
-                    Response::PortRegistered(p) => p,
-                };
-                let p1 = match resp_1 {
-                    Response::PortRegistered(p) => p,
-                };
-
-                k.spawn(async move {
-                    loop {
-                        let rgr = p0.consumer().read_grant().await;
-                        let len = rgr.len();
-                        p0.send(&rgr).await;
-                        rgr.release(len);
-                    }
-                })
-                .await;
-
-                // Now we juse send out data every second
+        // Now we just send out data every second
+        k.spawn(
+            async move {
                 loop {
                     Delay::new(Duration::from_secs(1)).await;
                     p1.send(b"hello\r\n").await;
                 }
             }
-            .instrument(tracing::info_span!("Loopback"));
-
-            let dummy_task = k.new_task(dummy_fut);
-            let boxed_dummy = guard.alloc_box(dummy_task).map_err(drop).unwrap();
-            k.spawn_allocated(boxed_dummy);
-        }
-
-        // Make sure we don't accidentally give away the mutex guard
-        drop(guard);
+            .instrument(tracing::info_span!("Hello Loop")),
+        )
+        .await;
     }
+    .instrument(tracing::info_span!("Initialize"));
+
+    k.initialize(initialization_future).unwrap();
 
     //////////////////////////////////////////////////////////////////////////////
     // TODO: Userspace doesn't really do anything yet! Simulate initialization of

@@ -41,7 +41,7 @@ version = "0.7.10"
 features = ["defmt-impl"]
 
 [dependencies.postcard]
-version = "0.7.3"
+version = "1.0.1"
 default-features = false
 
 [features]

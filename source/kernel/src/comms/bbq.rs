@@ -1,3 +1,9 @@
+//! A bbqueue based collection of single- and double- ended, async/await
+//! byte buffer queues.
+//!
+//! This extends the underlying bbqueue type exposed by the ABI crate, allowing
+//! for async kernel-to-kernel (including driver services) usage.
+
 use core::{
     mem::MaybeUninit,
     ops::{Deref, DerefMut},

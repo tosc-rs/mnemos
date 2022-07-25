@@ -1,23 +1,36 @@
-use mnemos_alloc::containers::{HeapArc, HeapArray, HeapFixedVec};
-use tracing::{debug, warn};
-
 use crate::{
     comms::{
         bbq,
-        kchannel::{KChannel, KConsumer, KProducer},
+        kchannel::{KChannel, KConsumer},
+        oneshot::Reusable,
+    },
+    registry::{
+        simple_serial::SimpleSerial, Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo,
     },
     Kernel,
 };
 use maitake::sync::Mutex;
+use mnemos_alloc::containers::{HeapArc, HeapArray, HeapFixedVec};
+use tracing::{debug, warn};
+use uuid::Uuid;
 
-struct PortInfo {
-    pub port: u16,
-    pub upstream: bbq::SpscProducer,
+/// SerialMux is the registered driver type
+pub struct SerialMux {
+    _inner: (),
 }
 
-pub struct Message {
-    pub req: Request,
-    pub resp: KProducer<Result<Response, ()>>,
+/// A PortHandle is the interface received after opening a virtual serial port
+pub struct PortHandle {
+    port: u16,
+    cons: bbq::Consumer,
+    outgoing: bbq::MpscProducer,
+    max_frame: usize,
+}
+
+/// A SerialMuxHandle is the client interface of the [SerialMux].
+pub struct SerialMuxHandle {
+    prod: KernelHandle<SerialMux>,
+    reply: Reusable<Envelope<Result<Response, SerialMuxError>>>,
 }
 
 pub enum Request {
@@ -28,48 +41,184 @@ pub enum Response {
     PortRegistered(PortHandle),
 }
 
-struct Commander {
-    cmd: KConsumer<Message>,
-    out: bbq::MpscProducer,
-    mux: HeapArc<Mutex<SerialMux>>,
+#[derive(Debug, Eq, PartialEq)]
+pub enum SerialMuxError {
+    DuplicateItem,
+    RegistryFull,
 }
 
-impl Commander {
-    async fn run(self) {
-        loop {
-            let msg = self.cmd.dequeue_async().await.unwrap();
-            let Message { req, resp } = msg;
-            match req {
-                Request::RegisterPort { port_id, capacity } => {
-                    let res = {
-                        let mut mux = self.mux.lock().await;
-                        mux.register_port(port_id, capacity, &self.out).await
-                    };
-                    resp.enqueue_async(res.map(|ph| Response::PortRegistered(ph)))
-                        .await
-                        .map_err(drop)
-                        .unwrap();
-                }
-            }
-        }
-    }
+struct PortInfo {
+    port: u16,
+    upstream: bbq::SpscProducer,
 }
 
-pub struct SerialMux {
+struct MuxingInfo {
     kernel: &'static Kernel,
     ports: HeapFixedVec<PortInfo>,
     max_frame: usize,
 }
 
+struct CommanderTask {
+    cmd: KConsumer<Message<SerialMux>>,
+    out: bbq::MpscProducer,
+    mux: HeapArc<Mutex<MuxingInfo>>,
+}
+
+struct IncomingMuxerTask {
+    buf: HeapArray<u8>,
+    idx: usize,
+    incoming: bbq::Consumer,
+    mux: HeapArc<Mutex<MuxingInfo>>,
+}
+
+// impl SerialMux
+
+impl RegisteredDriver for SerialMux {
+    type Request = Request;
+    type Response = Response;
+    type Error = SerialMuxError;
+    const UUID: Uuid = crate::registry::known_uuids::kernel::SERIAL_MUX;
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum RegistrationError {
+    SerialPortNotFound,
+    NoSerialPortAvailable,
+    MuxAlreadyRegistered,
+}
+
 impl SerialMux {
+    pub async fn register(
+        kernel: &'static Kernel,
+        max_ports: usize,
+        max_frame: usize,
+    ) -> Result<(), RegistrationError> {
+        let serial_handle = SimpleSerial::from_registry(kernel)
+            .await
+            .ok_or(RegistrationError::SerialPortNotFound)?;
+        let serial_port = serial_handle
+            .get_port()
+            .await
+            .ok_or(RegistrationError::NoSerialPortAvailable)?;
+
+        let (sprod, scons) = serial_port.split();
+        let sprod = sprod.into_mpmc_producer().await;
+
+        let ports = kernel.heap().allocate_fixed_vec(max_ports).await;
+        let imutex = kernel
+            .heap()
+            .allocate_arc(Mutex::new(MuxingInfo {
+                ports,
+                kernel,
+                max_frame,
+            }))
+            .await;
+        let (cmd_prod, cmd_cons) = KChannel::new_async(kernel, max_ports).await.split();
+        let buf = kernel.heap().allocate_array_with(|| 0, max_frame).await;
+        let commander = CommanderTask {
+            cmd: cmd_cons,
+            out: sprod,
+            mux: imutex.clone(),
+        };
+        let muxer = IncomingMuxerTask {
+            incoming: scons,
+            mux: imutex,
+            buf,
+            idx: 0,
+        };
+
+        kernel
+            .spawn(async move {
+                commander.run().await;
+            })
+            .await;
+
+        kernel
+            .spawn(async move {
+                muxer.run().await;
+            })
+            .await;
+
+        kernel
+            .with_registry(|reg| reg.register_konly::<SerialMux>(&cmd_prod))
+            .await
+            .map_err(|_| RegistrationError::MuxAlreadyRegistered)?;
+
+        Ok(())
+    }
+}
+
+// impl PortHandle
+
+impl PortHandle {
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    pub fn consumer(&self) -> &bbq::Consumer {
+        &self.cons
+    }
+
+    pub async fn send(&self, data: &[u8]) {
+        // This is lazy, and could probably be done with bigger chunks.
+        let msg_chunk = self.max_frame / 2;
+
+        for chunk in data.chunks(msg_chunk) {
+            let enc_chunk = cobs::max_encoding_length(chunk.len() + 2);
+            let mut wgr = self.outgoing.send_grant_exact(enc_chunk + 1).await;
+            let mut encoder = cobs::CobsEncoder::new(&mut wgr);
+            encoder.push(&self.port.to_le_bytes()).unwrap();
+            encoder.push(chunk).unwrap();
+            let used = encoder.finalize().unwrap();
+            wgr[used] = 0;
+            wgr.commit(used + 1);
+        }
+    }
+}
+
+// impl SerialMuxHandle
+
+impl SerialMuxHandle {
+    pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
+        let prod = kernel.with_registry(|reg| reg.get::<SerialMux>()).await?;
+
+        Some(SerialMuxHandle {
+            prod,
+            reply: Reusable::new_async(kernel).await,
+        })
+    }
+
+    pub async fn open_port(&self, port_id: u16, capacity: usize) -> Option<PortHandle> {
+        self.prod
+            .send(
+                Request::RegisterPort { port_id, capacity },
+                ReplyTo::OneShot(self.reply.sender().ok()?),
+            )
+            .await
+            .ok()?;
+
+        let resp = self.reply.receive().await.ok()?;
+        let body = resp.body.ok()?;
+
+        let Response::PortRegistered(port) = body;
+        Some(port)
+    }
+}
+
+// impl MuxingInfo
+
+impl MuxingInfo {
     async fn register_port(
         &mut self,
         port_id: u16,
         capacity: usize,
         outgoing: &bbq::MpscProducer,
-    ) -> Result<PortHandle, ()> {
-        if self.ports.is_full() || self.ports.iter().any(|p| p.port == port_id) {
-            return Err(());
+    ) -> Result<PortHandle, SerialMuxError> {
+        if self.ports.is_full() {
+            return Err(SerialMuxError::RegistryFull);
+        }
+        if self.ports.iter().any(|p| p.port == port_id) {
+            return Err(SerialMuxError::DuplicateItem);
         }
         let (prod, cons) = bbq::new_spsc_channel(self.kernel.heap(), capacity).await;
 
@@ -78,7 +227,7 @@ impl SerialMux {
                 port: port_id,
                 upstream: prod,
             })
-            .map_err(drop)?;
+            .map_err(|_| SerialMuxError::RegistryFull)?;
 
         let ph = PortHandle {
             port: port_id,
@@ -91,14 +240,32 @@ impl SerialMux {
     }
 }
 
-struct SerialMuxer {
-    buf: HeapArray<u8>,
-    idx: usize,
-    incoming: bbq::Consumer,
-    mux: HeapArc<Mutex<SerialMux>>,
+// impl CommanderTask
+
+impl CommanderTask {
+    async fn run(self) {
+        loop {
+            let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
+            let Message { msg: req, reply } = msg;
+            match req {
+                Envelope {
+                    body: Request::RegisterPort { port_id, capacity },
+                } => {
+                    let res = {
+                        let mut mux = self.mux.lock().await;
+                        mux.register_port(port_id, capacity, &self.out).await
+                    }
+                    .map(Response::PortRegistered);
+                    reply.reply_konly(res).await.map_err(drop).unwrap();
+                }
+            }
+        }
+    }
 }
 
-impl SerialMuxer {
+// impl IncomingMuxerTask
+
+impl IncomingMuxerTask {
     async fn run(mut self) {
         loop {
             let mut rgr = self.incoming.read_grant().await;
@@ -173,87 +340,5 @@ impl SerialMuxer {
             rgr.release(used);
             debug!(used, "processed incoming bytes");
         }
-    }
-}
-
-pub struct PortHandle {
-    port: u16,
-    cons: bbq::Consumer,
-    outgoing: bbq::MpscProducer,
-    max_frame: usize,
-}
-
-impl PortHandle {
-    pub fn port(&self) -> u16 {
-        self.port
-    }
-
-    pub fn consumer(&self) -> &bbq::Consumer {
-        &self.cons
-    }
-
-    pub async fn send(&self, data: &[u8]) {
-        // This is lazy, and could probably be done with bigger chunks.
-        let msg_chunk = self.max_frame / 2;
-
-        for chunk in data.chunks(msg_chunk) {
-            let enc_chunk = cobs::max_encoding_length(chunk.len() + 2);
-            let mut wgr = self.outgoing.send_grant_exact(enc_chunk + 1).await;
-            let mut encoder = cobs::CobsEncoder::new(&mut wgr);
-            encoder.push(&self.port.to_le_bytes()).unwrap();
-            encoder.push(chunk).unwrap();
-            let used = encoder.finalize().unwrap();
-            wgr[used] = 0;
-            wgr.commit(used + 1);
-        }
-    }
-}
-
-impl SerialMux {
-    pub async fn new(
-        kernel: &'static Kernel,
-        max_ports: usize,
-        max_frame: usize,
-        serial_port: bbq::BidiHandle,
-    ) -> KProducer<Message> {
-        let (sprod, scons) = serial_port.split();
-        let sprod = sprod.into_mpmc_producer().await;
-
-        let ports = kernel.heap().allocate_fixed_vec(max_ports).await;
-        let imutex = kernel
-            .heap()
-            .allocate_arc(Mutex::new(SerialMux {
-                ports,
-                kernel,
-                max_frame,
-            }))
-            .await;
-        let (cmd_prod, cmd_cons) = KChannel::new_async(kernel, max_ports).await.split();
-        let buf = kernel.heap().allocate_array_with(|| 0, max_frame).await;
-        let commander = Commander {
-            cmd: cmd_cons,
-            out: sprod,
-            mux: imutex.clone(),
-        };
-        let muxer = SerialMuxer {
-            incoming: scons,
-            mux: imutex,
-            buf,
-            idx: 0,
-        };
-
-        kernel
-            .spawn(async move {
-                commander.run().await;
-            })
-            .await;
-
-        kernel
-            .spawn(async move {
-                muxer.run().await;
-            })
-            .await;
-
-        cmd_prod
     }
 }

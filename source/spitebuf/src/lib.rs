@@ -15,7 +15,7 @@
 use core::{
     cell::UnsafeCell,
     mem::MaybeUninit,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use maitake::wait::{WaitCell, WaitQueue};
 use std::marker::PhantomData;
@@ -24,16 +24,29 @@ pub unsafe trait Storage<T> {
     fn buf(&self) -> (*const UnsafeCell<Cell<T>>, usize);
 }
 
-pub struct MpMcQueue<T, STO: Storage<T>> {
+pub struct MpScQueue<T, STO: Storage<T>> {
     storage: STO,
     dequeue_pos: AtomicUsize,
     enqueue_pos: AtomicUsize,
     cons_wait: WaitCell,
     prod_wait: WaitQueue,
+    closed: AtomicBool,
     pd: PhantomData<T>,
 }
 
-impl<T, STO: Storage<T>> MpMcQueue<T, STO> {
+/// Represents a closed error
+#[derive(Debug, Eq, PartialEq)]
+pub enum EnqueueError<T> {
+    Full(T),
+    Closed(T),
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum DequeueError {
+    Closed,
+}
+
+impl<T, STO: Storage<T>> MpScQueue<T, STO> {
     /// Creates an empty queue
     #[track_caller]
     pub fn new(storage: STO) -> Self {
@@ -53,12 +66,23 @@ impl<T, STO: Storage<T>> MpMcQueue<T, STO> {
             enqueue_pos: AtomicUsize::new(0),
             cons_wait: WaitCell::new(),
             prod_wait: WaitQueue::new(),
+            closed: AtomicBool::new(false),
             pd: PhantomData,
         }
     }
 
+    // Mark the channel as permanently closed. Any already sent data
+    // can be retrieved, but no further data will be allowed to be pushed.
+    pub fn close(&self) {
+        self.closed.store(true, Ordering::Release);
+        self.cons_wait.close();
+        self.prod_wait.close();
+    }
+
     /// Returns the item in the front of the queue, or `None` if the queue is empty
     pub fn dequeue_sync(&self) -> Option<T> {
+        // Note: DON'T check the closed flag on dequeue. We want to be able
+        // to drain any potential messages after closing.
         let (ptr, len) = self.storage.buf();
         let res = unsafe { dequeue((*ptr).get(), &self.dequeue_pos, len - 1) };
         if res.is_some() {
@@ -70,42 +94,55 @@ impl<T, STO: Storage<T>> MpMcQueue<T, STO> {
     /// Adds an `item` to the end of the queue
     ///
     /// Returns back the `item` if the queue is full
-    pub fn enqueue_sync(&self, item: T) -> Result<(), T> {
+    pub fn enqueue_sync(&self, item: T) -> Result<(), EnqueueError<T>> {
+        if self.closed.load(Ordering::Acquire) {
+            return Err(EnqueueError::Closed(item));
+        }
         let (ptr, len) = self.storage.buf();
         let res = unsafe { enqueue((*ptr).get(), &self.enqueue_pos, len - 1, item) };
         if res.is_ok() {
             self.cons_wait.wake();
         }
-        res
+        res.map_err(EnqueueError::Full)
     }
 
-    pub async fn enqueue_async(&self, mut item: T) -> Result<(), T> {
-        while let Err(eitem) = self.enqueue_sync(item) {
-            match self.prod_wait.wait().await {
-                Ok(()) => {}
-                Err(_) => return Err(eitem),
+    pub async fn enqueue_async(&self, mut item: T) -> Result<(), EnqueueError<T>> {
+        loop {
+            match self.enqueue_sync(item) {
+                // We succeeded or the queue is closed, propagate those errors
+                ok @ Ok(_) => return ok,
+                err @ Err(EnqueueError::Closed(_)) => return err,
+
+                // It's full, let's wait until it isn't or the channel has closed
+                Err(EnqueueError::Full(eitem)) => {
+                    match self.prod_wait.wait().await {
+                        Ok(()) => {}
+                        Err(_) => return Err(EnqueueError::Closed(eitem)),
+                    }
+                    item = eitem;
+                }
             }
-            item = eitem;
         }
-        Ok(())
     }
 
-    pub async fn dequeue_async(&self) -> Result<T, ()> {
+    pub async fn dequeue_async(&self) -> Result<T, DequeueError> {
         loop {
             match self.dequeue_sync() {
                 Some(t) => return Ok(t),
+
+                // Note: if we have been closed, this wait will fail.
                 None => match self.cons_wait.wait().await {
                     Ok(()) => {}
-                    Err(_) => return Err(()),
+                    Err(_) => return Err(DequeueError::Closed),
                 },
             }
         }
     }
 }
 
-unsafe impl<T, STO: Storage<T>> Sync for MpMcQueue<T, STO> where T: Send {}
+unsafe impl<T, STO: Storage<T>> Sync for MpScQueue<T, STO> where T: Send {}
 
-impl<T, STO: Storage<T>> Drop for MpMcQueue<T, STO> {
+impl<T, STO: Storage<T>> Drop for MpScQueue<T, STO> {
     fn drop(&mut self) {
         while self.dequeue_sync().is_some() {}
         self.cons_wait.close();
