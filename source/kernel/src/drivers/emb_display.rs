@@ -20,6 +20,8 @@ use embedded_graphics::{
 use embedded_graphics_simulator::SimulatorDisplay;
 
 const BYTES_PER_PIXEL: u32 = 1;
+const DISP_WIDTH: u32 = 319;
+const DISP_HEIGHT: u32 = 239;
 
 // Registered driver
 pub struct EmbDisplay {
@@ -216,7 +218,7 @@ impl DrawTarget for FrameChunk {
             // Check if the pixel coordinates are out of bounds (negative or greater than
             // (319,239)). `DrawTarget` implementation are required to discard any out of bounds
             // pixels without returning an error or causing a panic.
-            if let Ok((x @ 0..=319, y @ 0..=239)) = coord.try_into() {
+            if let Ok((x @ 0..=DISP_WIDTH, y @ 0..=DISP_HEIGHT)) = coord.try_into() {
                 // Calculate the index in the framebuffer.
                 let index: u32 = x + y * self.width;
                 // TODO: Implement bound checks and return BufferFull if needed
