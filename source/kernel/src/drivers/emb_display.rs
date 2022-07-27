@@ -126,7 +126,11 @@ impl EmbDisplay {
     }
 }
 
-
+// Create and return a Simulator display object from raw pixel data.
+// Pixel data is turned into a raw image, and then drawn onto a SimulatorDisplay object
+// This is necessary as a e-g Window only accepts SimulatorDisplay object
+// On a physical display, the raw pixel data can be sent over to the display directly 
+// Using the display's device interface
 impl FrameChunk {
     pub async fn frame_display(&mut self) -> Result<SimulatorDisplay<Gray8>, ()> {
         let mut sdisp = SimulatorDisplay::<Gray8>::new(Size::new(320, 240));
@@ -166,6 +170,7 @@ impl EmbDisplayHandle {
 }
 
 impl DisplayInfo {
+    // Returns a new frame chunk
     async fn new_frame(
         &mut self,
         frame_id: u16,
@@ -201,9 +206,6 @@ impl DisplayInfo {
 
 impl DrawTarget for FrameChunk {
     type Color = Gray8;
-    // `ExampleDisplay` uses a framebuffer and doesn't need to communicate with the display
-    // controller to draw pixel, which means that drawing operations can never fail. To reflect
-    // this the type `Infallible` was chosen as the `Error` type.
     type Error = core::convert::Infallible;
 
     fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
