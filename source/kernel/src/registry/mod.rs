@@ -23,10 +23,11 @@ pub mod known_uuids {
 
         pub const SERIAL_MUX: Uuid = uuid!("54c983fa-736f-4223-b90d-c4360a308647");
         pub const SIMPLE_SERIAL_PORT: Uuid = uuid!("f06aac01-2773-4266-8681-583ffe756554");
+        pub const EMB_DISPLAY: Uuid = uuid!("b54db574-3eb7-4c89-8bfb-1a20890be68e");
     }
 
     // In case you need to iterate over every UUID
-    pub static ALL: &[Uuid] = &[kernel::SERIAL_MUX, kernel::SIMPLE_SERIAL_PORT];
+    pub static ALL: &[Uuid] = &[kernel::SERIAL_MUX, kernel::SIMPLE_SERIAL_PORT, kernel::EMB_DISPLAY];
 }
 
 /// A marker trait designating a registerable driver service.

@@ -1,0 +1,255 @@
+use crate::{
+    comms::{
+        kchannel::{KChannel, KConsumer},
+        oneshot::Reusable,
+    },
+    registry::{
+        Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo,
+    },
+    Kernel,
+};
+use maitake::sync::Mutex;
+use mnemos_alloc::containers::{HeapArc, HeapArray, HeapFixedVec};
+// use tracing::{debug, warn};
+use uuid::Uuid;
+use embedded_graphics::{
+    pixelcolor::{Gray8, GrayColor},
+    prelude::*,
+    image::{Image, ImageRaw},
+};
+use embedded_graphics_simulator::SimulatorDisplay;
+
+const BYTES_PER_PIXEL: u32 = 1;
+
+// Registered driver
+pub struct EmbDisplay {
+    kernel: &'static Kernel,
+}
+
+// FrameChunk is recieved after client has sent a request for one
+pub struct FrameChunk {
+    frame_id: u16,
+    bytes: HeapArray<u8>,
+    start_x: i32,
+    start_y: i32,
+    width: u32,
+    height: u32,
+}
+
+struct FrameInfo {
+    frame: u16,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum FrameError {
+    DuplicateItem,
+    RegistryFull,
+}
+
+struct DisplayInfo{
+    kernel: &'static Kernel,
+    frames: HeapFixedVec<FrameInfo>,
+    frame_size: usize,
+}
+
+// Client interface to EmbDisplay
+pub struct EmbDisplayHandle {
+    prod: KernelHandle<EmbDisplay>,
+    reply: Reusable<Envelope<Result<Response, FrameError>>>,
+}
+
+pub enum Request {
+    NewFrameChunk { frame_id: u16, start_x: i32, start_y: i32, width: u32, height: u32 },
+}
+
+pub enum Response {
+    FrameChunkAllocated(FrameChunk),
+}
+
+pub enum EmbDisplayError {
+    BufferFull,
+}
+
+struct CommanderTask {
+    cmd: KConsumer<Message<EmbDisplay>>,
+    fmutex: HeapArc<Mutex<DisplayInfo>>, 
+}
+
+// impl EmbDisplay
+impl RegisteredDriver for EmbDisplay {
+    type Request = Request;
+    type Response = Response;
+    type Error = FrameError;
+    const UUID: Uuid = crate::registry::known_uuids::kernel::EMB_DISPLAY;
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum RegistrationError {
+    DisplayAlreadyExists,
+}
+
+// Register the driver instance
+impl EmbDisplay {
+    pub async fn register(
+        kernel: &'static Kernel,
+        max_frames: usize,
+        width: usize,
+        height: usize,
+    ) -> Result<(), ()> {
+        let frames = kernel.heap().allocate_fixed_vec(max_frames).await;
+        let frame_size = width * height * BYTES_PER_PIXEL as usize;
+
+        let imutex = kernel
+            .heap()
+            .allocate_arc(Mutex::new(DisplayInfo { 
+                kernel,
+                frames,
+                frame_size,
+            }))
+            .await;
+        let (cmd_prod, cmd_cons) = KChannel::new_async(kernel, 1).await.split();
+        let commander = CommanderTask {
+            cmd: cmd_cons,
+            fmutex: imutex,
+        };
+
+        kernel.spawn(async move{
+            commander.run().await;
+        }).await;
+
+        kernel
+            .with_registry(|reg| reg.register_konly::<EmbDisplay>(&cmd_prod))
+            .await
+            .map_err(|_| RegistrationError::DisplayAlreadyExists).unwrap();
+
+        Ok(())
+    }
+}
+
+
+impl FrameChunk {
+    pub async fn frame_display(&mut self) -> Result<SimulatorDisplay<Gray8>, ()> {
+        let mut sdisp = SimulatorDisplay::<Gray8>::new(Size::new(320, 240));
+        let raw_image = ImageRaw::<Gray8>::new(self.bytes.as_ref(), self.width);
+        let image = Image::new(&raw_image, Point::new(self.start_x, self.start_y));
+        image.draw(&mut sdisp).unwrap();
+        for elem in self.bytes.iter_mut() { *elem = 0; }
+        Ok(sdisp)
+    }
+}
+
+impl EmbDisplayHandle {
+    pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
+        let prod = kernel.with_registry(|reg| reg.get::<EmbDisplay>()).await?;
+
+        Some(EmbDisplayHandle {
+            prod,
+            reply: Reusable::new_async(kernel).await,
+        })
+    }
+
+    pub async fn get_framechunk(&mut self, frame_id: u16, start_x: i32, start_y: i32, width: u32, height: u32) -> Option<FrameChunk> {
+        self.prod
+            .send(
+                Request::NewFrameChunk { frame_id, start_x, start_y, width, height },
+                ReplyTo::OneShot(self.reply.sender().ok()?),
+            )
+            .await
+            .ok()?;
+
+        let resp = self.reply.receive().await.ok()?;
+        let body = resp.body.ok()?;
+
+        let Response::FrameChunkAllocated(frame) = body;
+        Some(frame)
+    }
+}
+
+impl DisplayInfo {
+    async fn new_frame(
+        &mut self,
+        frame_id: u16,
+        start_x: i32,
+        start_y: i32,
+        width: u32,
+        height: u32,
+    ) -> Result<FrameChunk, FrameError> {
+        if self.frames.is_full() {
+            return Err(FrameError::RegistryFull);
+        }
+
+        if self.frames.iter().any(|f| f.frame == frame_id) {
+            return Err(FrameError::DuplicateItem);
+        }
+
+        self.frames.push(FrameInfo { frame: frame_id })
+            .map_err(|_| FrameError::RegistryFull)?;
+
+        let size = (width * height) as usize;
+        let bytes = self.kernel.heap().allocate_array_with(|| 0, size).await;
+        let fc = FrameChunk {
+            frame_id: frame_id,
+            bytes: bytes,
+            start_x: start_x,
+            start_y: start_y,
+            width: width,
+            height: height,
+        };
+        Ok(fc)
+    }
+}
+
+impl DrawTarget for FrameChunk {
+    type Color = Gray8;
+    // `ExampleDisplay` uses a framebuffer and doesn't need to communicate with the display
+    // controller to draw pixel, which means that drawing operations can never fail. To reflect
+    // this the type `Infallible` was chosen as the `Error` type.
+    type Error = core::convert::Infallible;
+
+    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+    where
+        I: IntoIterator<Item = Pixel<Self::Color>>,
+    {
+        for Pixel(coord, color) in pixels.into_iter() {
+            // Check if the pixel coordinates are out of bounds (negative or greater than
+            // (319,239)). `DrawTarget` implementation are required to discard any out of bounds
+            // pixels without returning an error or causing a panic.
+            if let Ok((x @ 0..=319, y @ 0..=239)) = coord.try_into() {
+                // Calculate the index in the framebuffer.
+                let index: u32 = x + y * self.width;
+                // TODO: Implement bound checks and return BufferFull if needed
+                self.bytes[index as usize] = color.luma();
+            }
+        }
+
+        Ok(())
+    }
+}
+
+impl OriginDimensions for FrameChunk {
+    fn size(&self) -> Size {
+        Size::new(self.width, self.height)
+    }
+}
+
+impl CommanderTask {
+    async fn run(self) {
+        loop {
+            let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
+            let Message { msg: req, reply } = msg;
+            match req.body {
+                Request::NewFrameChunk { frame_id, start_x, start_y, width, height } => {
+                    let res = {
+                        let mut fmutex = self.fmutex.lock().await;
+                        fmutex.new_frame(frame_id, start_x, start_y, width, height).await
+                    }
+                    .map(Response::FrameChunkAllocated);
+
+                    let resp = req.reply_with(res);
+
+                    reply.reply_konly(resp).await.map_err(drop).unwrap();
+                }
+            }
+        }
+    }
+}
