@@ -2,20 +2,28 @@
 #![no_main]
 
 use core::cell::UnsafeCell;
-use core::ptr::NonNull;
-use core::sync::atomic::{compiler_fence, Ordering, fence};
+use core::ptr::{NonNull, null_mut};
+use core::sync::atomic::{compiler_fence, Ordering, fence, AtomicPtr, AtomicU64};
 
-use kernel;
+use kernel::comms::kchannel::{KConsumer, KChannel};
+use kernel::comms::oneshot::Reusable;
+use kernel::registry::{RegisteredDriver, KernelHandle, ReplyTo, Envelope};
+use kernel::{self, Kernel, registry::Message};
 
 use d1_pac::{Interrupt, TIMER, UART0};
 use d1_playground::dmac::descriptor::{
     AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType, Descriptor,
 };
 use d1_playground::dmac::{Dmac, ChannelMode};
+use maitake::sync::Mutex;
+use maitake::wait::{WaitCell, WaitQueue};
+use mnemos_alloc::containers::{HeapArc, HeapArray};
 use panic_halt as _;
 
 use d1_playground::plic::{Plic, Priority};
 use d1_playground::timer::{Timer, TimerMode, TimerPrescaler, TimerSource, Timers};
+
+use uuid::{Uuid, uuid};
 
 static HOUND: &str = include_str!("../hound.txt");
 
@@ -57,6 +65,14 @@ macro_rules! println {
         $crate::_print(core::format_args!($($arg)*));
         $crate::print!("\r\n");
     }
+}
+
+static TICK_MS: AtomicU64 = AtomicU64::new(0);
+static TICK_WAKER: AtomicPtr<WaitCell> = AtomicPtr::new(null_mut());
+
+extern "C" {
+    static _aheap_start: usize;
+    static _aheap_size: usize;
 }
 
 #[riscv_rt::entry]
@@ -129,24 +145,42 @@ fn main() -> ! {
 
     unsafe { PRINTER = Some(Uart(uart0)) };
 
+    let heap_start = unsafe {
+        core::ptr::addr_of!(_aheap_start) as *mut u8
+    };
+
+    let heap_size = unsafe {
+        core::ptr::addr_of!(_aheap_size) as usize
+    };
+
+    println!("Bootstrapping Kernel...");
+    println!("Heap Start: {:016X}", heap_start as usize);
+    println!("Heap Size:  {:016X}", heap_size);
+
+    let k_settings = kernel::KernelSettings {
+        heap_start,
+        heap_size,
+        max_drivers: 16,
+        k2u_size: 4096,
+        u2k_size: 4096,
+    };
+    let k = unsafe {
+        Kernel::new(k_settings).unwrap().leak().as_ref()
+    };
+
+    println!("Kernel configured. Waiting for initialization...");
+
     // Set up timers
     let Timers {
         mut timer0,
-        mut timer1,
         ..
     } = Timers::new(p.TIMER);
 
-    timer0.set_source(TimerSource::OSC24_M);
-    timer1.set_source(TimerSource::OSC24_M);
+    // timer0.set_source(TimerSource::OSC24_M);
 
     timer0.set_prescaler(TimerPrescaler::P8); // 24M / 8:  3.00M ticks/s
-    timer1.set_prescaler(TimerPrescaler::P32); // 24M / 32: 0.75M ticks/s
-
-    timer0.set_mode(TimerMode::SINGLE_COUNTING);
-    timer1.set_mode(TimerMode::SINGLE_COUNTING);
-
+    timer0.set_mode(TimerMode::PERIODIC);
     let _ = timer0.get_and_clear_interrupt();
-    let _ = timer1.get_and_clear_interrupt();
 
     unsafe {
         riscv::interrupt::enable();
@@ -155,53 +189,83 @@ fn main() -> ! {
 
     // Set up interrupts
     timer0.set_interrupt_en(true);
-    timer1.set_interrupt_en(true);
     let plic = Plic::new(p.PLIC);
 
     unsafe {
         plic.set_priority(Interrupt::UART0, Priority::P1);
         plic.set_priority(Interrupt::TIMER0, Priority::P1);
-        plic.set_priority(Interrupt::TIMER1, Priority::P1);
         plic.unmask(Interrupt::UART0);
         plic.unmask(Interrupt::TIMER0);
-        plic.unmask(Interrupt::TIMER1);
     }
 
-    let thr_addr = unsafe { &*UART0::PTR }.thr() as *const _ as *mut ();
+    timer0.start_counter(3_000_000 / 1_000);
 
-    for chunk in HOUND.lines() {
-        let d_cfg = DescriptorConfig {
-            source: chunk.as_ptr().cast(),
-            destination: thr_addr,
-            byte_counter: chunk.len(),
-            link: None,
-            wait_clock_cycles: 0,
-            bmode: BModeSel::Normal,
-            dest_width: DataWidth::Bit8,
-            dest_addr_mode: AddressMode::IoMode,
-            dest_block_size: BlockSize::Byte1,
-            dest_drq_type: DestDrqType::Uart0Tx,
-            src_data_width: DataWidth::Bit8,
-            src_addr_mode: AddressMode::LinearMode,
-            src_block_size: BlockSize::Byte1,
-            src_drq_type: SrcDrqType::Dram,
-        };
-        let descriptor = d_cfg.try_into().unwrap();
-        unsafe {
-            dmac.channels[0].set_channel_modes(ChannelMode::Wait, ChannelMode::Handshake);
-            dmac.channels[0].start_descriptor(NonNull::from(&descriptor));
-        }
+    k.initialize(async {
+        let hawc = TimerQueue::register(k).await.unwrap().leak();
+        TICK_WAKER.store(hawc.as_ptr(), Ordering::Release);
 
-        timer0.start_counter(1_500_000);
+        k.spawn(async {
+            let mut tq = TimerQueue::from_registry(k).await.unwrap();
+            let mut ctr = 0u64;
+            loop {
+                tq.delay_ms(1_000).await;
+                println!("[TASK 0, ct {:05}] lol. lmao.", ctr);
+                ctr += 1;
+            }
+        }).await;
+
+        k.spawn(async {
+            let mut tq = TimerQueue::from_registry(k).await.unwrap();
+            let mut ctr = 0u64;
+            loop {
+                tq.delay_ms(3_000).await;
+                println!("[TASK 1, ct {:05}] beep, boop.", ctr);
+                ctr += 1;
+            }
+        }).await;
+    }).unwrap();
+
+    println!("Initalized. Starting Run Loop.");
+
+    loop {
+        k.tick();
         unsafe { riscv::asm::wfi() };
-
-        println!("");
-
-        unsafe {
-            dmac.channels[0].stop_dma();
-        }
     }
-    panic!();
+
+    // let thr_addr = unsafe { &*UART0::PTR }.thr() as *const _ as *mut ();
+
+    // for chunk in HOUND.lines() {
+    //     let d_cfg = DescriptorConfig {
+    //         source: chunk.as_ptr().cast(),
+    //         destination: thr_addr,
+    //         byte_counter: chunk.len(),
+    //         link: None,
+    //         wait_clock_cycles: 0,
+    //         bmode: BModeSel::Normal,
+    //         dest_width: DataWidth::Bit8,
+    //         dest_addr_mode: AddressMode::IoMode,
+    //         dest_block_size: BlockSize::Byte1,
+    //         dest_drq_type: DestDrqType::Uart0Tx,
+    //         src_data_width: DataWidth::Bit8,
+    //         src_addr_mode: AddressMode::LinearMode,
+    //         src_block_size: BlockSize::Byte1,
+    //         src_drq_type: SrcDrqType::Dram,
+    //     };
+    //     let descriptor = d_cfg.try_into().unwrap();
+    //     unsafe {
+    //         dmac.channels[0].set_channel_modes(ChannelMode::Wait, ChannelMode::Handshake);
+    //         dmac.channels[0].start_descriptor(NonNull::from(&descriptor));
+    //     }
+
+    //     timer0.start_counter(1_500_000);
+    //     unsafe { riscv::asm::wfi() };
+
+    //     println!("");
+
+    //     unsafe {
+    //         dmac.channels[0].stop_dma();
+    //     }
+    // }
 }
 
 #[export_name = "MachineExternal"]
@@ -215,18 +279,20 @@ fn im_an_interrupt() {
 
     match claim {
         Interrupt::TIMER0 => {
+            TICK_MS.fetch_add(1, Ordering::AcqRel);
             timer
                 .tmr_irq_sta
                 .modify(|_r, w| w.tmr0_irq_pend().set_bit());
+            let ptr = TICK_WAKER.load(Ordering::Acquire);
+
+            if !ptr.is_null() {
+                unsafe {
+                    (&*ptr).wake();
+                }
+            }
+
             // Wait for the interrupt to clear to avoid repeat interrupts
             while timer.tmr_irq_sta.read().tmr0_irq_pend().bit_is_set() {}
-        }
-        Interrupt::TIMER1 => {
-            timer
-                .tmr_irq_sta
-                .modify(|_r, w| w.tmr1_irq_pend().set_bit());
-            // Wait for the interrupt to clear to avoid repeat interrupts
-            while timer.tmr_irq_sta.read().tmr1_irq_pend().bit_is_set() {}
         }
         Interrupt::UART0 => {
             println!("");
@@ -252,3 +318,141 @@ fn im_an_interrupt() {
 // DMAC_CFG_REGN
 // Mode:
 // DMAC_MODE_REGN
+
+pub struct TimerQueue {
+    _x: (),
+}
+
+pub struct TQPusher {
+    arr: HeapArc<Mutex<HeapArray<Option<(u64, Message<TimerQueue>)>>>>,
+    chan: KConsumer<Message<TimerQueue>>,
+}
+
+pub struct TQClient {
+    hdl: KernelHandle<TimerQueue>,
+    osc: Reusable<Envelope<Result<TQResponse, TQError>>>,
+}
+
+impl TQClient {
+    pub async fn delay_ms(&mut self, ms: u64) {
+        self.hdl.send(
+            TQRequest::DelayMs(ms),
+            ReplyTo::OneShot(self.osc.sender().unwrap()),
+        ).await.unwrap();
+        self.osc.receive().await.unwrap();
+    }
+}
+
+impl TQPusher {
+    pub async fn run(&mut self) {
+        loop {
+            match self.chan.dequeue_async().await {
+                Ok(msg) => {
+                    let now = TICK_MS.load(Ordering::Acquire);
+                    let mut guard = self.arr.lock().await;
+                    let space = guard.iter_mut().find(|i| i.is_none()).unwrap();
+                    let TQRequest::DelayMs(ms) = &msg.msg.body;
+                    let end = ms.wrapping_add(now);
+                    *space = Some((end, msg));
+                },
+                Err(_) => panic!(),
+            }
+        }
+    }
+}
+
+pub struct TQPopper {
+    arr: HeapArc<Mutex<HeapArray<Option<(u64, Message<TimerQueue>)>>>>,
+    wait: HeapArc<WaitCell>,
+}
+
+impl TQPopper {
+    pub async fn run(&mut self) {
+        loop {
+            self.wait.wait().await.unwrap();
+            let mut guard = self.arr.lock().await;
+            let now = TICK_MS.load(Ordering::Acquire);
+
+            // lol. lmao.
+            for item in guard.iter_mut() {
+                match item.take() {
+                    Some((time, msg)) => {
+                        if time <= now {
+                            let resp = msg.msg.reply_with(Ok(TQResponse::Delayed { now }));
+                            msg.reply.reply_konly(resp).await.unwrap();
+                        } else {
+                            *item = Some((time, msg));
+                        }
+                    },
+                    None => {},
+                }
+            }
+        }
+    }
+}
+
+impl TimerQueue {
+    pub async fn register(kernel: &'static Kernel) -> Result<HeapArc<WaitCell>, ()> {
+        let wait = kernel.heap().allocate_arc(WaitCell::new()).await;
+        let (kprod, kcons) = KChannel::new_async(kernel, 32).await.split();
+        let arr = kernel.heap().allocate_array_with(|| None, 128).await;
+        let arr = kernel.heap().allocate_arc(Mutex::new(arr)).await;
+
+        let mut push = TQPusher {
+            arr: arr.clone(),
+            chan: kcons,
+        };
+
+        let mut pop = TQPopper {
+            arr,
+            wait: wait.clone(),
+        };
+
+        kernel.spawn(async move {
+            push.run().await;
+        }).await;
+
+        kernel.spawn(async move {
+            pop.run().await;
+        }).await;
+
+        kernel.with_registry(move |reg| {
+            reg.register_konly(&kprod).map_err(drop)
+        }).await?;
+
+        Ok(wait)
+    }
+
+    pub async fn from_registry(kernel: &'static Kernel) -> Result<TQClient, ()> {
+        let hdl = kernel.with_registry(|reg| {
+            reg.get().unwrap()
+        }).await;
+
+        Ok(TQClient {
+            hdl,
+            osc: Reusable::new_async(kernel).await,
+        })
+    }
+}
+
+pub enum TQRequest {
+    DelayMs(u64),
+}
+
+pub enum TQResponse {
+    Delayed {
+        now: u64,
+    },
+}
+
+pub enum TQError {
+    Oops,
+}
+
+impl RegisteredDriver for TimerQueue {
+    type Request = TQRequest;
+    type Response = TQResponse;
+    type Error = TQError;
+
+    const UUID: Uuid = uuid!("74a06fee-485b-427a-b965-e19a6c62dc60");
+}

@@ -160,10 +160,13 @@ name = "d1-playground"
 version = "0.1.0"
 dependencies = [
  "d1-pac",
+ "maitake",
  "mnemos",
+ "mnemos-alloc",
  "panic-halt",
  "riscv 0.8.0 (git+https://github.com/rust-embedded/riscv)",
  "riscv-rt",
+ "uuid",
 ]
 
 [[package]]

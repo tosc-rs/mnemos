@@ -12,6 +12,18 @@ panic-halt = "0.2.0"
 [dependencies.mnemos]
 path = "../../kernel"
 
+[dependencies.uuid]
+version = "1.1.2"
+default-features = false
+features = ["serde"]
+
+[dependencies.mnemos-alloc]
+version = "0.1.0"
+
+[dependencies.maitake]
+version = "0.1.0"
+default-features = false
+
 [profile.release]
 codegen-units = 1
 incremental = false
