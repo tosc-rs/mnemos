@@ -7,7 +7,6 @@ edition = "2021"
 riscv = { version = "0.8.0", git = "https://github.com/rust-embedded/riscv" }
 riscv-rt = "0.9.0"
 d1-pac = "0.0.24"
-panic-halt = "0.2.0"
 
 [dependencies.mnemos]
 path = "../../kernel"
@@ -35,11 +34,11 @@ lto = true
 
 [patch.crates-io.maitake]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "23db951d19cf410e07ed4c2c47ead20d2b592d21"
+rev = "c96383e8dc07755571d2afccadd227d6c661df1d"
 
 [patch.crates-io.cordyceps]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "23db951d19cf410e07ed4c2c47ead20d2b592d21"
+rev = "c96383e8dc07755571d2afccadd227d6c661df1d"
 
 [patch.crates-io.mnemos-alloc]
 git = "https://github.com/tosc-rs/mnemos-alloc"

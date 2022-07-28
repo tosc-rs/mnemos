@@ -5,27 +5,26 @@ use core::cell::UnsafeCell;
 use core::ptr::{NonNull, null_mut};
 use core::sync::atomic::{compiler_fence, Ordering, fence, AtomicPtr, AtomicU64};
 
+use kernel::comms::bbq::{new_bidi_channel, SpscProducer};
 use kernel::comms::kchannel::{KConsumer, KChannel};
 use kernel::comms::oneshot::Reusable;
+use kernel::registry::simple_serial::{SimpleSerial, Request, Response, SimpleSerialError};
 use kernel::registry::{RegisteredDriver, KernelHandle, ReplyTo, Envelope};
 use kernel::{self, Kernel, registry::Message};
 
-use d1_pac::{Interrupt, TIMER, UART0};
+use d1_pac::{Interrupt, TIMER, UART0, DMAC};
 use d1_playground::dmac::descriptor::{
     AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType, Descriptor,
 };
-use d1_playground::dmac::{Dmac, ChannelMode};
+use d1_playground::dmac::{Dmac, ChannelMode, Channel};
 use maitake::sync::Mutex;
-use maitake::wait::{WaitCell, WaitQueue};
+use maitake::wait::{WaitCell, WaitQueue, Closed};
 use mnemos_alloc::containers::{HeapArc, HeapArray};
-use panic_halt as _;
 
 use d1_playground::plic::{Plic, Priority};
 use d1_playground::timer::{Timer, TimerMode, TimerPrescaler, TimerSource, Timers};
 
 use uuid::{Uuid, uuid};
-
-static HOUND: &str = include_str!("../hound.txt");
 
 struct Uart(d1_pac::UART0);
 static mut PRINTER: Option<Uart> = None;
@@ -69,6 +68,8 @@ macro_rules! println {
 
 static TICK_MS: AtomicU64 = AtomicU64::new(0);
 static TICK_WAKER: AtomicPtr<WaitCell> = AtomicPtr::new(null_mut());
+static UART_TX_WAKER: AtomicPtr<WaitCell> = AtomicPtr::new(null_mut());
+static UART_RX_PROD: AtomicPtr<SpscProducer> = AtomicPtr::new(null_mut());
 
 extern "C" {
     static _aheap_start: usize;
@@ -85,7 +86,10 @@ fn main() -> ! {
         .write(|w| w.uart0_gating().pass().uart0_rst().deassert());
 
     // DMAC enable
-    let mut dmac = Dmac::new(p.DMAC, ccu);
+    let dmac = Dmac::new(p.DMAC, ccu);
+    dmac.dmac.dmac_irq_en_reg0.modify(|_r, w| {
+        w.dma0_queue_irq_en().enabled()
+    });
 
     // Set PC1 LED to output.
     let gpio = &p.GPIO;
@@ -194,8 +198,10 @@ fn main() -> ! {
     unsafe {
         plic.set_priority(Interrupt::UART0, Priority::P1);
         plic.set_priority(Interrupt::TIMER0, Priority::P1);
+        plic.set_priority(Interrupt::DMAC_NS, Priority::P1);
         plic.unmask(Interrupt::UART0);
         plic.unmask(Interrupt::TIMER0);
+        plic.unmask(Interrupt::DMAC_NS);
     }
 
     timer0.start_counter(3_000_000 / 1_000);
@@ -203,6 +209,7 @@ fn main() -> ! {
     k.initialize(async {
         let hawc = TimerQueue::register(k).await.unwrap().leak();
         TICK_WAKER.store(hawc.as_ptr(), Ordering::Release);
+        D1Uart::register(k, 1024, 1024).await.unwrap();
 
         k.spawn(async {
             let mut tq = TimerQueue::from_registry(k).await.unwrap();
@@ -221,6 +228,20 @@ fn main() -> ! {
                 tq.delay_ms(3_000).await;
                 println!("[TASK 1, ct {:05}] beep, boop.", ctr);
                 ctr += 1;
+            }
+        }).await;
+
+        k.spawn(async {
+            let mut serial = SimpleSerial::from_registry(k).await.unwrap();
+            let ser_bidi = serial.get_port().await.unwrap();
+
+            loop {
+                let rgr = ser_bidi.consumer().read_grant().await;
+                let rlen = rgr.len();
+                let mut wgr = ser_bidi.producer().send_grant_exact(rlen).await;
+                wgr.copy_from_slice(&rgr);
+                rgr.release(rlen);
+                wgr.commit(rlen);
             }
         }).await;
     }).unwrap();
@@ -273,6 +294,7 @@ fn im_an_interrupt() {
     let plic = unsafe { Plic::summon() };
     let timer = unsafe { &*TIMER::PTR };
     let uart0 = unsafe { &*UART0::PTR };
+    let dmac = unsafe { &*DMAC::PTR };
 
     let claim = plic.claim();
     // println!("claim: {}", claim.bits());
@@ -295,14 +317,53 @@ fn im_an_interrupt() {
             while timer.tmr_irq_sta.read().tmr0_irq_pend().bit_is_set() {}
         }
         Interrupt::UART0 => {
-            println!("");
-            println!("UART SAYS: ");
-            while uart0.usr.read().rfne().bit_is_set() {
-                let byte = uart0.rbr().read().rbr().bits();
-                uart0.thr().write(|w| unsafe { w.thr().bits(byte) });
-                while uart0.usr.read().tfnf().bit_is_clear() {}
+            // println!("UART0 INT");
+            let prod = UART_RX_PROD.load(Ordering::Acquire);
+            if !prod.is_null() {
+                let prod = unsafe { &*prod };
+
+                while let Some(mut wgr) = prod.send_grant_max_sync(64) {
+                    let used_res = wgr.iter_mut().enumerate().try_for_each(|(i, b)| {
+                        if uart0.usr.read().rfne().bit_is_set() {
+                            *b = uart0.rbr().read().rbr().bits();
+                            Ok(())
+                        } else {
+                            Err(i)
+                        }
+                    });
+
+                    match used_res {
+                        Ok(()) => {
+                            let len = wgr.len();
+                            wgr.commit(len);
+                        },
+                        Err(used) => {
+                            wgr.commit(used);
+                            break;
+                        },
+                    }
+                }
             }
-            println!("");
+
+            // We've processed all possible bytes. Discard any remaining.
+            while uart0.usr.read().rfne().bit_is_set() {
+                let _byte = uart0.rbr().read().rbr().bits();
+            }
+        }
+        Interrupt::DMAC_NS => {
+            // println!("DMAC INT");
+            dmac.dmac_irq_pend_reg0.modify(|r, w| {
+                if r.dma0_queue_irq_pend().bit_is_set() {
+                    let waker = UART_TX_WAKER.load(Ordering::Acquire);
+                    if !waker.is_null() {
+                        unsafe {
+                            (&*waker).wake();
+                        }
+                    }
+                }
+                // Will write-back and high bits
+                w
+            })
         }
         x => {
             println!("Unexpected claim: {:?}", x);
@@ -318,6 +379,97 @@ fn im_an_interrupt() {
 // DMAC_CFG_REGN
 // Mode:
 // DMAC_MODE_REGN
+
+pub struct D1Uart {
+    _x: (),
+}
+
+impl D1Uart {
+    pub async fn register(kernel: &'static Kernel, cap_in: usize, cap_out: usize) -> Result<(), ()> {
+        let (kprod, kcons) = KChannel::new_async(kernel, 4).await.split();
+        let (a_ring, b_ring) = new_bidi_channel(kernel.heap(), cap_in, cap_out).await;
+        let tx_wake = kernel.heap().allocate_arc(WaitCell::new()).await;
+
+        // Message request handler
+        kernel.spawn(async move {
+            let handle = b_ring;
+
+            let req: Message<SimpleSerial> = kcons.dequeue_async().await.unwrap();
+            let Request::GetPort = req.msg.body;
+
+            let resp = req.msg.reply_with(Ok(Response::PortHandle { handle }));
+
+            req.reply.reply_konly(resp).await.map_err(drop).unwrap();
+
+            // And deny all further requests after the first
+            loop {
+                let req = kcons.dequeue_async().await.map_err(drop).unwrap();
+                let Request::GetPort = req.msg.body;
+                let resp = req
+                    .msg
+                    .reply_with(Err(SimpleSerialError::AlreadyAssignedPort));
+                req.reply.reply_konly(resp).await.map_err(drop).unwrap();
+            }
+
+        }).await;
+
+        let (prod, cons) = a_ring.split();
+
+        // Sender task
+        let sender_wake = tx_wake.clone();
+        UART_TX_WAKER.store(tx_wake.leak().as_ptr(), Ordering::Release);
+        kernel.spawn(async move {
+            let thr_addr = unsafe { &*UART0::PTR }.thr() as *const _ as *mut ();
+
+            loop {
+                let read = cons.read_grant().await;
+
+                let d_cfg = DescriptorConfig {
+                    source: read.as_ptr().cast(),
+                    destination: thr_addr,
+                    byte_counter: read.len(),
+                    link: None,
+                    wait_clock_cycles: 0,
+                    bmode: BModeSel::Normal,
+                    dest_width: DataWidth::Bit8,
+                    dest_addr_mode: AddressMode::IoMode,
+                    dest_block_size: BlockSize::Byte1,
+                    dest_drq_type: DestDrqType::Uart0Tx,
+                    src_data_width: DataWidth::Bit8,
+                    src_addr_mode: AddressMode::LinearMode,
+                    src_block_size: BlockSize::Byte1,
+                    src_drq_type: SrcDrqType::Dram,
+                };
+                let descriptor = d_cfg.try_into().unwrap();
+                unsafe {
+                    let mut chan = Channel::summon_channel(0);
+                    chan.set_channel_modes(ChannelMode::Wait, ChannelMode::Handshake);
+                    chan.start_descriptor(NonNull::from(&descriptor));
+                }
+                match sender_wake.wait().await {
+                    Ok(_) => {},
+                    Err(Closed) => todo!(),
+                }
+                let len = read.len();
+                read.release(len);
+            }
+        }).await;
+
+        // Receiver task
+        // TODO: This Arc shouldn't be necessary
+        // The reception is handled in the interrupt itself.
+        let prod = kernel.heap().allocate_arc(prod).await;
+        UART_RX_PROD.store(prod.leak().as_ptr(), Ordering::Release);
+
+        kernel.with_registry(|reg| {
+            reg.register_konly::<SimpleSerial>(&kprod).unwrap()
+        }).await;
+
+        Ok(())
+    }
+}
+
+// ----
 
 pub struct TimerQueue {
     _x: (),
@@ -455,4 +607,17 @@ impl RegisteredDriver for TimerQueue {
     type Error = TQError;
 
     const UUID: Uuid = uuid!("74a06fee-485b-427a-b965-e19a6c62dc60");
+}
+
+use core::panic::PanicInfo;
+
+#[panic_handler]
+fn handler(info: &PanicInfo) -> ! {
+    println!("");
+    println!("PANIC HAS HAPPENED!");
+    println!("{:?}", info.payload());
+    println!("{:?}", info.location());
+    loop {
+        fence(Ordering::SeqCst);
+    }
 }

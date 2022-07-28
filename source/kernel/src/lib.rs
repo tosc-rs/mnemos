@@ -202,7 +202,8 @@ impl Kernel {
     }
 
     pub fn spawn_allocated<F: Future + 'static>(&'static self, task: HeapBox<Task<F>>) {
-        self.inner.scheduler.spawn_allocated::<F, HBStorage>(task)
+        // TODO: Join Handle support!
+        let _ = self.inner.scheduler.spawn_allocated::<F, HBStorage>(task);
     }
 }
 

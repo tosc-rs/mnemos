@@ -50,6 +50,11 @@ pub struct Channel {
 }
 
 impl Channel {
+    pub unsafe fn summon_channel(idx: u8) -> Channel {
+        assert!(idx < 16);
+        Self { idx }
+    }
+
     pub unsafe fn desc_addr_reg(&self) -> &Reg<DMAC_DESC_ADDR_REG_SPEC> {
         let dmac = &*DMAC::PTR;
         match self.idx {
