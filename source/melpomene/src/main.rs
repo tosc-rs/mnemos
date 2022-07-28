@@ -170,7 +170,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
         let text_style = MonoTextStyle::new(&FONT_6X9, Gray8::WHITE);
         let datetime_style = MonoTextStyle::new(&FONT_5X7, Gray8::WHITE);
         let text1 = Text::new("Welcome to mnemOS!", Point::new(10, 10), text_style);
-        let text2 = Text::new("A tiny operating System", Point::new(10, 20), text_style);
+        let text2 = Text::new("A tiny operating system", Point::new(10, 20), text_style);
         let output_settings = OutputSettingsBuilder::new()
             .theme(BinaryColorTheme::OledBlue)
             .build();
