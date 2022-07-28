@@ -1,0 +1,45 @@
+[package]
+name = "d1-playground"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+riscv = { version = "0.8.0", git = "https://github.com/rust-embedded/riscv" }
+riscv-rt = "0.9.0"
+d1-pac = "0.0.24"
+
+[dependencies.mnemos]
+path = "../../kernel"
+
+[dependencies.uuid]
+version = "1.1.2"
+default-features = false
+features = ["serde"]
+
+[dependencies.mnemos-alloc]
+version = "0.1.0"
+
+[dependencies.maitake]
+version = "0.1.0"
+default-features = false
+
+[profile.release]
+codegen-units = 1
+incremental = false
+debug = true
+lto = true
+
+# TODO: KEEP THESE IN SYNC WITH THE MAIN PROJECT CARGO TOML,
+# OR FIGURE OUT HOW TO MAKE TARGET STUFF WORK RIGHT
+
+[patch.crates-io.maitake]
+git = "https://github.com/hawkw/mycelium.git"
+rev = "c96383e8dc07755571d2afccadd227d6c661df1d"
+
+[patch.crates-io.cordyceps]
+git = "https://github.com/hawkw/mycelium.git"
+rev = "c96383e8dc07755571d2afccadd227d6c661df1d"
+
+[patch.crates-io.mnemos-alloc]
+git = "https://github.com/tosc-rs/mnemos-alloc"
+rev = "a1e1a56fd4665e059b74eacea8ea7fe14e4f32c4"

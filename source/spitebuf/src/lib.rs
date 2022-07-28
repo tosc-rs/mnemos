@@ -10,6 +10,7 @@
 //!
 //! [0]: http://www.1024cores.net/home/lock-free-algorithms/queues/bounded-mpmc-queue
 
+#![no_std]
 #![allow(clippy::missing_safety_doc)]
 
 use core::{
@@ -18,7 +19,7 @@ use core::{
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use maitake::wait::{WaitCell, WaitQueue};
-use std::marker::PhantomData;
+use core::marker::PhantomData;
 
 pub unsafe trait Storage<T> {
     fn buf(&self) -> (*const UnsafeCell<Cell<T>>, usize);
