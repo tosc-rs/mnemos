@@ -12,6 +12,10 @@ members = [
     "tools/dumbloader",
 ]
 
+exclude = [
+    "source/platforms/allwinner-d1",
+]
+
 [patch.crates-io.maitake]
 git = "https://github.com/hawkw/mycelium.git"
 rev = "23db951d19cf410e07ed4c2c47ead20d2b592d21"

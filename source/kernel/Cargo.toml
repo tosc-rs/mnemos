@@ -18,7 +18,7 @@ name = "kernel"
 harness = false
 
 [dependencies]
-futures = "0.3.21"
+futures = { version = "0.3.21", default-features = false }
 
 [dependencies.uuid]
 version = "1.1.2"
@@ -30,8 +30,11 @@ version = "0.2.3"
 default-features = false
 
 [dependencies.tracing]
-version = "0.1.35"
+# version = "0.1.35"
 default-features = false
+git = "https://github.com/tokio-rs/tracing"
+branch = "master"
+features = ["attributes"]
 
 [dependencies.maitake]
 version = "0.1.0"
