@@ -89,8 +89,8 @@ pub enum RegistrationError {
     DisplayAlreadyExists,
 }
 
-// Register the driver instance
 impl EmbDisplay {
+    /// Register the driver instance
     pub async fn register(
         kernel: &'static Kernel,
         max_frames: usize,
