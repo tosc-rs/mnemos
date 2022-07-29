@@ -195,12 +195,12 @@ impl DisplayInfo {
         let size = (width * height) as usize;
         let bytes = self.kernel.heap().allocate_array_with(|| 0, size).await;
         let fc = FrameChunk {
-            frame_id: frame_id,
-            bytes: bytes,
-            start_x: start_x,
-            start_y: start_y,
-            width: width,
-            height: height,
+            frame_id
+            bytes,
+            start_x,
+            start_y,
+            width,
+            height,
         };
         Ok(fc)
     }
