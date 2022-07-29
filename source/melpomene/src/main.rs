@@ -10,7 +10,10 @@ use melpomene::{
     sim_drivers::{delay::Delay, tcp_serial::TcpSerial},
 };
 use mnemos_kernel::{
-    drivers::{serial_mux::{SerialMux, SerialMuxHandle}, emb_display::{EmbDisplay, EmbDisplayHandle}},
+    drivers::{
+        emb_display::{EmbDisplay, EmbDisplayHandle},
+        serial_mux::{SerialMux, SerialMuxHandle},
+    },
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -20,18 +23,20 @@ use tokio::{
 
 use tracing::Instrument;
 
-use chrono::{Local, Timelike, Datelike};
+use chrono::{Datelike, Local, Timelike};
 
 use embedded_graphics::{
-    pixelcolor::{Gray8},
+    image::{Image, ImageRaw},
+    mono_font::{ascii::FONT_5X7, ascii::FONT_6X9, MonoTextStyle},
+    pixelcolor::Gray8,
     prelude::*,
     primitives::{Line, PrimitiveStyle},
-    mono_font::{ascii::FONT_6X9, ascii::FONT_5X7, MonoTextStyle},
     text::Text,
-    image::{Image, ImageRaw},
 };
 
-use embedded_graphics_simulator::{BinaryColorTheme, SimulatorDisplay, Window, OutputSettingsBuilder, SimulatorEvent};
+use embedded_graphics_simulator::{
+    BinaryColorTheme, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window
+};
 
 const HEAP_SIZE: usize = 192 * 1024;
 static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
@@ -160,14 +165,10 @@ fn kernel_entry(opts: MelpomeneOptions) {
         drop(disp_hdl);
 
         let line_style = PrimitiveStyle::with_stroke(Gray8::WHITE, 1);
-        let tline = Line::new(Point::new(148, 2), Point::new(8, 2))
-            .into_styled(line_style);
-        let bline = Line::new(Point::new(148, 24), Point::new(8, 24))
-            .into_styled(line_style);
-        let lline = Line::new(Point::new(7, 24), Point::new(7, 2))
-            .into_styled(line_style);
-        let rline = Line::new(Point::new(149, 24), Point::new(149, 2))
-            .into_styled(line_style);
+        let tline = Line::new(Point::new(148, 2), Point::new(8, 2)).into_styled(line_style);
+        let bline = Line::new(Point::new(148, 24), Point::new(8, 24)).into_styled(line_style);
+        let lline = Line::new(Point::new(7, 24), Point::new(7, 2)).into_styled(line_style);
+        let rline = Line::new(Point::new(149, 24), Point::new(149, 2)).into_styled(line_style);
         let text_style = MonoTextStyle::new(&FONT_6X9, Gray8::WHITE);
         let datetime_style = MonoTextStyle::new(&FONT_5X7, Gray8::WHITE);
         let text1 = Text::new("Welcome to mnemOS!", Point::new(10, 10), text_style);
@@ -195,19 +196,11 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
                     let time = Local::now();
 
-                    let time_str = format!(
-                        "{:02}:{:02}:{02}",
-                        time.hour(),
-                        time.minute(),
-                        time.second()
-                    );
+                    let time_str = 
+                        format!("{:02}:{:02}:{02}", time.hour(), time.minute(), time.second());
 
-                    let date_str = format!(
-                        "{:02}/{:02}/{:02}",
-                        time.month(),
-                        time.day(),
-                        time.year()
-                    );
+                    let date_str = 
+                        format!("{:02}/{:02}/{:02}", time.month(), time.day(), time.year());
 
                     let date_text = Text::new(&date_str, Point::new(28, 35), datetime_style);
                     let time_text = Text::new(&time_str, Point::new(88, 35), datetime_style);
@@ -220,7 +213,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
                         image.draw(&mut sdisp).unwrap();
                         
                         window.update(&sdisp);
-                        if window.events().any(|e| e== SimulatorEvent::Quit) {
+                        if window.events().any(|e| e == SimulatorEvent::Quit) {
                             break 'running
                         }
 

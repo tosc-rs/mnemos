@@ -27,7 +27,11 @@ pub mod known_uuids {
     }
 
     // In case you need to iterate over every UUID
-    pub static ALL: &[Uuid] = &[kernel::SERIAL_MUX, kernel::SIMPLE_SERIAL_PORT, kernel::EMB_DISPLAY];
+    pub static ALL: &[Uuid] = &[
+        kernel::SERIAL_MUX, 
+        kernel::SIMPLE_SERIAL_PORT, 
+        kernel::EMB_DISPLAY,
+    ];
 }
 
 /// A marker trait designating a registerable driver service.

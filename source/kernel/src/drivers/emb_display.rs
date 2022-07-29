@@ -3,20 +3,17 @@ use crate::{
         kchannel::{KChannel, KConsumer},
         oneshot::Reusable,
     },
-    registry::{
-        Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo,
-    },
+    registry::{Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo},
     Kernel,
+};
+use embedded_graphics::{
+    image::ImageRaw,
+    pixelcolor::{Gray8, GrayColor},
+    prelude::*,
 };
 use maitake::sync::Mutex;
 use mnemos_alloc::containers::{HeapArc, HeapArray, HeapFixedVec};
-// use tracing::{debug, warn};
 use uuid::Uuid;
-use embedded_graphics::{
-    pixelcolor::{Gray8, GrayColor},
-    prelude::*,
-    image::ImageRaw,
-};
 
 const BYTES_PER_PIXEL: u32 = 1;
 const DISP_WIDTH: u32 = 319;
@@ -47,7 +44,7 @@ pub enum FrameError {
     RegistryFull,
 }
 
-struct DisplayInfo{
+struct DisplayInfo {
     kernel: &'static Kernel,
     frames: HeapFixedVec<FrameInfo>,
     frame_size: usize,
@@ -60,7 +57,13 @@ pub struct EmbDisplayHandle {
 }
 
 pub enum Request {
-    NewFrameChunk { frame_id: u16, start_x: i32, start_y: i32, width: u32, height: u32 },
+    NewFrameChunk { 
+        frame_id: u16, 
+        start_x: i32, 
+        start_y: i32, 
+        width: u32, 
+        height: u32,
+    },
 }
 
 pub enum Response {
@@ -119,7 +122,8 @@ impl EmbDisplay {
         kernel
             .with_registry(|reg| reg.register_konly::<EmbDisplay>(&cmd_prod))
             .await
-            .map_err(|_| RegistrationError::DisplayAlreadyExists).unwrap();
+            .map_err(|_| RegistrationError::DisplayAlreadyExists)
+            .unwrap();
 
         Ok(())
     }
@@ -139,8 +143,9 @@ impl FrameChunk {
     }
 
     pub fn frame_clear(&mut self) {
-        for elem in self.bytes.iter_mut() { *elem = 0; }
-        
+        for elem in self.bytes.iter_mut() { 
+            *elem = 0; 
+        }
     }
 }
 
@@ -154,10 +159,23 @@ impl EmbDisplayHandle {
         })
     }
 
-    pub async fn get_framechunk(&mut self, frame_id: u16, start_x: i32, start_y: i32, width: u32, height: u32) -> Option<FrameChunk> {
+    pub async fn get_framechunk(
+        &mut self, 
+        frame_id: u16, 
+        start_x: i32, 
+        start_y: i32, 
+        width: u32, 
+        height: u32
+    ) -> Option<FrameChunk> {
         self.prod
             .send(
-                Request::NewFrameChunk { frame_id, start_x, start_y, width, height },
+                Request::NewFrameChunk { 
+                    frame_id, 
+                    start_x, 
+                    start_y, 
+                    width, 
+                    height 
+                },
                 ReplyTo::OneShot(self.reply.sender().ok()?),
             )
             .await
@@ -189,7 +207,8 @@ impl DisplayInfo {
             return Err(FrameError::DuplicateItem);
         }
 
-        self.frames.push(FrameInfo { frame: frame_id })
+        self.frames
+            .push(FrameInfo { frame: frame_id })
             .map_err(|_| FrameError::RegistryFull)?;
 
         let size = (width * height) as usize;
@@ -242,10 +261,18 @@ impl CommanderTask {
             let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
             let Message { msg: req, reply } = msg;
             match req.body {
-                Request::NewFrameChunk { frame_id, start_x, start_y, width, height } => {
+                Request::NewFrameChunk { 
+                    frame_id, 
+                    start_x, 
+                    start_y, 
+                    width, 
+                    height 
+                } => {
                     let res = {
                         let mut fmutex = self.fmutex.lock().await;
-                        fmutex.new_frame(frame_id, start_x, start_y, width, height).await
+                        fmutex
+                            .new_frame(frame_id, start_x, start_y, width, height)
+                            .await
                     }
                     .map(Response::FrameChunkAllocated);
 
