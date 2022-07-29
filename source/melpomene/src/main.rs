@@ -215,7 +215,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
                     date_text.draw(&mut fc_0).unwrap();
                     time_text.draw(&mut fc_0).unwrap();
                     {
-                        let raw_img = fc_0.frame_display().await.unwrap();
+                        let raw_img = fc_0.frame_display().unwrap();
                         let image = Image::new(&raw_img, Point::new(80, 45));
                         image.draw(&mut sdisp).unwrap();
                         
@@ -227,7 +227,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
                         Delay::new(Duration::from_secs(1)).await;
                         sdisp.clear(Gray8::BLACK).unwrap();
                     }
-                    fc_0.frame_clear().await;
+                    fc_0.frame_clear();
                 }
             }
             .instrument(tracing::info_span!("Update clock")),
