@@ -114,9 +114,7 @@ impl EmbDisplay {
             fmutex: imutex,
         };
 
-        kernel.spawn(async move{
-            commander.run().await;
-        }).await;
+        kernel.spawn(commander.run()).await;
 
         kernel
             .with_registry(|reg| reg.register_konly::<EmbDisplay>(&cmd_prod))
