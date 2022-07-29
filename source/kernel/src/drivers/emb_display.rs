@@ -134,13 +134,13 @@ impl FrameChunk {
     /// This is necessary as a e-g Window only accepts SimulatorDisplay object
     /// On a physical display, the raw pixel data can be sent over to the display directly 
     /// Using the display's device interface
-    pub async fn frame_display(&mut self) -> Result<ImageRaw<Gray8>, ()> {
+    pub fn frame_display(&mut self) -> Result<ImageRaw<Gray8>, ()> {
         let raw_image: ImageRaw<Gray8>;
         raw_image = ImageRaw::<Gray8>::new(self.bytes.as_ref(), self.width);
         Ok(raw_image)
     }
 
-    pub async fn frame_clear(&mut self) {
+    pub fn frame_clear(&mut self) {
         for elem in self.bytes.iter_mut() { *elem = 0; }
         
     }
