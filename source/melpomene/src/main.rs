@@ -28,6 +28,7 @@ use embedded_graphics::{
     primitives::{Line, PrimitiveStyle},
     mono_font::{ascii::FONT_6X9, ascii::FONT_5X7, MonoTextStyle},
     text::Text,
+    image::{Image, ImageRaw},
 };
 
 use embedded_graphics_simulator::{BinaryColorTheme, SimulatorDisplay, Window, OutputSettingsBuilder, SimulatorEvent};
@@ -175,18 +176,8 @@ fn kernel_entry(opts: MelpomeneOptions) {
             .theme(BinaryColorTheme::OledBlue)
             .build();
                 
-        let mut disp = fc_0.frame_display().await.unwrap();
-       
-        tline.draw(&mut fc_0).unwrap();
-        bline.draw(&mut fc_0).unwrap();
-        rline.draw(&mut fc_0).unwrap();
-        lline.draw(&mut fc_0).unwrap();
-               
-        text1.draw(&mut fc_0).unwrap();
-        text2.draw(&mut fc_0).unwrap();
-                
+        let mut sdisp = SimulatorDisplay::<Gray8>::new(Size::new(320, 240));
         let mut window = Window::new("mnemOS", &output_settings);
-        window.update(&disp);
 
         k.spawn(
             async move {
@@ -223,16 +214,20 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
                     date_text.draw(&mut fc_0).unwrap();
                     time_text.draw(&mut fc_0).unwrap();
+                    {
+                        let raw_img = fc_0.frame_display().await.unwrap();
+                        let image = Image::new(&raw_img, Point::new(80, 45));
+                        image.draw(&mut sdisp).unwrap();
+                        
+                        window.update(&sdisp);
+                        if window.events().any(|e| e== SimulatorEvent::Quit) {
+                            break 'running
+                        }
 
-                    disp = fc_0.frame_display().await.unwrap();
-
-                    window.update(&disp);
-                    if window.events().any(|e| e== SimulatorEvent::Quit) {
-                        break 'running
+                        Delay::new(Duration::from_secs(1)).await;
+                        sdisp.clear(Gray8::BLACK).unwrap();
                     }
-
-                    Delay::new(Duration::from_secs(1)).await;
-                    disp.clear(Gray8::BLACK).unwrap();
+                    fc_0.frame_clear().await;
                 }
             }
             .instrument(tracing::info_span!("Update clock")),

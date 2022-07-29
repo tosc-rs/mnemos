@@ -15,9 +15,8 @@ use uuid::Uuid;
 use embedded_graphics::{
     pixelcolor::{Gray8, GrayColor},
     prelude::*,
-    image::{Image, ImageRaw},
+    image::ImageRaw,
 };
-use embedded_graphics_simulator::SimulatorDisplay;
 
 const BYTES_PER_PIXEL: u32 = 1;
 const DISP_WIDTH: u32 = 319;
@@ -134,13 +133,15 @@ impl EmbDisplay {
 // On a physical display, the raw pixel data can be sent over to the display directly 
 // Using the display's device interface
 impl FrameChunk {
-    pub async fn frame_display(&mut self) -> Result<SimulatorDisplay<Gray8>, ()> {
-        let mut sdisp = SimulatorDisplay::<Gray8>::new(Size::new(320, 240));
-        let raw_image = ImageRaw::<Gray8>::new(self.bytes.as_ref(), self.width);
-        let image = Image::new(&raw_image, Point::new(self.start_x, self.start_y));
-        image.draw(&mut sdisp).unwrap();
+    pub async fn frame_display(&mut self) -> Result<ImageRaw<Gray8>, ()> {
+        let raw_image: ImageRaw<Gray8>;
+        raw_image = ImageRaw::<Gray8>::new(self.bytes.as_ref(), self.width);
+        Ok(raw_image)
+    }
+
+    pub async fn frame_clear(&mut self) {
         for elem in self.bytes.iter_mut() { *elem = 0; }
-        Ok(sdisp)
+        
     }
 }
 
