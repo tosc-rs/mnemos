@@ -1277,7 +1277,6 @@ version = "0.1.0"
 dependencies = [
  "cobs",
  "embedded-graphics",
- "embedded-graphics-simulator",
  "futures",
  "heapless",
  "maitake",
