@@ -35,7 +35,7 @@ use embedded_graphics::{
 };
 
 use embedded_graphics_simulator::{
-    BinaryColorTheme, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window
+    BinaryColorTheme, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
 };
 
 const HEAP_SIZE: usize = 192 * 1024;
@@ -214,7 +214,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
                         
                         window.update(&sdisp);
                         if window.events().any(|e| e == SimulatorEvent::Quit) {
-                            break 'running
+                            break 'running;
                         }
 
                         Delay::new(Duration::from_secs(1)).await;

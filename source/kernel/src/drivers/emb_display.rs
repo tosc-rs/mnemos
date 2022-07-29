@@ -165,7 +165,7 @@ impl EmbDisplayHandle {
         start_x: i32, 
         start_y: i32, 
         width: u32, 
-        height: u32
+        height: u32,
     ) -> Option<FrameChunk> {
         self.prod
             .send(
@@ -266,7 +266,7 @@ impl CommanderTask {
                     start_x, 
                     start_y, 
                     width, 
-                    height 
+                    height, 
                 } => {
                     let res = {
                         let mut fmutex = self.fmutex.lock().await;
