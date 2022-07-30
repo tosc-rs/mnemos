@@ -89,6 +89,7 @@ impl Terpsichore {
     }
 
     pub fn spawn_allocated<F: Future + 'static>(&'static self, task: HeapBox<Task<F>>) {
-        self.scheduler.spawn_allocated::<F, HBStorage>(task)
+        // TODO: join handles
+        let _ = self.scheduler.spawn_allocated::<F, HBStorage>(task);
     }
 }

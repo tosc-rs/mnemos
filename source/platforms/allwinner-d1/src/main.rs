@@ -46,10 +46,10 @@ fn print_raw(data: &[u8]) {
         while uart.0.usr.read().tfnf().bit_is_clear() {}
     }
 }
-pub fn _print(args: core::fmt::Arguments) {
+pub fn _print(args: core::fmt::Arguments) -> Option<()> {
     use core::fmt::Write;
     unsafe {
-        PRINTER.as_mut().unwrap().write_fmt(args).ok();
+        PRINTER.as_mut()?.write_fmt(args).ok()
     }
 }
 #[macro_export]
@@ -78,7 +78,14 @@ extern "C" {
 
 #[riscv_rt::entry]
 fn main() -> ! {
-    let mut p = d1_pac::Peripherals::take().unwrap();
+    let _ = main_inner();
+    loop {
+
+    }
+}
+
+fn main_inner() -> Result<(), ()> {
+    let mut p = d1_pac::Peripherals::take().ok_or(())?;
 
     // Enable UART0 clock.
     let ccu = &mut p.CCU;
@@ -169,7 +176,7 @@ fn main() -> ! {
         u2k_size: 4096,
     };
     let k = unsafe {
-        Kernel::new(k_settings).unwrap().leak().as_ref()
+        Kernel::new(k_settings).map_err(drop)?.leak().as_ref()
     };
 
     println!("Kernel configured. Waiting for initialization...");
@@ -207,33 +214,39 @@ fn main() -> ! {
     timer0.start_counter(3_000_000 / 1_000);
 
     k.initialize(async {
-        let hawc = TimerQueue::register(k).await.unwrap().leak();
+        let hawc = TimerQueue::register(k).await?.leak();
         TICK_WAKER.store(hawc.as_ptr(), Ordering::Release);
-        D1Uart::register(k, 1024, 1024).await.unwrap();
+        D1Uart::register(k, 1024, 1024).await?;
 
         k.spawn(async {
-            let mut tq = TimerQueue::from_registry(k).await.unwrap();
+            let mut tq = TimerQueue::from_registry(k).await?;
             let mut ctr = 0u64;
             loop {
                 tq.delay_ms(1_000).await;
                 println!("[TASK 0, ct {:05}] lol. lmao.", ctr);
                 ctr += 1;
             }
+
+            #[allow(unreachable_code)]
+            Result::<(), ()>::Ok(())
         }).await;
 
         k.spawn(async {
-            let mut tq = TimerQueue::from_registry(k).await.unwrap();
+            let mut tq = TimerQueue::from_registry(k).await?;
             let mut ctr = 0u64;
             loop {
                 tq.delay_ms(3_000).await;
                 println!("[TASK 1, ct {:05}] beep, boop.", ctr);
                 ctr += 1;
             }
+
+            #[allow(unreachable_code)]
+            Result::<(), ()>::Ok(())
         }).await;
 
         k.spawn(async {
-            let mut serial = SimpleSerial::from_registry(k).await.unwrap();
-            let ser_bidi = serial.get_port().await.unwrap();
+            let mut serial = SimpleSerial::from_registry(k).await?;
+            let ser_bidi = serial.get_port().await?;
 
             loop {
                 let rgr = ser_bidi.consumer().read_grant().await;
@@ -243,8 +256,13 @@ fn main() -> ! {
                 rgr.release(rlen);
                 wgr.commit(rlen);
             }
+
+            #[allow(unreachable_code)]
+            Option::<()>::None
         }).await;
-    }).unwrap();
+
+        Result::<(), ()>::Ok(())
+    })?;
 
     println!("Initalized. Starting Run Loop.");
 
@@ -394,23 +412,25 @@ impl D1Uart {
         kernel.spawn(async move {
             let handle = b_ring;
 
-            let req: Message<SimpleSerial> = kcons.dequeue_async().await.unwrap();
+            let req: Message<SimpleSerial> = kcons.dequeue_async().await.map_err(drop)?;
             let Request::GetPort = req.msg.body;
 
             let resp = req.msg.reply_with(Ok(Response::PortHandle { handle }));
 
-            req.reply.reply_konly(resp).await.map_err(drop).unwrap();
+            req.reply.reply_konly(resp).await.map_err(drop)?;
 
             // And deny all further requests after the first
             loop {
-                let req = kcons.dequeue_async().await.map_err(drop).unwrap();
+                let req = kcons.dequeue_async().await.map_err(drop)?;
                 let Request::GetPort = req.msg.body;
                 let resp = req
                     .msg
                     .reply_with(Err(SimpleSerialError::AlreadyAssignedPort));
-                req.reply.reply_konly(resp).await.map_err(drop).unwrap();
+                req.reply.reply_konly(resp).await.map_err(drop)?;
             }
 
+            #[allow(unreachable_code)]
+            Result::<(), ()>::Ok(())
         }).await;
 
         let (prod, cons) = a_ring.split();
@@ -440,7 +460,7 @@ impl D1Uart {
                     src_block_size: BlockSize::Byte1,
                     src_drq_type: SrcDrqType::Dram,
                 };
-                let descriptor = d_cfg.try_into().unwrap();
+                let descriptor = d_cfg.try_into().map_err(drop)?;
                 unsafe {
                     let mut chan = Channel::summon_channel(0);
                     chan.set_channel_modes(ChannelMode::Wait, ChannelMode::Handshake);
@@ -453,6 +473,9 @@ impl D1Uart {
                 let len = read.len();
                 read.release(len);
             }
+
+            #[allow(unreachable_code)]
+            Result::<(), ()>::Ok(())
         }).await;
 
         // Receiver task
@@ -462,8 +485,8 @@ impl D1Uart {
         UART_RX_PROD.store(prod.leak().as_ptr(), Ordering::Release);
 
         kernel.with_registry(|reg| {
-            reg.register_konly::<SimpleSerial>(&kprod).unwrap()
-        }).await;
+            reg.register_konly::<SimpleSerial>(&kprod)
+        }).await.map_err(drop)?;
 
         Ok(())
     }
@@ -490,19 +513,19 @@ impl TQClient {
         self.hdl.send(
             TQRequest::DelayMs(ms),
             ReplyTo::OneShot(self.osc.sender().unwrap()),
-        ).await.unwrap();
-        self.osc.receive().await.unwrap();
+        ).await.ok();
+        self.osc.receive().await.ok();
     }
 }
 
 impl TQPusher {
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self) -> Result<(), ()> {
         loop {
             match self.chan.dequeue_async().await {
                 Ok(msg) => {
                     let now = TICK_MS.load(Ordering::Acquire);
                     let mut guard = self.arr.lock().await;
-                    let space = guard.iter_mut().find(|i| i.is_none()).unwrap();
+                    let space = guard.iter_mut().find(|i| i.is_none()).ok_or(())?;
                     let TQRequest::DelayMs(ms) = &msg.msg.body;
                     let end = ms.wrapping_add(now);
                     *space = Some((end, msg));
@@ -519,9 +542,9 @@ pub struct TQPopper {
 }
 
 impl TQPopper {
-    pub async fn run(&mut self) {
+    pub async fn run(&mut self) -> Result<(), ()> {
         loop {
-            self.wait.wait().await.unwrap();
+            self.wait.wait().await.map_err(drop)?;
             let mut guard = self.arr.lock().await;
             let now = TICK_MS.load(Ordering::Acquire);
 
@@ -531,7 +554,7 @@ impl TQPopper {
                     Some((time, msg)) => {
                         if time <= now {
                             let resp = msg.msg.reply_with(Ok(TQResponse::Delayed { now }));
-                            msg.reply.reply_konly(resp).await.unwrap();
+                            msg.reply.reply_konly(resp).await.map_err(drop)?;
                         } else {
                             *item = Some((time, msg));
                         }
@@ -561,11 +584,11 @@ impl TimerQueue {
         };
 
         kernel.spawn(async move {
-            push.run().await;
+            let _ = push.run().await;
         }).await;
 
         kernel.spawn(async move {
-            pop.run().await;
+            let _ = pop.run().await;
         }).await;
 
         kernel.with_registry(move |reg| {
@@ -577,8 +600,8 @@ impl TimerQueue {
 
     pub async fn from_registry(kernel: &'static Kernel) -> Result<TQClient, ()> {
         let hdl = kernel.with_registry(|reg| {
-            reg.get().unwrap()
-        }).await;
+            reg.get()
+        }).await.ok_or(())?;
 
         Ok(TQClient {
             hdl,
@@ -612,11 +635,11 @@ impl RegisteredDriver for TimerQueue {
 use core::panic::PanicInfo;
 
 #[panic_handler]
-fn handler(info: &PanicInfo) -> ! {
-    println!("");
-    println!("PANIC HAS HAPPENED!");
-    println!("{:?}", info.payload());
-    println!("{:?}", info.location());
+fn handler(_info: &PanicInfo) -> ! {
+    // println!("");
+    // println!("PANIC HAS HAPPENED!");
+    // println!("{:?}", info.payload());
+    // println!("{:?}", info.location());
     loop {
         fence(Ordering::SeqCst);
     }

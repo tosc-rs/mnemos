@@ -34,11 +34,11 @@ lto = true
 
 [patch.crates-io.maitake]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "c96383e8dc07755571d2afccadd227d6c661df1d"
+rev = "cea81817e95b38f178feb05ae27d137bbd4e8e60"
 
 [patch.crates-io.cordyceps]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "c96383e8dc07755571d2afccadd227d6c661df1d"
+rev = "cea81817e95b38f178feb05ae27d137bbd4e8e60"
 
 [patch.crates-io.mnemos-alloc]
 git = "https://github.com/tosc-rs/mnemos-alloc"
