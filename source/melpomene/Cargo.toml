@@ -58,6 +58,15 @@ features = ["env", "derive"]
 version = "2"
 optional = true
 
+[dependencies.embedded-graphics]
+version = "0.7.1"
+
+[dependencies.embedded-graphics-simulator]
+version = "0.3.0"
+
+[dependencies.chrono]
+version = "0.4"
+
 # Melpomene does not use any APIs from `maitake` directly. This dependency is
 # instead required in order to enable `maitake`'s support for `tracing` 0.1.x,
 # which is needed to support the Tokio Console while running in the simulator,

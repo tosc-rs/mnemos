@@ -60,3 +60,6 @@ features = ["derive"]
 [dependencies.postcard]
 version = "1.0.1"
 features = ["experimental-derive"]
+
+[dependencies.embedded-graphics]
+version = "0.7.1"

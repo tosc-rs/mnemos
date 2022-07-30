@@ -10,7 +10,10 @@ use melpomene::{
     sim_drivers::{delay::Delay, tcp_serial::TcpSerial},
 };
 use mnemos_kernel::{
-    drivers::serial_mux::{SerialMux, SerialMuxHandle},
+    drivers::{
+        emb_display::{EmbDisplay, EmbDisplayHandle},
+        serial_mux::{SerialMux, SerialMuxHandle},
+    },
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -19,6 +22,21 @@ use tokio::{
 };
 
 use tracing::Instrument;
+
+use chrono::{Datelike, Local, Timelike};
+
+use embedded_graphics::{
+    image::{Image, ImageRaw},
+    mono_font::{ascii::FONT_5X7, ascii::FONT_6X9, MonoTextStyle},
+    pixelcolor::Gray8,
+    prelude::*,
+    primitives::{Line, PrimitiveStyle},
+    text::Text,
+};
+
+use embedded_graphics_simulator::{
+    BinaryColorTheme, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
+};
 
 const HEAP_SIZE: usize = 192 * 1024;
 static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
@@ -134,6 +152,87 @@ fn kernel_entry(opts: MelpomeneOptions) {
     .instrument(tracing::info_span!("Initialize"));
 
     k.initialize(initialization_future).unwrap();
+
+    // Creating a dummy task to use the embedded display driver
+    let graphics_init_future = async move {
+        // Delay for one second, just for funsies
+        Delay::new(Duration::from_secs(1)).await;
+
+        EmbDisplay::register(k, 4, 160, 120).await.unwrap();
+
+        let mut disp_hdl = EmbDisplayHandle::from_registry(k).await.unwrap();
+        let mut fc_0 = disp_hdl.get_framechunk(0, 80, 45, 160, 120).await.unwrap();
+        drop(disp_hdl);
+
+        let line_style = PrimitiveStyle::with_stroke(Gray8::WHITE, 1);
+        let tline = Line::new(Point::new(148, 2), Point::new(8, 2)).into_styled(line_style);
+        let bline = Line::new(Point::new(148, 24), Point::new(8, 24)).into_styled(line_style);
+        let lline = Line::new(Point::new(7, 24), Point::new(7, 2)).into_styled(line_style);
+        let rline = Line::new(Point::new(149, 24), Point::new(149, 2)).into_styled(line_style);
+        let text_style = MonoTextStyle::new(&FONT_6X9, Gray8::WHITE);
+        let datetime_style = MonoTextStyle::new(&FONT_5X7, Gray8::WHITE);
+        let text1 = Text::new("Welcome to mnemOS!", Point::new(10, 10), text_style);
+        let text2 = Text::new("A tiny operating system", Point::new(10, 20), text_style);
+        let output_settings = OutputSettingsBuilder::new()
+            .theme(BinaryColorTheme::OledBlue)
+            .build();
+
+        let mut sdisp = SimulatorDisplay::<Gray8>::new(Size::new(320, 240));
+        let mut window = Window::new("mnemOS", &output_settings);
+
+        k.spawn(
+            async move {
+                'running: loop {
+                    // disp.clear(Gray8::BLACK).unwrap();
+
+                    tline.draw(&mut fc_0).unwrap();
+                    bline.draw(&mut fc_0).unwrap();
+                    rline.draw(&mut fc_0).unwrap();
+                    lline.draw(&mut fc_0).unwrap();
+
+                    text1.draw(&mut fc_0).unwrap();
+                    text2.draw(&mut fc_0).unwrap();
+
+                    let time = Local::now();
+
+                    let time_str = format!(
+                        "{:02}:{:02}:{02}",
+                        time.hour(),
+                        time.minute(),
+                        time.second()
+                    );
+
+                    let date_str =
+                        format!("{:02}/{:02}/{:02}", time.month(), time.day(), time.year());
+
+                    let date_text = Text::new(&date_str, Point::new(28, 35), datetime_style);
+                    let time_text = Text::new(&time_str, Point::new(88, 35), datetime_style);
+
+                    date_text.draw(&mut fc_0).unwrap();
+                    time_text.draw(&mut fc_0).unwrap();
+                    {
+                        let raw_img = fc_0.frame_display().unwrap();
+                        let image = Image::new(&raw_img, Point::new(80, 45));
+                        image.draw(&mut sdisp).unwrap();
+
+                        window.update(&sdisp);
+                        if window.events().any(|e| e == SimulatorEvent::Quit) {
+                            break 'running;
+                        }
+
+                        Delay::new(Duration::from_secs(1)).await;
+                        sdisp.clear(Gray8::BLACK).unwrap();
+                    }
+                    fc_0.frame_clear();
+                }
+            }
+            .instrument(tracing::info_span!("Update clock")),
+        )
+        .await;
+    }
+    .instrument(tracing::info_span!("Initialize graphics driver"));
+
+    k.initialize(graphics_init_future).unwrap();
 
     //////////////////////////////////////////////////////////////////////////////
     // TODO: Userspace doesn't really do anything yet! Simulate initialization of
