@@ -57,11 +57,11 @@ pub struct EmbDisplayHandle {
 }
 
 pub enum Request {
-    NewFrameChunk { 
-        frame_id: u16, 
-        start_x: i32, 
-        start_y: i32, 
-        width: u32, 
+    NewFrameChunk {
+        frame_id: u16,
+        start_x: i32,
+        start_y: i32,
+        width: u32,
         height: u32,
     },
 }
@@ -76,7 +76,7 @@ pub enum EmbDisplayError {
 
 struct CommanderTask {
     cmd: KConsumer<Message<EmbDisplay>>,
-    fmutex: HeapArc<Mutex<DisplayInfo>>, 
+    fmutex: HeapArc<Mutex<DisplayInfo>>,
 }
 
 // impl EmbDisplay
@@ -105,7 +105,7 @@ impl EmbDisplay {
 
         let imutex = kernel
             .heap()
-            .allocate_arc(Mutex::new(DisplayInfo { 
+            .allocate_arc(Mutex::new(DisplayInfo {
                 kernel,
                 frames,
                 frame_size,
@@ -134,7 +134,7 @@ impl FrameChunk {
     ///
     /// Pixel data is turned into a raw image, and then drawn onto a SimulatorDisplay object
     /// This is necessary as a e-g Window only accepts SimulatorDisplay object
-    /// On a physical display, the raw pixel data can be sent over to the display directly 
+    /// On a physical display, the raw pixel data can be sent over to the display directly
     /// Using the display's device interface
     pub fn frame_display(&mut self) -> Result<ImageRaw<Gray8>, ()> {
         let raw_image: ImageRaw<Gray8>;
@@ -143,8 +143,8 @@ impl FrameChunk {
     }
 
     pub fn frame_clear(&mut self) {
-        for elem in self.bytes.iter_mut() { 
-            *elem = 0; 
+        for elem in self.bytes.iter_mut() {
+            *elem = 0;
         }
     }
 }
@@ -160,21 +160,21 @@ impl EmbDisplayHandle {
     }
 
     pub async fn get_framechunk(
-        &mut self, 
-        frame_id: u16, 
-        start_x: i32, 
-        start_y: i32, 
-        width: u32, 
+        &mut self,
+        frame_id: u16,
+        start_x: i32,
+        start_y: i32,
+        width: u32,
         height: u32,
     ) -> Option<FrameChunk> {
         self.prod
             .send(
-                Request::NewFrameChunk { 
-                    frame_id, 
-                    start_x, 
-                    start_y, 
-                    width, 
-                    height 
+                Request::NewFrameChunk {
+                    frame_id,
+                    start_x,
+                    start_y,
+                    width,
+                    height,
                 },
                 ReplyTo::OneShot(self.reply.sender().ok()?),
             )
@@ -261,12 +261,12 @@ impl CommanderTask {
             let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
             let Message { msg: req, reply } = msg;
             match req.body {
-                Request::NewFrameChunk { 
-                    frame_id, 
-                    start_x, 
-                    start_y, 
-                    width, 
-                    height, 
+                Request::NewFrameChunk {
+                    frame_id,
+                    start_x,
+                    start_y,
+                    width,
+                    height,
                 } => {
                     let res = {
                         let mut fmutex = self.fmutex.lock().await;

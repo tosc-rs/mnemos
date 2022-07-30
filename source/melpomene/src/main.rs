@@ -176,14 +176,13 @@ fn kernel_entry(opts: MelpomeneOptions) {
         let output_settings = OutputSettingsBuilder::new()
             .theme(BinaryColorTheme::OledBlue)
             .build();
-                
+
         let mut sdisp = SimulatorDisplay::<Gray8>::new(Size::new(320, 240));
         let mut window = Window::new("mnemOS", &output_settings);
 
         k.spawn(
             async move {
                 'running: loop {
-
                     // disp.clear(Gray8::BLACK).unwrap();
 
                     tline.draw(&mut fc_0).unwrap();
@@ -196,10 +195,14 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
                     let time = Local::now();
 
-                    let time_str = 
-                        format!("{:02}:{:02}:{02}", time.hour(), time.minute(), time.second());
+                    let time_str = format!(
+                        "{:02}:{:02}:{02}",
+                        time.hour(),
+                        time.minute(),
+                        time.second()
+                    );
 
-                    let date_str = 
+                    let date_str =
                         format!("{:02}/{:02}/{:02}", time.month(), time.day(), time.year());
 
                     let date_text = Text::new(&date_str, Point::new(28, 35), datetime_style);
@@ -211,7 +214,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
                         let raw_img = fc_0.frame_display().unwrap();
                         let image = Image::new(&raw_img, Point::new(80, 45));
                         image.draw(&mut sdisp).unwrap();
-                        
+
                         window.update(&sdisp);
                         if window.events().any(|e| e == SimulatorEvent::Quit) {
                             break 'running;
@@ -230,7 +233,6 @@ fn kernel_entry(opts: MelpomeneOptions) {
     .instrument(tracing::info_span!("Initialize graphics driver"));
 
     k.initialize(graphics_init_future).unwrap();
-
 
     //////////////////////////////////////////////////////////////////////////////
     // TODO: Userspace doesn't really do anything yet! Simulate initialization of
