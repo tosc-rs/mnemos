@@ -2,21 +2,25 @@
 
 This repository is for the MnemOS Operating System.
 
+## Stable Docs
+
 Currently, MnemOS is being rewritten as part of the v0.2 version. The current source may not
-match the [currently published documentation](https://mnemos.jamesmunns.com)!
+match the currently published documentation!
+
+[hosted mnemOS v0.1 documentation](https://mnemos.jamesmunns.com)
 
 ## Development and API Docs
 
-`rustdoc` output for the current `main` branch can be [viewed online here], or built locally with `cargo doc --open`.
+`rustdoc` output for the current `main` branch can be built locally with `cargo doc --open`.
 
-[viewed online here]: https://mnemos-dev.jamesmunns.com/kernel/
+[hosted mnemOS `main` branch documentation](https://mnemos-dev.jamesmunns.com/) - includes "the mnemOS book" and source/API documentation.
 
 ## Folder Layout
 
 The project layout contains the following folders:
 
 * [`assets/`] - images and files used for READMEs and other documentation
-* [`book/`] - This is the source of the [currently published documentation], and is NOT up to date for v0.2.
+* [`book/`] - This is the source of "the mnemOS book"
 * [`source/`] - This folder contains the source code of the kernel, userspace, simulator, and related libraries
 * [`tools/`] - This folder contains desktop tools used for working with MnemOS
 
