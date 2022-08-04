@@ -1,15 +1,8 @@
 # Summary
 
-- [Introduction](./intro.md)
-- [Components](./components/intro.md)
-    - [Common Library](./components/common.md)
-    - [Kernel Binary](./components/kernel.md)
-    - [Userspace Library](./components/userspace.md)
-- [Users Guide](./user-guide/intro.md)
-    - [Connecting to Virtual Serial Ports](./user-guide/serial.md)
-    - [Uploading and Running Programs](./user-guide/upload-and-run.md)
-- [Developers Guide](./dev-guide/intro.md)
-    - [Supported (and Required) Hardware](./dev-guide/hardware.md)
-    - [Required (and Recommended) Software Tools](./dev-guide/software.md)
-    - [Flashing the Kernel](./dev-guide/flash-kernel.md)
-    - [Building User Applications](./dev-guide/build-apps.md)
+- [introduction](./intro.md)
+- [parts of mnemOS](./components/intro.md)
+    - [the kernel](./components/kernel.md)
+    - [the drivers](./components/drivers.md)
+    - [user applications](./components/userspace.md)
+

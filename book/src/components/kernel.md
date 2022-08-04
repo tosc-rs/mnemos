@@ -1,45 +1,23 @@
-# Kernel Binary
+# the kernel
 
-## Theory
+The kernel is fairly limited, both at the moment, and in general by design. It provides a couple of specific abilities:
 
-The kernel is still in early and active development, however here are a couple of design choices that have been made:
+## the allocator
 
-### User Isolation
+The kernel provides an allocator intended for use by drivers. Rather than RTOS or other more "embedded style" projects, dynamic allocation can be used to spawn driver tasks, and allocate resources, like how large buffers are, how many concurrent requests can be made at once, etc. mnemOS [does NOT use the standard Rust allocator API](https://cohost.org/jamesmunns/post/69963-async-allocations-m), and provides its own.
 
-Currently, the kernel runs with its own stack, using the Cortex-M MSP (Main Stack Pointer). Additionally, it runs in priviledged mode, while userspace runs in unpriviledged mode. The userspace has its own separate stack, using the Cortex-M PSP (Process Stack Pointer).
+Although an allocator is available, it is not intended to be used in the "normal case", such as sending or receiving messages. Instead, buffers should be allocated at setup or configuration time, to reduce allocator impact. For example: setting up the TCP stack, or opening a new port might incur an allocation, but sending or receiving a TCP frame should not. This is not currently enforced, and is a soft goal for limiting memory usage and fragmentation.
 
-Support for Cortex-M Memory Protection Units (MPUs) for additional isolaton is planned, but not currently implemented.
+## the executor/scheduler
 
-As the userspace is in unpriviledged, it is limited to interacting with kernel through the `SVCall` interrupt, which triggers a system call.
+As initial versions of mnemOS are intended to run on single core devices, and hard-realtime is not a specific goal, the kernel provides no concepts of threading for concurrency. Instead, all driver tasks are expected to run as cooperative async/await tasks. This allows for efficient use of CPU time in the kernel, while allowing events like hardware interrupts to serve as simple wakers for async tasks.
 
-### System Calls
+The executor is based largely on the [maitake](https://mycelium.elizas.website/maitake/) library. Maitake is a collection of no-std compatible executor building blocks, which are used extensively. This executor serve the purpose of scheduling all driver behaviors, as well as kernel-time scheduling of user applications.
 
-In order to interact with the kernel, the userspace application makes system calls, which trigger an interrupt which the kernel responds to.
+## the driver registry
 
-Before making a system call, the userspace prepares two things:
+In order to dynamically discover what drivers are running, the kernel [provides a driver registry](https://github.com/tosc-rs/mnemos/blob/main/rfcs/0025-driver-registry.md), which uses UUIDs to uniquely identify a "driver service".
 
-* An "input slice", a pointer and length pair, which can together be considered as a Rust `&[u8]`. The contents of this slice is the requested system call action.
-* An "output slice", a pointer and length pair, which can together be considered as a Rust `&mut [u8]`. Initially this contains nothing, and the length represents the maximum output contents. The kernel will fill the contents of this slice with the result of the requested system call, and the length of the output slice will be reduced to the used output area.
+By default, drivers are expected to operate in a message-oriented, request-reply fashion. This means to interact with a driver, you send it messages of a certain type (defined by the UUID), and it will send you a response of a certain type (defined by the UUID). This message passing is all async/await, and is type-safe, meaning it is not necessary to do text or binary parsing.
 
-As Rust does not have a stable ABI, MnemOS instead relies on serialized data. MnemOS uses the [`postcard`] crate (built on top of Serde) to define the message format for system calls.
-
-Put together, the process of making a system call is generally:
-
-1. The userspace prepares the request, and serializes it to the input slice
-2. The userspace prepares a destination buffer, to be used as the output slice
-3. The userspace triggers an SVCall interrupt
-4. The kernel receives the SVCall interrupt
-5. The kernel deserializes the input slice, and performs the requested action
-6. The kernel prepares a response, and serializes it to the output slice
-7. The kernel returns control to userspace
-8. The userspace deserializes the contents of the output slice
-
-More information on the details of the system call protocol can be found in the [`common` chapter] of this book.
-
-[`postcard`]: https://docs.rs/postcard/latest/postcard/
-[Serde]: https://serde.rs/
-[`common` chapter]: https://github.com/jamesmunns/pellegrino/blob/main/firmware/common/README.md
-
-### Program Loading
-
-At the moment, user applications are loaded to RAM, and executed from RAM. Applications declare their stack size, which is prepared by the operating system.
+Additionally, drivers may choose whether they also make their services available to user programs as well. This interface will be explained later, when discussing user space programs.
