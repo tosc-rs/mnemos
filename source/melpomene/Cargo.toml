@@ -92,4 +92,5 @@ trace-modality = [
 default = [
     "trace-console",
     "trace-fmt",
+    "trace-modality", # TODO
 ]

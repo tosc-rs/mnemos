@@ -124,20 +124,25 @@ pub enum MessageKind {
 impl RequestResponseId {
     pub fn new(id: u32, kind: MessageKind) -> Self {
         let bit = match kind {
-            MessageKind::Request => 0b1,
-            MessageKind::Response => 0b0,
+            MessageKind::Request => 0b0,
+            MessageKind::Response => 0b1,
         };
         Self((id << 1) | bit)
     }
 
     pub fn id(&self) -> u32 {
-        self.0 >> 1
+        self.0
+    }
+
+    pub fn to_reply(self) -> Self {
+        debug_assert_eq!(self.kind(), MessageKind::Request, "Replying to a reply!");
+        Self(self.0 | 0b1)
     }
 
     pub fn kind(&self) -> MessageKind {
         let bit = self.0 & 0b1;
 
-        if bit == 1 {
+        if bit == 0 {
             MessageKind::Request
         } else {
             MessageKind::Response
@@ -446,7 +451,7 @@ impl<P> Envelope<P> {
             body,
             service_id: self.service_id,
             client_id: self.client_id,
-            request_id: RequestResponseId::new(self.request_id.id(), MessageKind::Response),
+            request_id: self.request_id.to_reply(),
         }
     }
 }

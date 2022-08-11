@@ -26,7 +26,7 @@ use tracing::Instrument;
 use chrono::{Datelike, Local, Timelike};
 
 use embedded_graphics::{
-    image::{Image, ImageRaw},
+    image::Image,
     mono_font::{ascii::FONT_5X7, ascii::FONT_6X9, MonoTextStyle},
     pixelcolor::Gray8,
     prelude::*,
@@ -43,6 +43,8 @@ static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
 
 fn main() {
     let args = cli::Args::parse();
+    println!("Starting simulator.");
+
     args.tracing.setup_tracing();
     let _span = tracing::info_span!("Melpo").entered();
     run_melpomene(args.melpomene);
@@ -50,7 +52,6 @@ fn main() {
 
 #[tokio::main(flavor = "current_thread")]
 async fn run_melpomene(opts: cli::MelpomeneOptions) {
-    println!("========================================");
     let kernel = task::spawn_blocking(move || {
         kernel_entry(opts);
     });
@@ -70,15 +71,12 @@ async fn run_melpomene(opts: cli::MelpomeneOptions) {
     // println!("========================================");
 
     // let uj = userspace.join();
-    println!("========================================");
     time::sleep(Duration::from_millis(50)).await;
     // println!("[Melpo]: Userspace ended: {:?}", uj);
 
     let kj = kernel.await;
     time::sleep(Duration::from_millis(50)).await;
     tracing::info!("Kernel ended:    {:?}", kj);
-
-    println!("========================================");
 
     tracing::error!("You've met with a terrible fate, haven't you?");
 }
@@ -155,9 +153,6 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
     // Creating a dummy task to use the embedded display driver
     let graphics_init_future = async move {
-        // Delay for one second, just for funsies
-        Delay::new(Duration::from_secs(1)).await;
-
         EmbDisplay::register(k, 4, 160, 120).await.unwrap();
 
         let mut disp_hdl = EmbDisplayHandle::from_registry(k).await.unwrap();
@@ -196,7 +191,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
                     let time = Local::now();
 
                     let time_str = format!(
-                        "{:02}:{:02}:{02}",
+                        "{:02}:{:02}:{:02}",
                         time.hour(),
                         time.minute(),
                         time.second()
@@ -220,7 +215,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
                             break 'running;
                         }
 
-                        Delay::new(Duration::from_secs(1)).await;
+                        Delay::new(Duration::from_millis(250)).await;
                         sdisp.clear(Gray8::BLACK).unwrap();
                     }
                     fc_0.frame_clear();

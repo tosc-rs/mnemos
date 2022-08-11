@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 #[cfg(feature = "trace-console")]
 use std::path::PathBuf;
+#[cfg(feature = "trace-fmt")]
 use tracing_subscriber::filter;
 
 #[derive(Debug, clap::Args)]
@@ -128,6 +129,8 @@ impl TracingOpts {
             use tracing_subscriber::fmt;
             let filter = self.env_filter;
 
+            println!("'trace-fmt' active. 'tracing' information will be printed to the console.");
+
             let fmt = fmt::layer()
                 .with_timer(fmt::time::uptime())
                 .with_ansi(atty::is(atty::Stream::Stdout))
@@ -135,6 +138,9 @@ impl TracingOpts {
 
             subscriber.with(fmt)
         };
+
+        #[cfg(not(feature = "trace-fmt"))]
+        println!("'trace-fmt' feature not enabled. 'tracing' information will not be printed to the console.");
 
         // if `trace-console` is enabled, add a `console-subscriber` layer.
         #[cfg(feature = "trace-console")]
@@ -153,6 +159,9 @@ impl TracingOpts {
             subscriber.with(console.spawn())
         };
 
+        #[cfg(not(feature = "trace-console"))]
+        println!("'trace-console' feature not enabled.");
+
         // if `trace-modality` is enabled, add the Modality layer as well.
         #[cfg(feature = "trace-modality")]
         let subscriber = {
@@ -162,12 +171,15 @@ impl TracingOpts {
                 eprintln!("Sending traces to Modality at {modality_addr}");
                 options.set_server_address(modality_addr);
             } else {
-                eprintln!("Sending traces to Modality");
+                eprintln!("Sending traces to Modality with default configuration");
             }
 
             let layer = tracing_modality::ModalityLayer::init_with_options(options).unwrap();
             subscriber.with(layer)
         };
+
+        #[cfg(not(feature = "trace-modality"))]
+        println!("'trace-modality' feature not enabled.");
 
         subscriber.init();
     }
