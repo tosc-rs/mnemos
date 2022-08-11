@@ -117,7 +117,7 @@ fn parse_envfilter(s: &str) -> Result<filter::EnvFilter, filter::ParseError> {
 }
 
 impl TracingOpts {
-    pub fn setup_tracing(mut self) {
+    pub async fn setup_tracing(mut self) {
         use tracing_subscriber::prelude::*;
 
         let subscriber = tracing_subscriber::registry();
@@ -174,7 +174,11 @@ impl TracingOpts {
                 eprintln!("Sending traces to Modality with default configuration");
             }
 
-            let layer = tracing_modality::ModalityLayer::init_with_options(options).unwrap();
+            let (layer, handle) = tracing_modality::ModalityLayer::init_with_options(options).await.unwrap();
+
+            // AJM: TODO - leaking handle to avoid shutdown
+            core::mem::forget(handle);
+
             subscriber.with(layer)
         };
 

@@ -45,15 +45,17 @@ fn main() {
     let args = cli::Args::parse();
     println!("Starting simulator.");
 
-    args.tracing.setup_tracing();
-    let _span = tracing::info_span!("Melpo").entered();
-    run_melpomene(args.melpomene);
+    run_melpomene(args);
 }
 
 #[tokio::main(flavor = "current_thread")]
-async fn run_melpomene(opts: cli::MelpomeneOptions) {
+async fn run_melpomene(args: cli::Args) {
+    args.tracing.setup_tracing().await;
+
+    let _span = tracing::info_span!("Melpo").entered();
+
     let kernel = task::spawn_blocking(move || {
-        kernel_entry(opts);
+        kernel_entry(args.melpomene);
     });
     tracing::info!("Kernel started.");
 

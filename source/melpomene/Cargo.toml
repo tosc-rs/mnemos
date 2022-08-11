@@ -17,7 +17,7 @@ default-features = false
 # version = "0.1.1"
 optional = true
 git = "https://github.com/auxoncorp/modality-tracing-rs"
-rev = "9c23c188466357e7ad0c618b4edfe9514e9bf764"
+rev = "e54ad9235c509ff219f0760e69ae7832a55f0886"
 
 [dependencies.uuid]
 version = "1.1.2"
