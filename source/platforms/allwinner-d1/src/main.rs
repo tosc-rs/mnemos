@@ -156,6 +156,56 @@ fn main_inner() -> Result<(), ()> {
 
     unsafe { PRINTER = Some(Uart(uart0)) };
 
+
+    // ///////
+
+    // SPI enable
+    let spi1 = &p.SPI_DBI;
+    ccu.spi1_clk.write(|w| {
+        w.clk_gating().on();     // ?
+        w.clk_src_sel().hosc();     // base:  24 MHz
+        w.factor_n().n1();          // /1:    24 MHz
+        w.factor_m().variant(11);   // /12:    2 MHz
+        w
+    });
+    ccu.spi_bgr.modify(|_r, w| {
+        w.spi1_gating().pass().spi1_rst().deassert();
+        w
+    });
+
+
+    gpio.pd_cfg1.write(|w| {
+        w.pd10_select().spi1_cs_dbi_csx();
+        w.pd11_select().spi1_clk_dbi_sclk();
+        w.pd12_select().spi1_mosi_dbi_sdo();
+        w
+    });
+    gpio.pd_pull0.write(|w| {
+        w.pd10_pull().pull_disable();
+        w.pd11_pull().pull_disable();
+        w.pd12_pull().pull_disable();
+        w
+    });
+
+    // ///////
+
+    spi1.spi_gcr.write(|w| {
+        w.tp_en().normal();
+        w.mode().master();
+        w.en().enable();
+        w
+    });
+    spi1.spi_tcr.write(|w| {
+        w.ss_owner().spi_controller();
+        // w.cpol().low();
+        // w.cpha().p0();
+        w.fbs().lsb();
+        w.spol().clear_bit();
+        w
+    });
+
+    // ///////
+
     let heap_start = unsafe {
         core::ptr::addr_of!(_aheap_start) as *mut u8
     };
@@ -213,7 +263,7 @@ fn main_inner() -> Result<(), ()> {
 
     timer0.start_counter(3_000_000 / 1_000);
 
-    k.initialize(async {
+    k.initialize(async move {
         let hawc = TimerQueue::register(k).await?.leak();
         TICK_WAKER.store(hawc.as_ptr(), Ordering::Release);
         D1Uart::register(k, 1024, 1024).await?;
@@ -259,6 +309,120 @@ fn main_inner() -> Result<(), ()> {
 
             #[allow(unreachable_code)]
             Option::<()>::None
+        }).await;
+
+        k.spawn(async move {
+            let spi = p.SPI_DBI;
+            let mut tq = TimerQueue::from_registry(k).await?;
+
+            // SPI_BCC (0:23 and 24:27)
+            // SPI_MTC and SPI_MBC
+            // Start SPI_TCR(31)
+
+            // Send a blank command
+            let msg_1: [u8; 2] = [0x04, 0x00];
+            spi.spi_bcc.modify(|_r, w| {
+                w.stc().variant(msg_1.len() as u32);
+                w
+            });
+            spi.spi_mbc.modify(|_r, w| {
+                w.mbc().variant(msg_1.len() as u32);
+                w
+            });
+            spi.spi_mtc.modify(|_r, w| {
+                w.mwtc().variant(msg_1.len() as u32);
+                w
+            });
+
+
+            let txd_ptr: *mut u32 = spi.spi_txd.as_ptr();
+            let txd_ptr: *mut u8 = txd_ptr.cast();
+
+            for b in msg_1.iter() {
+                unsafe {
+                    txd_ptr.write_volatile(*b);
+                }
+            }
+
+            spi.spi_tcr.modify(|_r, w| {
+                w.xch().initiate_exchange();
+                w
+            });
+
+            tq.delay_ms(10).await;
+
+
+            // Loop, toggling the VCOM
+            let mut vcom = true;
+            let mut ctr = 0u32;
+            let mut cmp = 0;
+
+            loop {
+                // Send a pattern
+                for line in 1u8..=240u8 {
+                    let vc = if vcom {
+                        0x02
+                    } else {
+                        0x00
+                    };
+
+                    let msg_hdr: [u8; 2] = [0x01 | vc, line];
+                    spi.spi_bcc.modify(|_r, w| {
+                        w.stc().variant(54u32);
+                        w
+                    });
+                    spi.spi_mbc.modify(|_r, w| {
+                        w.mbc().variant(54u32);
+                        w
+                    });
+                    spi.spi_mtc.modify(|_r, w| {
+                        w.mwtc().variant(54u32);
+                        w
+                    });
+
+                    for b in msg_hdr.iter() {
+                        unsafe {
+                            txd_ptr.write_volatile(*b);
+                        }
+                    }
+
+                    // let mut data = 0xFF00F0C0u32;
+                    for _ in 0..50 {
+                        unsafe {
+                            if cmp == 0 {
+                                txd_ptr.write_volatile(0xF0);
+                            } else {
+                                txd_ptr.write_volatile(0x0F);
+                            }
+                        }
+                    }
+
+                    for _ in 0..2 {
+                        unsafe {
+                            txd_ptr.write_volatile(0x00);
+                        }
+                    }
+
+                    spi.spi_tcr.modify(|_r, w| {
+                        w.xch().initiate_exchange();
+                        w
+                    });
+
+                    while spi.spi_tcr.read().xch().bit_is_set() { }
+
+                }
+
+                if (ctr % 8) == 0 {
+                    vcom = !vcom;
+                }
+                ctr = ctr.wrapping_add(1);
+                cmp = cmp ^ 0b1;
+                tq.delay_ms(125).await;
+            }
+
+            #[allow(unreachable_code)]
+            Result::<(), ()>::Ok(())
+
         }).await;
 
         Result::<(), ()>::Ok(())
