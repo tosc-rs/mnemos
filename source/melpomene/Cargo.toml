@@ -5,6 +5,10 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[dependencies.once_cell]
+version = "1"
+optional = true
+
 [dependencies.tracing]
 version = "0.1.35"
 
@@ -16,8 +20,9 @@ default-features = false
 [dependencies.tracing-modality]
 # version = "0.1.1"
 optional = true
-git = "https://github.com/auxoncorp/modality-tracing-rs"
-rev = "e54ad9235c509ff219f0760e69ae7832a55f0886"
+path = "/home/james/contracts/modalityv2/tracing-modality-lense/tracing-modality"
+# git = "https://github.com/auxoncorp/modality-tracing-rs"
+# rev = "e54ad9235c509ff219f0760e69ae7832a55f0886"
 
 [dependencies.uuid]
 version = "1.1.2"
@@ -84,10 +89,8 @@ trace-fmt = ["tracing-subscriber/fmt", "atty"]
 # More information: https://auxon.io/products/modality
 trace-modality = [
     "tracing-modality",
-    # Note, works around a missing feature set in tracing-modality, can
-    # be changed later
-    "tokio/net",
-    "tokio/sync",
+    "once_cell",
+    "uuid/v4",
 ]
 default = [
     "trace-console",

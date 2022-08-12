@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 #[cfg(feature = "trace-console")]
 use std::path::PathBuf;
+use tracing_modality::TimelineInfo;
 #[cfg(feature = "trace-fmt")]
 use tracing_subscriber::filter;
 
@@ -187,4 +188,8 @@ impl TracingOpts {
 
         subscriber.init();
     }
+}
+
+fn modality_identifier() -> TimelineInfo {
+    todo!()
 }
