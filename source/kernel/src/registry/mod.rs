@@ -444,6 +444,18 @@ impl<P> Envelope<P> {
             request_id: RequestResponseId::new(self.request_id.id(), MessageKind::Response),
         }
     }
+
+    pub fn reply_with2<F, U>(self, f: F) -> Envelope<U>
+    where
+        F: FnOnce(P) -> U
+    {
+        Envelope {
+            service_id: self.service_id,
+            client_id: self.client_id,
+            request_id: RequestResponseId::new(self.request_id.id(), MessageKind::Response),
+            body: f(self.body),
+        }
+    }
 }
 
 // Message

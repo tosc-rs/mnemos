@@ -1,9 +1,8 @@
 #![no_std]
 #![no_main]
 
-use core::cell::UnsafeCell;
 use core::ptr::{NonNull, null_mut};
-use core::sync::atomic::{compiler_fence, Ordering, fence, AtomicPtr, AtomicU64};
+use core::sync::atomic::{Ordering, fence, AtomicPtr, AtomicU64};
 
 use kernel::comms::bbq::{new_bidi_channel, SpscProducer};
 use kernel::comms::kchannel::{KConsumer, KChannel};
@@ -12,17 +11,17 @@ use kernel::registry::simple_serial::{SimpleSerial, Request, Response, SimpleSer
 use kernel::registry::{RegisteredDriver, KernelHandle, ReplyTo, Envelope};
 use kernel::{self, Kernel, registry::Message};
 
-use d1_pac::{Interrupt, TIMER, UART0, DMAC};
+use d1_pac::{Interrupt, TIMER, UART0, DMAC, SPI_DBI};
 use d1_playground::dmac::descriptor::{
-    AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType, Descriptor,
+    AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType,
 };
 use d1_playground::dmac::{Dmac, ChannelMode, Channel};
 use maitake::sync::Mutex;
-use maitake::wait::{WaitCell, WaitQueue, Closed};
+use maitake::wait::WaitCell;
 use mnemos_alloc::containers::{HeapArc, HeapArray};
 
 use d1_playground::plic::{Plic, Priority};
-use d1_playground::timer::{Timer, TimerMode, TimerPrescaler, TimerSource, Timers};
+use d1_playground::timer::{Timer, TimerMode, TimerPrescaler, Timers};
 
 use uuid::{Uuid, uuid};
 
@@ -38,6 +37,8 @@ impl core::fmt::Write for Uart {
         Ok(())
     }
 }
+
+#[allow(dead_code)]
 fn print_raw(data: &[u8]) {
     let uart = unsafe { PRINTER.as_mut().unwrap() };
     while uart.0.usr.read().tfnf().bit_is_clear() {}
@@ -69,6 +70,7 @@ macro_rules! println {
 static TICK_MS: AtomicU64 = AtomicU64::new(0);
 static TICK_WAKER: AtomicPtr<WaitCell> = AtomicPtr::new(null_mut());
 static UART_TX_WAKER: AtomicPtr<WaitCell> = AtomicPtr::new(null_mut());
+static SPI1_TX_WAKER: AtomicPtr<WaitCell> = AtomicPtr::new(null_mut());
 static UART_RX_PROD: AtomicPtr<SpscProducer> = AtomicPtr::new(null_mut());
 
 extern "C" {
@@ -76,6 +78,7 @@ extern "C" {
     static _aheap_size: usize;
 }
 
+#[allow(non_snake_case)]
 #[riscv_rt::entry]
 fn main() -> ! {
     let _ = main_inner();
@@ -95,7 +98,9 @@ fn main_inner() -> Result<(), ()> {
     // DMAC enable
     let dmac = Dmac::new(p.DMAC, ccu);
     dmac.dmac.dmac_irq_en_reg0.modify(|_r, w| {
-        w.dma0_queue_irq_en().enabled()
+        w.dma0_queue_irq_en().enabled();
+        w.dma1_queue_irq_en().enabled();
+        w
     });
 
     // Set PC1 LED to output.
@@ -203,6 +208,10 @@ fn main_inner() -> Result<(), ()> {
         w.spol().clear_bit();
         w
     });
+    spi1.spi_fcr.modify(|_r, w| {
+        w.tf_drq_en().enable();
+        w
+    });
 
     // ///////
 
@@ -267,6 +276,8 @@ fn main_inner() -> Result<(), ()> {
         let hawc = TimerQueue::register(k).await?.leak();
         TICK_WAKER.store(hawc.as_ptr(), Ordering::Release);
         D1Uart::register(k, 1024, 1024).await?;
+        let spi_wake = SpiSender::register(k, 4).await?.leak();
+        SPI1_TX_WAKER.store(spi_wake.as_ptr(), Ordering::Release);
 
         k.spawn(async {
             let mut tq = TimerQueue::from_registry(k).await?;
@@ -312,42 +323,16 @@ fn main_inner() -> Result<(), ()> {
         }).await;
 
         k.spawn(async move {
-            let spi = p.SPI_DBI;
             let mut tq = TimerQueue::from_registry(k).await?;
+            let mut spim = SpiSender::from_registry(k).await?;
 
             // SPI_BCC (0:23 and 24:27)
             // SPI_MTC and SPI_MBC
             // Start SPI_TCR(31)
 
-            // Send a blank command
-            let msg_1: [u8; 2] = [0x04, 0x00];
-            spi.spi_bcc.modify(|_r, w| {
-                w.stc().variant(msg_1.len() as u32);
-                w
-            });
-            spi.spi_mbc.modify(|_r, w| {
-                w.mbc().variant(msg_1.len() as u32);
-                w
-            });
-            spi.spi_mtc.modify(|_r, w| {
-                w.mwtc().variant(msg_1.len() as u32);
-                w
-            });
-
-
-            let txd_ptr: *mut u32 = spi.spi_txd.as_ptr();
-            let txd_ptr: *mut u8 = txd_ptr.cast();
-
-            for b in msg_1.iter() {
-                unsafe {
-                    txd_ptr.write_volatile(*b);
-                }
-            }
-
-            spi.spi_tcr.modify(|_r, w| {
-                w.xch().initiate_exchange();
-                w
-            });
+            let mut msg_1 = k.heap().allocate_array_with(|| 0, 2).await;
+            msg_1.copy_from_slice(&[0x04, 0x00]);
+            let _ = spim.send_wait(msg_1).await.ok();
 
             tq.delay_ms(10).await;
 
@@ -356,6 +341,7 @@ fn main_inner() -> Result<(), ()> {
             let mut vcom = true;
             let mut ctr = 0u32;
             let mut cmp = 0;
+            let mut linebuf = k.heap().allocate_array_with(|| 0, 54).await;
 
             loop {
                 // Send a pattern
@@ -366,50 +352,19 @@ fn main_inner() -> Result<(), ()> {
                         0x00
                     };
 
-                    let msg_hdr: [u8; 2] = [0x01 | vc, line];
-                    spi.spi_bcc.modify(|_r, w| {
-                        w.stc().variant(54u32);
-                        w
-                    });
-                    spi.spi_mbc.modify(|_r, w| {
-                        w.mbc().variant(54u32);
-                        w
-                    });
-                    spi.spi_mtc.modify(|_r, w| {
-                        w.mwtc().variant(54u32);
-                        w
-                    });
-
-                    for b in msg_hdr.iter() {
-                        unsafe {
-                            txd_ptr.write_volatile(*b);
-                        }
-                    }
+                    linebuf[0] = 0x01 | vc;
+                    linebuf[1] = line;
 
                     // let mut data = 0xFF00F0C0u32;
-                    for _ in 0..50 {
-                        unsafe {
-                            if cmp == 0 {
-                                txd_ptr.write_volatile(0xF0);
-                            } else {
-                                txd_ptr.write_volatile(0x0F);
-                            }
-                        }
+                    for b in &mut linebuf[2..=52] {
+                        *b = if cmp == 0 {
+                            0xF0
+                        } else {
+                            0x0F
+                        };
                     }
 
-                    for _ in 0..2 {
-                        unsafe {
-                            txd_ptr.write_volatile(0x00);
-                        }
-                    }
-
-                    spi.spi_tcr.modify(|_r, w| {
-                        w.xch().initiate_exchange();
-                        w
-                    });
-
-                    while spi.spi_tcr.read().xch().bit_is_set() { }
-
+                    linebuf = spim.send_wait(linebuf).await.map_err(drop).unwrap();
                 }
 
                 if (ctr % 8) == 0 {
@@ -434,41 +389,6 @@ fn main_inner() -> Result<(), ()> {
         k.tick();
         unsafe { riscv::asm::wfi() };
     }
-
-    // let thr_addr = unsafe { &*UART0::PTR }.thr() as *const _ as *mut ();
-
-    // for chunk in HOUND.lines() {
-    //     let d_cfg = DescriptorConfig {
-    //         source: chunk.as_ptr().cast(),
-    //         destination: thr_addr,
-    //         byte_counter: chunk.len(),
-    //         link: None,
-    //         wait_clock_cycles: 0,
-    //         bmode: BModeSel::Normal,
-    //         dest_width: DataWidth::Bit8,
-    //         dest_addr_mode: AddressMode::IoMode,
-    //         dest_block_size: BlockSize::Byte1,
-    //         dest_drq_type: DestDrqType::Uart0Tx,
-    //         src_data_width: DataWidth::Bit8,
-    //         src_addr_mode: AddressMode::LinearMode,
-    //         src_block_size: BlockSize::Byte1,
-    //         src_drq_type: SrcDrqType::Dram,
-    //     };
-    //     let descriptor = d_cfg.try_into().unwrap();
-    //     unsafe {
-    //         dmac.channels[0].set_channel_modes(ChannelMode::Wait, ChannelMode::Handshake);
-    //         dmac.channels[0].start_descriptor(NonNull::from(&descriptor));
-    //     }
-
-    //     timer0.start_counter(1_500_000);
-    //     unsafe { riscv::asm::wfi() };
-
-    //     println!("");
-
-    //     unsafe {
-    //         dmac.channels[0].stop_dma();
-    //     }
-    // }
 }
 
 #[export_name = "MachineExternal"]
@@ -543,9 +463,18 @@ fn im_an_interrupt() {
                         }
                     }
                 }
+
+                if r.dma1_queue_irq_pend().bit_is_set() {
+                    let waker = SPI1_TX_WAKER.load(Ordering::Acquire);
+                    if !waker.is_null() {
+                        unsafe {
+                            (&*waker).wake();
+                        }
+                    }
+                }
                 // Will write-back and high bits
                 w
-            })
+            });
         }
         x => {
             println!("Unexpected claim: {:?}", x);
@@ -632,7 +561,7 @@ impl D1Uart {
                 }
                 match sender_wake.wait().await {
                     Ok(_) => {},
-                    Err(Closed) => todo!(),
+                    Err(_) => todo!(),
                 }
                 let len = read.len();
                 read.release(len);
@@ -794,6 +723,149 @@ impl RegisteredDriver for TimerQueue {
     type Error = TQError;
 
     const UUID: Uuid = uuid!("74a06fee-485b-427a-b965-e19a6c62dc60");
+}
+
+// Spi Sender
+
+pub struct SpiSender {
+    _x: (),
+}
+
+impl SpiSender {
+    pub async fn register(kernel: &'static Kernel, queued: usize) -> Result<HeapArc<WaitCell>, ()> {
+        let wait = kernel.heap().allocate_arc(WaitCell::new()).await;
+        let (kprod, kcons) = KChannel::new_async(kernel, queued).await.split();
+
+        let sender_wait = wait.clone();
+        kernel.spawn(async move {
+            let kcons = kcons;
+            let sender_wait = sender_wait;
+            let spi = unsafe { &*SPI_DBI::PTR };
+
+            let txd_ptr: *mut u32 = spi.spi_txd.as_ptr();
+            let txd_ptr: *mut u8 = txd_ptr.cast();
+            let txd_ptr: *mut () = txd_ptr.cast();
+
+            loop {
+                let msg: Message<SpiSender> = kcons.dequeue_async().await.unwrap();
+                let Message { msg, reply } = msg;
+                let SpiSenderRequest::Send(ref payload) = msg.body;
+
+                spi.spi_bcc.modify(|_r, w| {
+                    w.stc().variant(payload.len() as u32);
+                    w
+                });
+                spi.spi_mbc.modify(|_r, w| {
+                    w.mbc().variant(payload.len() as u32);
+                    w
+                });
+                spi.spi_mtc.modify(|_r, w| {
+                    w.mwtc().variant(payload.len() as u32);
+                    w
+                });
+
+                spi.spi_tcr.modify(|_r, w| {
+                    w.xch().initiate_exchange();
+                    w
+                });
+
+                let d_cfg = DescriptorConfig {
+                    source: payload.as_ptr().cast(),
+                    destination: txd_ptr,
+                    byte_counter: payload.len(),
+                    link: None,
+                    wait_clock_cycles: 0,
+                    bmode: BModeSel::Normal,
+                    dest_width: DataWidth::Bit8,
+                    dest_addr_mode: AddressMode::IoMode,
+                    dest_block_size: BlockSize::Byte1,
+                    dest_drq_type: DestDrqType::Spi1Tx,
+                    src_data_width: DataWidth::Bit8,
+                    src_addr_mode: AddressMode::LinearMode,
+                    src_block_size: BlockSize::Byte1,
+                    src_drq_type: SrcDrqType::Dram,
+                };
+                let descriptor = d_cfg.try_into().map_err(drop)?;
+                unsafe {
+                    let mut chan = Channel::summon_channel(1);
+                    chan.set_channel_modes(ChannelMode::Wait, ChannelMode::Handshake);
+                    chan.start_descriptor(NonNull::from(&descriptor));
+                }
+                match sender_wait.wait().await {
+                    Ok(_) => {},
+                    Err(_) => todo!(),
+                }
+                reply.reply_konly(msg.reply_with2(|req| {
+                    let SpiSenderRequest::Send(payload) = req;
+                    Ok(SpiSenderResponse::Sent(payload))
+                })).await.unwrap();
+            }
+
+            #[allow(unreachable_code)]
+            Result::<(), ()>::Ok(())
+
+        }).await;
+
+        kernel.with_registry(move |reg| {
+            reg.register_konly::<SpiSender>(&kprod).map_err(drop)
+        }).await?;
+
+        Ok(wait)
+    }
+
+    pub async fn from_registry(kernel: &'static Kernel) -> Result<SpiSenderClient, ()> {
+        let hdl = kernel.with_registry(|reg| {
+            reg.get()
+        }).await.ok_or(())?;
+
+        Ok(SpiSenderClient {
+            hdl,
+            osc: Reusable::new_async(kernel).await,
+        })
+    }
+}
+
+pub enum SpiSenderRequest {
+    Send(HeapArray<u8>),
+}
+
+pub enum SpiSenderResponse {
+    Sent(HeapArray<u8>),
+}
+
+pub enum SpiSenderError {
+    Oops,
+}
+
+pub struct SpiSenderClient {
+    hdl: KernelHandle<SpiSender>,
+    osc: Reusable<Envelope<Result<SpiSenderResponse, SpiSenderError>>>,
+}
+
+impl SpiSenderClient {
+    pub async fn send_wait(&mut self, data: HeapArray<u8>) -> Result<HeapArray<u8>, SpiSenderError> {
+        self.hdl.send(
+            SpiSenderRequest::Send(data),
+            ReplyTo::OneShot(self.osc.sender().unwrap()),
+        ).await.ok();
+        self.osc
+            .receive()
+            .await
+            .map_err(|_| SpiSenderError::Oops)?
+            .body
+            .map(|resp| {
+                let SpiSenderResponse::Sent(payload) = resp;
+                payload
+            })
+    }
+}
+
+impl RegisteredDriver for SpiSender {
+    type Request = SpiSenderRequest;
+    type Response = SpiSenderResponse;
+    type Error = SpiSenderError;
+
+    const UUID: Uuid = uuid!("b5fd3487-08c4-4c0c-ae97-65dd1b151138");
 }
 
 use core::panic::PanicInfo;
