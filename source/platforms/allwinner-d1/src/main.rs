@@ -341,38 +341,37 @@ fn main_inner() -> Result<(), ()> {
             let mut vcom = true;
             let mut ctr = 0u32;
             let mut cmp = 0;
-            let mut linebuf = k.heap().allocate_array_with(|| 0, 54).await;
+            let mut linebuf = k.heap().allocate_array_with(|| 0, (52 * 240) + 2).await;
+
+            let forever = [0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+            let mut forever = forever.iter().copied().cycle();
 
             loop {
                 // Send a pattern
-                for line in 1u8..=240u8 {
-                    let vc = if vcom {
-                        0x02
-                    } else {
-                        0x00
-                    };
+                let vc = if vcom {
+                    0x02
+                } else {
+                    0x00
+                };
+                linebuf[0] = 0x01 | vc;
 
-                    linebuf[0] = 0x01 | vc;
-                    linebuf[1] = line;
+                for (line, chunk) in linebuf.chunks_exact_mut(52).enumerate() {
+                    chunk[1] = (line as u8) + 1;
 
-                    // let mut data = 0xFF00F0C0u32;
-                    for b in &mut linebuf[2..=52] {
-                        *b = if cmp == 0 {
-                            0xF0
-                        } else {
-                            0x0F
-                        };
+                    let val = forever.next().unwrap();
+
+                    for b in &mut chunk[2..] {
+                        *b = val;
                     }
-
-                    linebuf = spim.send_wait(linebuf).await.map_err(drop).unwrap();
                 }
 
-                if (ctr % 8) == 0 {
+                linebuf = spim.send_wait(linebuf).await.map_err(drop).unwrap();
+
+                if (ctr % 16) == 0 {
                     vcom = !vcom;
                 }
                 ctr = ctr.wrapping_add(1);
                 cmp = cmp ^ 0b1;
-                tq.delay_ms(125).await;
             }
 
             #[allow(unreachable_code)]
