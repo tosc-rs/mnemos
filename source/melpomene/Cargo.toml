@@ -20,9 +20,8 @@ default-features = false
 [dependencies.tracing-modality]
 # version = "0.1.1"
 optional = true
-path = "/home/james/contracts/modalityv2/tracing-modality-lense/tracing-modality"
-# git = "https://github.com/auxoncorp/modality-tracing-rs"
-# rev = "e54ad9235c509ff219f0760e69ae7832a55f0886"
+git = "https://github.com/auxoncorp/modality-tracing-rs"
+rev = "161544ca8d8ab3b60dfe223086fc8721f5be5d9c"
 
 [dependencies.uuid]
 version = "1.1.2"

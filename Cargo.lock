@@ -382,7 +382,7 @@ dependencies = [
 [[package]]
 name = "cordyceps"
 version = "0.3.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=23db951d19cf410e07ed4c2c47ead20d2b592d21#23db951d19cf410e07ed4c2c47ead20d2b592d21"
+source = "git+https://github.com/hawkw/mycelium.git?rev=5cb0341b2c7b91e8e01b26bedb6c4ce536e726b5#5cb0341b2c7b91e8e01b26bedb6c4ce536e726b5"
 dependencies = [
  "loom",
 ]
@@ -1135,7 +1135,7 @@ dependencies = [
 [[package]]
 name = "maitake"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=23db951d19cf410e07ed4c2c47ead20d2b592d21#23db951d19cf410e07ed4c2c47ead20d2b592d21"
+source = "git+https://github.com/hawkw/mycelium.git?rev=5cb0341b2c7b91e8e01b26bedb6c4ce536e726b5#5cb0341b2c7b91e8e01b26bedb6c4ce536e726b5"
 dependencies = [
  "cordyceps",
  "mycelium-bitfield",
@@ -1186,7 +1186,7 @@ dependencies = [
  "tracing 0.1.35",
  "tracing-modality",
  "tracing-subscriber",
- "uuid 1.1.2",
+ "uuid",
 ]
 
 [[package]]
@@ -1297,7 +1297,7 @@ dependencies = [
  "serde",
  "spitebuf",
  "tracing 0.1.35",
- "uuid 1.1.2",
+ "uuid",
 ]
 
 [[package]]
@@ -1336,8 +1336,7 @@ dependencies = [
 [[package]]
 name = "modality-ingest-client"
 version = "0.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fee3ff46a80a5570968baad720e5a225406ec87f4d3a6843452736adad41860"
+source = "git+https://github.com/auxoncorp/modality-sdk?rev=4a3b9e3cca08e8225e084f9e8409e818646589ec#4a3b9e3cca08e8225e084f9e8409e818646589ec"
 dependencies = [
  "minicbor",
  "native-tls",
@@ -1345,18 +1344,18 @@ dependencies = [
  "tokio",
  "tokio-native-tls",
  "url",
- "uuid 0.8.2",
+ "uuid",
 ]
 
 [[package]]
 name = "mycelium-bitfield"
-version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=23db951d19cf410e07ed4c2c47ead20d2b592d21#23db951d19cf410e07ed4c2c47ead20d2b592d21"
+version = "0.1.2"
+source = "git+https://github.com/hawkw/mycelium.git?rev=5cb0341b2c7b91e8e01b26bedb6c4ce536e726b5#5cb0341b2c7b91e8e01b26bedb6c4ce536e726b5"
 
 [[package]]
 name = "mycelium-util"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=23db951d19cf410e07ed4c2c47ead20d2b592d21#23db951d19cf410e07ed4c2c47ead20d2b592d21"
+source = "git+https://github.com/hawkw/mycelium.git?rev=5cb0341b2c7b91e8e01b26bedb6c4ce536e726b5#5cb0341b2c7b91e8e01b26bedb6c4ce536e726b5"
 dependencies = [
  "cordyceps",
  "loom",
@@ -2547,6 +2546,7 @@ dependencies = [
 [[package]]
 name = "tracing-modality"
 version = "0.2.0"
+source = "git+https://github.com/auxoncorp/modality-tracing-rs?rev=161544ca8d8ab3b60dfe223086fc8721f5be5d9c#161544ca8d8ab3b60dfe223086fc8721f5be5d9c"
 dependencies = [
  "anyhow",
  "dirs",
@@ -2561,7 +2561,7 @@ dependencies = [
  "tracing-core 0.1.28",
  "tracing-subscriber",
  "url",
- "uuid 1.1.2",
+ "uuid",
 ]
 
 [[package]]
@@ -2625,15 +2625,6 @@ dependencies = [
  "idna",
  "matches",
  "percent-encoding",
-]
-
-[[package]]
-name = "uuid"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bc5cf98d8186244414c848017f0e2676b3fcb46807f6668a97dfe67359a3c4b7"
-dependencies = [
- "getrandom",
 ]
 
 [[package]]

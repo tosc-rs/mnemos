@@ -1,7 +1,6 @@
 use std::net::SocketAddr;
 #[cfg(feature = "trace-console")]
 use std::path::PathBuf;
-use tracing_modality::TimelineInfo;
 #[cfg(feature = "trace-fmt")]
 use tracing_subscriber::filter;
 
@@ -118,6 +117,7 @@ fn parse_envfilter(s: &str) -> Result<filter::EnvFilter, filter::ParseError> {
 }
 
 impl TracingOpts {
+    #[allow(unused_mut)]
     pub async fn setup_tracing(mut self) {
         use tracing_subscriber::prelude::*;
 
@@ -168,6 +168,8 @@ impl TracingOpts {
         let subscriber = {
             let mut options = tracing_modality::Options::new().with_name("melpomene");
 
+            options.set_timeline_identifier(crate::get_timeline);
+
             if let Some(modality_addr) = self.modality.modality_addr {
                 eprintln!("Sending traces to Modality at {modality_addr}");
                 options.set_server_address(modality_addr);
@@ -188,8 +190,4 @@ impl TracingOpts {
 
         subscriber.init();
     }
-}
-
-fn modality_identifier() -> TimelineInfo {
-    todo!()
 }

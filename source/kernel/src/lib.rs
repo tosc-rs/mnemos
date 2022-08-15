@@ -17,7 +17,7 @@ use comms::kchannel::KChannel;
 use maitake::{
     self,
     scheduler::{StaticScheduler, TaskStub},
-    task::Storage,
+    task::{Storage, TaskId},
 };
 use maitake::{sync::Mutex, task::Task as MaitakeTask};
 use mnemos_alloc::{containers::HeapBox, heap::AHeap};
@@ -120,6 +120,10 @@ impl Kernel {
         &self.inner
     }
 
+    pub fn task_id(&'static self) -> Option<TaskId> {
+        self.inner.scheduler.current_task().map(|t| t.id())
+    }
+
     pub fn rings(&'static self) -> Rings {
         unsafe {
             Rings {
@@ -202,7 +206,7 @@ impl Kernel {
     }
 
     pub fn spawn_allocated<F: Future + 'static>(&'static self, task: HeapBox<Task<F>>) {
-        self.inner.scheduler.spawn_allocated::<F, HBStorage>(task)
+        let _ = self.inner.scheduler.spawn_allocated::<F, HBStorage>(task);
     }
 }
 

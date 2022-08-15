@@ -12,13 +12,17 @@ members = [
     "tools/dumbloader",
 ]
 
+[patch.crates-io.modality-ingest-client]
+git = "https://github.com/auxoncorp/modality-sdk"
+rev = "4a3b9e3cca08e8225e084f9e8409e818646589ec"
+
 [patch.crates-io.maitake]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "23db951d19cf410e07ed4c2c47ead20d2b592d21"
+rev = "5cb0341b2c7b91e8e01b26bedb6c4ce536e726b5"
 
 [patch.crates-io.cordyceps]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "23db951d19cf410e07ed4c2c47ead20d2b592d21"
+rev = "5cb0341b2c7b91e8e01b26bedb6c4ce536e726b5"
 
 [patch.crates-io.mnemos-alloc]
 git = "https://github.com/tosc-rs/mnemos-alloc"

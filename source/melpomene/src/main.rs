@@ -99,6 +99,11 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
     let k = unsafe { Kernel::new(settings).unwrap().leak().as_ref() };
 
+    melpomene::TIMELINES.with(|tl| {
+        let mut tl = tl.write().unwrap();
+        tl.kernel = Some(k);
+    });
+
     // First let's make a dummy driver just to make sure some stuff happens
     let initialization_future = async move {
         // Delay for one second, just for funsies
