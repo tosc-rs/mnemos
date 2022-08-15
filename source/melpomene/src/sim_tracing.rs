@@ -177,7 +177,9 @@ impl TracingOpts {
                 eprintln!("Sending traces to Modality with default configuration");
             }
 
-            let (layer, handle) = tracing_modality::ModalityLayer::init_with_options(options).await.unwrap();
+            let (layer, handle) = tracing_modality::ModalityLayer::init_with_options(options)
+                .await
+                .unwrap();
 
             // AJM: TODO - leaking handle to avoid shutdown
             core::mem::forget(handle);

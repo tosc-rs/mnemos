@@ -7,7 +7,7 @@ use std::{collections::HashMap, sync::RwLock, thread};
 use maitake::task::TaskId;
 use mnemos_kernel::Kernel;
 use once_cell::sync::Lazy;
-use tracing_modality::{TimelineInfo, TimelineId};
+use tracing_modality::{TimelineId, TimelineInfo};
 
 pub struct Timelines {
     thread_info: TimelineInfo,
@@ -42,10 +42,7 @@ pub(crate) fn get_timeline() -> TimelineInfo {
         drop(tl_immut);
 
         let new_name = format!("kerneltask-{}", task_id);
-        let new_info = TimelineInfo::new(
-            new_name,
-            TimelineId::allocate(),
-        );
+        let new_info = TimelineInfo::new(new_name, TimelineId::allocate());
         let mut tl_mut = tl.write().unwrap();
         tl_mut.task_map.insert(task_id, new_info.clone());
         new_info
