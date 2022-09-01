@@ -2,20 +2,20 @@ pub mod cli;
 pub mod sim_drivers;
 pub mod sim_tracing;
 
-use std::{collections::HashMap, sync::RwLock, thread};
+use std::{collections::HashMap, sync::{RwLock, atomic::{AtomicU64, Ordering}}, thread, intrinsics::transmute};
 
 use maitake::task::TaskId;
 use mnemos_kernel::Kernel;
 use once_cell::sync::Lazy;
-use tracing_modality::{TimelineId, TimelineInfo};
+use tracing_modality::UserTimelineInfo;
 
 pub struct Timelines {
-    thread_info: TimelineInfo,
+    thread_info: UserTimelineInfo,
     pub kernel: Option<&'static Kernel>,
-    task_map: HashMap<TaskId, TimelineInfo>,
+    task_map: HashMap<TaskId, UserTimelineInfo>,
 }
 
-pub(crate) fn get_timeline() -> TimelineInfo {
+pub(crate) fn get_timeline() -> UserTimelineInfo {
     TIMELINES.with(|tl| {
         // First, see if we can resolve without mut access
         let tl_immut = tl.read().unwrap();
@@ -42,12 +42,18 @@ pub(crate) fn get_timeline() -> TimelineInfo {
         drop(tl_immut);
 
         let new_name = format!("kerneltask-{}", task_id);
-        let new_info = TimelineInfo::new(new_name, TimelineId::allocate());
+
+        // Sorry eliza
+        let task_id_u64: u64 = unsafe { transmute(task_id) };
+        let new_info = UserTimelineInfo::new(new_name, task_id_u64);
+
         let mut tl_mut = tl.write().unwrap();
         tl_mut.task_map.insert(task_id, new_info.clone());
         new_info
     })
 }
+
+static THREAD_COUNTER: AtomicU64 = AtomicU64::new(0x8000_0000_0000_0000);
 
 thread_local! {
     pub static TIMELINES: Lazy<RwLock<Timelines>>  = Lazy::new(|| {
@@ -57,9 +63,9 @@ thread_local! {
             .map(Into::into)
             .unwrap_or_else(|| format!("thread-{:?}", cur.id()));
 
-        let id = TimelineId::allocate();
+        let id = THREAD_COUNTER.fetch_add(1, Ordering::AcqRel);
 
-        let thread_info = TimelineInfo::new(
+        let thread_info = UserTimelineInfo::new(
             name,
             id,
         );

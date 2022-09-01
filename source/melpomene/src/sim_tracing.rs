@@ -1,8 +1,10 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, borrow::Cow};
 #[cfg(feature = "trace-console")]
 use std::path::PathBuf;
+use tracing_modality::attr_handlers::{AttributeHandler, TracingValue, tracing_value_to_attr_val, AttrVal};
 #[cfg(feature = "trace-fmt")]
 use tracing_subscriber::filter;
+use uuid::Uuid;
 
 #[derive(Debug, clap::Args)]
 #[clap(
@@ -169,6 +171,7 @@ impl TracingOpts {
             let mut options = tracing_modality::Options::new().with_name("melpomene");
 
             options.set_timeline_identifier(crate::get_timeline);
+            options.set_attr_handlers(DEFAULT_HANDLERS.to_vec());
 
             if let Some(modality_addr) = self.modality.modality_addr {
                 eprintln!("Sending traces to Modality at {modality_addr}");
@@ -192,4 +195,36 @@ impl TracingOpts {
 
         subscriber.init();
     }
+}
+
+pub(crate) const DEFAULT_HANDLERS: &[AttributeHandler] = &[
+    AttributeHandler::new("timestamp", tracing_modality::attr_handlers::timestamp),
+    // AttributeHandler::new("interaction.remote_timestamp", tracing_modality::attr_handlers::remote_timestamp),
+    AttributeHandler::new("src_task", tracing_modality::attr_handlers::remote_timeline_id),
+    AttributeHandler::new("nonce", nonce),
+    AttributeHandler::new("src_nonce", remote_nonce),
+    AttributeHandler::new("src_task", tracing_modality::attr_handlers::remote_timeline_id),
+    AttributeHandler::new("name", tracing_modality::attr_handlers::name),
+    AttributeHandler::new("message", tracing_modality::attr_handlers::name),
+    AttributeHandler::new("severity", tracing_modality::attr_handlers::severity),
+    AttributeHandler::new("source.module", tracing_modality::attr_handlers::source_module),
+    AttributeHandler::new("source.file", tracing_modality::attr_handlers::source_file),
+];
+
+pub fn nonce(
+    _tracing_key: &str,
+    tracing_val: TracingValue,
+    _run_id: &Uuid,
+) -> (Cow<'static, str>, AttrVal) {
+    let attrval = tracing_value_to_attr_val(tracing_val);
+    (Cow::Borrowed("event.nonce"), attrval)
+}
+
+pub fn remote_nonce(
+    _tracing_key: &str,
+    tracing_val: TracingValue,
+    _run_id: &Uuid,
+) -> (Cow<'static, str>, AttrVal) {
+    let attrval = tracing_value_to_attr_val(tracing_val);
+    (Cow::Borrowed("event.interaction.remote_nonce"), attrval)
 }

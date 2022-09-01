@@ -41,19 +41,21 @@ impl TcpSerial {
 
                 // Reply to the first request, giving away the serial port
                 let req = cons.dequeue_async().await.map_err(drop).unwrap();
+                req.trace_rx();
                 let Request::GetPort = req.msg.body;
                 let resp = req.msg.reply_with(Ok(Response::PortHandle { handle }));
 
-                req.reply.reply_konly(resp).await.map_err(drop).unwrap();
+                req.reply.reply_konly(resp, kernel).await.map_err(drop).unwrap();
 
                 // And deny all further requests after the first
                 loop {
                     let req = cons.dequeue_async().await.map_err(drop).unwrap();
+                    req.trace_rx();
                     let Request::GetPort = req.msg.body;
                     let resp = req
                         .msg
                         .reply_with(Err(SimpleSerialError::AlreadyAssignedPort));
-                    req.reply.reply_konly(resp).await.map_err(drop).unwrap();
+                    req.reply.reply_konly(resp, kernel).await.map_err(drop).unwrap();
                 }
             })
             .await;

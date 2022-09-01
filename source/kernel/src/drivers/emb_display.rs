@@ -77,6 +77,7 @@ pub enum EmbDisplayError {
 struct CommanderTask {
     cmd: KConsumer<Message<EmbDisplay>>,
     fmutex: HeapArc<Mutex<DisplayInfo>>,
+    kernel: &'static Kernel,
 }
 
 // impl EmbDisplay
@@ -115,6 +116,7 @@ impl EmbDisplay {
         let commander = CommanderTask {
             cmd: cmd_cons,
             fmutex: imutex,
+            kernel,
         };
 
         kernel.spawn(commander.run()).await;
@@ -151,7 +153,7 @@ impl FrameChunk {
 
 impl EmbDisplayHandle {
     pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
-        let prod = kernel.with_registry(|reg| reg.get::<EmbDisplay>()).await?;
+        let prod = kernel.with_registry(|reg| reg.get::<EmbDisplay>(kernel)).await?;
 
         Some(EmbDisplayHandle {
             prod,
@@ -182,6 +184,7 @@ impl EmbDisplayHandle {
             .ok()?;
 
         let resp = self.reply.receive().await.ok()?;
+        resp.trace_rx();
         let body = resp.body.ok()?;
 
         let Response::FrameChunkAllocated(frame) = body;
@@ -259,6 +262,7 @@ impl CommanderTask {
     async fn run(self) {
         loop {
             let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
+            msg.trace_rx();
             let Message { msg: req, reply } = msg;
             match req.body {
                 Request::NewFrameChunk {
@@ -278,7 +282,7 @@ impl CommanderTask {
 
                     let resp = req.reply_with(res);
 
-                    reply.reply_konly(resp).await.map_err(drop).unwrap();
+                    reply.reply_konly(resp, self.kernel).await.map_err(drop).unwrap();
                 }
             }
         }

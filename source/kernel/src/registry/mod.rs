@@ -1,4 +1,4 @@
-use core::any::TypeId;
+use core::{any::TypeId, sync::atomic::{AtomicU64, Ordering}, intrinsics::transmute};
 
 use mnemos_alloc::{containers::HeapFixedVec, heap::HeapGuard};
 use postcard::experimental::max_size::MaxSize;
@@ -7,11 +7,13 @@ use spitebuf::EnqueueError;
 use tracing::{debug, info};
 use uuid::{uuid, Uuid};
 
-use crate::comms::{
+use crate::{comms::{
     bbq,
     kchannel::{ErasedKProducer, KProducer},
     oneshot::{ReusableError, Sender},
-};
+}, Kernel};
+
+static NONCE: AtomicU64 = AtomicU64::new(0);
 
 /// A partial list of known UUIDs of driver services
 pub mod known_uuids {
@@ -159,6 +161,21 @@ pub struct Envelope<P> {
     service_id: ServiceId,
     client_id: ClientId,
     request_id: RequestResponseId,
+    nonce: u64,
+    src_task: u64,
+}
+
+impl<P> Envelope<P> {
+    pub fn trace_rx(&self) {
+        debug!(
+            service_id = self.service_id.0,
+            client_id = self.client_id.0,
+            response_id = self.request_id.id(),
+            src_nonce = self.nonce,
+            src_task = self.src_task,
+            "Received Message",
+        );
+    }
 }
 
 /// The [Message] kind represents a full reply/response sequence to
@@ -171,6 +188,13 @@ pub struct Envelope<P> {
 pub struct Message<RD: RegisteredDriver> {
     pub msg: Envelope<RD::Request>,
     pub reply: ReplyTo<RD>,
+}
+
+impl<RD: RegisteredDriver> Message<RD> {
+    // TODO THIS IS BAD
+    pub fn trace_rx(&self) {
+        self.msg.trace_rx();
+    }
 }
 
 /// A `ReplyTo` is used to allow the CLIENT of a service to choose the
@@ -242,6 +266,9 @@ pub struct UserspaceHandle {
     req_deser: ErasedDeserHandler,
     service_id: ServiceId,
     client_id: ClientId,
+
+    // TODO: I hate this!
+    kernel: &'static Kernel,
 }
 
 /// A KernelHandle is used to send typed messages to a kernelspace Driver
@@ -251,6 +278,9 @@ pub struct KernelHandle<RD: RegisteredDriver> {
     service_id: ServiceId,
     client_id: ClientId,
     request_ctr: u32,
+
+    // TODO: I hate this!
+    kernel: &'static Kernel,
 }
 
 type ErasedDeserHandler = unsafe fn(
@@ -259,6 +289,7 @@ type ErasedDeserHandler = unsafe fn(
     &bbq::MpscProducer,
     ServiceId,
     ClientId,
+    &'static Kernel,
 ) -> Result<(), UserHandlerError>;
 
 /// The payload of a registry item.
@@ -383,10 +414,10 @@ impl Registry {
     #[tracing::instrument(
         name = "Registry::get",
         level = "debug",
-        skip(self),
+        skip(self, kernel),
         fields(uuid = ?RD::UUID),
     )]
-    pub fn get<RD: RegisteredDriver>(&mut self) -> Option<KernelHandle<RD>> {
+    pub fn get<RD: RegisteredDriver>(&mut self, kernel: &'static Kernel) -> Option<KernelHandle<RD>> {
         let item = self.items.iter().find(|i| i.key == RD::UUID)?;
         if item.value.req_resp_tuple_id != RD::type_id().type_of() {
             return None;
@@ -397,6 +428,7 @@ impl Registry {
                 service_id: item.value.service_id,
                 client_id: ClientId(self.counter),
                 request_ctr: 0,
+                kernel,
             });
             info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
             self.counter = self.counter.wrapping_add(1);
@@ -415,10 +447,10 @@ impl Registry {
     #[tracing::instrument(
         name = "Registry::get_userspace",
         level = "debug",
-        skip(self),
+        skip(self, kernel),
         fields(uuid = ?RD::UUID),
     )]
-    pub fn get_userspace<RD>(&mut self) -> Option<UserspaceHandle>
+    pub fn get_userspace<RD>(&mut self, kernel: &'static Kernel) -> Option<UserspaceHandle>
     where
         RD: RegisteredDriver,
         RD::Request: Serialize + DeserializeOwned,
@@ -433,6 +465,7 @@ impl Registry {
             req_deser: item.value.req_deser?,
             service_id: item.value.service_id,
             client_id: ClientId(client_id),
+            kernel,
         })
     }
 }
@@ -452,6 +485,10 @@ impl<P> Envelope<P> {
             service_id: self.service_id,
             client_id: self.client_id,
             request_id: self.request_id.to_reply(),
+
+            // TODO THIS IS WRONG AND BAD
+            nonce: self.nonce,
+            src_task: self.src_task,
         }
     }
 }
@@ -463,12 +500,27 @@ impl<P> Envelope<P> {
 impl<RD: RegisteredDriver> ReplyTo<RD> {
     pub async fn reply_konly(
         self,
-        envelope: Envelope<Result<RD::Response, RD::Error>>,
+        mut envelope: Envelope<Result<RD::Response, RD::Error>>,
+        kernel: &'static Kernel,
     ) -> Result<(), ReplyError> {
+        let task_id: u64 = kernel.task_id()
+            .map(|task_id| {
+                // Sorry eliza
+                let task_id: u64 = unsafe { transmute(task_id) };
+                task_id
+            })
+            .unwrap_or(0xFFFF_FFFF_FFFF_FFFF);
+        let nonce = NONCE.fetch_add(1, Ordering::AcqRel);
+
+        // TODO THIS IS WRONG AND BAD
+        envelope.src_task = task_id;
+        envelope.nonce = nonce;
+
         debug!(
             service_id = envelope.service_id.0,
             client_id = envelope.client_id.0,
             response_id = envelope.request_id.id(),
+            nonce,
             "Replying KOnly",
         );
         match self {
@@ -492,12 +544,29 @@ where
     pub async fn reply(
         self,
         uuid_source: Uuid,
-        envelope: Envelope<Result<RD::Response, RD::Error>>,
+        mut envelope: Envelope<Result<RD::Response, RD::Error>>,
+        kernel: &'static Kernel,
     ) -> Result<(), ReplyError> {
+
+        let task_id: u64 = kernel.task_id()
+            .map(|task_id| {
+                // Sorry eliza
+                let task_id: u64 = unsafe { transmute(task_id) };
+                task_id
+            })
+            .unwrap_or(0xFFFF_FFFF_FFFF_FFFF);
+        let nonce = NONCE.fetch_add(1, Ordering::AcqRel);
+
+        // TODO THIS IS WRONG AND BAD
+        envelope.src_task = task_id;
+        envelope.nonce = nonce;
+
         debug!(
             service_id = envelope.service_id.0,
             client_id = envelope.client_id.0,
             response_id = envelope.request_id.id(),
+            nonce,
+            src_task = task_id,
             "Replying",
         );
         match self {
@@ -547,6 +616,7 @@ impl UserspaceHandle {
                 user_ring,
                 self.service_id,
                 self.client_id,
+                self.kernel,
             )
         }
     }
@@ -558,6 +628,15 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
     pub async fn send(&mut self, msg: RD::Request, reply: ReplyTo<RD>) -> Result<(), ()> {
         let request_id = RequestResponseId::new(self.request_ctr, MessageKind::Request);
         self.request_ctr = self.request_ctr.wrapping_add(1);
+        let nonce = NONCE.fetch_add(1, Ordering::AcqRel);
+        let task_id: u64 = self.kernel.task_id()
+            .map(|task_id| {
+                // Sorry eliza
+                let task_id: u64 = unsafe { transmute(task_id) };
+                task_id
+            })
+            .unwrap_or(0xFFFF_FFFF_FFFF_FFFF);
+
         let result = self
             .prod
             .enqueue_async(Message {
@@ -566,15 +645,21 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
                     service_id: self.service_id,
                     client_id: self.client_id,
                     request_id,
+                    nonce,
+                    src_task: task_id,
                 },
                 reply,
             })
             .await
             .map_err(drop)?;
+
+
+
         debug!(
             service_id = self.service_id.0,
             client_id = self.client_id.0,
             request_id = request_id.id(),
+            nonce,
             "Sent Request"
         );
         Ok(result)
@@ -597,6 +682,7 @@ unsafe fn map_deser<RD>(
     user_resp: &bbq::MpscProducer,
     service_id: ServiceId,
     client_id: ClientId,
+    kernel: &'static Kernel,
 ) -> Result<(), UserHandlerError>
 where
     RD: RegisteredDriver,
@@ -617,6 +703,15 @@ where
     let u_payload: RD::Request = postcard::from_bytes(umsg.req_bytes)
         .map_err(|_| UserHandlerError::DeserializationFailed)?;
 
+    let nonce = NONCE.fetch_add(1, Ordering::AcqRel);
+    let task_id: u64 = kernel.task_id()
+        .map(|task_id| {
+            // Sorry eliza
+            let task_id: u64 = transmute(task_id);
+            task_id
+        })
+        .unwrap_or(0xFFFF_FFFF_FFFF_FFFF);
+
     // Create the message type to be sent on the channel
     let msg: Message<RD> = Message {
         msg: Envelope {
@@ -624,6 +719,8 @@ where
             service_id,
             client_id,
             request_id: RequestResponseId::new(umsg.nonce, MessageKind::Request),
+            nonce,
+            src_task: task_id,
         },
         reply: ReplyTo::Userspace {
             nonce: umsg.nonce,
@@ -667,7 +764,7 @@ pub mod simple_serial {
     impl SimpleSerial {
         pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
             let kprod = kernel
-                .with_registry(|reg| reg.get::<SimpleSerial>())
+                .with_registry(|reg| reg.get::<SimpleSerial>(kernel))
                 .await?;
 
             Some(SimpleSerial {
@@ -682,6 +779,7 @@ pub mod simple_serial {
                 .await
                 .ok()?;
             let resp = self.rosc.receive().await.ok()?;
+            resp.trace_rx();
 
             let Response::PortHandle { handle } = resp.body.ok()?;
             Some(handle)

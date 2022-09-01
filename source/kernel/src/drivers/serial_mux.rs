@@ -62,6 +62,7 @@ struct CommanderTask {
     cmd: KConsumer<Message<SerialMux>>,
     out: bbq::MpscProducer,
     mux: HeapArc<Mutex<MuxingInfo>>,
+    kernel: &'static Kernel,
 }
 
 struct IncomingMuxerTask {
@@ -119,6 +120,7 @@ impl SerialMux {
             cmd: cmd_cons,
             out: sprod,
             mux: imutex.clone(),
+            kernel,
         };
         let muxer = IncomingMuxerTask {
             incoming: scons,
@@ -180,7 +182,7 @@ impl PortHandle {
 
 impl SerialMuxHandle {
     pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
-        let prod = kernel.with_registry(|reg| reg.get::<SerialMux>()).await?;
+        let prod = kernel.with_registry(|reg| reg.get::<SerialMux>(kernel)).await?;
 
         Some(SerialMuxHandle {
             prod,
@@ -198,6 +200,7 @@ impl SerialMuxHandle {
             .ok()?;
 
         let resp = self.reply.receive().await.ok()?;
+        resp.trace_rx();
         let body = resp.body.ok()?;
 
         let Response::PortRegistered(port) = body;
@@ -246,6 +249,7 @@ impl CommanderTask {
     async fn run(self) {
         loop {
             let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
+            msg.trace_rx();
             let Message { msg: req, reply } = msg;
             match req.body {
                 Request::RegisterPort { port_id, capacity } => {
@@ -257,7 +261,7 @@ impl CommanderTask {
 
                     let resp = req.reply_with(res);
 
-                    reply.reply_konly(resp).await.map_err(drop).unwrap();
+                    reply.reply_konly(resp, self.kernel).await.map_err(drop).unwrap();
                 }
             }
         }

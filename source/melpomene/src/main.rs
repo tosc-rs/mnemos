@@ -205,7 +205,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
                     );
 
                     let date_str =
-                        format!("{:02}/{:02}/{:02}", time.month(), time.day(), time.year());
+                        format!("{:04}-{:02}-{:02}", time.year(), time.month(), time.day());
 
                     let date_text = Text::new(&date_str, Point::new(28, 35), datetime_style);
                     let time_text = Text::new(&time_str, Point::new(88, 35), datetime_style);
