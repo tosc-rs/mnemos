@@ -105,30 +105,13 @@ impl Name {
 
         new
     }
-}
 
-static ONE: Bide = Bide { de: DictionaryEntry {
-        name: Name::new_from_arr(Mode::Run, 5, *b"hello                          "),
-        link: None,
-        code_pointer: Fif::undefined,
-        parameter_field: [],
-    }};
-static TWO: Bide = Bide { de: DictionaryEntry {
-        name: Name::new_from_arr(Mode::Run, 5, *b"hello                          "),
-        link: Some(unsafe {
-            NonNull::new_unchecked(
-                ((&ONE.de) as *const DictionaryEntry) as *mut DictionaryEntry
-            )
-        }),
-        code_pointer: Fif::undefined,
-        parameter_field: [],
-    }};
-
-unsafe impl Sync for Bide { }
-
-#[repr(transparent)]
-struct Bide {
-    de: DictionaryEntry,
+    pub fn as_str(&self) -> &str {
+        let len = (self.prec_len & 0x7F) as usize;
+        unsafe {
+            core::str::from_utf8_unchecked(&self.name[..len])
+        }
+    }
 }
 
 // Starting FORTH: page 220
@@ -177,7 +160,14 @@ impl DictionaryEntry {
 
     // TODO: This might be more sound if I make this part of the "find" function
     pub unsafe fn get_run<'a, 'b>(this: NonNull<Self>) -> (WordFunc<'a, 'b>, NonNull<Word>) {
-        let wf: WordFunc<'static, 'static> = this.as_ref().code_pointer;
+        // println!("{:02X?}", core::slice::from_raw_parts(
+        //     this.as_ptr().cast::<u8>(),
+        //     core::mem::size_of::<DictionaryEntry>(),
+        // ));
+        // panic!("gr: {:016X}", this.as_ptr() as usize);
+        let de: &DictionaryEntry = this.as_ref();
+
+        let wf: WordFunc<'static, 'static> = de.code_pointer;
         let wf: WordFunc<'a, 'b> = core::mem::transmute(wf);
         let cfa = DictionaryEntry::pfa(this);
         (wf, cfa)
@@ -404,71 +394,119 @@ impl<'a, 'b> Fif<'a, 'b> {
         }))
     }
 
+    pub fn interpret(self, mut cfa: *mut Word) -> Result<(), ()> {
+        Ok(())
+    }
+
     pub fn literal(self, _cfa: *mut Word) -> Result<(), ()> {
         // TODO: Do I only use this as a sentinel?
         Err(())
     }
 
     pub fn colon(self, cfa: *mut Word) -> Result<(), ()> {
-        match self.forth.mode {
-            Mode::Run => todo!(),
-            Mode::Compile => {
-                let name = self.input.next_word().ok_or(())?;
-                let name = Name::new_from_bstr(Mode::Run, name.as_bytes());
+        let old_mode = core::mem::replace(&mut self.forth.mode, Mode::Compile);
+        let name = self.input.next_word().ok_or(())?;
+        let name = Name::new_from_bstr(Mode::Run, name.as_bytes());
 
-                // TODO, I could check that there is at least a `;` here,
-                // but that ignores any other errors. Let's plough ahead,
-                // at the risk we "leak" dictionary memory in the case of
-                // a bad compile. Later: we can figure out how to "unwind"
-                // this and reclaim the allocated memory
+        // TODO, I could check that there is at least a `;` here,
+        // but that ignores any other errors. Let's plough ahead,
+        // at the risk we "leak" dictionary memory in the case of
+        // a bad compile. Later: we can figure out how to "unwind"
+        // this and reclaim the allocated memory
 
-                let word_base = self
-                    .forth
-                    .dict_alloc
-                    .bump::<DictionaryEntry>()
-                    .ok_or(())?;
+        let word_base = self
+            .forth
+            .dict_alloc
+            .bump::<DictionaryEntry>()
+            .ok_or(())?;
 
-                unsafe {
-                    word_base.as_ptr().write(DictionaryEntry {
-                        name,
-                        // Don't link until we know we have a "good" entry!
-                        link: None,
-                        code_pointer: Fif::colon,
-                        parameter_field: [],
-                    });
-                }
-
-                // Rather than having an "exit" word, I'll prepend the
-                // cfa array with a length field (NOT including the length
-                // itself).
-                let len: &mut u32 = {
-                    let len_word = self
-                        .forth
-                        .dict_alloc
-                        .bump::<Word>()
-                        .ok_or(())?;
-                    unsafe {
-                        len_word.as_ptr().write(Word::data(0));
-                        &mut (*len_word.as_ptr()).data
-                    }
-                };
-
-                let mut semicolon = false;
-
-                while let Some(word) = self.input.next_word() {
-                    match self.forth.lookup(word)? {
-                        Lookup::Builtin { func } => todo!(),
-                        Lookup::Dict { func, cfa } => todo!(),
-                        Lookup::Literal { val } => todo!(),
-                    }
-                }
-                // Link to run dict
-                // (&mut *word_base.as_ptr()).link = self.forth.run_dict_tail.take();
-                // self.forth.run_dict_tail = Some(word_base);
-            },
+        unsafe {
+            word_base.as_ptr().write(DictionaryEntry {
+                name,
+                // Don't link until we know we have a "good" entry!
+                link: None,
+                code_pointer: Fif::interpret,
+                parameter_field: [],
+            });
+            {
+                println!("{:02X?}", core::slice::from_raw_parts(
+                    word_base.as_ptr().cast::<u8>(),
+                    core::mem::size_of::<DictionaryEntry>(),
+                ));
+            }
+            println!("c: {:016X}", word_base.as_ptr() as usize);
+            println!(" l:  {}", word_base.as_ref().link.is_some());
+            println!(" cp: {:016X}", word_base.as_ref().code_pointer as usize);
+            println!(" pf: {:016X}", &word_base.as_ref().parameter_field as *const _ as usize);
         }
 
-        todo!()
+        // Rather than having an "exit" word, I'll prepend the
+        // cfa array with a length field (NOT including the length
+        // itself).
+        let len: &mut u32 = {
+            let len_word = self
+                .forth
+                .dict_alloc
+                .bump::<Word>()
+                .ok_or(())?;
+            unsafe {
+                len_word.as_ptr().write(Word::data(0));
+                &mut (*len_word.as_ptr()).data
+            }
+        };
+
+        let mut semicolon = false;
+
+        while let Some(word) = self.input.next_word() {
+            if word == ";" {
+                semicolon = true;
+                break;
+            }
+            match self.forth.lookup(word)? {
+                Lookup::Builtin { func } => {
+                    let fptr: *mut () = func as *mut ();
+                    let wptr = self.forth.dict_alloc.bump::<Word>().ok_or(())?;
+                    unsafe {
+                        wptr.as_ptr().write(Word::ptr(fptr));
+                    }
+                    *len += 1;
+                },
+                Lookup::Dict { de } => {
+                    let dptr: *mut () = de.as_ptr().cast();
+                    let wptr = self.forth.dict_alloc.bump::<Word>().ok_or(())?;
+                    unsafe {
+                        wptr.as_ptr().write(Word::ptr(dptr));
+                    }
+                    *len += 1;
+                },
+                Lookup::Literal { val } => {
+                    let fptr: *mut () = Fif::literal as *mut ();
+                    let wptr = self.forth.dict_alloc.bump::<Word>().ok_or(())?;
+                    unsafe {
+                        wptr.as_ptr().write(Word::ptr(fptr));
+                    }
+                    *len += 1;
+
+                    let wptr = self.forth.dict_alloc.bump::<Word>().ok_or(())?;
+                    unsafe {
+                        wptr.as_ptr().write(Word::data(val));
+                    }
+                    *len += 1;
+                },
+            }
+        }
+
+        if semicolon {
+            // Link to run dict
+            unsafe {
+                (&mut *word_base.as_ptr()).link = self.forth.run_dict_tail.take();
+            }
+            self.forth.run_dict_tail = Some(word_base);
+            self.forth.mode = old_mode;
+            Ok(())
+        } else {
+            Err(())
+        }
     }
 }
 
@@ -477,8 +515,7 @@ pub enum Lookup<'a, 'b> {
         func: WordFunc<'a, 'b>,
     },
     Dict {
-        func: WordFunc<'a, 'b>,
-        cfa: NonNull<Word>,
+        de: NonNull<DictionaryEntry>,
     },
     Literal {
         val: u32,
@@ -494,6 +531,13 @@ type WordFunc<'a, 'b> = fn(Fif<'a, 'b>, *mut Word) -> Result<(), ()>;
 // so we can irrefutably bind the forth context and input buffers with
 // different lifetimes.
 impl Forth {
+
+    const BUILTINS: &'static [(&'static str, WordFunc<'static, 'static>)] = &[
+        ("add", Fif::add),
+        (".", Fif::pop_print),
+        (":", Fif::colon),
+        ("(interpret)", Fif::interpret),
+    ];
 
     pub unsafe fn new(
         stack_buf: (*mut Word, usize),
@@ -514,15 +558,27 @@ impl Forth {
         u32::from_str(word).ok()
     }
 
-    fn find_in_dict<'a>(&self, _word: &'a str) -> Option<NonNull<DictionaryEntry>> {
+    fn find_in_dict<'a>(&self, word: &'a str) -> Option<NonNull<DictionaryEntry>> {
+        let mut optr: Option<&NonNull<DictionaryEntry>> = self.run_dict_tail.as_ref();
+        while let Some(ptr) = optr.take() {
+            let de = unsafe { ptr.as_ref() };
+            if de.name.as_str() == word {
+                return Some(*ptr);
+            }
+            optr = de.link.as_ref();
+        }
         None
     }
 
     fn find_builtin<'a, 'b>(word: &'b str) -> Option<WordFunc<'a, 'b>> {
-        Some(match word {
-            "add" => Fif::add,
-            "." => Fif::pop_print,
-            _ => return None,
+        Self::BUILTINS.iter().find_map(|(n, func)| {
+            if *n == word {
+                let func: WordFunc<'static, 'static> = *func;
+                let func: WordFunc<'a, 'b> = unsafe { core::mem::transmute(func) };
+                Some(func)
+            } else {
+                None
+            }
         })
     }
 
@@ -530,8 +586,7 @@ impl Forth {
         if let Some(func) = Self::find_builtin(word) {
             Ok(Lookup::Builtin { func })
         } else if let Some(entry) = self.find_in_dict(word) {
-            let (func, cfa) = unsafe { DictionaryEntry::get_run(entry) };
-            Ok(Lookup::Dict { func, cfa })
+            Ok(Lookup::Dict { de: entry })
         } else if let Some(val) = Self::parse_num(word) {
             Ok(Lookup::Literal { val })
         } else {
@@ -541,9 +596,13 @@ impl Forth {
 
     pub fn process_line<'a>(&mut self, line: &'a mut WordStrBuf) -> Result<(), ()> {
         while let Some(word) = line.next_word() {
+            println!("{}", word);
             match self.lookup(word)? {
                 Lookup::Builtin { func } => func(Fif { forth: self, input: line }, null_mut()),
-                Lookup::Dict { func, cfa } => func(Fif { forth: self, input: line }, cfa.as_ptr()),
+                Lookup::Dict { de } => {
+                    let (func, cfa) = unsafe { DictionaryEntry::get_run(de) };
+                    func(Fif { forth: self, input: line }, cfa.as_ptr())
+                },
                 Lookup::Literal { val } => {
                     self.data_stack.push(Word::data(val))
                 },
@@ -559,19 +618,23 @@ pub mod test {
         alloc::{GlobalAlloc, Layout, System},
         mem::MaybeUninit,
         ptr::{addr_of_mut, NonNull},
+        cell::UnsafeCell,
     };
 
     use crate::{DictionaryBump, DictionaryEntry, Name, Stack, Word, Forth, WordStrBuf, Fif, Mode};
 
     #[test]
     fn forth() {
-        let payload_stack: *mut Word = Box::leak(Box::new(MaybeUninit::<[Word; 256]>::uninit()))
+        let payload_stack: *mut Word = Box::leak(Box::new(UnsafeCell::new(MaybeUninit::<[Word; 256]>::uninit())))
+            .get_mut()
             .as_mut_ptr()
             .cast();
-        let input_buf: *mut u8 = Box::leak(Box::new(MaybeUninit::<[u8; 256]>::uninit()))
+        let input_buf: *mut u8 = Box::leak(Box::new(UnsafeCell::new(MaybeUninit::<[u8; 256]>::uninit())))
+            .get_mut()
             .as_mut_ptr()
             .cast();
-        let dict_buf: *mut u8 = Box::leak(Box::new(MaybeUninit::<[u8; 512]>::uninit()))
+        let dict_buf: *mut u8 = Box::leak(Box::new(UnsafeCell::new(MaybeUninit::<[u8; 512]>::uninit())))
+            .get_mut()
             .as_mut_ptr()
             .cast();
 
@@ -582,6 +645,11 @@ pub mod test {
         ) };
         input.fill("2 3 add .").unwrap();
         forth.process_line(&mut input).unwrap();
+        input.fill(": yay 2 3 add . ;").unwrap();
+        forth.process_line(&mut input).unwrap();
+        input.fill("yay yay yay").unwrap();
+        forth.process_line(&mut input).unwrap();
+
         panic!();
     }
 
