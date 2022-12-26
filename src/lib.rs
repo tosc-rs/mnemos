@@ -1,6 +1,7 @@
 use core::ptr::NonNull;
 use core::{alloc::Layout, ptr::addr_of_mut, str::SplitWhitespace};
 use core::str::FromStr;
+use std::mem::{MaybeUninit, transmute};
 use std::ptr::null_mut;
 
 // SAFETY: James needs to audit basically every use of `wrapping_x` on a pointer type.
@@ -21,12 +22,20 @@ pub union Word {
 impl Word {
     #[inline]
     fn data(data: u32) -> Self {
-        Word { data }
+        let mut mu_word: MaybeUninit<Word> = MaybeUninit::zeroed();
+        unsafe {
+            mu_word.as_mut_ptr().cast::<u32>().write(data);
+            mu_word.assume_init()
+        }
     }
 
     #[inline]
     fn ptr<T>(ptr: *mut T) -> Self {
-        Word { ptr: ptr.cast() }
+        let mut mu_word: MaybeUninit<Word> = MaybeUninit::zeroed();
+        unsafe {
+            mu_word.as_mut_ptr().cast::<*mut T>().write(ptr);
+            mu_word.assume_init()
+        }
     }
 }
 
@@ -266,7 +275,7 @@ impl DictionaryBump {
             None
         } else {
             self.cur = new_cur;
-            Some(unsafe { NonNull::new_unchecked(new_cur.cast()) })
+            Some(unsafe { NonNull::new_unchecked(align_cur.cast()) })
         }
     }
 }
@@ -382,7 +391,7 @@ impl<'a, 'b> Fif<'a, 'b> {
 
     pub fn pop_print(self, _cfa: *mut Word) -> Result<(), ()> {
         let a = self.forth.data_stack.pop().ok_or(())?;
-        println!("{}", unsafe { a.data });
+        print!("{} ", unsafe { a.data });
         Ok(())
     }
 
@@ -394,11 +403,51 @@ impl<'a, 'b> Fif<'a, 'b> {
         }))
     }
 
-    pub fn interpret(self, mut cfa: *mut Word) -> Result<(), ()> {
+    pub fn interpret(mut self, cfa: *mut Word) -> Result<(), ()> {
+        let mut words = unsafe {
+            let len = *cfa.cast::<u32>() as usize;
+            if len == 0 {
+                return Ok(());
+            }
+            core::slice::from_raw_parts(cfa.add(1), len)
+        }.iter();
+
+        const LIT: *mut () = Fif::literal as *mut WordFunc<'static, 'static> as *mut ();
+        while let Some(word) = words.next() {
+            let ptr = unsafe { word.ptr };
+            let builtin = Forth::BUILTINS.iter().find_map(|(_name, func)| {
+                let bif = (*func) as *mut ();
+                if bif == ptr {
+                    let a: WordFunc<'static, 'static> = *func;
+                    let b: WordFunc<'_, '_> = unsafe { transmute(a) };
+                    Some(b)
+                } else {
+                    None
+                }
+            });
+
+            let fif2 = Fif { forth: self.forth, input: self.input };
+            if let Some(func) = builtin {
+                func(fif2, null_mut())?;
+            } else if LIT == ptr {
+                let lit = words.next().ok_or(())?;
+                let val = unsafe { lit.data };
+                fif2.forth.data_stack.push(Word::data(val))?;
+            } else {
+                let (wf, cfa) = unsafe {
+                    let de = NonNull::new_unchecked(ptr.cast::<DictionaryEntry>());
+                    DictionaryEntry::get_run(de)
+                };
+                wf(fif2, cfa.as_ptr())?;
+            }
+        }
+
+
         Ok(())
     }
 
     pub fn literal(self, _cfa: *mut Word) -> Result<(), ()> {
+        panic!();
         // TODO: Do I only use this as a sentinel?
         Err(())
     }
@@ -428,16 +477,16 @@ impl<'a, 'b> Fif<'a, 'b> {
                 code_pointer: Fif::interpret,
                 parameter_field: [],
             });
-            {
-                println!("{:02X?}", core::slice::from_raw_parts(
-                    word_base.as_ptr().cast::<u8>(),
-                    core::mem::size_of::<DictionaryEntry>(),
-                ));
-            }
-            println!("c: {:016X}", word_base.as_ptr() as usize);
-            println!(" l:  {}", word_base.as_ref().link.is_some());
-            println!(" cp: {:016X}", word_base.as_ref().code_pointer as usize);
-            println!(" pf: {:016X}", &word_base.as_ref().parameter_field as *const _ as usize);
+            // {
+            //     println!("{:02X?}", core::slice::from_raw_parts(
+            //         word_base.as_ptr().cast::<u8>(),
+            //         core::mem::size_of::<DictionaryEntry>(),
+            //     ));
+            // }
+            // println!("c: {:016X}", word_base.as_ptr() as usize);
+            // println!(" l:  {}", word_base.as_ref().link.is_some());
+            // println!(" cp: {:016X}", word_base.as_ref().code_pointer as usize);
+            // println!(" pf: {:016X}", &word_base.as_ref().parameter_field as *const _ as usize);
         }
 
         // Rather than having an "exit" word, I'll prepend the
@@ -532,6 +581,7 @@ type WordFunc<'a, 'b> = fn(Fif<'a, 'b>, *mut Word) -> Result<(), ()>;
 // different lifetimes.
 impl Forth {
 
+    // DON'T include `literal` here!
     const BUILTINS: &'static [(&'static str, WordFunc<'static, 'static>)] = &[
         ("add", Fif::add),
         (".", Fif::pop_print),
@@ -596,7 +646,7 @@ impl Forth {
 
     pub fn process_line<'a>(&mut self, line: &'a mut WordStrBuf) -> Result<(), ()> {
         while let Some(word) = line.next_word() {
-            println!("{}", word);
+            // println!("{}", word);
             match self.lookup(word)? {
                 Lookup::Builtin { func } => func(Fif { forth: self, input: line }, null_mut()),
                 Lookup::Dict { de } => {
@@ -643,12 +693,22 @@ pub mod test {
             (payload_stack, 256),
             (dict_buf, 512),
         ) };
-        input.fill("2 3 add .").unwrap();
-        forth.process_line(&mut input).unwrap();
-        input.fill(": yay 2 3 add . ;").unwrap();
-        forth.process_line(&mut input).unwrap();
-        input.fill("yay yay yay").unwrap();
-        forth.process_line(&mut input).unwrap();
+
+        let lines = &[
+            "2 3 add .",
+            ": yay 2 3 add . ;",
+            "yay yay yay",
+            ": boop yay yay ;",
+            "boop",
+        ];
+
+        for line in lines {
+            println!("{}", line);
+            print!(" => ");
+            input.fill(line).unwrap();
+            forth.process_line(&mut input).unwrap();
+            println!("ok.");
+        }
 
         panic!();
     }
