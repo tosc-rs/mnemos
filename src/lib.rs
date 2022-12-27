@@ -173,8 +173,12 @@ impl<'a, 'b> Fif<'a, 'b> {
     }
 
     pub fn colon(self) -> Result<(), ()> {
-        let old_mode = core::mem::replace(&mut self.forth.mode, Mode::Compile);
         let name = self.input.next_word().ok_or(())?;
+        if Fif::BUILTINS.iter().map(|(name, _func)| name).any(|bin| *bin == name) {
+            return Err(());
+        }
+
+        let old_mode = core::mem::replace(&mut self.forth.mode, Mode::Compile);
         let name = Name::new_from_bstr(Mode::Run, name.as_bytes());
 
         // Allocate and initialize the dictionary entry
