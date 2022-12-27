@@ -1,5 +1,6 @@
 use core::{mem::transmute, ptr::NonNull, str::FromStr};
 
+pub mod cfa;
 pub mod dictionary;
 pub mod input;
 pub mod name;
@@ -54,8 +55,8 @@ impl Forth {
         }
     }
 
-    fn parse_num(word: &str) -> Option<u32> {
-        u32::from_str(word).ok()
+    fn parse_num(word: &str) -> Option<i32> {
+        i32::from_str(word).ok()
     }
 
     fn find_in_dict<'a>(&self, word: &'a str) -> Option<NonNull<DictionaryEntry>> {
@@ -200,7 +201,7 @@ impl<'a, 'b> Fif<'a, 'b> {
         // Rather than having an "exit" word, I'll prepend the
         // cfa array with a length field (NOT including the length
         // itself).
-        let len: &mut u32 = {
+        let len: &mut i32 = {
             let len_word = self.forth.dict_alloc.bump::<Word>().ok_or(())?;
             unsafe {
                 len_word.as_ptr().write(Word::data(0));
@@ -350,7 +351,7 @@ impl<'a, 'b> Fif<'a, 'b> {
 pub enum Lookup<'a, 'b> {
     Builtin { func: BuiltinFunc<'a, 'b> },
     Dict { de: NonNull<DictionaryEntry> },
-    Literal { val: u32 },
+    Literal { val: i32 },
 }
 
 #[cfg(test)]

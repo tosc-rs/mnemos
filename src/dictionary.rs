@@ -186,7 +186,7 @@ pub mod test {
                 DictionaryEntry::pfa(node_a)
                     .as_ptr()
                     .add(i)
-                    .write(Word::data(i as u32));
+                    .write(Word::data(i as i32));
             }
         }
     }

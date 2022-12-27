@@ -61,11 +61,11 @@ pub mod test {
         let mut stack = Stack::new(payload.ptr(), payload.len());
 
         for _ in 0..3 {
-            for i in 0..(ITEMS as u32) {
+            for i in 0..(ITEMS as i32) {
                 assert!(stack.push(Word::data(i)).is_ok());
             }
             assert!(stack.push(Word::data(100)).is_err());
-            for i in (0..(ITEMS as u32)).rev() {
+            for i in (0..(ITEMS as i32)).rev() {
                 assert_eq!(unsafe { stack.pop().unwrap().data }, i);
             }
             assert!(stack.pop().is_none());

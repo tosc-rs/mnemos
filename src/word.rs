@@ -4,16 +4,16 @@ use core::mem::MaybeUninit;
 // so the *data* is always 32 bits, but the pointer is whatever the
 // native word size is.
 pub union Word {
-    pub data: u32,
+    pub data: i32,
     pub ptr: *mut (),
 }
 
 impl Word {
     #[inline]
-    pub fn data(data: u32) -> Self {
+    pub fn data(data: i32) -> Self {
         let mut mu_word: MaybeUninit<Word> = MaybeUninit::zeroed();
         unsafe {
-            mu_word.as_mut_ptr().cast::<u32>().write(data);
+            mu_word.as_mut_ptr().cast::<i32>().write(data);
             mu_word.assume_init()
         }
     }
