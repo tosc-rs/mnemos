@@ -6,3 +6,12 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+
+# [dependencies.serde]
+# version = "1.0.152"
+# default-features = false
+# features = ["derive"]
+
+# [dependencies.postcard]
+# version = "1.0.2"
+# default-features = false
