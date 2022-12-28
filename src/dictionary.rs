@@ -3,6 +3,11 @@ use core::alloc::Layout;
 use core::ptr::addr_of_mut;
 use core::ptr::NonNull;
 
+#[derive(Debug, PartialEq)]
+pub enum BumpError {
+    OutOfMemory,
+}
+
 // Starting FORTH: page 220
 #[repr(C)]
 pub struct DictionaryEntry {
@@ -91,21 +96,21 @@ impl DictionaryBump {
         }
     }
 
-    pub fn bump<T: Sized>(&mut self) -> Option<NonNull<T>> {
+    pub fn bump<T: Sized>(&mut self) -> Result<NonNull<T>, BumpError> {
         let offset = self.cur.align_offset(Layout::new::<T>().align());
         let align_cur = self.cur.wrapping_add(offset);
         let new_cur = align_cur.wrapping_add(Layout::new::<T>().size());
 
         if new_cur > self.end {
-            None
+            Err(BumpError::OutOfMemory)
         } else {
             self.cur = new_cur;
-            Some(unsafe { NonNull::new_unchecked(align_cur.cast()) })
+            Ok(unsafe { NonNull::new_unchecked(align_cur.cast()) })
         }
     }
 
-    pub fn bump_write<T: Sized>(&mut self, val: T) -> Result<(), ()> {
-        let nnt = self.bump::<T>().ok_or(())?;
+    pub fn bump_write<T: Sized>(&mut self, val: T) -> Result<(), BumpError> {
+        let nnt = self.bump::<T>()?;
         unsafe {
             nnt.as_ptr().write(val);
         }
@@ -135,7 +140,7 @@ pub mod test {
     use crate::{
         dictionary::{DictionaryBump, DictionaryEntry},
         test::LeakBox,
-        Fif, Mode, Name, Word,
+        Fif, Mode, Name, Word, Error,
     };
 
     #[test]
@@ -164,11 +169,11 @@ pub mod test {
 
     #[test]
     fn linked_list() {
-        fn undefined(_fif: Fif<'_, '_>, _cfa: *mut Word) -> Result<(), ()> {
+        fn undefined(_fif: Fif<'_, '_>) -> Result<(), Error> {
             #[cfg(test)]
             panic!("WHAT IS THIS EVEN");
             #[allow(unreachable_code)]
-            Err(())
+            Err(Error::ShouldBeUnreachable)
         }
 
         let layout_10 = unsafe { DictionaryEntry::layout_for_arr(10) };

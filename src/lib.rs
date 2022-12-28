@@ -1,11 +1,17 @@
-use core::{mem::transmute, ptr::NonNull, str::FromStr};
+// For now...
+#![allow(clippy::missing_safety_doc, clippy::result_unit_err)]
 
-pub mod cfa;
+use core::{ptr::NonNull, str::FromStr};
+use std::ptr::null_mut;
+
 pub mod dictionary;
 pub mod input;
 pub mod name;
 pub mod stack;
 pub mod word;
+
+use dictionary::BumpError;
+use stack::StackError;
 
 use crate::{
     dictionary::{DictionaryBump, DictionaryEntry},
@@ -15,16 +21,41 @@ use crate::{
     word::Word,
 };
 
+#[derive(Debug, PartialEq)]
+pub enum Error {
+    Stack(StackError),
+    Bump(BumpError),
+    ReturnStackMissingCFA,
+    ReturnStackMissingCFAIdx,
+    ReturnStackMissingParentCFA,
+    ReturnStackMissingParentCFAIdx,
+    CFANotInDict(Word),
+    CFAIdxOutInvalid(Word),
+    WordNotInDict,
+    CFAIdxInInvalid(usize),
+    ColonCompileMissingName,
+    ColonCompileMissingSemicolon,
+    LookupFailed,
+    ShouldBeUnreachable,
+}
+
+impl From<StackError> for Error {
+    fn from(se: StackError) -> Self {
+        Error::Stack(se)
+    }
+}
+
+impl From<BumpError> for Error {
+    fn from(be: BumpError) -> Self {
+        Error::Bump(be)
+    }
+}
+
 /// `WordFunc` represents a function that can be used as part of a dictionary word.
 ///
 /// It takes the current "full context" (e.g. `Fif`), as well as the CFA pointer
 /// to the dictionary entry.
-type WordFunc<'a, 'b> = fn(Fif<'a, 'b>, *mut Word) -> Result<(), ()>;
-
-/// `BuildinFunc` represents a function that is recognized as a pre-compiled built-in
-/// of the VM/interpreter. It does not take a CFA, as it is not stored as a dictionary
-/// entry.
-type BuiltinFunc<'a, 'b> = fn(Fif<'a, 'b>) -> Result<(), ()>;
+type WordFunc<'a, 'b> = fn(Fif<'a, 'b>) -> Result<(), Error>;
 
 /// Forth is the "context" of the VM/interpreter.
 ///
@@ -35,6 +66,7 @@ type BuiltinFunc<'a, 'b> = fn(Fif<'a, 'b>) -> Result<(), ()>;
 pub struct Forth {
     mode: Mode,
     data_stack: Stack,
+    return_stack: Stack,
     dict_alloc: DictionaryBump,
     run_dict_tail: Option<NonNull<DictionaryEntry>>,
 
@@ -43,23 +75,51 @@ pub struct Forth {
 }
 
 impl Forth {
-    pub unsafe fn new(stack_buf: (*mut Word, usize), dict_buf: (*mut u8, usize)) -> Self {
-        let data_stack = Stack::new(stack_buf.0, stack_buf.1);
+    pub unsafe fn new(
+        dstack_buf: (*mut Word, usize),
+        rstack_buf: (*mut Word, usize),
+        dict_buf: (*mut u8, usize),
+    ) -> Result<Self, Error> {
+        let data_stack = Stack::new(dstack_buf.0, dstack_buf.1);
+        let return_stack = Stack::new(rstack_buf.0, rstack_buf.1);
         let dict_alloc = DictionaryBump::new(dict_buf.0, dict_buf.1);
-        Self {
+        let mut new = Self {
             mode: Mode::Run,
             data_stack,
+            return_stack,
             dict_alloc,
             run_dict_tail: None,
             _comp_dict_tail: None,
+        };
+
+        let mut last = None;
+
+        for (name, func) in Fif::BUILTINS {
+            let name = Name::new_from_bstr(Mode::Run, name.as_bytes());
+
+            // Allocate and initialize the dictionary entry
+            let dict_base = new.dict_alloc.bump::<DictionaryEntry>()?;
+            println!("INIT CMP: '{}' - {:016X}", name.as_str(), dict_base.as_ptr() as usize);
+            unsafe {
+                dict_base.as_ptr().write(DictionaryEntry {
+                    name,
+                    link: last.take(),
+                    code_pointer: *func,
+                    parameter_field: [],
+                });
+            }
+            last = Some(dict_base);
         }
+
+        new.run_dict_tail = last;
+        Ok(new)
     }
 
     fn parse_num(word: &str) -> Option<i32> {
         i32::from_str(word).ok()
     }
 
-    fn find_in_dict<'a>(&self, word: &'a str) -> Option<NonNull<DictionaryEntry>> {
+    fn find_in_dict(&self, word: &str) -> Option<NonNull<DictionaryEntry>> {
         let mut optr: Option<&NonNull<DictionaryEntry>> = self.run_dict_tail.as_ref();
         while let Some(ptr) = optr.take() {
             let de = unsafe { ptr.as_ref() };
@@ -71,73 +131,41 @@ impl Forth {
         None
     }
 
-    fn find_builtin<'a, 'b>(word: &'b str) -> Option<BuiltinFunc<'a, 'b>> {
-        Fif::BUILTINS.iter().find_map(|(n, func)| {
-            if *n == word {
-                let func: BuiltinFunc<'static, 'static> = *func;
-                let func: BuiltinFunc<'a, 'b> = unsafe { core::mem::transmute(func) };
-                Some(func)
-            } else {
-                None
-            }
-        })
-    }
-
-    pub fn lookup<'a>(&self, word: &'a str) -> Result<Lookup<'_, 'a>, ()> {
-        if let Some(func) = Self::find_builtin(word) {
-            Ok(Lookup::Builtin { func })
-        } else if let Some(entry) = self.find_in_dict(word) {
+    pub fn lookup(&self, word: &str) -> Result<Lookup, Error> {
+        if let Some(entry) = self.find_in_dict(word) {
             Ok(Lookup::Dict { de: entry })
         } else if let Some(val) = Self::parse_num(word) {
             Ok(Lookup::Literal { val })
         } else {
-            Err(())
+            Err(Error::LookupFailed)
         }
     }
 
-    pub fn process_line<'a>(&mut self, line: &'a mut WordStrBuf) -> Result<(), ()> {
+    pub fn process_line(&mut self, line: &mut WordStrBuf) -> Result<(), Error> {
+        self.return_stack.push(Word::ptr(null_mut::<Word>()))?; // Fake CFA
         while let Some(word) = line.next_word() {
             match self.lookup(word)? {
-                Lookup::Builtin { func } => {
-                    let before_compile_alloc = self.dict_alloc.cur;
-                    let before_compile_dict = self.run_dict_tail.clone();
-                    // TODO: Also check run dict, once we use that
-                    assert!(self._comp_dict_tail.is_none());
-
-                    let res = func(Fif {
-                        forth: self,
-                        input: line,
-                    });
-
-                    // If we are compiling, and the process fails, rewind the allocator
-                    // to this position
-                    if func == Fif::colon {
-                        if res.is_err() {
-                            if before_compile_dict == self.run_dict_tail {
-                                // Rewind the allocator to before the start of this compilation
-                                self.dict_alloc.cur = before_compile_alloc;
-                            } else {
-                                #[cfg(test)]
-                                panic!("compilation failed but dict LL was modified?");
-                            }
-                        }
-                    }
-
-                    res
-                }
                 Lookup::Dict { de } => {
+                    println!("PLLU - {}", word);
                     let (func, cfa) = unsafe { DictionaryEntry::get_run(de) };
-                    func(
+                    self.return_stack.push(Word::data(0))?;                 // Fake offset
+                    self.return_stack.push(Word::ptr(cfa.as_ptr()))?;       // Calling CFA
+                    let res = func(
                         Fif {
                             forth: self,
                             input: line,
                         },
-                        cfa.as_ptr(),
-                    )
+                    );
+                    self.return_stack.pop().ok_or(Error::ReturnStackMissingCFA)?;
+                    self.return_stack.pop().ok_or(Error::ReturnStackMissingParentCFAIdx)?;
+                    res?;
                 }
-                Lookup::Literal { val } => self.data_stack.push(Word::data(val)),
-            }?;
+                Lookup::Literal { val } => {
+                    self.data_stack.push(Word::data(val))?;
+                },
+            }
         }
+        self.return_stack.pop().ok_or(Error::ReturnStackMissingParentCFA)?;
         Ok(())
     }
 }
@@ -155,39 +183,43 @@ pub struct Fif<'a, 'b> {
 }
 
 impl<'a, 'b> Fif<'a, 'b> {
-    const BUILTINS: &'static [(&'static str, BuiltinFunc<'static, 'static>)] =
-        &[("add", Fif::add), (".", Fif::pop_print), (":", Fif::colon)];
+    const BUILTINS: &'static [(&'static str, WordFunc<'static, 'static>)] =
+        &[
+            ("add", Fif::add),
+            (".", Fif::pop_print),
+            (":", Fif::colon),
+            ("(literal)", Fif::literal),
+        ];
 
-    pub fn pop_print(self) -> Result<(), ()> {
-        let _a = self.forth.data_stack.pop().ok_or(())?;
+    pub fn pop_print(self) -> Result<(), Error> {
+        let _a = self.forth.data_stack.pop().ok_or(StackError::StackEmpty)?;
         #[cfg(test)]
         print!("{} ", unsafe { _a.data });
         Ok(())
     }
 
-    pub fn add(self) -> Result<(), ()> {
-        let a = self.forth.data_stack.pop().ok_or(())?;
-        let b = self.forth.data_stack.pop().ok_or(())?;
+    pub fn add(self) -> Result<(), Error> {
+        let a = self.forth.data_stack.pop().ok_or(StackError::StackEmpty)?;
+        let b = self.forth.data_stack.pop().ok_or(StackError::StackEmpty)?;
         self.forth
             .data_stack
-            .push(Word::data(unsafe { a.data.wrapping_add(b.data) }))
+            .push(Word::data(unsafe { a.data.wrapping_add(b.data) }))?;
+        Ok(())
     }
 
-    pub fn colon(self) -> Result<(), ()> {
-        let name = self.input.next_word().ok_or(())?;
-        if Fif::BUILTINS.iter().map(|(name, _func)| name).any(|bin| *bin == name) {
-            return Err(());
-        }
-
+    pub fn colon(self) -> Result<(), Error> {
+        let name = self.input.next_word().ok_or(Error::ColonCompileMissingName)?;
         let old_mode = core::mem::replace(&mut self.forth.mode, Mode::Compile);
         let name = Name::new_from_bstr(Mode::Run, name.as_bytes());
+        let literal_dict = self.forth.find_in_dict("(literal)").ok_or(Error::WordNotInDict)?;
 
         // Allocate and initialize the dictionary entry
         //
         // TODO: Using `bump_write` here instead of just `bump` causes Miri to
         // get angry with a stacked borrows violation later when we attempt
         // to interpret a built word.
-        let mut dict_base = self.forth.dict_alloc.bump::<DictionaryEntry>().ok_or(())?;
+        let mut dict_base = self.forth.dict_alloc.bump::<DictionaryEntry>()?;
+        println!("RUNT CMP: '{}' - {:016X}", name.as_str(), dict_base.as_ptr() as usize);
         unsafe {
             dict_base.as_ptr().write(DictionaryEntry {
                 name,
@@ -202,7 +234,7 @@ impl<'a, 'b> Fif<'a, 'b> {
         // cfa array with a length field (NOT including the length
         // itself).
         let len: &mut i32 = {
-            let len_word = self.forth.dict_alloc.bump::<Word>().ok_or(())?;
+            let len_word = self.forth.dict_alloc.bump::<Word>()?;
             unsafe {
                 len_word.as_ptr().write(Word::data(0));
                 &mut (*len_word.as_ptr()).data
@@ -217,13 +249,6 @@ impl<'a, 'b> Fif<'a, 'b> {
                 break;
             }
             match self.forth.lookup(word)? {
-                Lookup::Builtin { func } => {
-                    // Builtins are put into the CFA array directly as a pointer
-                    // to the builtin function.
-                    let fptr: *mut () = func as *mut ();
-                    self.forth.dict_alloc.bump_write(Word::ptr(fptr))?;
-                    *len += 1;
-                }
                 Lookup::Dict { de } => {
                     // Dictionary items are put into the CFA array directly as
                     // a pointer to the dictionary entry
@@ -234,10 +259,9 @@ impl<'a, 'b> Fif<'a, 'b> {
                 Lookup::Literal { val } => {
                     // Literals are added to the CFA as two items:
                     //
-                    // 1. The address of the `literal()` function, used as a sentinel
+                    // 1. The address of the `literal()` dictionary item
                     // 2. The value of the literal, as a data word
-                    let fptr: *mut () = Fif::literal as *mut ();
-                    self.forth.dict_alloc.bump_write(Word::ptr(fptr))?;
+                    self.forth.dict_alloc.bump_write(Word::ptr(literal_dict.as_ptr()))?;
                     self.forth.dict_alloc.bump_write(Word::data(val))?;
                     *len += 2;
                 }
@@ -254,7 +278,7 @@ impl<'a, 'b> Fif<'a, 'b> {
             self.forth.mode = old_mode;
             Ok(())
         } else {
-            Err(())
+            Err(Error::ColonCompileMissingSemicolon)
         }
     }
 
@@ -262,24 +286,41 @@ impl<'a, 'b> Fif<'a, 'b> {
     /// words to note that the next item in the CFA is a `u32`.
     ///
     /// It generally shouldn't ever be called.
-    pub fn literal(self) -> Result<(), ()> {
-        #[cfg(test)]
-        panic!();
-        #[allow(unreachable_code)]
-        Err(())
+    pub fn literal(self) -> Result<(), Error> {
+        // Current stack SHOULD be:
+        // 0: OUR CFA (d/c)
+        // 1: Our parent's CFA offset
+        // 2: Out parent's CFA
+        let parent_cfa = self.forth.return_stack.peek_back_n(2).ok_or(Error::ReturnStackMissingParentCFA)?;
+        let parent_off = self.forth.return_stack.peek_back_n(1).ok_or(Error::ReturnStackMissingParentCFAIdx)?;
+        unsafe {
+            let putter = parent_cfa.ptr.cast::<Word>();
+            let val = putter.offset(parent_off.data as isize).read();
+            self.forth.data_stack.push(val)?;
+            // Increment our parent's offset by one to skip the literal
+            self.forth.return_stack.overwrite_back_n(1, Word::data(parent_off.data + 1))?;
+        }
+        Ok(())
     }
 
     /// Interpret is the run-time target of the `:` (colon) word.
     ///
     /// It is NOT considered a "builtin", as it DOES take the cfa, where
     /// other builtins do not.
-    pub fn interpret(self, cfa: *mut Word) -> Result<(), ()> {
+    pub fn interpret(self) -> Result<(), Error> {
         // The "literal" built-in word is used as a sentinel. See below.
-        const LIT: *mut () = Fif::literal as *mut ();
+        let cfa = unsafe {
+            self.forth
+                .return_stack
+                .peek()
+                .ok_or(Error::ReturnStackMissingCFA)?
+                .ptr
+                .cast::<Word>()
+        };
 
         // Colon compiles into a list of words, where the first word
         // is a `u32` of the `len` number of words.
-        let mut words = unsafe {
+        let words = unsafe {
             let len = *cfa.cast::<u32>() as usize;
             if len == 0 {
                 return Ok(());
@@ -287,13 +328,13 @@ impl<'a, 'b> Fif<'a, 'b> {
             // Skip the "len" field, which is the first word
             // of the cfa.
             core::slice::from_raw_parts(cfa.add(1), len)
-        }
-        .iter();
+        };
 
+        let mut idx = 0usize;
         // For the remaining words, we do a while-let loop instead of
         // a for-loop, as some words (e.g. literals) require advancing
         // to the next word.
-        while let Some(word) = words.next() {
+        while let Some(word) = words.get(idx) {
             // We can safely assume that all items in the list are pointers,
             // EXCEPT for literals, but those are handled manually below.
             let ptr = unsafe { word.ptr };
@@ -319,37 +360,27 @@ impl<'a, 'b> Fif<'a, 'b> {
                 };
 
                 // We then call the dictionary entry's function with the cfa addr.
-                wf(fif2, cfa.as_ptr())?;
-            } else if LIT == ptr {
-                // If this word is SPECIFICALLY the `literal` builtin, then we
-                // need to treat the NEXT word as a u32, and push it on the
-                // stack.
-                let lit = words.next().ok_or(())?;
-                let val = unsafe { lit.data };
-                fif2.forth.data_stack.push(Word::data(val))?;
+                let idx_i32 = i32::try_from(idx).map_err(|_| Error::CFAIdxInInvalid(idx))?;
+                fif2.forth.return_stack.push(Word::data(idx_i32))?;         // Our "index"
+                fif2.forth.return_stack.push(Word::ptr(cfa.as_ptr()))?;     // Callee CFA
+                wf(fif2)?;
+                self.forth.return_stack.pop().ok_or(Error::ReturnStackMissingCFA)?;
+                let oidx_i32 = self.forth.return_stack.pop().ok_or(Error::ReturnStackMissingCFAIdx)?;
+                idx = usize::try_from(unsafe { oidx_i32.data }).map_err(|_| {
+                    Error::CFAIdxOutInvalid(oidx_i32)
+                })?;
             } else {
-                // The
-                let builtin = Self::BUILTINS.iter().find_map(|(_name, func)| {
-                    let bif = (*func) as *mut ();
-                    if bif == ptr {
-                        let a: BuiltinFunc<'static, 'static> = *func;
-                        let b: BuiltinFunc<'_, '_> = unsafe { transmute(a) };
-                        Some(b)
-                    } else {
-                        None
-                    }
-                });
-
-                builtin.ok_or(())?(fif2)?;
+                println!("UH OH: {:016X}", ptr as usize);
+                return Err(Error::CFANotInDict(*word));
             }
+            idx += 1;
         }
 
         Ok(())
     }
 }
 
-pub enum Lookup<'a, 'b> {
-    Builtin { func: BuiltinFunc<'a, 'b> },
+pub enum Lookup {
     Dict { de: NonNull<DictionaryEntry> },
     Literal { val: i32 },
 }
@@ -391,16 +422,18 @@ pub mod test {
 
     #[test]
     fn forth() {
-        let payload_stack: LeakBox<Word, 256> = LeakBox::new();
+        let payload_dstack: LeakBox<Word, 256> = LeakBox::new();
+        let payload_rstack: LeakBox<Word, 256> = LeakBox::new();
         let input_buf: LeakBox<u8, 256> = LeakBox::new();
         let dict_buf: LeakBox<u8, 512> = LeakBox::new();
 
         let mut input = WordStrBuf::new(input_buf.ptr(), input_buf.len());
         let mut forth = unsafe {
             Forth::new(
-                (payload_stack.ptr(), payload_stack.len()),
+                (payload_dstack.ptr(), payload_dstack.len()),
+                (payload_rstack.ptr(), payload_rstack.len()),
                 (dict_buf.ptr(), dict_buf.len()),
-            )
+            ).unwrap()
         };
 
         let lines = &[

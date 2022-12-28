@@ -6,6 +6,13 @@ pub struct Stack {
     bot: *mut Word,
 }
 
+#[derive(Debug, PartialEq)]
+pub enum StackError {
+    StackEmpty,
+    StackFull,
+    OverwriteInvalid,
+}
+
 impl Stack {
     pub fn new(bottom: *mut Word, words: usize) -> Self {
         let top = bottom.wrapping_add(words);
@@ -18,10 +25,10 @@ impl Stack {
     }
 
     #[inline]
-    pub fn push(&mut self, word: Word) -> Result<(), ()> {
+    pub fn push(&mut self, word: Word) -> Result<(), StackError> {
         let next_cur = self.cur.wrapping_sub(1);
         if next_cur < self.bot {
-            return Err(());
+            return Err(StackError::StackFull);
         }
         self.cur = next_cur;
         unsafe {
@@ -39,6 +46,36 @@ impl Stack {
         let val = unsafe { self.cur.read() };
         self.cur = next_cur;
         Some(val)
+    }
+
+    #[inline]
+    pub fn peek(&self) -> Option<Word> {
+        if self.cur == self.top {
+            None
+        } else {
+            Some(unsafe { self.cur.read() })
+        }
+    }
+
+    #[inline]
+    pub fn peek_back_n(&self, n: usize) -> Option<Word> {
+        let request = self.cur.wrapping_add(n);
+        if request >= self.top {
+            None
+        } else {
+            unsafe { Some(request.read()) }
+        }
+    }
+
+    #[inline]
+    pub fn overwrite_back_n(&mut self, n: usize, word: Word) -> Result<(), StackError> {
+        let request = self.cur.wrapping_add(n);
+        if request >= self.top {
+            Err(StackError::OverwriteInvalid)
+        } else {
+            unsafe { request.write(word); }
+            Ok(())
+        }
     }
 
     #[inline]

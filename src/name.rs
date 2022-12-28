@@ -35,7 +35,7 @@ impl Name {
         new.name[..len].copy_from_slice(&bstr[..len]);
 
         // TODO: Smarter way to make sure this is a str?
-        debug_assert!({ (&new.name[..len]).iter().all(|b| b.is_ascii()) });
+        debug_assert!({ (new.name[..len]).iter().all(|b| b.is_ascii()) });
 
         new
     }
