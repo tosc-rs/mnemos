@@ -1,4 +1,5 @@
-use crate::{Name, Word, WordFunc};
+use crate::fastr::FaStr;
+use crate::{Word, WordFunc};
 use core::alloc::Layout;
 use core::ptr::addr_of_mut;
 use core::ptr::NonNull;
@@ -6,6 +7,7 @@ use core::ptr::NonNull;
 #[derive(Debug, PartialEq)]
 pub enum BumpError {
     OutOfMemory,
+    CantAllocUtf8,
 }
 
 // Starting FORTH: page 220
@@ -13,7 +15,7 @@ pub enum BumpError {
 pub struct DictionaryEntry {
     /// Precedence bit, length, and text characters
     /// Precedence bit is used to determine if it runs at compile or run time
-    pub(crate) name: Name,
+    pub(crate) name: FaStr,
     /// Link field, points back to the previous entry
     pub(crate) link: Option<NonNull<DictionaryEntry>>,
 
@@ -80,6 +82,40 @@ impl DictionaryBump {
             end,
             start: bottom,
             cur: bottom,
+        }
+    }
+
+    pub fn bump_str(&mut self, s: &str) -> Result<FaStr, BumpError> {
+        debug_assert!(!s.is_empty());
+
+        let len = s.len().min(31);
+        let astr = &s.as_bytes()[..len];
+
+        if !astr.iter().all(|b| b.is_ascii()) {
+            return Err(BumpError::CantAllocUtf8);
+        }
+        let stir = self.bump_u8s(len).ok_or(BumpError::OutOfMemory)?.as_ptr();
+        for (i, ch) in astr.iter().enumerate() {
+            unsafe {
+                stir.add(i).write(ch.to_ascii_lowercase());
+            }
+        }
+        unsafe { Ok(FaStr::new(stir, len)) }
+    }
+
+    pub fn bump_u8s(&mut self, n: usize) -> Option<NonNull<u8>> {
+        if n == 0 {
+            return None;
+        }
+
+        let req = self.cur.wrapping_add(n);
+
+        if req > self.end {
+            None
+        } else {
+            let ptr = self.cur;
+            self.cur = req;
+            Some(unsafe { NonNull::new_unchecked(ptr) })
         }
     }
 

@@ -1,28 +1,34 @@
 // For now...
 #![allow(clippy::missing_safety_doc, clippy::result_unit_err)]
 
-use core::fmt::Write;
-use core::ptr::null_mut;
-use core::{ptr::NonNull, str::FromStr};
-
 pub mod dictionary;
+pub mod fastr;
 pub mod input;
-pub mod name;
 pub mod output;
 pub mod stack;
 pub mod word;
 
-use dictionary::BumpError;
-use output::{OutputBuf, OutputError};
-use stack::StackError;
+use core::{
+    fmt::Write,
+    ops::Deref,
+    ptr::{null_mut, NonNull},
+    str::FromStr,
+};
 
 use crate::{
-    dictionary::{DictionaryBump, DictionaryEntry},
+    dictionary::{BumpError, DictionaryBump, DictionaryEntry},
+    fastr::{FaStr, TmpFaStr},
     input::WordStrBuf,
-    name::{Mode, Name},
-    stack::Stack,
+    output::{OutputBuf, OutputError},
+    stack::{Stack, StackError},
     word::Word,
 };
+
+#[derive(Debug)]
+pub enum Mode {
+    Run,
+    Compile,
+}
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
@@ -113,7 +119,7 @@ impl Forth {
         let mut last = None;
 
         for (name, func) in Forth::BUILTINS {
-            let name = Name::new_from_bstr(Mode::Run, name.as_bytes());
+            let name = unsafe { FaStr::new(name.as_ptr(), name.len()) };
 
             // Allocate and initialize the dictionary entry
             let dict_base = new.dict_alloc.bump::<DictionaryEntry>()?;
@@ -138,9 +144,10 @@ impl Forth {
 
     fn find_in_dict(&self, word: &str) -> Option<NonNull<DictionaryEntry>> {
         let mut optr: Option<&NonNull<DictionaryEntry>> = self.run_dict_tail.as_ref();
+        let fastr = TmpFaStr::new_from(word);
         while let Some(ptr) = optr.take() {
             let de = unsafe { ptr.as_ref() };
-            if de.name.as_str() == word {
+            if &de.name == fastr.deref() {
                 return Some(*ptr);
             }
             optr = de.link.as_ref();
@@ -252,7 +259,7 @@ impl Forth {
             .cur_word()
             .ok_or(Error::ColonCompileMissingName)?;
         let old_mode = core::mem::replace(&mut self.mode, Mode::Compile);
-        let name = Name::new_from_bstr(Mode::Run, name.as_bytes());
+        let name = self.dict_alloc.bump_str(name)?;
         let literal_dict = self.find_in_dict("(literal)").ok_or(Error::WordNotInDict)?;
 
         // Allocate and initialize the dictionary entry

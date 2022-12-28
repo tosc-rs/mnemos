@@ -37,7 +37,7 @@ impl WordStrBuf {
             for i in 0..ilen {
                 self.start
                     .add(i)
-                    .write((*istart.add(i)).to_ascii_lowercase());
+                    .write((istart.add(i).read()).to_ascii_lowercase());
             }
             core::ptr::write_bytes(self.start.add(ilen), b' ', cap - ilen);
         }
