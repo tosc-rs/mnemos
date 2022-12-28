@@ -158,13 +158,15 @@ impl Forth {
         }
     }
 
-    pub fn process_line(
-        &mut self,
-        line: &mut WordStrBuf,
-        out: &mut OutputBuf,
-    ) -> Result<(), Error> {
+    pub fn process_line(&mut self) -> Result<(), Error> {
         self.return_stack.push(Word::ptr(null_mut::<Word>()))?; // Fake CFA
-        while let Some(word) = line.next_word() {
+        loop {
+            self.input.advance();
+            let word = match self.input.cur_word() {
+                Some(w) => w,
+                None => break,
+            };
+
             match self.lookup(word)? {
                 Lookup::Dict { de } => {
                     let (func, cfa) = unsafe { DictionaryEntry::get_run(de) };
@@ -187,7 +189,7 @@ impl Forth {
         self.return_stack
             .pop()
             .ok_or(Error::ReturnStackMissingParentCFA)?;
-        writeln!(out, "ok.").map_err(|_| OutputError::FormattingErr)?;
+        writeln!(&mut self.output, "ok.").map_err(|_| OutputError::FormattingErr)?;
         Ok(())
     }
 }
@@ -217,10 +219,7 @@ impl Forth {
     }
 
     pub fn return_to_data_stack(&mut self) -> Result<(), Error> {
-        let val = self
-            .return_stack
-            .pop()
-            .ok_or(StackError::StackEmpty)?;
+        let val = self.return_stack.pop().ok_or(StackError::StackEmpty)?;
         self.data_stack.push(val)?;
         Ok(())
     }
@@ -241,22 +240,20 @@ impl Forth {
     pub fn add(&mut self) -> Result<(), Error> {
         let a = self.data_stack.pop().ok_or(StackError::StackEmpty)?;
         let b = self.data_stack.pop().ok_or(StackError::StackEmpty)?;
-        self
-            .data_stack
+        self.data_stack
             .push(Word::data(unsafe { a.data.wrapping_add(b.data) }))?;
         Ok(())
     }
 
     pub fn colon(&mut self) -> Result<(), Error> {
+        self.input.advance();
         let name = self
             .input
-            .next_word()
+            .cur_word()
             .ok_or(Error::ColonCompileMissingName)?;
         let old_mode = core::mem::replace(&mut self.mode, Mode::Compile);
         let name = Name::new_from_bstr(Mode::Run, name.as_bytes());
-        let literal_dict = self
-            .find_in_dict("(literal)")
-            .ok_or(Error::WordNotInDict)?;
+        let literal_dict = self.find_in_dict("(literal)").ok_or(Error::WordNotInDict)?;
 
         // Allocate and initialize the dictionary entry
         //
@@ -287,7 +284,13 @@ impl Forth {
 
         // Begin compiling until we hit the end of the line or a semicolon.
         let mut semicolon = false;
-        while let Some(word) = self.input.next_word() {
+        loop {
+            self.input.advance();
+            let word = match self.input.cur_word() {
+                Some(w) => w,
+                None => break,
+            };
+
             if word == ";" {
                 semicolon = true;
                 break;
@@ -305,8 +308,7 @@ impl Forth {
                     //
                     // 1. The address of the `literal()` dictionary item
                     // 2. The value of the literal, as a data word
-                    self
-                        .dict_alloc
+                    self.dict_alloc
                         .bump_write(Word::ptr(literal_dict.as_ptr()))?;
                     self.dict_alloc.bump_write(Word::data(val))?;
                     *len += 2;
@@ -361,8 +363,7 @@ impl Forth {
             self.data_stack.push(val)?;
             // Move the "program counter" to the literal, so our parent "thinks"
             // they just processed the literal
-            self
-                .return_stack
+            self.return_stack
                 .overwrite_back_n(1, lit_offset.try_into()?)?;
         }
         Ok(())
@@ -412,8 +413,7 @@ impl Forth {
                 self.return_stack.push(idx_word)?; // Our "index"
                 self.return_stack.push(Word::ptr(cfa.as_ptr()))?; // Callee CFA
                 wf(self)?;
-                self
-                    .return_stack
+                self.return_stack
                     .pop()
                     .ok_or(Error::ReturnStackMissingCFA)?;
                 let oidx_i32 = self
@@ -489,13 +489,15 @@ pub mod test {
         let output_buf: LeakBox<u8, 256> = LeakBox::new();
         let dict_buf: LeakBox<u8, 4096> = LeakBox::new();
 
-        let mut input = WordStrBuf::new(input_buf.ptr(), input_buf.len());
-        let mut output = OutputBuf::new(output_buf.ptr(), output_buf.len());
+        let input = WordStrBuf::new(input_buf.ptr(), input_buf.len());
+        let output = OutputBuf::new(output_buf.ptr(), output_buf.len());
         let mut forth = unsafe {
             Forth::new(
                 (payload_dstack.ptr(), payload_dstack.len()),
                 (payload_rstack.ptr(), payload_rstack.len()),
                 (dict_buf.ptr(), dict_buf.len()),
+                input,
+                output,
             )
             .unwrap()
         };
@@ -510,22 +512,22 @@ pub mod test {
 
         for (line, out) in lines {
             println!("{}", line);
-            input.fill(line).unwrap();
-            forth.process_line(&mut input, &mut output).unwrap();
-            assert_eq!(output.as_str(), *out);
-            output.clear();
+            forth.input.fill(line).unwrap();
+            forth.process_line().unwrap();
+            assert_eq!(forth.output.as_str(), *out);
+            forth.output.clear();
         }
 
-        input.fill(": derp boop yay").unwrap();
-        assert!(forth.process_line(&mut input, &mut output).is_err());
+        forth.input.fill(": derp boop yay").unwrap();
+        assert!(forth.process_line().is_err());
 
-        input.fill(": doot yay yaay").unwrap();
-        assert!(forth.process_line(&mut input, &mut output).is_err());
+        forth.input.fill(": doot yay yaay").unwrap();
+        assert!(forth.process_line().is_err());
 
-        output.clear();
-        input.fill("boop yay").unwrap();
-        forth.process_line(&mut input, &mut output).unwrap();
-        assert_eq!(output.as_str(), "5 5 5 ok.\n");
+        forth.output.clear();
+        forth.input.fill("boop yay").unwrap();
+        forth.process_line().unwrap();
+        assert_eq!(forth.output.as_str(), "5 5 5 ok.\n");
 
         // Uncomment if you want to check how much of the dictionary
         // was used during a test run.

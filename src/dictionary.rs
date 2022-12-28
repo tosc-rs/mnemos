@@ -129,15 +129,12 @@ impl DictionaryBump {
 
 #[cfg(test)]
 pub mod test {
-    use std::{
-        alloc::{GlobalAlloc, Layout, System},
-        ptr::{addr_of_mut, NonNull},
-    };
+    use std::alloc::Layout;
 
     use crate::{
         dictionary::{DictionaryBump, DictionaryEntry},
         test::LeakBox,
-        Error, Fif, Mode, Name, Word,
+        Word,
     };
 
     #[test]
@@ -161,35 +158,6 @@ pub mod test {
         for _w in 0..10 {
             let w = bump.bump::<Word>().unwrap();
             assert_eq!(w.as_ptr().align_offset(walign), 0);
-        }
-    }
-
-    #[test]
-    fn linked_list() {
-        fn undefined(_fif: Fif<'_, '_>) -> Result<(), Error> {
-            #[cfg(test)]
-            panic!("WHAT IS THIS EVEN");
-            #[allow(unreachable_code)]
-            Err(Error::ShouldBeUnreachable)
-        }
-
-        let layout_10 = unsafe { DictionaryEntry::layout_for_arr(10) };
-        let node_a: NonNull<DictionaryEntry> =
-            unsafe { NonNull::new(System.alloc(layout_10).cast()).unwrap() };
-
-        unsafe {
-            let nap = node_a.as_ptr();
-
-            addr_of_mut!((*nap).name).write(Name::new_from_bstr(Mode::Run, b"hello"));
-            addr_of_mut!((*nap).link).write(None);
-            addr_of_mut!((*nap).code_pointer).write(undefined);
-
-            for i in 0..10 {
-                DictionaryEntry::pfa(node_a)
-                    .as_ptr()
-                    .add(i)
-                    .write(Word::data(i as i32));
-            }
         }
     }
 }

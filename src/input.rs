@@ -2,6 +2,7 @@ pub struct WordStrBuf {
     start: *mut u8,
     cur: *mut u8,
     end: *mut u8,
+    cur_word: Option<(*mut u8, usize)>,
 }
 
 impl WordStrBuf {
@@ -12,6 +13,7 @@ impl WordStrBuf {
             end,
             start: bottom,
             cur: end,
+            cur_word: None,
         }
     }
 
@@ -43,11 +45,13 @@ impl WordStrBuf {
         Ok(())
     }
 
-    pub fn next_word(&mut self) -> Option<&str> {
+    pub fn advance(&mut self) {
+        let _ = self.cur_word.take();
+
         // Find the start, skipping any ASCII whitespace
         let start = loop {
             if self.cur == self.end {
-                return None;
+                return;
             }
             if !unsafe { *self.cur }.is_ascii_whitespace() {
                 break self.cur;
@@ -66,8 +70,12 @@ impl WordStrBuf {
             self.cur = self.cur.wrapping_add(1);
         };
         let size = (end as usize) - (start as usize);
-        Some(unsafe {
-            let u8_sli = core::slice::from_raw_parts(start, size);
+        self.cur_word = Some((start, size));
+    }
+
+    pub fn cur_word(&self) -> Option<&str> {
+        self.cur_word.map(|(start, len)| unsafe {
+            let u8_sli = core::slice::from_raw_parts(start, len);
             core::str::from_utf8_unchecked(u8_sli)
         })
     }
