@@ -1,16 +1,19 @@
 // For now...
 #![allow(clippy::missing_safety_doc, clippy::result_unit_err)]
 
+use core::fmt::Write;
+use core::ptr::null_mut;
 use core::{ptr::NonNull, str::FromStr};
-use std::ptr::null_mut;
 
 pub mod dictionary;
 pub mod input;
 pub mod name;
+pub mod output;
 pub mod stack;
 pub mod word;
 
 use dictionary::BumpError;
+use output::{OutputBuf, OutputError};
 use stack::StackError;
 
 use crate::{
@@ -25,6 +28,7 @@ use crate::{
 pub enum Error {
     Stack(StackError),
     Bump(BumpError),
+    Output(OutputError),
     ReturnStackMissingCFA,
     ReturnStackMissingCFAIdx,
     ReturnStackMissingParentCFA,
@@ -37,6 +41,8 @@ pub enum Error {
     ColonCompileMissingSemicolon,
     LookupFailed,
     ShouldBeUnreachable,
+    WordToUsizeInvalid(i32),
+    UsizeToWordInvalid(usize),
 }
 
 impl From<StackError> for Error {
@@ -48,6 +54,12 @@ impl From<StackError> for Error {
 impl From<BumpError> for Error {
     fn from(be: BumpError) -> Self {
         Error::Bump(be)
+    }
+}
+
+impl From<OutputError> for Error {
+    fn from(oe: OutputError) -> Self {
+        Error::Output(oe)
     }
 }
 
@@ -99,11 +111,6 @@ impl Forth {
 
             // Allocate and initialize the dictionary entry
             let dict_base = new.dict_alloc.bump::<DictionaryEntry>()?;
-            println!(
-                "INIT CMP: '{}' - {:016X}",
-                name.as_str(),
-                dict_base.as_ptr() as usize
-            );
             unsafe {
                 dict_base.as_ptr().write(DictionaryEntry {
                     name,
@@ -145,18 +152,22 @@ impl Forth {
         }
     }
 
-    pub fn process_line(&mut self, line: &mut WordStrBuf) -> Result<(), Error> {
+    pub fn process_line(
+        &mut self,
+        line: &mut WordStrBuf,
+        out: &mut OutputBuf,
+    ) -> Result<(), Error> {
         self.return_stack.push(Word::ptr(null_mut::<Word>()))?; // Fake CFA
         while let Some(word) = line.next_word() {
             match self.lookup(word)? {
                 Lookup::Dict { de } => {
-                    println!("PLLU - {}", word);
                     let (func, cfa) = unsafe { DictionaryEntry::get_run(de) };
                     self.return_stack.push(Word::data(0))?; // Fake offset
                     self.return_stack.push(Word::ptr(cfa.as_ptr()))?; // Calling CFA
                     let res = func(Fif {
                         forth: self,
                         input: line,
+                        output: out,
                     });
                     self.return_stack
                         .pop()
@@ -174,6 +185,7 @@ impl Forth {
         self.return_stack
             .pop()
             .ok_or(Error::ReturnStackMissingParentCFA)?;
+        writeln!(out, "ok.").map_err(|_| OutputError::FormattingErr)?;
         Ok(())
     }
 }
@@ -188,20 +200,46 @@ impl Forth {
 pub struct Fif<'a, 'b> {
     forth: &'a mut Forth,
     input: &'b mut WordStrBuf,
+    output: &'b mut OutputBuf,
 }
 
 impl<'a, 'b> Fif<'a, 'b> {
     const BUILTINS: &'static [(&'static str, WordFunc<'static, 'static>)] = &[
-        ("add", Fif::add),
+        ("+", Fif::add),
+        ("dup", Fif::dup),
         (".", Fif::pop_print),
         (":", Fif::colon),
         ("(literal)", Fif::literal),
+        ("d>r", Fif::data_to_return_stack),
+        ("r>d", Fif::return_to_data_stack),
     ];
 
-    pub fn pop_print(self) -> Result<(), Error> {
-        let _a = self.forth.data_stack.pop().ok_or(StackError::StackEmpty)?;
-        #[cfg(test)]
-        print!("{} ", unsafe { _a.data });
+    pub fn dup(self) -> Result<(), Error> {
+        let val = self.forth.data_stack.peek().ok_or(StackError::StackEmpty)?;
+        self.forth.data_stack.push(val)?;
+        Ok(())
+    }
+
+    pub fn return_to_data_stack(self) -> Result<(), Error> {
+        let val = self
+            .forth
+            .return_stack
+            .pop()
+            .ok_or(StackError::StackEmpty)?;
+        self.forth.data_stack.push(val)?;
+        Ok(())
+    }
+
+    pub fn data_to_return_stack(self) -> Result<(), Error> {
+        let val = self.forth.data_stack.pop().ok_or(StackError::StackEmpty)?;
+        self.forth.return_stack.push(val)?;
+        Ok(())
+    }
+
+    pub fn pop_print(mut self) -> Result<(), Error> {
+        let a = self.forth.data_stack.pop().ok_or(StackError::StackEmpty)?;
+        write!(&mut self.output, "{} ", unsafe { a.data })
+            .map_err(|_| OutputError::FormattingErr)?;
         Ok(())
     }
 
@@ -232,11 +270,6 @@ impl<'a, 'b> Fif<'a, 'b> {
         // get angry with a stacked borrows violation later when we attempt
         // to interpret a built word.
         let mut dict_base = self.forth.dict_alloc.bump::<DictionaryEntry>()?;
-        println!(
-            "RUNT CMP: '{}' - {:016X}",
-            name.as_str(),
-            dict_base.as_ptr() as usize
-        );
         unsafe {
             dict_base.as_ptr().write(DictionaryEntry {
                 name,
@@ -301,10 +334,8 @@ impl<'a, 'b> Fif<'a, 'b> {
         }
     }
 
-    /// Literal is generally only used as a sentinel value in compiled
-    /// words to note that the next item in the CFA is a `u32`.
-    ///
-    /// It generally shouldn't ever be called.
+    /// `(literal)` is used mid-interpret to put the NEXT word of the parent's
+    /// CFA array into the stack as a value.
     pub fn literal(self) -> Result<(), Error> {
         // Current stack SHOULD be:
         // 0: OUR CFA (d/c)
@@ -315,19 +346,32 @@ impl<'a, 'b> Fif<'a, 'b> {
             .return_stack
             .peek_back_n(2)
             .ok_or(Error::ReturnStackMissingParentCFA)?;
-        let parent_off = self
+        let parent_off: usize = self
             .forth
             .return_stack
             .peek_back_n(1)
-            .ok_or(Error::ReturnStackMissingParentCFAIdx)?;
+            .ok_or(Error::ReturnStackMissingParentCFAIdx)?
+            .try_into()?;
+
+        // Our parent is calling *US*, so the literal is the *NEXT* word.
+        let lit_offset = parent_off + 1;
+
         unsafe {
+            // Turn the parent's CFA into a slice
             let putter = parent_cfa.ptr.cast::<Word>();
-            let val = putter.offset(parent_off.data as isize).read();
+            let sli = cfa_to_slice(putter);
+
+            // Then try to get the value at the expected location
+            let val = *sli
+                .get(lit_offset)
+                .ok_or(Error::CFAIdxInInvalid(lit_offset))?;
+            // Put the value on the data stack
             self.forth.data_stack.push(val)?;
-            // Increment our parent's offset by one to skip the literal
+            // Move the "program counter" to the literal, so our parent "thinks"
+            // they just processed the literal
             self.forth
                 .return_stack
-                .overwrite_back_n(1, Word::data(parent_off.data + 1))?;
+                .overwrite_back_n(1, lit_offset.try_into()?)?;
         }
         Ok(())
     }
@@ -337,26 +381,18 @@ impl<'a, 'b> Fif<'a, 'b> {
     /// It is NOT considered a "builtin", as it DOES take the cfa, where
     /// other builtins do not.
     pub fn interpret(self) -> Result<(), Error> {
-        // The "literal" built-in word is used as a sentinel. See below.
-        let cfa = unsafe {
-            self.forth
+        // Colon compiles into a list of words, where the first word
+        // is a `u32` of the `len` number of words.
+        let words = unsafe {
+            let cfa = self
+                .forth
                 .return_stack
                 .peek()
                 .ok_or(Error::ReturnStackMissingCFA)?
                 .ptr
-                .cast::<Word>()
-        };
+                .cast::<Word>();
 
-        // Colon compiles into a list of words, where the first word
-        // is a `u32` of the `len` number of words.
-        let words = unsafe {
-            let len = *cfa.cast::<u32>() as usize;
-            if len == 0 {
-                return Ok(());
-            }
-            // Skip the "len" field, which is the first word
-            // of the cfa.
-            core::slice::from_raw_parts(cfa.add(1), len)
+            cfa_to_slice(cfa)
         };
 
         let mut idx = 0usize;
@@ -378,6 +414,7 @@ impl<'a, 'b> Fif<'a, 'b> {
             let fif2 = Fif {
                 forth: self.forth,
                 input: self.input,
+                output: self.output,
             };
 
             if in_dict {
@@ -389,8 +426,8 @@ impl<'a, 'b> Fif<'a, 'b> {
                 };
 
                 // We then call the dictionary entry's function with the cfa addr.
-                let idx_i32 = i32::try_from(idx).map_err(|_| Error::CFAIdxInInvalid(idx))?;
-                fif2.forth.return_stack.push(Word::data(idx_i32))?; // Our "index"
+                let idx_word = idx.try_into()?;
+                fif2.forth.return_stack.push(idx_word)?; // Our "index"
                 fif2.forth.return_stack.push(Word::ptr(cfa.as_ptr()))?; // Callee CFA
                 wf(fif2)?;
                 self.forth
@@ -402,17 +439,20 @@ impl<'a, 'b> Fif<'a, 'b> {
                     .return_stack
                     .pop()
                     .ok_or(Error::ReturnStackMissingCFAIdx)?;
-                idx = usize::try_from(unsafe { oidx_i32.data })
-                    .map_err(|_| Error::CFAIdxOutInvalid(oidx_i32))?;
+                idx = oidx_i32.try_into()?;
             } else {
-                println!("UH OH: {:016X}", ptr as usize);
                 return Err(Error::CFANotInDict(*word));
             }
             idx += 1;
         }
-
         Ok(())
     }
+}
+
+unsafe fn cfa_to_slice<'a>(ptr: *mut Word) -> &'a [Word] {
+    // First is length
+    let len = (*ptr).data as usize;
+    core::slice::from_raw_parts(ptr.add(1), len)
 }
 
 pub enum Lookup {
@@ -424,7 +464,7 @@ pub enum Lookup {
 pub mod test {
     use std::{cell::UnsafeCell, mem::MaybeUninit};
 
-    use crate::{Forth, Word, WordStrBuf};
+    use crate::{output::OutputBuf, Forth, Word, WordStrBuf};
 
     // Helper type that will un-leak the buffer once it is dropped.
     pub(crate) struct LeakBox<T, const N: usize> {
@@ -460,9 +500,11 @@ pub mod test {
         let payload_dstack: LeakBox<Word, 256> = LeakBox::new();
         let payload_rstack: LeakBox<Word, 256> = LeakBox::new();
         let input_buf: LeakBox<u8, 256> = LeakBox::new();
-        let dict_buf: LeakBox<u8, 512> = LeakBox::new();
+        let output_buf: LeakBox<u8, 256> = LeakBox::new();
+        let dict_buf: LeakBox<u8, 4096> = LeakBox::new();
 
         let mut input = WordStrBuf::new(input_buf.ptr(), input_buf.len());
+        let mut output = OutputBuf::new(output_buf.ptr(), output_buf.len());
         let mut forth = unsafe {
             Forth::new(
                 (payload_dstack.ptr(), payload_dstack.len()),
@@ -473,29 +515,31 @@ pub mod test {
         };
 
         let lines = &[
-            "2 3 add .",
-            ": yay 2 3 add . ;",
-            "yay yay yay",
-            ": boop yay yay ;",
-            "boop",
+            ("2 3 + .", "5 ok.\n"),
+            (": yay 2 3 + . ;", "ok.\n"),
+            ("yay yay yay", "5 5 5 ok.\n"),
+            (": boop yay yay ;", "ok.\n"),
+            ("boop", "5 5 ok.\n"),
         ];
 
-        for line in lines {
+        for (line, out) in lines {
             println!("{}", line);
-            print!(" => ");
             input.fill(line).unwrap();
-            forth.process_line(&mut input).unwrap();
-            println!("ok.");
+            forth.process_line(&mut input, &mut output).unwrap();
+            assert_eq!(output.as_str(), *out);
+            output.clear();
         }
 
         input.fill(": derp boop yay").unwrap();
-        assert!(forth.process_line(&mut input).is_err());
+        assert!(forth.process_line(&mut input, &mut output).is_err());
 
         input.fill(": doot yay yaay").unwrap();
-        assert!(forth.process_line(&mut input).is_err());
+        assert!(forth.process_line(&mut input, &mut output).is_err());
 
+        output.clear();
         input.fill("boop yay").unwrap();
-        forth.process_line(&mut input).unwrap();
+        forth.process_line(&mut input, &mut output).unwrap();
+        assert_eq!(output.as_str(), "5 5 5 ok.\n");
 
         // Uncomment if you want to check how much of the dictionary
         // was used during a test run.

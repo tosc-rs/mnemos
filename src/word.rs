@@ -24,6 +24,24 @@ impl PartialEq for Word {
     }
 }
 
+impl TryFrom<usize> for Word {
+    type Error = crate::Error;
+
+    fn try_from(value: usize) -> Result<Self, Self::Error> {
+        let val = i32::try_from(value).map_err(|_| crate::Error::UsizeToWordInvalid(value))?;
+        Ok(Word::data(val))
+    }
+}
+
+impl TryInto<usize> for Word {
+    type Error = crate::Error;
+
+    fn try_into(self) -> Result<usize, Self::Error> {
+        let val = unsafe { self.data };
+        Ok(usize::try_from(val).map_err(|_| crate::Error::WordToUsizeInvalid(val))?)
+    }
+}
+
 impl Word {
     #[inline]
     pub fn data(data: i32) -> Self {
