@@ -99,7 +99,11 @@ impl Forth {
 
             // Allocate and initialize the dictionary entry
             let dict_base = new.dict_alloc.bump::<DictionaryEntry>()?;
-            println!("INIT CMP: '{}' - {:016X}", name.as_str(), dict_base.as_ptr() as usize);
+            println!(
+                "INIT CMP: '{}' - {:016X}",
+                name.as_str(),
+                dict_base.as_ptr() as usize
+            );
             unsafe {
                 dict_base.as_ptr().write(DictionaryEntry {
                     name,
@@ -148,24 +152,28 @@ impl Forth {
                 Lookup::Dict { de } => {
                     println!("PLLU - {}", word);
                     let (func, cfa) = unsafe { DictionaryEntry::get_run(de) };
-                    self.return_stack.push(Word::data(0))?;                 // Fake offset
-                    self.return_stack.push(Word::ptr(cfa.as_ptr()))?;       // Calling CFA
-                    let res = func(
-                        Fif {
-                            forth: self,
-                            input: line,
-                        },
-                    );
-                    self.return_stack.pop().ok_or(Error::ReturnStackMissingCFA)?;
-                    self.return_stack.pop().ok_or(Error::ReturnStackMissingParentCFAIdx)?;
+                    self.return_stack.push(Word::data(0))?; // Fake offset
+                    self.return_stack.push(Word::ptr(cfa.as_ptr()))?; // Calling CFA
+                    let res = func(Fif {
+                        forth: self,
+                        input: line,
+                    });
+                    self.return_stack
+                        .pop()
+                        .ok_or(Error::ReturnStackMissingCFA)?;
+                    self.return_stack
+                        .pop()
+                        .ok_or(Error::ReturnStackMissingParentCFAIdx)?;
                     res?;
                 }
                 Lookup::Literal { val } => {
                     self.data_stack.push(Word::data(val))?;
-                },
+                }
             }
         }
-        self.return_stack.pop().ok_or(Error::ReturnStackMissingParentCFA)?;
+        self.return_stack
+            .pop()
+            .ok_or(Error::ReturnStackMissingParentCFA)?;
         Ok(())
     }
 }
@@ -183,13 +191,12 @@ pub struct Fif<'a, 'b> {
 }
 
 impl<'a, 'b> Fif<'a, 'b> {
-    const BUILTINS: &'static [(&'static str, WordFunc<'static, 'static>)] =
-        &[
-            ("add", Fif::add),
-            (".", Fif::pop_print),
-            (":", Fif::colon),
-            ("(literal)", Fif::literal),
-        ];
+    const BUILTINS: &'static [(&'static str, WordFunc<'static, 'static>)] = &[
+        ("add", Fif::add),
+        (".", Fif::pop_print),
+        (":", Fif::colon),
+        ("(literal)", Fif::literal),
+    ];
 
     pub fn pop_print(self) -> Result<(), Error> {
         let _a = self.forth.data_stack.pop().ok_or(StackError::StackEmpty)?;
@@ -208,10 +215,16 @@ impl<'a, 'b> Fif<'a, 'b> {
     }
 
     pub fn colon(self) -> Result<(), Error> {
-        let name = self.input.next_word().ok_or(Error::ColonCompileMissingName)?;
+        let name = self
+            .input
+            .next_word()
+            .ok_or(Error::ColonCompileMissingName)?;
         let old_mode = core::mem::replace(&mut self.forth.mode, Mode::Compile);
         let name = Name::new_from_bstr(Mode::Run, name.as_bytes());
-        let literal_dict = self.forth.find_in_dict("(literal)").ok_or(Error::WordNotInDict)?;
+        let literal_dict = self
+            .forth
+            .find_in_dict("(literal)")
+            .ok_or(Error::WordNotInDict)?;
 
         // Allocate and initialize the dictionary entry
         //
@@ -219,7 +232,11 @@ impl<'a, 'b> Fif<'a, 'b> {
         // get angry with a stacked borrows violation later when we attempt
         // to interpret a built word.
         let mut dict_base = self.forth.dict_alloc.bump::<DictionaryEntry>()?;
-        println!("RUNT CMP: '{}' - {:016X}", name.as_str(), dict_base.as_ptr() as usize);
+        println!(
+            "RUNT CMP: '{}' - {:016X}",
+            name.as_str(),
+            dict_base.as_ptr() as usize
+        );
         unsafe {
             dict_base.as_ptr().write(DictionaryEntry {
                 name,
@@ -261,7 +278,9 @@ impl<'a, 'b> Fif<'a, 'b> {
                     //
                     // 1. The address of the `literal()` dictionary item
                     // 2. The value of the literal, as a data word
-                    self.forth.dict_alloc.bump_write(Word::ptr(literal_dict.as_ptr()))?;
+                    self.forth
+                        .dict_alloc
+                        .bump_write(Word::ptr(literal_dict.as_ptr()))?;
                     self.forth.dict_alloc.bump_write(Word::data(val))?;
                     *len += 2;
                 }
@@ -291,14 +310,24 @@ impl<'a, 'b> Fif<'a, 'b> {
         // 0: OUR CFA (d/c)
         // 1: Our parent's CFA offset
         // 2: Out parent's CFA
-        let parent_cfa = self.forth.return_stack.peek_back_n(2).ok_or(Error::ReturnStackMissingParentCFA)?;
-        let parent_off = self.forth.return_stack.peek_back_n(1).ok_or(Error::ReturnStackMissingParentCFAIdx)?;
+        let parent_cfa = self
+            .forth
+            .return_stack
+            .peek_back_n(2)
+            .ok_or(Error::ReturnStackMissingParentCFA)?;
+        let parent_off = self
+            .forth
+            .return_stack
+            .peek_back_n(1)
+            .ok_or(Error::ReturnStackMissingParentCFAIdx)?;
         unsafe {
             let putter = parent_cfa.ptr.cast::<Word>();
             let val = putter.offset(parent_off.data as isize).read();
             self.forth.data_stack.push(val)?;
             // Increment our parent's offset by one to skip the literal
-            self.forth.return_stack.overwrite_back_n(1, Word::data(parent_off.data + 1))?;
+            self.forth
+                .return_stack
+                .overwrite_back_n(1, Word::data(parent_off.data + 1))?;
         }
         Ok(())
     }
@@ -361,14 +390,20 @@ impl<'a, 'b> Fif<'a, 'b> {
 
                 // We then call the dictionary entry's function with the cfa addr.
                 let idx_i32 = i32::try_from(idx).map_err(|_| Error::CFAIdxInInvalid(idx))?;
-                fif2.forth.return_stack.push(Word::data(idx_i32))?;         // Our "index"
-                fif2.forth.return_stack.push(Word::ptr(cfa.as_ptr()))?;     // Callee CFA
+                fif2.forth.return_stack.push(Word::data(idx_i32))?; // Our "index"
+                fif2.forth.return_stack.push(Word::ptr(cfa.as_ptr()))?; // Callee CFA
                 wf(fif2)?;
-                self.forth.return_stack.pop().ok_or(Error::ReturnStackMissingCFA)?;
-                let oidx_i32 = self.forth.return_stack.pop().ok_or(Error::ReturnStackMissingCFAIdx)?;
-                idx = usize::try_from(unsafe { oidx_i32.data }).map_err(|_| {
-                    Error::CFAIdxOutInvalid(oidx_i32)
-                })?;
+                self.forth
+                    .return_stack
+                    .pop()
+                    .ok_or(Error::ReturnStackMissingCFA)?;
+                let oidx_i32 = self
+                    .forth
+                    .return_stack
+                    .pop()
+                    .ok_or(Error::ReturnStackMissingCFAIdx)?;
+                idx = usize::try_from(unsafe { oidx_i32.data })
+                    .map_err(|_| Error::CFAIdxOutInvalid(oidx_i32))?;
             } else {
                 println!("UH OH: {:016X}", ptr as usize);
                 return Err(Error::CFANotInDict(*word));
@@ -433,7 +468,8 @@ pub mod test {
                 (payload_dstack.ptr(), payload_dstack.len()),
                 (payload_rstack.ptr(), payload_rstack.len()),
                 (dict_buf.ptr(), dict_buf.len()),
-            ).unwrap()
+            )
+            .unwrap()
         };
 
         let lines = &[

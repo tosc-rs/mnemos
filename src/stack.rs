@@ -73,7 +73,9 @@ impl Stack {
         if request >= self.top {
             Err(StackError::OverwriteInvalid)
         } else {
-            unsafe { request.write(word); }
+            unsafe {
+                request.write(word);
+            }
             Ok(())
         }
     }

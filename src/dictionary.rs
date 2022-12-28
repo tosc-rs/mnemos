@@ -140,7 +140,7 @@ pub mod test {
     use crate::{
         dictionary::{DictionaryBump, DictionaryEntry},
         test::LeakBox,
-        Fif, Mode, Name, Word, Error,
+        Error, Fif, Mode, Name, Word,
     };
 
     #[test]

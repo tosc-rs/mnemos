@@ -1,6 +1,6 @@
+use core::fmt::Debug;
 use core::mem::MaybeUninit;
 use core::ptr::addr_of_mut;
-use core::fmt::Debug;
 
 // Use a union so that things work on both 32- and 64-bit systems,
 // so the *data* is always 32 bits, but the pointer is whatever the
@@ -14,17 +14,13 @@ pub union Word {
 
 impl Debug for Word {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        unsafe {
-            self.ptr.fmt(f)
-        }
+        unsafe { self.ptr.fmt(f) }
     }
 }
 
 impl PartialEq for Word {
     fn eq(&self, other: &Self) -> bool {
-        unsafe {
-            self.ptr.eq(&other.ptr)
-        }
+        unsafe { self.ptr.eq(&other.ptr) }
     }
 }
 
