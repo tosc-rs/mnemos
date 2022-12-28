@@ -35,7 +35,7 @@ pub struct DictionaryEntry {
     /// The code that is pointed to is called the "run-time code"
     /// because it's used when a word of that type is executed (not when
     /// a word of that type is defined or compiled).
-    pub(crate) code_pointer: WordFunc<'static, 'static>,
+    pub(crate) code_pointer: WordFunc,
 
     /// data OR an array of compiled code.
     /// the first word is the "p(arameter)fa" or "c(ode)fa"
@@ -59,13 +59,10 @@ impl DictionaryEntry {
     }
 
     // TODO: This might be more sound if I make this part of the "find" function
-    pub unsafe fn get_run<'a, 'b>(this: NonNull<Self>) -> (WordFunc<'a, 'b>, NonNull<Word>) {
+    pub unsafe fn get_run<'a, 'b>(this: NonNull<Self>) -> (WordFunc, NonNull<Word>) {
         let de: &DictionaryEntry = this.as_ref();
-
-        let wf: WordFunc<'static, 'static> = de.code_pointer;
-        let wf: WordFunc<'a, 'b> = core::mem::transmute(wf);
         let cfa = DictionaryEntry::pfa(this);
-        (wf, cfa)
+        (de.code_pointer, cfa)
     }
 
     pub unsafe fn pfa(this: NonNull<Self>) -> NonNull<Word> {

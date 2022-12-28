@@ -67,7 +67,7 @@ impl From<OutputError> for Error {
 ///
 /// It takes the current "full context" (e.g. `Fif`), as well as the CFA pointer
 /// to the dictionary entry.
-type WordFunc<'a, 'b> = fn(Fif<'a, 'b>) -> Result<(), Error>;
+type WordFunc = fn(&mut Forth) -> Result<(), Error>;
 
 /// Forth is the "context" of the VM/interpreter.
 ///
@@ -81,6 +81,8 @@ pub struct Forth {
     return_stack: Stack,
     dict_alloc: DictionaryBump,
     run_dict_tail: Option<NonNull<DictionaryEntry>>,
+    input: WordStrBuf,
+    output: OutputBuf,
 
     // TODO: This will be for words that have compile time actions, I guess?
     _comp_dict_tail: Option<NonNull<DictionaryEntry>>,
@@ -91,6 +93,8 @@ impl Forth {
         dstack_buf: (*mut Word, usize),
         rstack_buf: (*mut Word, usize),
         dict_buf: (*mut u8, usize),
+        input: WordStrBuf,
+        output: OutputBuf,
     ) -> Result<Self, Error> {
         let data_stack = Stack::new(dstack_buf.0, dstack_buf.1);
         let return_stack = Stack::new(rstack_buf.0, rstack_buf.1);
@@ -102,11 +106,13 @@ impl Forth {
             dict_alloc,
             run_dict_tail: None,
             _comp_dict_tail: None,
+            input,
+            output,
         };
 
         let mut last = None;
 
-        for (name, func) in Fif::BUILTINS {
+        for (name, func) in Forth::BUILTINS {
             let name = Name::new_from_bstr(Mode::Run, name.as_bytes());
 
             // Allocate and initialize the dictionary entry
@@ -164,11 +170,7 @@ impl Forth {
                     let (func, cfa) = unsafe { DictionaryEntry::get_run(de) };
                     self.return_stack.push(Word::data(0))?; // Fake offset
                     self.return_stack.push(Word::ptr(cfa.as_ptr()))?; // Calling CFA
-                    let res = func(Fif {
-                        forth: self,
-                        input: line,
-                        output: out,
-                    });
+                    let res = func(self);
                     self.return_stack
                         .pop()
                         .ok_or(Error::ReturnStackMissingCFA)?;
@@ -197,70 +199,62 @@ impl Forth {
 /// mutate the I/O buffer (mostly popping values) while operating on the
 /// forth VM. It may be possible to move `Fif`'s functionality back into the
 /// `Forth` struct at a later point.
-pub struct Fif<'a, 'b> {
-    forth: &'a mut Forth,
-    input: &'b mut WordStrBuf,
-    output: &'b mut OutputBuf,
-}
-
-impl<'a, 'b> Fif<'a, 'b> {
-    const BUILTINS: &'static [(&'static str, WordFunc<'static, 'static>)] = &[
-        ("+", Fif::add),
-        ("dup", Fif::dup),
-        (".", Fif::pop_print),
-        (":", Fif::colon),
-        ("(literal)", Fif::literal),
-        ("d>r", Fif::data_to_return_stack),
-        ("r>d", Fif::return_to_data_stack),
+impl Forth {
+    const BUILTINS: &'static [(&'static str, WordFunc)] = &[
+        ("+", Forth::add),
+        ("dup", Forth::dup),
+        (".", Forth::pop_print),
+        (":", Forth::colon),
+        ("(literal)", Forth::literal),
+        ("d>r", Forth::data_to_return_stack),
+        ("r>d", Forth::return_to_data_stack),
     ];
 
-    pub fn dup(self) -> Result<(), Error> {
-        let val = self.forth.data_stack.peek().ok_or(StackError::StackEmpty)?;
-        self.forth.data_stack.push(val)?;
+    pub fn dup(&mut self) -> Result<(), Error> {
+        let val = self.data_stack.peek().ok_or(StackError::StackEmpty)?;
+        self.data_stack.push(val)?;
         Ok(())
     }
 
-    pub fn return_to_data_stack(self) -> Result<(), Error> {
+    pub fn return_to_data_stack(&mut self) -> Result<(), Error> {
         let val = self
-            .forth
             .return_stack
             .pop()
             .ok_or(StackError::StackEmpty)?;
-        self.forth.data_stack.push(val)?;
+        self.data_stack.push(val)?;
         Ok(())
     }
 
-    pub fn data_to_return_stack(self) -> Result<(), Error> {
-        let val = self.forth.data_stack.pop().ok_or(StackError::StackEmpty)?;
-        self.forth.return_stack.push(val)?;
+    pub fn data_to_return_stack(&mut self) -> Result<(), Error> {
+        let val = self.data_stack.pop().ok_or(StackError::StackEmpty)?;
+        self.return_stack.push(val)?;
         Ok(())
     }
 
-    pub fn pop_print(mut self) -> Result<(), Error> {
-        let a = self.forth.data_stack.pop().ok_or(StackError::StackEmpty)?;
+    pub fn pop_print(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.pop().ok_or(StackError::StackEmpty)?;
         write!(&mut self.output, "{} ", unsafe { a.data })
             .map_err(|_| OutputError::FormattingErr)?;
         Ok(())
     }
 
-    pub fn add(self) -> Result<(), Error> {
-        let a = self.forth.data_stack.pop().ok_or(StackError::StackEmpty)?;
-        let b = self.forth.data_stack.pop().ok_or(StackError::StackEmpty)?;
-        self.forth
+    pub fn add(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.pop().ok_or(StackError::StackEmpty)?;
+        let b = self.data_stack.pop().ok_or(StackError::StackEmpty)?;
+        self
             .data_stack
             .push(Word::data(unsafe { a.data.wrapping_add(b.data) }))?;
         Ok(())
     }
 
-    pub fn colon(self) -> Result<(), Error> {
+    pub fn colon(&mut self) -> Result<(), Error> {
         let name = self
             .input
             .next_word()
             .ok_or(Error::ColonCompileMissingName)?;
-        let old_mode = core::mem::replace(&mut self.forth.mode, Mode::Compile);
+        let old_mode = core::mem::replace(&mut self.mode, Mode::Compile);
         let name = Name::new_from_bstr(Mode::Run, name.as_bytes());
         let literal_dict = self
-            .forth
             .find_in_dict("(literal)")
             .ok_or(Error::WordNotInDict)?;
 
@@ -269,13 +263,13 @@ impl<'a, 'b> Fif<'a, 'b> {
         // TODO: Using `bump_write` here instead of just `bump` causes Miri to
         // get angry with a stacked borrows violation later when we attempt
         // to interpret a built word.
-        let mut dict_base = self.forth.dict_alloc.bump::<DictionaryEntry>()?;
+        let mut dict_base = self.dict_alloc.bump::<DictionaryEntry>()?;
         unsafe {
             dict_base.as_ptr().write(DictionaryEntry {
                 name,
                 // Don't link until we know we have a "good" entry!
                 link: None,
-                code_pointer: Fif::interpret,
+                code_pointer: Forth::interpret,
                 parameter_field: [],
             });
         }
@@ -284,7 +278,7 @@ impl<'a, 'b> Fif<'a, 'b> {
         // cfa array with a length field (NOT including the length
         // itself).
         let len: &mut i32 = {
-            let len_word = self.forth.dict_alloc.bump::<Word>()?;
+            let len_word = self.dict_alloc.bump::<Word>()?;
             unsafe {
                 len_word.as_ptr().write(Word::data(0));
                 &mut (*len_word.as_ptr()).data
@@ -298,12 +292,12 @@ impl<'a, 'b> Fif<'a, 'b> {
                 semicolon = true;
                 break;
             }
-            match self.forth.lookup(word)? {
+            match self.lookup(word)? {
                 Lookup::Dict { de } => {
                     // Dictionary items are put into the CFA array directly as
                     // a pointer to the dictionary entry
                     let dptr: *mut () = de.as_ptr().cast();
-                    self.forth.dict_alloc.bump_write(Word::ptr(dptr))?;
+                    self.dict_alloc.bump_write(Word::ptr(dptr))?;
                     *len += 1;
                 }
                 Lookup::Literal { val } => {
@@ -311,10 +305,10 @@ impl<'a, 'b> Fif<'a, 'b> {
                     //
                     // 1. The address of the `literal()` dictionary item
                     // 2. The value of the literal, as a data word
-                    self.forth
+                    self
                         .dict_alloc
                         .bump_write(Word::ptr(literal_dict.as_ptr()))?;
-                    self.forth.dict_alloc.bump_write(Word::data(val))?;
+                    self.dict_alloc.bump_write(Word::data(val))?;
                     *len += 2;
                 }
             }
@@ -324,10 +318,10 @@ impl<'a, 'b> Fif<'a, 'b> {
         if semicolon {
             // Link to run dict
             unsafe {
-                dict_base.as_mut().link = self.forth.run_dict_tail.take();
+                dict_base.as_mut().link = self.run_dict_tail.take();
             }
-            self.forth.run_dict_tail = Some(dict_base);
-            self.forth.mode = old_mode;
+            self.run_dict_tail = Some(dict_base);
+            self.mode = old_mode;
             Ok(())
         } else {
             Err(Error::ColonCompileMissingSemicolon)
@@ -336,18 +330,16 @@ impl<'a, 'b> Fif<'a, 'b> {
 
     /// `(literal)` is used mid-interpret to put the NEXT word of the parent's
     /// CFA array into the stack as a value.
-    pub fn literal(self) -> Result<(), Error> {
+    pub fn literal(&mut self) -> Result<(), Error> {
         // Current stack SHOULD be:
         // 0: OUR CFA (d/c)
         // 1: Our parent's CFA offset
         // 2: Out parent's CFA
         let parent_cfa = self
-            .forth
             .return_stack
             .peek_back_n(2)
             .ok_or(Error::ReturnStackMissingParentCFA)?;
         let parent_off: usize = self
-            .forth
             .return_stack
             .peek_back_n(1)
             .ok_or(Error::ReturnStackMissingParentCFAIdx)?
@@ -366,10 +358,10 @@ impl<'a, 'b> Fif<'a, 'b> {
                 .get(lit_offset)
                 .ok_or(Error::CFAIdxInInvalid(lit_offset))?;
             // Put the value on the data stack
-            self.forth.data_stack.push(val)?;
+            self.data_stack.push(val)?;
             // Move the "program counter" to the literal, so our parent "thinks"
             // they just processed the literal
-            self.forth
+            self
                 .return_stack
                 .overwrite_back_n(1, lit_offset.try_into()?)?;
         }
@@ -380,12 +372,11 @@ impl<'a, 'b> Fif<'a, 'b> {
     ///
     /// It is NOT considered a "builtin", as it DOES take the cfa, where
     /// other builtins do not.
-    pub fn interpret(self) -> Result<(), Error> {
+    pub fn interpret(&mut self) -> Result<(), Error> {
         // Colon compiles into a list of words, where the first word
         // is a `u32` of the `len` number of words.
         let words = unsafe {
             let cfa = self
-                .forth
                 .return_stack
                 .peek()
                 .ok_or(Error::ReturnStackMissingCFA)?
@@ -406,16 +397,7 @@ impl<'a, 'b> Fif<'a, 'b> {
 
             // Is the given word pointing at somewhere in the range of
             // the dictionary allocator?
-            let in_dict = self.forth.dict_alloc.contains(ptr);
-
-            // We need to re-borrow our fields to make another `Fif`, which
-            // is basically just `self` but gets consumed by the function we
-            // call.
-            let fif2 = Fif {
-                forth: self.forth,
-                input: self.input,
-                output: self.output,
-            };
+            let in_dict = self.dict_alloc.contains(ptr);
 
             if in_dict {
                 // If the word points to somewhere in the dictionary, then treat
@@ -427,15 +409,14 @@ impl<'a, 'b> Fif<'a, 'b> {
 
                 // We then call the dictionary entry's function with the cfa addr.
                 let idx_word = idx.try_into()?;
-                fif2.forth.return_stack.push(idx_word)?; // Our "index"
-                fif2.forth.return_stack.push(Word::ptr(cfa.as_ptr()))?; // Callee CFA
-                wf(fif2)?;
-                self.forth
+                self.return_stack.push(idx_word)?; // Our "index"
+                self.return_stack.push(Word::ptr(cfa.as_ptr()))?; // Callee CFA
+                wf(self)?;
+                self
                     .return_stack
                     .pop()
                     .ok_or(Error::ReturnStackMissingCFA)?;
                 let oidx_i32 = self
-                    .forth
                     .return_stack
                     .pop()
                     .ok_or(Error::ReturnStackMissingCFAIdx)?;
@@ -444,6 +425,11 @@ impl<'a, 'b> Fif<'a, 'b> {
                 return Err(Error::CFANotInDict(*word));
             }
             idx += 1;
+            // TODO: If I want A4-style pausing here, I'd probably want to also
+            // push dictionary locations to the stack (under the CFA), which
+            // would allow for halting and resuming. Yield after loading "next",
+            // right before executing the function itself. This would also allow
+            // for cursed control flow
         }
         Ok(())
     }
