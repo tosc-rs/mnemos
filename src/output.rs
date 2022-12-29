@@ -26,8 +26,7 @@ impl OutputBuf {
         (self.end as usize) - (self.start as usize)
     }
 
-    pub fn push_str(&mut self, stir: &str) -> Result<(), OutputError> {
-        let bstr = stir.as_bytes();
+    pub fn push_bstr(&mut self, bstr: &[u8]) -> Result<(), OutputError> {
         let new_end = self.cur.wrapping_add(bstr.len());
         if new_end > self.end {
             Err(OutputError::OutputFull)
@@ -38,6 +37,11 @@ impl OutputBuf {
             }
             Ok(())
         }
+    }
+
+    pub fn push_str(&mut self, stir: &str) -> Result<(), OutputError> {
+        let bstr = stir.as_bytes();
+        self.push_bstr(bstr)
     }
 
     pub fn clear(&mut self) {

@@ -236,7 +236,15 @@ impl Forth {
         ("r>d", Forth::return_to_data_stack),
         ("(jump-zero)", Forth::jump_if_zero),
         ("(jmp)", Forth::jump),
+        ("emit", Forth::emit),
     ];
+
+    pub fn emit(&mut self) -> Result<(), Error> {
+        let val = self.data_stack.pop().ok_or(StackError::StackEmpty)?;
+        let val = unsafe { val.data };
+        self.output.push_bstr(&[val as u8])?;
+        Ok(())
+    }
 
     pub fn jump_if_zero(&mut self) -> Result<(), Error> {
         let do_jmp = unsafe {
@@ -291,8 +299,7 @@ impl Forth {
             let new_val = parent_off_word.data + val;
 
             // XXX
-            self.return_stack
-                .overwrite_back_n(1, Word::data(new_val))?;
+            self.return_stack.overwrite_back_n(1, Word::data(new_val))?;
         }
         Ok(())
     }
@@ -387,7 +394,9 @@ impl Forth {
         let start = *len;
 
         // Write a conditional jump, followed by space for a literal
-        let literal_cj = self.find_in_dict("(jump-zero)").ok_or(Error::WordNotInDict)?;
+        let literal_cj = self
+            .find_in_dict("(jump-zero)")
+            .ok_or(Error::WordNotInDict)?;
         self.dict_alloc.bump_write(Word::ptr(literal_cj.as_ptr()))?;
         let cj_offset: &mut i32 = {
             let cj_offset_word = self.dict_alloc.bump::<Word>()?;
@@ -695,12 +704,16 @@ pub mod test {
             ("  0 nif", "ok.\n"),
             ("0 1 nif", "1 6 1 ok.\n"),
             ("1 1 nif", "1 2 2 1 ok.\n"),
+            ("42 emit", "*ok.\n"),
+            (": star 42 emit ;", "ok.\n"),
+            ("star star star", "***ok.\n"),
         ];
 
         for (line, out) in lines {
             println!("{}", line);
             forth.input.fill(line).unwrap();
             forth.process_line().unwrap();
+            print!(" => {}", forth.output.as_str());
             assert_eq!(forth.output.as_str(), *out);
             forth.output.clear();
         }
