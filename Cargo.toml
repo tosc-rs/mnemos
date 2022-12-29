@@ -8,6 +8,10 @@ edition = "2021"
 [dependencies]
 hash32 = "0.3.1"
 
+[features]
+default = []
+use-std = []
+
 # [dependencies.serde]
 # version = "1.0.152"
 # default-features = false

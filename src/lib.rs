@@ -134,8 +134,8 @@ pub struct Forth {
     call_stack: Stack<Context>,
     dict_alloc: DictionaryBump,
     run_dict_tail: Option<NonNull<DictionaryEntry>>,
-    input: WordStrBuf,
-    output: OutputBuf,
+    pub input: WordStrBuf,
+    pub output: OutputBuf,
 
     // TODO: This will be for words that have compile time actions, I guess?
     _comp_dict_tail: Option<NonNull<DictionaryEntry>>,
@@ -732,49 +732,65 @@ impl<T, OE> ReplaceErr for Result<T, OE> {
     }
 }
 
-#[cfg(test)]
-pub mod test {
-    use std::{cell::UnsafeCell, mem::MaybeUninit};
-
-    use crate::{output::OutputBuf, Context, Forth, Word, WordStrBuf};
+#[cfg(any(test, feature = "use-std"))]
+pub mod leakbox {
+    use std::{
+        alloc::{GlobalAlloc, Layout, System},
+        cell::UnsafeCell,
+        mem::MaybeUninit,
+    };
 
     // Helper type that will un-leak the buffer once it is dropped.
-    pub(crate) struct LeakBox<T, const N: usize> {
-        ptr: *mut UnsafeCell<MaybeUninit<[T; N]>>,
+    pub struct LeakBox<T> {
+        ptr: *mut UnsafeCell<MaybeUninit<T>>,
+        len: usize,
     }
 
-    impl<T, const N: usize> LeakBox<T, N> {
-        pub(crate) fn new() -> Self {
+    impl<T> LeakBox<T> {
+        pub fn new(len: usize) -> Self {
             Self {
-                ptr: Box::leak(Box::new(UnsafeCell::new(MaybeUninit::uninit()))),
+                ptr: unsafe {
+                    System
+                        .alloc(Layout::array::<UnsafeCell<MaybeUninit<T>>>(len).unwrap())
+                        .cast()
+                },
+                len,
             }
         }
 
-        pub(crate) fn ptr(&self) -> *mut T {
+        pub fn ptr(&self) -> *mut T {
             self.ptr.cast()
         }
 
-        pub(crate) fn len(&self) -> usize {
-            N
+        pub fn len(&self) -> usize {
+            self.len
         }
     }
 
-    impl<T, const N: usize> Drop for LeakBox<T, N> {
+    impl<T> Drop for LeakBox<T> {
         fn drop(&mut self) {
             unsafe {
-                let _ = Box::from_raw(self.ptr);
+                System.dealloc(
+                    self.ptr.cast(),
+                    Layout::array::<UnsafeCell<MaybeUninit<T>>>(self.len).unwrap(),
+                )
             }
         }
     }
+}
+
+#[cfg(test)]
+pub mod test {
+    use crate::{leakbox::LeakBox, output::OutputBuf, Context, Forth, Word, WordStrBuf};
 
     #[test]
     fn forth() {
-        let payload_dstack: LeakBox<Word, 256> = LeakBox::new();
-        let payload_rstack: LeakBox<Word, 256> = LeakBox::new();
-        let payload_cstack: LeakBox<Context, 256> = LeakBox::new();
-        let input_buf: LeakBox<u8, 256> = LeakBox::new();
-        let output_buf: LeakBox<u8, 256> = LeakBox::new();
-        let dict_buf: LeakBox<u8, 4096> = LeakBox::new();
+        let payload_dstack: LeakBox<Word> = LeakBox::new(256);
+        let payload_rstack: LeakBox<Word> = LeakBox::new(256);
+        let payload_cstack: LeakBox<Context> = LeakBox::new(256);
+        let input_buf: LeakBox<u8> = LeakBox::new(256);
+        let output_buf: LeakBox<u8> = LeakBox::new(256);
+        let dict_buf: LeakBox<u8> = LeakBox::new(4096);
 
         let input = WordStrBuf::new(input_buf.ptr(), input_buf.len());
         let output = OutputBuf::new(output_buf.ptr(), output_buf.len());

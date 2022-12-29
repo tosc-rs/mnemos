@@ -143,13 +143,13 @@ impl<T: Copy> Stack<T> {
 #[cfg(test)]
 pub mod test {
     use super::Stack;
-    use crate::test::LeakBox;
+    use crate::leakbox::LeakBox;
     use crate::Word;
 
     #[test]
     fn stack() {
         const ITEMS: usize = 16;
-        let payload: LeakBox<Word, ITEMS> = LeakBox::new();
+        let payload: LeakBox<Word> = LeakBox::new(ITEMS);
 
         let mut stack = Stack::<Word>::new(payload.ptr(), payload.len());
 

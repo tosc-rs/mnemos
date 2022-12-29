@@ -169,13 +169,13 @@ pub mod test {
 
     use crate::{
         dictionary::{DictionaryBump, DictionaryEntry},
-        test::LeakBox,
+        leakbox::LeakBox,
         Word,
     };
 
     #[test]
     fn do_a_bump() {
-        let payload: LeakBox<u8, 256> = LeakBox::new();
+        let payload: LeakBox<u8> = LeakBox::new(256);
 
         let mut bump = DictionaryBump::new(payload.ptr(), payload.len());
 
