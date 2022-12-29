@@ -1,9 +1,7 @@
-use crate::word::Word;
-
-pub struct Stack {
-    top: *mut Word,
-    cur: *mut Word,
-    bot: *mut Word,
+pub struct Stack<T: Copy> {
+    top: *mut T,
+    cur: *mut T,
+    bot: *mut T,
 }
 
 #[derive(Debug, PartialEq)]
@@ -13,9 +11,9 @@ pub enum StackError {
     OverwriteInvalid,
 }
 
-impl Stack {
-    pub fn new(bottom: *mut Word, words: usize) -> Self {
-        let top = bottom.wrapping_add(words);
+impl<T: Copy> Stack<T> {
+    pub fn new(bottom: *mut T, items: usize) -> Self {
+        let top = bottom.wrapping_add(items);
         debug_assert!(top >= bottom);
         Self {
             top,
@@ -25,20 +23,20 @@ impl Stack {
     }
 
     #[inline]
-    pub fn push(&mut self, word: Word) -> Result<(), StackError> {
+    pub fn push(&mut self, item: T) -> Result<(), StackError> {
         let next_cur = self.cur.wrapping_sub(1);
         if next_cur < self.bot {
             return Err(StackError::StackFull);
         }
         self.cur = next_cur;
         unsafe {
-            self.cur.write(word);
+            self.cur.write(item);
         }
         Ok(())
     }
 
     #[inline]
-    pub fn pop(&mut self) -> Option<Word> {
+    pub fn pop(&mut self) -> Option<T> {
         let next_cur = self.cur.wrapping_add(1);
         if next_cur > self.top {
             return None;
@@ -49,7 +47,7 @@ impl Stack {
     }
 
     #[inline]
-    pub fn peek(&self) -> Option<Word> {
+    pub fn peek(&self) -> Option<T> {
         if self.cur == self.top {
             None
         } else {
@@ -58,7 +56,16 @@ impl Stack {
     }
 
     #[inline]
-    pub fn peek_back_n(&self, n: usize) -> Option<Word> {
+    pub fn peek_mut(&mut self) -> Option<&mut T> {
+        if self.cur == self.top {
+            None
+        } else {
+            Some(unsafe { &mut *self.cur })
+        }
+    }
+
+    #[inline]
+    pub fn peek_back_n(&self, n: usize) -> Option<T> {
         let request = self.cur.wrapping_add(n);
         if request >= self.top {
             None
@@ -68,13 +75,23 @@ impl Stack {
     }
 
     #[inline]
-    pub fn overwrite_back_n(&mut self, n: usize, word: Word) -> Result<(), StackError> {
+    pub fn peek_back_n_mut(&mut self, n: usize) -> Option<&mut T> {
+        let request = self.cur.wrapping_add(n);
+        if request >= self.top {
+            None
+        } else {
+            unsafe { Some(&mut *request) }
+        }
+    }
+
+    #[inline]
+    pub fn overwrite_back_n(&mut self, n: usize, item: T) -> Result<(), StackError> {
         let request = self.cur.wrapping_add(n);
         if request >= self.top {
             Err(StackError::OverwriteInvalid)
         } else {
             unsafe {
-                request.write(word);
+                request.write(item);
             }
             Ok(())
         }
@@ -97,7 +114,7 @@ pub mod test {
         const ITEMS: usize = 16;
         let payload: LeakBox<Word, ITEMS> = LeakBox::new();
 
-        let mut stack = Stack::new(payload.ptr(), payload.len());
+        let mut stack = Stack::<Word>::new(payload.ptr(), payload.len());
 
         for _ in 0..3 {
             for i in 0..(ITEMS as i32) {

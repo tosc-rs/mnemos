@@ -38,7 +38,7 @@ impl TryInto<usize> for Word {
 
     fn try_into(self) -> Result<usize, Self::Error> {
         let val = unsafe { self.data };
-        Ok(usize::try_from(val).map_err(|_| crate::Error::WordToUsizeInvalid(val))?)
+        usize::try_from(val).map_err(|_| crate::Error::WordToUsizeInvalid(val))
     }
 }
 

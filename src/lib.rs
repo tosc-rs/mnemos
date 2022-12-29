@@ -8,12 +8,7 @@ pub mod output;
 pub mod stack;
 pub mod word;
 
-use core::{
-    fmt::Write,
-    ops::Deref,
-    ptr::{null_mut, NonNull},
-    str::FromStr,
-};
+use core::{fmt::Write, ops::Deref, ptr::NonNull, str::FromStr};
 
 use crate::{
     dictionary::{BumpError, DictionaryBump, DictionaryEntry},
@@ -54,6 +49,8 @@ pub enum Error {
     IfWithoutThen,
     DuplicateElse,
     IfElseWithoutThen,
+    CallStackCorrupted,
+    InterpretingCompileOnlyWord,
 }
 
 impl From<StackError> for Error {
@@ -74,6 +71,41 @@ impl From<OutputError> for Error {
     }
 }
 
+#[derive(Copy, Clone)]
+pub struct Context {
+    cfa: *mut Word,
+    idx: usize,
+}
+
+impl Context {
+    fn get_next_val(&self) -> Result<i32, Error> {
+        unsafe {
+            let sli = cfa_to_slice(self.cfa);
+            let req = self.idx + 1;
+            Ok(sli.get(req).ok_or(Error::CFAIdxInInvalid(req))?.data)
+        }
+    }
+
+    fn offset(&mut self, offset: i32) -> Result<(), Error> {
+        // TODO JAMES THIS IS BAD
+        if offset.is_positive() {
+            self.idx += offset as usize;
+        } else {
+            self.idx -= offset.unsigned_abs() as usize;
+        }
+        Ok(())
+    }
+
+    fn cfa_arr(&self) -> &[Word] {
+        unsafe { cfa_to_slice(self.cfa) }
+    }
+
+    fn get_word(&self) -> Option<&Word> {
+        let arr = self.cfa_arr();
+        arr.get(self.idx)
+    }
+}
+
 /// `WordFunc` represents a function that can be used as part of a dictionary word.
 ///
 /// It takes the current "full context" (e.g. `Fif`), as well as the CFA pointer
@@ -88,8 +120,9 @@ type WordFunc = fn(&mut Forth) -> Result<(), Error>;
 /// reasons.
 pub struct Forth {
     mode: Mode,
-    data_stack: Stack,
-    return_stack: Stack,
+    data_stack: Stack<Word>,
+    return_stack: Stack<Word>,
+    call_stack: Stack<Context>,
     dict_alloc: DictionaryBump,
     run_dict_tail: Option<NonNull<DictionaryEntry>>,
     input: WordStrBuf,
@@ -103,17 +136,20 @@ impl Forth {
     pub unsafe fn new(
         dstack_buf: (*mut Word, usize),
         rstack_buf: (*mut Word, usize),
+        cstack_buf: (*mut Context, usize),
         dict_buf: (*mut u8, usize),
         input: WordStrBuf,
         output: OutputBuf,
     ) -> Result<Self, Error> {
         let data_stack = Stack::new(dstack_buf.0, dstack_buf.1);
         let return_stack = Stack::new(rstack_buf.0, rstack_buf.1);
+        let call_stack = Stack::new(cstack_buf.0, cstack_buf.1);
         let dict_alloc = DictionaryBump::new(dict_buf.0, dict_buf.1);
         let mut new = Self {
             mode: Mode::Run,
             data_stack,
             return_stack,
+            call_stack,
             dict_alloc,
             run_dict_tail: None,
             _comp_dict_tail: None,
@@ -179,7 +215,6 @@ impl Forth {
     }
 
     pub fn process_line(&mut self) -> Result<(), Error> {
-        self.return_stack.push(Word::ptr(null_mut::<Word>()))?; // Fake CFA
         loop {
             self.input.advance();
             let word = match self.input.cur_word() {
@@ -190,29 +225,23 @@ impl Forth {
             match self.lookup(word)? {
                 Lookup::Dict { de } => {
                     let (func, cfa) = unsafe { DictionaryEntry::get_run(de) };
-                    self.return_stack.push(Word::data(0))?; // Fake offset
-                    self.return_stack.push(Word::ptr(cfa.as_ptr()))?; // Calling CFA
+                    self.call_stack.push(Context {
+                        cfa: cfa.as_ptr(),
+                        idx: 0,
+                    })?;
                     let res = func(self);
-                    self.return_stack
-                        .pop()
-                        .ok_or(Error::ReturnStackMissingCFA)?;
-                    self.return_stack
-                        .pop()
-                        .ok_or(Error::ReturnStackMissingParentCFAIdx)?;
+                    self.call_stack.pop().ok_or(Error::CallStackCorrupted)?;
                     res?;
                 }
                 Lookup::Literal { val } => {
                     self.data_stack.push(Word::data(val))?;
                 }
-                Lookup::Semicolon => todo!(),
-                Lookup::If => todo!(),
-                Lookup::Else => todo!(),
-                Lookup::Then => todo!(),
+                Lookup::Semicolon => return Err(Error::InterpretingCompileOnlyWord),
+                Lookup::If => return Err(Error::InterpretingCompileOnlyWord),
+                Lookup::Else => return Err(Error::InterpretingCompileOnlyWord),
+                Lookup::Then => return Err(Error::InterpretingCompileOnlyWord),
             }
         }
-        self.return_stack
-            .pop()
-            .ok_or(Error::ReturnStackMissingParentCFA)?;
         writeln!(&mut self.output, "ok.").map_err(|_| OutputError::FormattingErr)?;
         Ok(())
     }
@@ -254,53 +283,17 @@ impl Forth {
         if do_jmp {
             self.jump()
         } else {
-            unsafe {
-                let parent_off = self
-                    .return_stack
-                    .peek_back_n(1)
-                    .ok_or(Error::ReturnStackMissingParentCFAIdx)?
-                    .data;
-                self.return_stack
-                    .overwrite_back_n(1, Word::data(parent_off + 1))?;
-            }
+            let parent = self.call_stack.peek_back_n_mut(1).unwrap();
+            parent.offset(1).unwrap();
             Ok(())
         }
     }
 
     pub fn jump(&mut self) -> Result<(), Error> {
-        // Current stack SHOULD be:
-        // 0: OUR CFA (d/c)
-        // 1: Our parent's CFA offset
-        // 2: Out parent's CFA
-        let parent_cfa = self
-            .return_stack
-            .peek_back_n(2)
-            .ok_or(Error::ReturnStackMissingParentCFA)?;
-        let parent_off_word = self
-            .return_stack
-            .peek_back_n(1)
-            .ok_or(Error::ReturnStackMissingParentCFAIdx)?;
-
-        // Our parent is calling *US*, so the literal is the *NEXT* word.
-        let po_usize: usize = parent_off_word.try_into()?;
-        let lit_offset = po_usize + 1;
-
-        unsafe {
-            // Turn the parent's CFA into a slice
-            let putter = parent_cfa.ptr.cast::<Word>();
-            let sli = cfa_to_slice(putter);
-
-            // Then try to get the value at the expected location
-            let val = sli
-                .get(lit_offset)
-                .ok_or(Error::CFAIdxInInvalid(lit_offset))?
-                .data;
-
-            let new_val = parent_off_word.data + val;
-
-            // XXX
-            self.return_stack.overwrite_back_n(1, Word::data(new_val))?;
-        }
+        let mut parent = self.call_stack.peek_back_n(1).unwrap();
+        let offset = parent.get_next_val()?;
+        parent.offset(offset)?;
+        self.call_stack.overwrite_back_n(1, parent)?;
         Ok(())
     }
 
@@ -506,7 +499,7 @@ impl Forth {
                 *len += 2;
             }
         }
-        return Ok(*len - start);
+        Ok(*len - start)
     }
 
     /// `(literal)` is used mid-interpret to put the NEXT word of the parent's
@@ -516,35 +509,10 @@ impl Forth {
         // 0: OUR CFA (d/c)
         // 1: Our parent's CFA offset
         // 2: Out parent's CFA
-        let parent_cfa = self
-            .return_stack
-            .peek_back_n(2)
-            .ok_or(Error::ReturnStackMissingParentCFA)?;
-        let parent_off: usize = self
-            .return_stack
-            .peek_back_n(1)
-            .ok_or(Error::ReturnStackMissingParentCFAIdx)?
-            .try_into()?;
-
-        // Our parent is calling *US*, so the literal is the *NEXT* word.
-        let lit_offset = parent_off + 1;
-
-        unsafe {
-            // Turn the parent's CFA into a slice
-            let putter = parent_cfa.ptr.cast::<Word>();
-            let sli = cfa_to_slice(putter);
-
-            // Then try to get the value at the expected location
-            let val = *sli
-                .get(lit_offset)
-                .ok_or(Error::CFAIdxInInvalid(lit_offset))?;
-            // Put the value on the data stack
-            self.data_stack.push(val)?;
-            // Move the "program counter" to the literal, so our parent "thinks"
-            // they just processed the literal
-            self.return_stack
-                .overwrite_back_n(1, lit_offset.try_into()?)?;
-        }
+        let parent = self.call_stack.peek_back_n_mut(1).unwrap();
+        let literal = parent.get_next_val()?;
+        parent.offset(1)?;
+        self.data_stack.push(Word::data(literal))?;
         Ok(())
     }
 
@@ -555,22 +523,15 @@ impl Forth {
     pub fn interpret(&mut self) -> Result<(), Error> {
         // Colon compiles into a list of words, where the first word
         // is a `u32` of the `len` number of words.
-        let words = unsafe {
-            let cfa = self
-                .return_stack
-                .peek()
-                .ok_or(Error::ReturnStackMissingCFA)?
-                .ptr
-                .cast::<Word>();
+        //
+        // NOTE: we DON'T use `Stack::peek_back_n_mut` because the callee
+        // could pop off our item, which would lead to UB.
+        let mut me = self.call_stack.peek().unwrap();
 
-            cfa_to_slice(cfa)
-        };
-
-        let mut idx = 0usize;
         // For the remaining words, we do a while-let loop instead of
         // a for-loop, as some words (e.g. literals) require advancing
         // to the next word.
-        while let Some(word) = words.get(idx) {
+        while let Some(word) = me.get_word() {
             // We can safely assume that all items in the list are pointers,
             // EXCEPT for literals, but those are handled manually below.
             let ptr = unsafe { word.ptr };
@@ -587,23 +548,19 @@ impl Forth {
                     DictionaryEntry::get_run(de)
                 };
 
-                // We then call the dictionary entry's function with the cfa addr.
-                let idx_word = idx.try_into()?;
-                self.return_stack.push(idx_word)?; // Our "index"
-                self.return_stack.push(Word::ptr(cfa.as_ptr()))?; // Callee CFA
-                wf(self)?;
-                self.return_stack
-                    .pop()
-                    .ok_or(Error::ReturnStackMissingCFA)?;
-                let oidx_i32 = self
-                    .return_stack
-                    .pop()
-                    .ok_or(Error::ReturnStackMissingCFAIdx)?;
-                idx = oidx_i32.try_into()?;
+                self.call_stack.overwrite_back_n(0, me)?;
+                self.call_stack.push(Context {
+                    cfa: cfa.as_ptr(),
+                    idx: 0,
+                })?;
+                let result = wf(self);
+                self.call_stack.pop().unwrap();
+                result?;
+                me = self.call_stack.peek().unwrap();
             } else {
                 return Err(Error::CFANotInDict(*word));
             }
-            idx += 1;
+            me.offset(1).unwrap();
             // TODO: If I want A4-style pausing here, I'd probably want to also
             // push dictionary locations to the stack (under the CFA), which
             // would allow for halting and resuming. Yield after loading "next",
@@ -633,7 +590,7 @@ pub enum Lookup {
 pub mod test {
     use std::{cell::UnsafeCell, mem::MaybeUninit};
 
-    use crate::{output::OutputBuf, Forth, Word, WordStrBuf};
+    use crate::{output::OutputBuf, Context, Forth, Word, WordStrBuf};
 
     // Helper type that will un-leak the buffer once it is dropped.
     pub(crate) struct LeakBox<T, const N: usize> {
@@ -668,6 +625,7 @@ pub mod test {
     fn forth() {
         let payload_dstack: LeakBox<Word, 256> = LeakBox::new();
         let payload_rstack: LeakBox<Word, 256> = LeakBox::new();
+        let payload_cstack: LeakBox<Context, 256> = LeakBox::new();
         let input_buf: LeakBox<u8, 256> = LeakBox::new();
         let output_buf: LeakBox<u8, 256> = LeakBox::new();
         let dict_buf: LeakBox<u8, 4096> = LeakBox::new();
@@ -678,6 +636,7 @@ pub mod test {
             Forth::new(
                 (payload_dstack.ptr(), payload_dstack.len()),
                 (payload_rstack.ptr(), payload_rstack.len()),
+                (payload_cstack.ptr(), payload_cstack.len()),
                 (dict_buf.ptr(), dict_buf.len()),
                 input,
                 output,

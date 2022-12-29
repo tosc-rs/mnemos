@@ -73,6 +73,7 @@ impl LenHash {
     const LEN_MASK: u32 = 0x1F00_0000;
 
     /// Creates a new LenHash, considering UP TO 31 ascii characters.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Self {
         Self::from_bstr(s.as_bytes())
     }
@@ -90,6 +91,7 @@ impl LenHash {
         Self { inner }
     }
 
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         let len_u32 = (self.inner & Self::LEN_MASK) >> 24;
         len_u32 as usize

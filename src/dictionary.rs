@@ -61,7 +61,7 @@ impl DictionaryEntry {
     }
 
     // TODO: This might be more sound if I make this part of the "find" function
-    pub unsafe fn get_run<'a, 'b>(this: NonNull<Self>) -> (WordFunc, NonNull<Word>) {
+    pub unsafe fn get_run(this: NonNull<Self>) -> (WordFunc, NonNull<Word>) {
         let de: &DictionaryEntry = this.as_ref();
         let cfa = DictionaryEntry::pfa(this);
         (de.code_pointer, cfa)
