@@ -49,6 +49,11 @@ pub enum Error {
     ShouldBeUnreachable,
     WordToUsizeInvalid(i32),
     UsizeToWordInvalid(usize),
+    ElseBeforeIf,
+    ThenBeforeIf,
+    IfWithoutThen,
+    DuplicateElse,
+    IfElseWithoutThen,
 }
 
 impl From<StackError> for Error {
@@ -156,12 +161,20 @@ impl Forth {
     }
 
     pub fn lookup(&self, word: &str) -> Result<Lookup, Error> {
-        if let Some(entry) = self.find_in_dict(word) {
-            Ok(Lookup::Dict { de: entry })
-        } else if let Some(val) = Self::parse_num(word) {
-            Ok(Lookup::Literal { val })
-        } else {
-            Err(Error::LookupFailed)
+        match word {
+            ";" => Ok(Lookup::Semicolon),
+            "if" => Ok(Lookup::If),
+            "else" => Ok(Lookup::Else),
+            "then" => Ok(Lookup::Then),
+            _ => {
+                if let Some(entry) = self.find_in_dict(word) {
+                    Ok(Lookup::Dict { de: entry })
+                } else if let Some(val) = Self::parse_num(word) {
+                    Ok(Lookup::Literal { val })
+                } else {
+                    Err(Error::LookupFailed)
+                }
+            }
         }
     }
 
@@ -191,6 +204,10 @@ impl Forth {
                 Lookup::Literal { val } => {
                     self.data_stack.push(Word::data(val))?;
                 }
+                Lookup::Semicolon => todo!(),
+                Lookup::If => todo!(),
+                Lookup::Else => todo!(),
+                Lookup::Then => todo!(),
             }
         }
         self.return_stack
@@ -217,7 +234,68 @@ impl Forth {
         ("(literal)", Forth::literal),
         ("d>r", Forth::data_to_return_stack),
         ("r>d", Forth::return_to_data_stack),
+        ("(jump-zero)", Forth::jump_if_zero),
+        ("(jmp)", Forth::jump),
     ];
+
+    pub fn jump_if_zero(&mut self) -> Result<(), Error> {
+        let do_jmp = unsafe {
+            let val = self.data_stack.pop().ok_or(StackError::StackEmpty)?;
+            val.data == 0
+        };
+        if do_jmp {
+            self.jump()
+        } else {
+            unsafe {
+                let parent_off = self
+                    .return_stack
+                    .peek_back_n(1)
+                    .ok_or(Error::ReturnStackMissingParentCFAIdx)?
+                    .data;
+                self.return_stack
+                    .overwrite_back_n(1, Word::data(parent_off + 1))?;
+            }
+            Ok(())
+        }
+    }
+
+    pub fn jump(&mut self) -> Result<(), Error> {
+        // Current stack SHOULD be:
+        // 0: OUR CFA (d/c)
+        // 1: Our parent's CFA offset
+        // 2: Out parent's CFA
+        let parent_cfa = self
+            .return_stack
+            .peek_back_n(2)
+            .ok_or(Error::ReturnStackMissingParentCFA)?;
+        let parent_off_word = self
+            .return_stack
+            .peek_back_n(1)
+            .ok_or(Error::ReturnStackMissingParentCFAIdx)?;
+
+        // Our parent is calling *US*, so the literal is the *NEXT* word.
+        let po_usize: usize = parent_off_word.try_into()?;
+        let lit_offset = po_usize + 1;
+
+        unsafe {
+            // Turn the parent's CFA into a slice
+            let putter = parent_cfa.ptr.cast::<Word>();
+            let sli = cfa_to_slice(putter);
+
+            // Then try to get the value at the expected location
+            let val = sli
+                .get(lit_offset)
+                .ok_or(Error::CFAIdxInInvalid(lit_offset))?
+                .data;
+
+            let new_val = parent_off_word.data + val;
+
+            // XXX
+            self.return_stack
+                .overwrite_back_n(1, Word::data(new_val))?;
+        }
+        Ok(())
+    }
 
     pub fn dup(&mut self) -> Result<(), Error> {
         let val = self.data_stack.peek().ok_or(StackError::StackEmpty)?;
@@ -260,7 +338,6 @@ impl Forth {
             .ok_or(Error::ColonCompileMissingName)?;
         let old_mode = core::mem::replace(&mut self.mode, Mode::Compile);
         let name = self.dict_alloc.bump_str(name)?;
-        let literal_dict = self.find_in_dict("(literal)").ok_or(Error::WordNotInDict)?;
 
         // Allocate and initialize the dictionary entry
         //
@@ -290,41 +367,10 @@ impl Forth {
         };
 
         // Begin compiling until we hit the end of the line or a semicolon.
-        let mut semicolon = false;
-        loop {
-            self.input.advance();
-            let word = match self.input.cur_word() {
-                Some(w) => w,
-                None => break,
-            };
-
-            if word == ";" {
-                semicolon = true;
-                break;
-            }
-            match self.lookup(word)? {
-                Lookup::Dict { de } => {
-                    // Dictionary items are put into the CFA array directly as
-                    // a pointer to the dictionary entry
-                    let dptr: *mut () = de.as_ptr().cast();
-                    self.dict_alloc.bump_write(Word::ptr(dptr))?;
-                    *len += 1;
-                }
-                Lookup::Literal { val } => {
-                    // Literals are added to the CFA as two items:
-                    //
-                    // 1. The address of the `literal()` dictionary item
-                    // 2. The value of the literal, as a data word
-                    self.dict_alloc
-                        .bump_write(Word::ptr(literal_dict.as_ptr()))?;
-                    self.dict_alloc.bump_write(Word::data(val))?;
-                    *len += 2;
-                }
-            }
-        }
+        while self.munch_one(len)? != 0 {}
 
         // Did we successfully get to the end, marked by a semicolon?
-        if semicolon {
+        if self.input.cur_word() == Some(";") {
             // Link to run dict
             unsafe {
                 dict_base.as_mut().link = self.run_dict_tail.take();
@@ -335,6 +381,123 @@ impl Forth {
         } else {
             Err(Error::ColonCompileMissingSemicolon)
         }
+    }
+
+    fn munch_if(&mut self, len: &mut i32) -> Result<i32, Error> {
+        let start = *len;
+
+        // Write a conditional jump, followed by space for a literal
+        let literal_cj = self.find_in_dict("(jump-zero)").ok_or(Error::WordNotInDict)?;
+        self.dict_alloc.bump_write(Word::ptr(literal_cj.as_ptr()))?;
+        let cj_offset: &mut i32 = {
+            let cj_offset_word = self.dict_alloc.bump::<Word>()?;
+            unsafe {
+                cj_offset_word.as_ptr().write(Word::data(0));
+                &mut (*cj_offset_word.as_ptr()).data
+            }
+        };
+
+        // Increment the length for the number so far.
+        *len += 2;
+
+        let mut else_then = false;
+        let if_start = *len;
+        // Now work until we hit an else or then statement.
+        loop {
+            match self.munch_one(len) {
+                // We hit the end of stream before an else/then.
+                Ok(0) => return Err(Error::IfWithoutThen),
+                // We compiled some stuff, keep going...
+                Ok(_) => {}
+                Err(Error::ElseBeforeIf) => {
+                    else_then = true;
+                    break;
+                }
+                Err(Error::ThenBeforeIf) => break,
+                Err(e) => return Err(e),
+            }
+        }
+
+        let delta = *len - if_start;
+        if !else_then {
+            // we got a "then"
+            //
+            // Jump offset is words placed + 1 for the jump-zero literal
+            *cj_offset = delta + 1;
+            return Ok(*len - start);
+        }
+        // We got an "else", keep going for "then"
+        //
+        // Jump offset is words placed + 1 (cj lit) + 2 (else cj + lit)
+        *cj_offset = delta + 3;
+
+        // Write a conditional jump, followed by space for a literal
+        let literal_jmp = self.find_in_dict("(jmp)").ok_or(Error::WordNotInDict)?;
+        self.dict_alloc
+            .bump_write(Word::ptr(literal_jmp.as_ptr()))?;
+        let jmp_offset: &mut i32 = {
+            let jmp_offset_word = self.dict_alloc.bump::<Word>()?;
+            unsafe {
+                jmp_offset_word.as_ptr().write(Word::data(0));
+                &mut (*jmp_offset_word.as_ptr()).data
+            }
+        };
+        *len += 2;
+
+        let else_start = *len;
+        // Now work until we hit a then statement.
+        loop {
+            match self.munch_one(len) {
+                // We hit the end of stream before a then.
+                Ok(0) => return Err(Error::IfElseWithoutThen),
+                // We compiled some stuff, keep going...
+                Ok(_) => {}
+                Err(Error::ElseBeforeIf) => return Err(Error::DuplicateElse),
+                Err(Error::ThenBeforeIf) => break,
+                Err(e) => return Err(e),
+            }
+        }
+
+        let delta = *len - else_start;
+        // Jump offset is words placed + 1 (jmp lit)
+        *jmp_offset = delta + 1;
+
+        Ok(*len - start)
+    }
+
+    fn munch_one(&mut self, len: &mut i32) -> Result<i32, Error> {
+        let start = *len;
+        self.input.advance();
+        let word = match self.input.cur_word() {
+            Some(w) => w,
+            None => return Ok(0),
+        };
+
+        match self.lookup(word)? {
+            Lookup::If => return self.munch_if(len),
+            Lookup::Else => return Err(Error::ElseBeforeIf),
+            Lookup::Then => return Err(Error::ThenBeforeIf),
+            Lookup::Semicolon => return Ok(0),
+            Lookup::Dict { de } => {
+                // Dictionary items are put into the CFA array directly as
+                // a pointer to the dictionary entry
+                let dptr: *mut () = de.as_ptr().cast();
+                self.dict_alloc.bump_write(Word::ptr(dptr))?;
+                *len += 1;
+            }
+            Lookup::Literal { val } => {
+                // Literals are added to the CFA as two items:
+                //
+                // 1. The address of the `literal()` dictionary item
+                // 2. The value of the literal, as a data word
+                let literal_dict = self.find_in_dict("(literal)").ok_or(Error::WordNotInDict)?;
+                self.dict_alloc
+                    .bump_write(Word::ptr(literal_dict.as_ptr()))?;
+                self.dict_alloc.bump_write(Word::data(val))?;
+                *len += 2;
+            }
+        }
+        return Ok(*len - start);
     }
 
     /// `(literal)` is used mid-interpret to put the NEXT word of the parent's
@@ -451,6 +614,10 @@ unsafe fn cfa_to_slice<'a>(ptr: *mut Word) -> &'a [Word] {
 pub enum Lookup {
     Dict { de: NonNull<DictionaryEntry> },
     Literal { val: i32 },
+    Semicolon,
+    If,
+    Else,
+    Then,
 }
 
 #[cfg(test)]
@@ -515,6 +682,19 @@ pub mod test {
             ("yay yay yay", "5 5 5 ok.\n"),
             (": boop yay yay ;", "ok.\n"),
             ("boop", "5 5 ok.\n"),
+            (": err if boop boop boop else yay yay then ;", "ok.\n"),
+            (": erf if boop boop boop then yay yay ;", "ok.\n"),
+            ("0 err", "5 5 ok.\n"),
+            ("1 err", "5 5 5 5 5 5 ok.\n"),
+            ("0 erf", "5 5 ok.\n"),
+            ("1 erf", "5 5 5 5 5 5 5 5 ok.\n"),
+            (": one 1 . ;", "ok.\n"),
+            (": two 2 . ;", "ok.\n"),
+            (": six 6 . ;", "ok.\n"),
+            (": nif if one if two two else six then one then ;", "ok.\n"),
+            ("  0 nif", "ok.\n"),
+            ("0 1 nif", "1 6 1 ok.\n"),
+            ("1 1 nif", "1 2 2 1 ok.\n"),
         ];
 
         for (line, out) in lines {
@@ -527,14 +707,30 @@ pub mod test {
 
         forth.input.fill(": derp boop yay").unwrap();
         assert!(forth.process_line().is_err());
+        // TODO: Should handle this automatically...
+        forth.return_stack.clear();
 
         forth.input.fill(": doot yay yaay").unwrap();
         assert!(forth.process_line().is_err());
+        // TODO: Should handle this automatically...
+        forth.return_stack.clear();
 
         forth.output.clear();
         forth.input.fill("boop yay").unwrap();
         forth.process_line().unwrap();
         assert_eq!(forth.output.as_str(), "5 5 5 ok.\n");
+
+        let mut any_stacks = false;
+
+        while let Some(dsw) = forth.data_stack.pop() {
+            println!("DSW: {:?}", dsw);
+            any_stacks = true;
+        }
+        while let Some(rsw) = forth.return_stack.pop() {
+            println!("RSW: {:?}", rsw);
+            any_stacks = true;
+        }
+        assert!(!any_stacks);
 
         // Uncomment if you want to check how much of the dictionary
         // was used during a test run.
