@@ -36,6 +36,14 @@ impl<T: Copy> Stack<T> {
     }
 
     #[inline]
+    pub fn try_pop(&mut self) -> Result<T, StackError> {
+        match self.pop() {
+            Some(v) => Ok(v),
+            None => Err(StackError::StackEmpty),
+        }
+    }
+
+    #[inline]
     pub fn pop(&mut self) -> Option<T> {
         let next_cur = self.cur.wrapping_add(1);
         if next_cur > self.top {
@@ -44,6 +52,15 @@ impl<T: Copy> Stack<T> {
         let val = unsafe { self.cur.read() };
         self.cur = next_cur;
         Some(val)
+    }
+
+    #[inline]
+    pub fn try_peek(&self) -> Result<T, StackError> {
+        if self.cur == self.top {
+            Err(StackError::StackEmpty)
+        } else {
+            Ok(unsafe { self.cur.read() })
+        }
     }
 
     #[inline]
@@ -75,12 +92,32 @@ impl<T: Copy> Stack<T> {
     }
 
     #[inline]
+    pub fn try_peek_back_n(&self, n: usize) -> Result<T, StackError> {
+        let request = self.cur.wrapping_add(n);
+        if request >= self.top {
+            Err(StackError::StackEmpty)
+        } else {
+            unsafe { Ok(request.read()) }
+        }
+    }
+
+    #[inline]
     pub fn peek_back_n_mut(&mut self, n: usize) -> Option<&mut T> {
         let request = self.cur.wrapping_add(n);
         if request >= self.top {
             None
         } else {
             unsafe { Some(&mut *request) }
+        }
+    }
+
+    #[inline]
+    pub fn try_peek_back_n_mut(&mut self, n: usize) -> Result<&mut T, StackError> {
+        let request = self.cur.wrapping_add(n);
+        if request >= self.top {
+            Err(StackError::StackEmpty)
+        } else {
+            unsafe { Ok(&mut *request) }
         }
     }
 

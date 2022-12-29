@@ -8,7 +8,12 @@ pub mod output;
 pub mod stack;
 pub mod word;
 
-use core::{fmt::Write, ops::Deref, ptr::NonNull, str::FromStr};
+use core::{
+    fmt::Write,
+    ops::{Deref, Neg},
+    ptr::NonNull,
+    str::FromStr,
+};
 
 use crate::{
     dictionary::{BumpError, DictionaryBump, DictionaryEntry},
@@ -51,6 +56,9 @@ pub enum Error {
     IfElseWithoutThen,
     CallStackCorrupted,
     InterpretingCompileOnlyWord,
+    BadCfaOffset,
+    LoopBeforeDo,
+    DoWithoutLoop,
 }
 
 impl From<StackError> for Error {
@@ -87,11 +95,12 @@ impl Context {
     }
 
     fn offset(&mut self, offset: i32) -> Result<(), Error> {
-        // TODO JAMES THIS IS BAD
         if offset.is_positive() {
-            self.idx += offset as usize;
+            let offset = usize::try_from(offset).replace_err(Error::BadCfaOffset)?;
+            self.idx = self.idx.checked_add(offset).ok_or(Error::BadCfaOffset)?;
         } else {
-            self.idx -= offset.unsigned_abs() as usize;
+            let offset = usize::try_from(offset.unsigned_abs()).replace_err(Error::BadCfaOffset)?;
+            self.idx = self.idx.checked_sub(offset).ok_or(Error::BadCfaOffset)?;
         }
         Ok(())
     }
@@ -100,7 +109,7 @@ impl Context {
         unsafe { cfa_to_slice(self.cfa) }
     }
 
-    fn get_word(&self) -> Option<&Word> {
+    fn get_word_at_cur_idx(&self) -> Option<&Word> {
         let arr = self.cfa_arr();
         arr.get(self.idx)
     }
@@ -184,14 +193,14 @@ impl Forth {
     }
 
     fn find_in_dict(&self, word: &str) -> Option<NonNull<DictionaryEntry>> {
-        let mut optr: Option<&NonNull<DictionaryEntry>> = self.run_dict_tail.as_ref();
+        let mut optr: Option<NonNull<DictionaryEntry>> = self.run_dict_tail.clone();
         let fastr = TmpFaStr::new_from(word);
         while let Some(ptr) = optr.take() {
             let de = unsafe { ptr.as_ref() };
             if &de.name == fastr.deref() {
-                return Some(*ptr);
+                return Some(ptr);
             }
-            optr = de.link.as_ref();
+            optr = de.link.clone();
         }
         None
     }
@@ -202,6 +211,8 @@ impl Forth {
             "if" => Ok(Lookup::If),
             "else" => Ok(Lookup::Else),
             "then" => Ok(Lookup::Then),
+            "do" => Ok(Lookup::Do),
+            "loop" => Ok(Lookup::Loop),
             _ => {
                 if let Some(entry) = self.find_in_dict(word) {
                     Ok(Lookup::Dict { de: entry })
@@ -240,6 +251,8 @@ impl Forth {
                 Lookup::If => return Err(Error::InterpretingCompileOnlyWord),
                 Lookup::Else => return Err(Error::InterpretingCompileOnlyWord),
                 Lookup::Then => return Err(Error::InterpretingCompileOnlyWord),
+                Lookup::Do => return Err(Error::InterpretingCompileOnlyWord),
+                Lookup::Loop => return Err(Error::InterpretingCompileOnlyWord),
             }
         }
         writeln!(&mut self.output, "ok.").map_err(|_| OutputError::FormattingErr)?;
@@ -257,19 +270,91 @@ impl Forth {
 impl Forth {
     const BUILTINS: &'static [(&'static str, WordFunc)] = &[
         ("+", Forth::add),
+        ("/", Forth::div),
+        ("=", Forth::equal),
+        ("not", Forth::invert),
+        ("mod", Forth::modu),
         ("dup", Forth::dup),
+        ("i", Forth::loop_i),
         (".", Forth::pop_print),
         (":", Forth::colon),
         ("(literal)", Forth::literal),
         ("d>r", Forth::data_to_return_stack),
+        ("2d>2r", Forth::data2_to_return2_stack),
         ("r>d", Forth::return_to_data_stack),
         ("(jump-zero)", Forth::jump_if_zero),
         ("(jmp)", Forth::jump),
+        ("(jmp-doloop)", Forth::jump_doloop),
         ("emit", Forth::emit),
     ];
 
+    fn skip_literal(&mut self) -> Result<(), Error> {
+        let parent = self.call_stack.try_peek_back_n_mut(1)?;
+        parent.offset(1)?;
+        Ok(())
+    }
+
+    pub fn invert(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let val = if a == Word::data(0) {
+            Word::data(-1)
+        } else {
+            Word::data(0)
+        };
+        self.data_stack.push(val)?;
+        Ok(())
+    }
+
+    pub fn equal(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        let val = if a == b {
+            Word::data(-1)
+        } else {
+            Word::data(0)
+        };
+        self.data_stack.push(val)?;
+        Ok(())
+    }
+
+    pub fn div(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        let val = unsafe { Word::data(b.data / a.data) };
+        self.data_stack.push(val)?;
+        Ok(())
+    }
+
+    pub fn modu(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        let val = unsafe { Word::data(b.data % a.data) };
+        self.data_stack.push(val)?;
+        Ok(())
+    }
+
+    pub fn loop_i(&mut self) -> Result<(), Error> {
+        let a = self.return_stack.try_peek()?;
+        self.data_stack.push(a)?;
+        Ok(())
+    }
+
+    pub fn jump_doloop(&mut self) -> Result<(), Error> {
+        let a = self.return_stack.try_pop()?;
+        let b = self.return_stack.try_peek()?;
+        let ctr = unsafe { Word::data(a.data + 1) };
+        let do_jmp = ctr != b;
+        if do_jmp {
+            self.return_stack.push(ctr)?;
+            self.jump()
+        } else {
+            self.return_stack.try_pop()?;
+            self.skip_literal()
+        }
+    }
+
     pub fn emit(&mut self) -> Result<(), Error> {
-        let val = self.data_stack.pop().ok_or(StackError::StackEmpty)?;
+        let val = self.data_stack.try_pop()?;
         let val = unsafe { val.data };
         self.output.push_bstr(&[val as u8])?;
         Ok(())
@@ -277,54 +362,59 @@ impl Forth {
 
     pub fn jump_if_zero(&mut self) -> Result<(), Error> {
         let do_jmp = unsafe {
-            let val = self.data_stack.pop().ok_or(StackError::StackEmpty)?;
+            let val = self.data_stack.try_pop()?;
             val.data == 0
         };
         if do_jmp {
             self.jump()
         } else {
-            let parent = self.call_stack.peek_back_n_mut(1).unwrap();
-            parent.offset(1).unwrap();
-            Ok(())
+            self.skip_literal()
         }
     }
 
     pub fn jump(&mut self) -> Result<(), Error> {
-        let mut parent = self.call_stack.peek_back_n(1).unwrap();
+        let parent = self.call_stack.try_peek_back_n_mut(1)?;
         let offset = parent.get_next_val()?;
         parent.offset(offset)?;
-        self.call_stack.overwrite_back_n(1, parent)?;
         Ok(())
     }
 
     pub fn dup(&mut self) -> Result<(), Error> {
-        let val = self.data_stack.peek().ok_or(StackError::StackEmpty)?;
+        let val = self.data_stack.try_peek()?;
         self.data_stack.push(val)?;
         Ok(())
     }
 
     pub fn return_to_data_stack(&mut self) -> Result<(), Error> {
-        let val = self.return_stack.pop().ok_or(StackError::StackEmpty)?;
+        let val = self.return_stack.try_pop()?;
         self.data_stack.push(val)?;
         Ok(())
     }
 
     pub fn data_to_return_stack(&mut self) -> Result<(), Error> {
-        let val = self.data_stack.pop().ok_or(StackError::StackEmpty)?;
+        let val = self.data_stack.try_pop()?;
         self.return_stack.push(val)?;
         Ok(())
     }
 
+    pub fn data2_to_return2_stack(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        self.return_stack.push(b)?;
+        self.return_stack.push(a)?;
+        Ok(())
+    }
+
     pub fn pop_print(&mut self) -> Result<(), Error> {
-        let a = self.data_stack.pop().ok_or(StackError::StackEmpty)?;
+        let a = self.data_stack.try_pop()?;
         write!(&mut self.output, "{} ", unsafe { a.data })
             .map_err(|_| OutputError::FormattingErr)?;
         Ok(())
     }
 
     pub fn add(&mut self) -> Result<(), Error> {
-        let a = self.data_stack.pop().ok_or(StackError::StackEmpty)?;
-        let b = self.data_stack.pop().ok_or(StackError::StackEmpty)?;
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
         self.data_stack
             .push(Word::data(unsafe { a.data.wrapping_add(b.data) }))?;
         Ok(())
@@ -381,6 +471,42 @@ impl Forth {
         } else {
             Err(Error::ColonCompileMissingSemicolon)
         }
+    }
+
+    fn munch_do(&mut self, len: &mut i32) -> Result<i32, Error> {
+        let start = *len;
+
+        // Write a conditional jump, followed by space for a literal
+        let literal_cj = self.find_in_dict("2d>2r").ok_or(Error::WordNotInDict)?;
+        self.dict_alloc.bump_write(Word::ptr(literal_cj.as_ptr()))?;
+        *len += 1;
+
+        let do_start = *len;
+        // Now work until we hit an else or then statement.
+        loop {
+            match self.munch_one(len) {
+                // We hit the end of stream before an else/then.
+                Ok(0) => return Err(Error::DoWithoutLoop),
+                // We compiled some stuff, keep going...
+                Ok(_) => {}
+                Err(Error::LoopBeforeDo) => {
+                    break;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        let delta = *len - do_start;
+        let offset = (delta + 1).neg();
+        let literal_dojmp = self
+            .find_in_dict("(jmp-doloop)")
+            .ok_or(Error::WordNotInDict)?;
+        self.dict_alloc
+            .bump_write(Word::ptr(literal_dojmp.as_ptr()))?;
+        self.dict_alloc.bump_write(Word::data(offset))?;
+        *len += 2;
+
+        Ok(*len - start)
     }
 
     fn munch_if(&mut self, len: &mut i32) -> Result<i32, Error> {
@@ -498,6 +624,8 @@ impl Forth {
                 self.dict_alloc.bump_write(Word::data(val))?;
                 *len += 2;
             }
+            Lookup::Do => return self.munch_do(len),
+            Lookup::Loop => return Err(Error::LoopBeforeDo),
         }
         Ok(*len - start)
     }
@@ -509,7 +637,7 @@ impl Forth {
         // 0: OUR CFA (d/c)
         // 1: Our parent's CFA offset
         // 2: Out parent's CFA
-        let parent = self.call_stack.peek_back_n_mut(1).unwrap();
+        let parent = self.call_stack.try_peek_back_n_mut(1)?;
         let literal = parent.get_next_val()?;
         parent.offset(1)?;
         self.data_stack.push(Word::data(literal))?;
@@ -524,14 +652,14 @@ impl Forth {
         // Colon compiles into a list of words, where the first word
         // is a `u32` of the `len` number of words.
         //
-        // NOTE: we DON'T use `Stack::peek_back_n_mut` because the callee
+        // NOTE: we DON'T use `Stack::try_peek_back_n_mut` because the callee
         // could pop off our item, which would lead to UB.
         let mut me = self.call_stack.peek().unwrap();
 
         // For the remaining words, we do a while-let loop instead of
         // a for-loop, as some words (e.g. literals) require advancing
         // to the next word.
-        while let Some(word) = me.get_word() {
+        while let Some(word) = me.get_word_at_cur_idx() {
             // We can safely assume that all items in the list are pointers,
             // EXCEPT for literals, but those are handled manually below.
             let ptr = unsafe { word.ptr };
@@ -584,6 +712,24 @@ pub enum Lookup {
     If,
     Else,
     Then,
+    Do,
+    Loop,
+}
+
+trait ReplaceErr {
+    type OK;
+    fn replace_err<NE>(self, t: NE) -> Result<Self::OK, NE>;
+}
+
+impl<T, OE> ReplaceErr for Result<T, OE> {
+    type OK = T;
+    #[inline]
+    fn replace_err<NE>(self, e: NE) -> Result<Self::OK, NE> {
+        match self {
+            Ok(t) => Ok(t),
+            Err(_e) => Err(e),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -666,6 +812,12 @@ pub mod test {
             ("42 emit", "*ok.\n"),
             (": star 42 emit ;", "ok.\n"),
             ("star star star", "***ok.\n"),
+            (": sloop one 5 0 do star star loop six ;", "ok.\n"),
+            ("sloop", "1 **********6 ok.\n"),
+            (": count 10 0 do i . loop ;", "ok.\n"),
+            ("count", "0 1 2 3 4 5 6 7 8 9 ok.\n"),
+            (": smod 10 0 do i 3 mod not if star then loop ;", "ok.\n"),
+            ("smod", "****ok.\n"),
         ];
 
         for (line, out) in lines {
@@ -713,6 +865,6 @@ pub mod test {
         // forth run. TODO: Remove this once we implement the
         // output buffer.
         //
-        // panic!();
+        // panic!("Test Passed! Manual inspection...");
     }
 }
