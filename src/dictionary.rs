@@ -12,9 +12,17 @@ pub enum BumpError {
 
 pub enum CodeField<T: 'static> {
     Interpret { len: usize },
+    // TODO: "Builtin" isn't really the right word anymore. These
+    // are "Native" functions added at runtime.
     Builtin { ptr: WordFunc<T> },
     // TODO: Variable
     // TODO: Constant
+}
+
+#[repr(C)]
+pub struct BuiltinEntry<T: 'static> {
+    pub name: FaStr,
+    pub func: WordFunc<T>,
 }
 
 // Starting FORTH: page 220
@@ -71,6 +79,51 @@ impl<T: 'static> DictionaryEntry<T> {
         let ptr = this.as_ptr();
         let pfp: *mut [Word; 0] = addr_of_mut!((*ptr).parameter_field);
         NonNull::new_unchecked(pfp.cast::<Word>())
+    }
+
+    #[cfg(any(test, feature = "use-std"))]
+    pub(crate) unsafe fn contains(this: NonNull<Self>, target: *mut ()) -> bool {
+        let mut now = this;
+        loop {
+            let de = now.as_ref();
+            if let Some(cde) = de.link {
+                if cde.as_ptr().cast() == target {
+                    break true;
+                } else {
+                    now = cde;
+                }
+            } else {
+                break false;
+            }
+        }
+    }
+
+    #[cfg(any(test, feature = "use-std"))]
+    pub(crate) unsafe fn dump_recursive(this: NonNull<Self>) {
+        let cfa = DictionaryEntry::pfa(this);
+        let de = this.as_ref();
+        if let Some(cde) = de.link {
+            DictionaryEntry::dump_recursive(cde);
+        }
+
+        match de.code_field {
+            CodeField::Interpret { len } => {
+                let mut vee = format!(": {} ", de.name.as_str());
+                let sli = core::slice::from_raw_parts(cfa.as_ptr(), len);
+                for w in sli {
+                    if DictionaryEntry::contains(this, w.ptr.cast()) {
+                        vee += &format!("{} ", (*w.ptr.cast::<DictionaryEntry<T>>()).name.as_str());
+                    } else {
+                        vee += &format!("{} ", w.data);
+                    }
+                }
+                vee += ";";
+                println!("{}", vee);
+            }
+            CodeField::Builtin { .. } => {
+                println!("( builtin - '{}' )", de.name.as_str());
+            }
+        };
     }
 }
 

@@ -48,13 +48,21 @@ impl FaStr {
     pub fn as_str(&self) -> &str {
         unsafe { core::str::from_utf8_unchecked(self.as_bytes()) }
     }
+
+    pub fn raw(&self) -> u32 {
+        self.len_hash.inner
+    }
 }
 
 impl PartialEq for FaStr {
     fn eq(&self, other: &Self) -> bool {
+        // First, check the hash
         if self.len_hash.eq_ignore_bits(&other.len_hash) {
+            // The hash matches, but there might be collisions. Do the strcmp
+            // to make sure
             self.as_bytes().eq(other.as_bytes())
         } else {
+            // If the hash doesn't match, it's definitely not equal.
             false
         }
     }
@@ -104,5 +112,58 @@ impl LenHash {
 
     pub fn eq_ignore_bits(&self, other: &Self) -> bool {
         (self.inner & !Self::BITS_MASK) == (other.inner & !Self::BITS_MASK)
+    }
+}
+
+pub const fn comptime_fastr(s: &'static str) -> FaStr {
+    let len = s.len();
+    assert!(!s.is_empty());
+    assert!(len <= 31);
+    let hash = comptime_hash_by(s.as_bytes(), BASIS);
+    FaStr {
+        ptr: s.as_ptr(),
+        len_hash: LenHash {
+            inner: ((len as u32) << 24) | (hash & LenHash::HASH_MASK),
+        },
+    }
+}
+
+const fn comptime_hash_by(sli: &'static [u8], state: u32) -> u32 {
+    match sli.split_first() {
+        Some((first, rest)) => {
+            let state = state ^ (*first as u32);
+            let state = state.wrapping_mul(PRIME);
+            comptime_hash_by(rest, state)
+        }
+        None => state,
+    }
+}
+
+const BASIS: u32 = 0x811c_9dc5;
+const PRIME: u32 = 0x0100_0193;
+
+#[cfg(test)]
+pub mod test {
+    use crate::fastr::FaStr;
+
+    use super::{comptime_fastr, TmpFaStr};
+
+    #[test]
+    fn const_fastr() {
+        use comptime_fastr as cf;
+        const ITEMS: &[(&str, FaStr)] = &[
+            ("hello", cf("hello")),
+            ("this", cf("this")),
+            ("is", cf("is")),
+            ("a", cf("a")),
+            ("very", cf("very")),
+            ("silly", cf("silly")),
+            ("test", cf("test")),
+        ];
+
+        for (txt, cf) in ITEMS {
+            let tafs = TmpFaStr::new_from(txt);
+            assert!(cf == &tafs.fastr);
+        }
     }
 }

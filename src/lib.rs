@@ -15,7 +15,9 @@ use core::{
     str::FromStr,
 };
 
-use dictionary::CodeField;
+use dictionary::{BuiltinEntry, CodeField};
+use fastr::comptime_fastr;
+use word::PtrKind;
 
 use crate::{
     dictionary::{BumpError, DictionaryBump, DictionaryEntry},
@@ -37,18 +39,11 @@ pub enum Error {
     Stack(StackError),
     Bump(BumpError),
     Output(OutputError),
-    ReturnStackMissingCFA,
-    ReturnStackMissingCFAIdx,
-    ReturnStackMissingParentCFA,
-    ReturnStackMissingParentCFAIdx,
     CFANotInDict(Word),
-    CFAIdxOutInvalid(Word),
     WordNotInDict,
-    CFAIdxInInvalid(usize),
     ColonCompileMissingName,
     ColonCompileMissingSemicolon,
     LookupFailed,
-    ShouldBeUnreachable,
     WordToUsizeInvalid(i32),
     UsizeToWordInvalid(usize),
     ElseBeforeIf,
@@ -63,6 +58,7 @@ pub enum Error {
     DoWithoutLoop,
     BadCfaLen,
     BuiltinHasNoNextValue,
+    UntaggedCFAPtr,
 }
 
 impl From<StackError> for Error {
@@ -84,7 +80,7 @@ impl From<OutputError> for Error {
 }
 
 pub struct Context<T: 'static> {
-    de: NonNull<DictionaryEntry<T>>,
+    de: Option<NonNull<DictionaryEntry<T>>>,
     idx: usize,
 }
 
@@ -97,17 +93,17 @@ impl<T: 'static> Clone for Context<T> {
     }
 }
 
-
-impl<T: 'static> Copy for Context<T> { }
+impl<T: 'static> Copy for Context<T> {}
 
 impl<T: 'static> Context<T> {
     fn get_next_val(&self) -> Result<i32, Error> {
+        let de = self.de.ok_or(Error::BuiltinHasNoNextValue)?;
         unsafe {
-            match self.de.as_ref().code_field {
+            match de.as_ref().code_field {
                 CodeField::Interpret { len } => {
                     let req = self.idx + 1;
                     if req < len {
-                        Ok(DictionaryEntry::pfa(self.de).as_ptr().add(req).read().data)
+                        Ok(DictionaryEntry::pfa(de).as_ptr().add(req).read().data)
                     } else {
                         Err(Error::BadCfaOffset)
                     }
@@ -133,11 +129,12 @@ impl<T: 'static> Context<T> {
     // }
 
     fn get_word_at_cur_idx(&self) -> Option<&Word> {
+        let de = self.de?;
         unsafe {
-            match self.de.as_ref().code_field {
+            match de.as_ref().code_field {
                 CodeField::Interpret { len } => {
                     if self.idx < len {
-                        Some(&*DictionaryEntry::pfa(self.de).as_ptr().add(self.idx))
+                        Some(&*DictionaryEntry::pfa(de).as_ptr().add(self.idx))
                     } else {
                         None
                     }
@@ -170,6 +167,7 @@ pub struct Forth<T: 'static> {
     pub input: WordStrBuf,
     pub output: OutputBuf,
     pub host_ctxt: T,
+    builtins: &'static [BuiltinEntry<T>],
 
     // TODO: This will be for words that have compile time actions, I guess?
     _comp_dict_tail: Option<NonNull<DictionaryEntry<T>>>,
@@ -183,13 +181,15 @@ impl<T> Forth<T> {
         dict_buf: (*mut u8, usize),
         input: WordStrBuf,
         output: OutputBuf,
-        host_ctxt: T
+        host_ctxt: T,
+        builtins: &'static [BuiltinEntry<T>],
     ) -> Result<Self, Error> {
         let data_stack = Stack::new(dstack_buf.0, dstack_buf.1);
         let return_stack = Stack::new(rstack_buf.0, rstack_buf.1);
         let call_stack = Stack::new(cstack_buf.0, cstack_buf.1);
         let dict_alloc = DictionaryBump::new(dict_buf.0, dict_buf.1);
-        let mut new = Self {
+
+        Ok(Self {
             mode: Mode::Run,
             data_stack,
             return_stack,
@@ -200,16 +200,15 @@ impl<T> Forth<T> {
             input,
             output,
             host_ctxt,
-        };
-
-        for (name, func) in Forth::BUILTINS {
-            new.add_builtin_static_name(name, *func)?;
-        }
-
-        Ok(new)
+            builtins,
+        })
     }
 
-    pub fn add_builtin_static_name(&mut self, name: &'static str, bi: WordFunc<T>) -> Result<(), Error> {
+    pub fn add_builtin_static_name(
+        &mut self,
+        name: &'static str,
+        bi: WordFunc<T>,
+    ) -> Result<(), Error> {
         let name = unsafe { FaStr::new(name.as_ptr(), name.len()) };
         self.add_bi_fastr(name, bi)
     }
@@ -238,15 +237,28 @@ impl<T> Forth<T> {
         i32::from_str(word).ok()
     }
 
-    fn find_in_dict(&self, word: &str) -> Option<NonNull<DictionaryEntry<T>>> {
-        let mut optr: Option<NonNull<DictionaryEntry<T>>> = self.run_dict_tail.clone();
+    fn find_word(&self, word: &str) -> Option<PtrKind<T>> {
         let fastr = TmpFaStr::new_from(word);
+        self.find_in_dict(&fastr)
+            .map(PtrKind::DictWord)
+            .or_else(|| self.find_in_bis(&fastr).map(PtrKind::BuiltinWord))
+    }
+
+    fn find_in_bis(&self, fastr: &TmpFaStr<'_>) -> Option<NonNull<BuiltinEntry<T>>> {
+        self.builtins
+            .iter()
+            .find(|bi| &bi.name == fastr.deref())
+            .map(NonNull::from)
+    }
+
+    fn find_in_dict(&self, fastr: &TmpFaStr<'_>) -> Option<NonNull<DictionaryEntry<T>>> {
+        let mut optr: Option<NonNull<DictionaryEntry<T>>> = self.run_dict_tail;
         while let Some(ptr) = optr.take() {
             let de = unsafe { ptr.as_ref() };
             if &de.name == fastr.deref() {
                 return Some(ptr);
             }
-            optr = de.link.clone();
+            optr = de.link;
         }
         None
     }
@@ -260,8 +272,11 @@ impl<T> Forth<T> {
             "do" => Ok(Lookup::Do),
             "loop" => Ok(Lookup::Loop),
             _ => {
-                if let Some(entry) = self.find_in_dict(word) {
+                let fastr = TmpFaStr::new_from(word);
+                if let Some(entry) = self.find_in_dict(&fastr) {
                     Ok(Lookup::Dict { de: entry })
+                } else if let Some(bis) = self.find_in_bis(&fastr) {
+                    Ok(Lookup::Builtin { bi: bis })
                 } else if let Some(val) = Self::parse_num(word) {
                     Ok(Lookup::Literal { val })
                 } else {
@@ -287,8 +302,18 @@ impl<T> Forth<T> {
                             CodeField::Builtin { ptr } => ptr,
                         }
                     };
-                    self.call_stack.push(Context { de, idx: 0 })?;
+                    self.call_stack.push(Context {
+                        de: Some(de),
+                        idx: 0,
+                    })?;
                     let res = func(self);
+                    self.call_stack.pop().ok_or(Error::CallStackCorrupted)?;
+                    res?;
+                }
+                Lookup::Builtin { bi } => {
+                    // TODO: Do I want to push builtins to the call stack?
+                    self.call_stack.push(Context { de: None, idx: 0 })?;
+                    let res = unsafe { (bi.as_ref().func)(self) };
                     self.call_stack.pop().ok_or(Error::CallStackCorrupted)?;
                     res?;
                 }
@@ -320,24 +345,75 @@ impl<T> Forth<T> {
 /// forth VM. It may be possible to move `Fif`'s functionality back into the
 /// `Forth` struct at a later point.
 impl<T> Forth<T> {
-    const BUILTINS: &'static [(&'static str, WordFunc<T>)] = &[
-        ("+", Self::add),
-        ("/", Self::div),
-        ("=", Self::equal),
-        ("not", Self::invert),
-        ("mod", Self::modu),
-        ("dup", Self::dup),
-        ("i", Self::loop_i),
-        (".", Self::pop_print),
-        (":", Self::colon),
-        ("(literal)", Self::literal),
-        ("d>r", Self::data_to_return_stack),
-        ("2d>2r", Self::data2_to_return2_stack),
-        ("r>d", Self::return_to_data_stack),
-        ("(jump-zero)", Self::jump_if_zero),
-        ("(jmp)", Self::jump),
-        ("(jmp-doloop)", Self::jump_doloop),
-        ("emit", Self::emit),
+    pub const FULL_BUILTINS: &'static [BuiltinEntry<T>] = &[
+        BuiltinEntry {
+            name: comptime_fastr("+"),
+            func: Self::add,
+        },
+        BuiltinEntry {
+            name: comptime_fastr("/"),
+            func: Self::div,
+        },
+        BuiltinEntry {
+            name: comptime_fastr("="),
+            func: Self::equal,
+        },
+        BuiltinEntry {
+            name: comptime_fastr("not"),
+            func: Self::invert,
+        },
+        BuiltinEntry {
+            name: comptime_fastr("mod"),
+            func: Self::modu,
+        },
+        BuiltinEntry {
+            name: comptime_fastr("dup"),
+            func: Self::dup,
+        },
+        BuiltinEntry {
+            name: comptime_fastr("i"),
+            func: Self::loop_i,
+        },
+        BuiltinEntry {
+            name: comptime_fastr("."),
+            func: Self::pop_print,
+        },
+        BuiltinEntry {
+            name: comptime_fastr(":"),
+            func: Self::colon,
+        },
+        BuiltinEntry {
+            name: comptime_fastr("(literal)"),
+            func: Self::literal,
+        },
+        BuiltinEntry {
+            name: comptime_fastr("d>r"),
+            func: Self::data_to_return_stack,
+        },
+        BuiltinEntry {
+            name: comptime_fastr("2d>2r"),
+            func: Self::data2_to_return2_stack,
+        },
+        BuiltinEntry {
+            name: comptime_fastr("r>d"),
+            func: Self::return_to_data_stack,
+        },
+        BuiltinEntry {
+            name: comptime_fastr("(jump-zero)"),
+            func: Self::jump_if_zero,
+        },
+        BuiltinEntry {
+            name: comptime_fastr("(jmp)"),
+            func: Self::jump,
+        },
+        BuiltinEntry {
+            name: comptime_fastr("(jmp-doloop)"),
+            func: Self::jump_doloop,
+        },
+        BuiltinEntry {
+            name: comptime_fastr("emit"),
+            func: Self::emit,
+        },
     ];
 
     fn skip_literal(&mut self) -> Result<(), Error> {
@@ -517,8 +593,8 @@ impl<T> Forth<T> {
         let start = *len;
 
         // Write a conditional jump, followed by space for a literal
-        let literal_cj = self.find_in_dict("2d>2r").ok_or(Error::WordNotInDict)?;
-        self.dict_alloc.bump_write(Word::ptr(literal_cj.as_ptr()))?;
+        let literal_cj = self.find_word("2d>2r").ok_or(Error::WordNotInDict)?;
+        self.dict_alloc.bump_write(Word::kinded_ptr(literal_cj))?;
         *len += 1;
 
         let do_start = *len;
@@ -538,11 +614,9 @@ impl<T> Forth<T> {
 
         let delta = *len - do_start;
         let offset = (delta + 1).neg();
-        let literal_dojmp = self
-            .find_in_dict("(jmp-doloop)")
-            .ok_or(Error::WordNotInDict)?;
+        let literal_dojmp = self.find_word("(jmp-doloop)").ok_or(Error::WordNotInDict)?;
         self.dict_alloc
-            .bump_write(Word::ptr(literal_dojmp.as_ptr()))?;
+            .bump_write(Word::kinded_ptr(literal_dojmp))?;
         self.dict_alloc.bump_write(Word::data(offset))?;
         *len += 2;
 
@@ -553,10 +627,8 @@ impl<T> Forth<T> {
         let start = *len;
 
         // Write a conditional jump, followed by space for a literal
-        let literal_cj = self
-            .find_in_dict("(jump-zero)")
-            .ok_or(Error::WordNotInDict)?;
-        self.dict_alloc.bump_write(Word::ptr(literal_cj.as_ptr()))?;
+        let literal_cj = self.find_word("(jump-zero)").ok_or(Error::WordNotInDict)?;
+        self.dict_alloc.bump_write(Word::kinded_ptr(literal_cj))?;
         let cj_offset: &mut i32 = {
             let cj_offset_word = self.dict_alloc.bump::<Word>()?;
             unsafe {
@@ -600,9 +672,8 @@ impl<T> Forth<T> {
         *cj_offset = delta + 3;
 
         // Write a conditional jump, followed by space for a literal
-        let literal_jmp = self.find_in_dict("(jmp)").ok_or(Error::WordNotInDict)?;
-        self.dict_alloc
-            .bump_write(Word::ptr(literal_jmp.as_ptr()))?;
+        let literal_jmp = self.find_word("(jmp)").ok_or(Error::WordNotInDict)?;
+        self.dict_alloc.bump_write(Word::kinded_ptr(literal_jmp))?;
         let jmp_offset: &mut i32 = {
             let jmp_offset_word = self.dict_alloc.bump::<Word>()?;
             unsafe {
@@ -649,8 +720,13 @@ impl<T> Forth<T> {
             Lookup::Dict { de } => {
                 // Dictionary items are put into the CFA array directly as
                 // a pointer to the dictionary entry
-                let dptr: *mut () = de.as_ptr().cast();
-                self.dict_alloc.bump_write(Word::ptr(dptr))?;
+                self.dict_alloc
+                    .bump_write(Word::kinded_ptr(PtrKind::DictWord(de)))?;
+                *len += 1;
+            }
+            Lookup::Builtin { bi } => {
+                self.dict_alloc
+                    .bump_write(Word::kinded_ptr(PtrKind::BuiltinWord(bi)))?;
                 *len += 1;
             }
             Lookup::Literal { val } => {
@@ -658,9 +734,8 @@ impl<T> Forth<T> {
                 //
                 // 1. The address of the `literal()` dictionary item
                 // 2. The value of the literal, as a data word
-                let literal_dict = self.find_in_dict("(literal)").ok_or(Error::WordNotInDict)?;
-                self.dict_alloc
-                    .bump_write(Word::ptr(literal_dict.as_ptr()))?;
+                let literal_dict = self.find_word("(literal)").ok_or(Error::WordNotInDict)?;
+                self.dict_alloc.bump_write(Word::kinded_ptr(literal_dict))?;
                 self.dict_alloc.bump_write(Word::data(val))?;
                 *len += 2;
             }
@@ -702,35 +777,49 @@ impl<T> Forth<T> {
         while let Some(word) = me.get_word_at_cur_idx() {
             // We can safely assume that all items in the list are pointers,
             // EXCEPT for literals, but those are handled manually below.
-            let ptr = unsafe { word.ptr };
+            let ptr = unsafe { word.as_kinded_ptr() };
 
-            // Is the given word pointing at somewhere in the range of
-            // the dictionary allocator?
-            let in_dict = self.dict_alloc.contains(ptr);
+            match ptr {
+                PtrKind::DictWord(de) => {
+                    // Is the given word pointing at somewhere in the range of
+                    // the dictionary allocator?
+                    let in_dict = self.dict_alloc.contains(de.as_ptr().cast());
 
-            if in_dict {
-                // If the word points to somewhere in the dictionary, then treat
-                // it as if it is a dictionary entry
-                let (func, de) = unsafe {
-                    let de_ptr = ptr.cast::<DictionaryEntry<T>>();
-                    let func = match (*de_ptr).code_field {
-                        CodeField::Interpret { .. } => Forth::interpret,
-                        CodeField::Builtin { ptr } => ptr,
-                    };
-                    let de = NonNull::new_unchecked(de_ptr);
-                    (func, de)
-                };
+                    if in_dict {
+                        // If the word points to somewhere in the dictionary, then treat
+                        // it as if it is a dictionary entry
+                        let func = unsafe {
+                            match de.as_ref().code_field {
+                                CodeField::Interpret { .. } => Forth::interpret,
+                                CodeField::Builtin { ptr } => ptr,
+                            }
+                        };
 
-                self.call_stack.overwrite_back_n(0, me)?;
-                self.call_stack.push(Context { de, idx: 0 })?;
-                let result = func(self);
-                self.call_stack.pop().unwrap();
-                result?;
-                me = self.call_stack.peek().unwrap();
-            } else {
-                return Err(Error::CFANotInDict(*word));
+                        self.call_stack.overwrite_back_n(0, me)?;
+                        self.call_stack.push(Context {
+                            de: Some(de),
+                            idx: 0,
+                        })?;
+                        let result = func(self);
+                        self.call_stack.pop().unwrap();
+                        result?;
+                        me = self.call_stack.peek().unwrap();
+                    } else {
+                        return Err(Error::CFANotInDict(*word));
+                    }
+                }
+                PtrKind::BuiltinWord(bi) => {
+                    self.call_stack.overwrite_back_n(0, me)?;
+                    self.call_stack.push(Context { de: None, idx: 0 })?;
+                    let result = unsafe { (bi.as_ref().func)(self) };
+                    self.call_stack.pop().unwrap();
+                    result?;
+                    me = self.call_stack.peek().unwrap();
+                }
+                PtrKind::Unknown(_) => return Err(Error::UntaggedCFAPtr),
             }
-            me.offset(1).unwrap();
+
+            me.offset(1)?;
             // TODO: If I want A4-style pausing here, I'd probably want to also
             // push dictionary locations to the stack (under the CFA), which
             // would allow for halting and resuming. Yield after loading "next",
@@ -739,11 +828,21 @@ impl<T> Forth<T> {
         }
         Ok(())
     }
+
+    #[cfg(any(test, feature = "use-std"))]
+    pub fn print_dump(&self) {
+        if let Some(link) = self.run_dict_tail {
+            unsafe {
+                DictionaryEntry::dump_recursive(link);
+            }
+        }
+    }
 }
 
 pub enum Lookup<T: 'static> {
     Dict { de: NonNull<DictionaryEntry<T>> },
     Literal { val: i32 },
+    Builtin { bi: NonNull<BuiltinEntry<T>> },
     Semicolon,
     If,
     Else,
@@ -776,7 +875,9 @@ pub mod leakbox {
         mem::MaybeUninit,
     };
 
-    use crate::{input::WordStrBuf, output::OutputBuf, word::Word, Context, Forth};
+    use crate::{
+        dictionary::BuiltinEntry, input::WordStrBuf, output::OutputBuf, word::Word, Context, Forth,
+    };
 
     // Helper type that will un-leak the buffer once it is dropped.
     pub struct LeakBox<T> {
@@ -848,7 +949,11 @@ pub mod leakbox {
         _dict_buf: LeakBox<u8>,
     }
     impl<T: 'static> LBForth<T> {
-        pub fn from_params(params: LBForthParams, host_ctxt: T) -> Self {
+        pub fn from_params(
+            params: LBForthParams,
+            host_ctxt: T,
+            builtins: &'static [BuiltinEntry<T>],
+        ) -> Self {
             let _payload_dstack: LeakBox<Word> = LeakBox::new(params.data_stack_elems);
             let _payload_rstack: LeakBox<Word> = LeakBox::new(params.return_stack_elems);
             let _payload_cstack: LeakBox<Context<T>> = LeakBox::new(params.control_stack_elems);
@@ -867,6 +972,7 @@ pub mod leakbox {
                     input,
                     output,
                     host_ctxt,
+                    builtins,
                 )
                 .unwrap()
             };
@@ -886,7 +992,12 @@ pub mod leakbox {
 
 #[cfg(test)]
 pub mod test {
-    use crate::{leakbox::{LBForth, LBForthParams}, Forth};
+    use crate::{
+        dictionary::DictionaryEntry,
+        leakbox::{LBForth, LBForthParams},
+        word::Word,
+        Forth,
+    };
 
     #[derive(Default)]
     struct TestContext {
@@ -895,9 +1006,18 @@ pub mod test {
 
     #[test]
     fn forth() {
-        let mut lbforth = LBForth::from_params(LBForthParams::default(), TestContext::default());
-        let forth = &mut lbforth.forth;
+        use core::mem::{align_of, size_of};
+        assert_eq!(5 * size_of::<usize>(), size_of::<DictionaryEntry<()>>());
+        assert_eq!(5 * size_of::<usize>(), size_of::<DictionaryEntry<()>>());
+        assert_eq!(1 * size_of::<usize>(), align_of::<Word>());
 
+        let mut lbforth = LBForth::from_params(
+            LBForthParams::default(),
+            TestContext::default(),
+            Forth::<TestContext>::FULL_BUILTINS,
+        );
+        let forth = &mut lbforth.forth;
+        assert_eq!(0, forth.dict_alloc.used());
         let lines = &[
             ("2 3 + .", "5 ok.\n"),
             (": yay 2 3 + . ;", "ok.\n"),
@@ -937,32 +1057,32 @@ pub mod test {
             forth.output.clear();
         }
 
-        forth.input.fill(": derp boop yay").unwrap();
-        assert!(forth.process_line().is_err());
-        // TODO: Should handle this automatically...
-        forth.return_stack.clear();
+        // forth.input.fill(": derp boop yay").unwrap();
+        // assert!(forth.process_line().is_err());
+        // // TODO: Should handle this automatically...
+        // forth.return_stack.clear();
 
-        forth.input.fill(": doot yay yaay").unwrap();
-        assert!(forth.process_line().is_err());
-        // TODO: Should handle this automatically...
-        forth.return_stack.clear();
+        // forth.input.fill(": doot yay yaay").unwrap();
+        // assert!(forth.process_line().is_err());
+        // // TODO: Should handle this automatically...
+        // forth.return_stack.clear();
 
-        forth.output.clear();
-        forth.input.fill("boop yay").unwrap();
-        forth.process_line().unwrap();
-        assert_eq!(forth.output.as_str(), "5 5 5 ok.\n");
+        // forth.output.clear();
+        // forth.input.fill("boop yay").unwrap();
+        // forth.process_line().unwrap();
+        // assert_eq!(forth.output.as_str(), "5 5 5 ok.\n");
 
-        let mut any_stacks = false;
+        // let mut any_stacks = false;
 
-        while let Some(dsw) = forth.data_stack.pop() {
-            println!("DSW: {:?}", dsw);
-            any_stacks = true;
-        }
-        while let Some(rsw) = forth.return_stack.pop() {
-            println!("RSW: {:?}", rsw);
-            any_stacks = true;
-        }
-        assert!(!any_stacks);
+        // while let Some(dsw) = forth.data_stack.pop() {
+        //     println!("DSW: {:?}", dsw);
+        //     any_stacks = true;
+        // }
+        // while let Some(rsw) = forth.return_stack.pop() {
+        //     println!("RSW: {:?}", rsw);
+        //     any_stacks = true;
+        // }
+        // assert!(!any_stacks);
 
         // Uncomment if you want to check how much of the dictionary
         // was used during a test run.
@@ -998,6 +1118,9 @@ pub mod test {
             assert_eq!(forth.output.as_str(), *out);
             forth.output.clear();
         }
+
+        forth.print_dump();
+        panic!();
 
         let context = lbforth.forth.release();
         assert_eq!(&context.contents, &[6, 5, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
