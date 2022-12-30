@@ -10,21 +10,21 @@ pub enum BumpError {
     CantAllocUtf8,
 }
 
-pub enum CodeField {
+pub enum CodeField<T: 'static> {
     Interpret { len: usize },
-    Builtin { ptr: WordFunc },
+    Builtin { ptr: WordFunc<T> },
     // TODO: Variable
     // TODO: Constant
 }
 
 // Starting FORTH: page 220
 #[repr(C)]
-pub struct DictionaryEntry {
+pub struct DictionaryEntry<T: 'static> {
     /// Precedence bit, length, and text characters
     /// Precedence bit is used to determine if it runs at compile or run time
     pub(crate) name: FaStr,
     /// Link field, points back to the previous entry
-    pub(crate) link: Option<NonNull<DictionaryEntry>>,
+    pub(crate) link: Option<NonNull<DictionaryEntry<T>>>,
 
     // HEAD ^
     // ------
@@ -44,7 +44,7 @@ pub struct DictionaryEntry {
     /// The code that is pointed to is called the "run-time code"
     /// because it's used when a word of that type is executed (not when
     /// a word of that type is defined or compiled).
-    pub(crate) code_field: CodeField,
+    pub(crate) code_field: CodeField<T>,
 
     /// data OR an array of compiled code.
     /// the first word is the "p(arameter)fa" or "c(ode)fa"
@@ -57,7 +57,7 @@ pub struct DictionaryBump {
     pub(crate) end: *mut u8,
 }
 
-impl DictionaryEntry {
+impl<T: 'static> DictionaryEntry<T> {
     // Hmm, I probably won't ever actually "know" how many items I have,
     // since the actual editor will be more... dynamic than that.
     pub unsafe fn layout_for_arr(ct: usize) -> Layout {
@@ -183,14 +183,14 @@ pub mod test {
         let _b = bump.bump_u8().unwrap();
 
         // ALLOT 10
-        let d = bump.bump::<DictionaryEntry>().unwrap();
+        let d = bump.bump::<DictionaryEntry<()>>().unwrap();
         assert_eq!(
             d.as_ptr()
-                .align_offset(Layout::new::<DictionaryEntry>().align()),
+                .align_offset(Layout::new::<DictionaryEntry<()>>().align()),
             0
         );
 
-        let walign = Layout::new::<DictionaryEntry>().align();
+        let walign = Layout::new::<DictionaryEntry<()>>().align();
         for _w in 0..10 {
             let w = bump.bump::<Word>().unwrap();
             assert_eq!(w.as_ptr().align_offset(walign), 0);

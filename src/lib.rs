@@ -83,13 +83,24 @@ impl From<OutputError> for Error {
     }
 }
 
-#[derive(Copy, Clone)]
-pub struct Context {
-    de: NonNull<DictionaryEntry>,
+pub struct Context<T: 'static> {
+    de: NonNull<DictionaryEntry<T>>,
     idx: usize,
 }
 
-impl Context {
+impl<T: 'static> Clone for Context<T> {
+    fn clone(&self) -> Self {
+        Self {
+            de: self.de,
+            idx: self.idx,
+        }
+    }
+}
+
+
+impl<T: 'static> Copy for Context<T> { }
+
+impl<T: 'static> Context<T> {
     fn get_next_val(&self) -> Result<i32, Error> {
         unsafe {
             match self.de.as_ref().code_field {
@@ -141,7 +152,7 @@ impl Context {
 ///
 /// It takes the current "full context" (e.g. `Fif`), as well as the CFA pointer
 /// to the dictionary entry.
-type WordFunc = fn(&mut Forth) -> Result<(), Error>;
+type WordFunc<T> = fn(&mut Forth<T>) -> Result<(), Error>;
 
 /// Forth is the "context" of the VM/interpreter.
 ///
@@ -149,28 +160,30 @@ type WordFunc = fn(&mut Forth) -> Result<(), Error>;
 /// directly rely on those buffers. This Forth context is composed with
 /// the I/O buffers to create the `Fif` type. This is done for lifetime
 /// reasons.
-pub struct Forth {
+pub struct Forth<T: 'static> {
     mode: Mode,
     data_stack: Stack<Word>,
     return_stack: Stack<Word>,
-    call_stack: Stack<Context>,
+    call_stack: Stack<Context<T>>,
     dict_alloc: DictionaryBump,
-    run_dict_tail: Option<NonNull<DictionaryEntry>>,
+    run_dict_tail: Option<NonNull<DictionaryEntry<T>>>,
     pub input: WordStrBuf,
     pub output: OutputBuf,
+    pub host_ctxt: T,
 
     // TODO: This will be for words that have compile time actions, I guess?
-    _comp_dict_tail: Option<NonNull<DictionaryEntry>>,
+    _comp_dict_tail: Option<NonNull<DictionaryEntry<T>>>,
 }
 
-impl Forth {
+impl<T> Forth<T> {
     pub unsafe fn new(
         dstack_buf: (*mut Word, usize),
         rstack_buf: (*mut Word, usize),
-        cstack_buf: (*mut Context, usize),
+        cstack_buf: (*mut Context<T>, usize),
         dict_buf: (*mut u8, usize),
         input: WordStrBuf,
         output: OutputBuf,
+        host_ctxt: T
     ) -> Result<Self, Error> {
         let data_stack = Stack::new(dstack_buf.0, dstack_buf.1);
         let return_stack = Stack::new(rstack_buf.0, rstack_buf.1);
@@ -186,36 +199,47 @@ impl Forth {
             _comp_dict_tail: None,
             input,
             output,
+            host_ctxt,
         };
 
-        let mut last = None;
-
         for (name, func) in Forth::BUILTINS {
-            let name = unsafe { FaStr::new(name.as_ptr(), name.len()) };
-
-            // Allocate and initialize the dictionary entry
-            let dict_base = new.dict_alloc.bump::<DictionaryEntry>()?;
-            unsafe {
-                dict_base.as_ptr().write(DictionaryEntry {
-                    name,
-                    link: last.take(),
-                    code_field: CodeField::Builtin { ptr: *func },
-                    parameter_field: [],
-                });
-            }
-            last = Some(dict_base);
+            new.add_builtin_static_name(name, *func)?;
         }
 
-        new.run_dict_tail = last;
         Ok(new)
+    }
+
+    pub fn add_builtin_static_name(&mut self, name: &'static str, bi: WordFunc<T>) -> Result<(), Error> {
+        let name = unsafe { FaStr::new(name.as_ptr(), name.len()) };
+        self.add_bi_fastr(name, bi)
+    }
+
+    pub fn add_builtin(&mut self, name: &str, bi: WordFunc<T>) -> Result<(), Error> {
+        let name = self.dict_alloc.bump_str(name)?;
+        self.add_bi_fastr(name, bi)
+    }
+
+    fn add_bi_fastr(&mut self, name: FaStr, bi: WordFunc<T>) -> Result<(), Error> {
+        // Allocate and initialize the dictionary entry
+        let dict_base = self.dict_alloc.bump::<DictionaryEntry<T>>()?;
+        unsafe {
+            dict_base.as_ptr().write(DictionaryEntry {
+                name,
+                link: self.run_dict_tail.take(),
+                code_field: CodeField::Builtin { ptr: bi },
+                parameter_field: [],
+            });
+        }
+        self.run_dict_tail = Some(dict_base);
+        Ok(())
     }
 
     fn parse_num(word: &str) -> Option<i32> {
         i32::from_str(word).ok()
     }
 
-    fn find_in_dict(&self, word: &str) -> Option<NonNull<DictionaryEntry>> {
-        let mut optr: Option<NonNull<DictionaryEntry>> = self.run_dict_tail.clone();
+    fn find_in_dict(&self, word: &str) -> Option<NonNull<DictionaryEntry<T>>> {
+        let mut optr: Option<NonNull<DictionaryEntry<T>>> = self.run_dict_tail.clone();
         let fastr = TmpFaStr::new_from(word);
         while let Some(ptr) = optr.take() {
             let de = unsafe { ptr.as_ref() };
@@ -227,7 +251,7 @@ impl Forth {
         None
     }
 
-    pub fn lookup(&self, word: &str) -> Result<Lookup, Error> {
+    pub fn lookup(&self, word: &str) -> Result<Lookup<T>, Error> {
         match word {
             ";" => Ok(Lookup::Semicolon),
             "if" => Ok(Lookup::If),
@@ -282,6 +306,10 @@ impl Forth {
         writeln!(&mut self.output, "ok.").map_err(|_| OutputError::FormattingErr)?;
         Ok(())
     }
+
+    pub fn release(self) -> T {
+        self.host_ctxt
+    }
 }
 
 /// `Fif` is an ephemeral container that holds both the Forth interpreter/VM
@@ -291,25 +319,25 @@ impl Forth {
 /// mutate the I/O buffer (mostly popping values) while operating on the
 /// forth VM. It may be possible to move `Fif`'s functionality back into the
 /// `Forth` struct at a later point.
-impl Forth {
-    const BUILTINS: &'static [(&'static str, WordFunc)] = &[
-        ("+", Forth::add),
-        ("/", Forth::div),
-        ("=", Forth::equal),
-        ("not", Forth::invert),
-        ("mod", Forth::modu),
-        ("dup", Forth::dup),
-        ("i", Forth::loop_i),
-        (".", Forth::pop_print),
-        (":", Forth::colon),
-        ("(literal)", Forth::literal),
-        ("d>r", Forth::data_to_return_stack),
-        ("2d>2r", Forth::data2_to_return2_stack),
-        ("r>d", Forth::return_to_data_stack),
-        ("(jump-zero)", Forth::jump_if_zero),
-        ("(jmp)", Forth::jump),
-        ("(jmp-doloop)", Forth::jump_doloop),
-        ("emit", Forth::emit),
+impl<T> Forth<T> {
+    const BUILTINS: &'static [(&'static str, WordFunc<T>)] = &[
+        ("+", Self::add),
+        ("/", Self::div),
+        ("=", Self::equal),
+        ("not", Self::invert),
+        ("mod", Self::modu),
+        ("dup", Self::dup),
+        ("i", Self::loop_i),
+        (".", Self::pop_print),
+        (":", Self::colon),
+        ("(literal)", Self::literal),
+        ("d>r", Self::data_to_return_stack),
+        ("2d>2r", Self::data2_to_return2_stack),
+        ("r>d", Self::return_to_data_stack),
+        ("(jump-zero)", Self::jump_if_zero),
+        ("(jmp)", Self::jump),
+        ("(jmp-doloop)", Self::jump_doloop),
+        ("emit", Self::emit),
     ];
 
     fn skip_literal(&mut self) -> Result<(), Error> {
@@ -458,7 +486,7 @@ impl Forth {
         // TODO: Using `bump_write` here instead of just `bump` causes Miri to
         // get angry with a stacked borrows violation later when we attempt
         // to interpret a built word.
-        let dict_base = self.dict_alloc.bump::<DictionaryEntry>()?;
+        let dict_base = self.dict_alloc.bump::<DictionaryEntry<T>>()?;
 
         let mut len = 0i32;
 
@@ -684,7 +712,7 @@ impl Forth {
                 // If the word points to somewhere in the dictionary, then treat
                 // it as if it is a dictionary entry
                 let (func, de) = unsafe {
-                    let de_ptr = ptr.cast::<DictionaryEntry>();
+                    let de_ptr = ptr.cast::<DictionaryEntry<T>>();
                     let func = match (*de_ptr).code_field {
                         CodeField::Interpret { .. } => Forth::interpret,
                         CodeField::Builtin { ptr } => ptr,
@@ -713,8 +741,8 @@ impl Forth {
     }
 }
 
-pub enum Lookup {
-    Dict { de: NonNull<DictionaryEntry> },
+pub enum Lookup<T: 'static> {
+    Dict { de: NonNull<DictionaryEntry<T>> },
     Literal { val: i32 },
     Semicolon,
     If,
@@ -810,20 +838,20 @@ pub mod leakbox {
         }
     }
 
-    pub struct LBForth {
-        pub forth: Forth,
+    pub struct LBForth<T: 'static> {
+        pub forth: Forth<T>,
         _payload_dstack: LeakBox<Word>,
         _payload_rstack: LeakBox<Word>,
-        _payload_cstack: LeakBox<Context>,
+        _payload_cstack: LeakBox<Context<T>>,
         _input_buf: LeakBox<u8>,
         _output_buf: LeakBox<u8>,
         _dict_buf: LeakBox<u8>,
     }
-    impl LBForth {
-        pub fn from_params(params: LBForthParams) -> Self {
+    impl<T: 'static> LBForth<T> {
+        pub fn from_params(params: LBForthParams, host_ctxt: T) -> Self {
             let _payload_dstack: LeakBox<Word> = LeakBox::new(params.data_stack_elems);
             let _payload_rstack: LeakBox<Word> = LeakBox::new(params.return_stack_elems);
-            let _payload_cstack: LeakBox<Context> = LeakBox::new(params.control_stack_elems);
+            let _payload_cstack: LeakBox<Context<T>> = LeakBox::new(params.control_stack_elems);
             let _input_buf: LeakBox<u8> = LeakBox::new(params.input_buf_elems);
             let _output_buf: LeakBox<u8> = LeakBox::new(params.output_buf_elems);
             let _dict_buf: LeakBox<u8> = LeakBox::new(params.dict_buf_elems);
@@ -831,13 +859,14 @@ pub mod leakbox {
             let input = WordStrBuf::new(_input_buf.ptr(), _input_buf.len());
             let output = OutputBuf::new(_output_buf.ptr(), _output_buf.len());
             let forth = unsafe {
-                Forth::new(
+                Forth::<T>::new(
                     (_payload_dstack.ptr(), _payload_dstack.len()),
                     (_payload_rstack.ptr(), _payload_rstack.len()),
                     (_payload_cstack.ptr(), _payload_cstack.len()),
                     (_dict_buf.ptr(), _dict_buf.len()),
                     input,
                     output,
+                    host_ctxt,
                 )
                 .unwrap()
             };
@@ -857,11 +886,16 @@ pub mod leakbox {
 
 #[cfg(test)]
 pub mod test {
-    use crate::leakbox::{LBForth, LBForthParams};
+    use crate::{leakbox::{LBForth, LBForthParams}, Forth};
+
+    #[derive(Default)]
+    struct TestContext {
+        contents: Vec<i32>,
+    }
 
     #[test]
     fn forth() {
-        let mut lbforth = LBForth::from_params(LBForthParams::default());
+        let mut lbforth = LBForth::from_params(LBForthParams::default(), TestContext::default());
         let forth = &mut lbforth.forth;
 
         let lines = &[
@@ -940,5 +974,32 @@ pub mod test {
         // output buffer.
         //
         // panic!("Test Passed! Manual inspection...");
+
+        // Takes one value off the stack, and stores it in the vec
+        fn squirrel(forth: &mut Forth<TestContext>) -> Result<(), crate::Error> {
+            let val = forth.data_stack.try_pop()?;
+            forth.host_ctxt.contents.push(unsafe { val.data });
+            Ok(())
+        }
+        forth.add_builtin("squirrel", squirrel).unwrap();
+
+        let lines = &[
+            ("5 6 squirrel squirrel", "ok.\n"),
+            (": sqloop 10 0 do i squirrel loop ;", "ok.\n"),
+            ("sqloop", "ok.\n"),
+        ];
+
+        forth.output.clear();
+        for (line, out) in lines {
+            println!("{}", line);
+            forth.input.fill(line).unwrap();
+            forth.process_line().unwrap();
+            print!(" => {}", forth.output.as_str());
+            assert_eq!(forth.output.as_str(), *out);
+            forth.output.clear();
+        }
+
+        let context = lbforth.forth.release();
+        assert_eq!(&context.contents, &[6, 5, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
 }
