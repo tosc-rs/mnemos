@@ -10,6 +10,13 @@ pub enum BumpError {
     CantAllocUtf8,
 }
 
+pub enum CodeField {
+    Interpret { len: usize },
+    Builtin { ptr: WordFunc },
+    // TODO: Variable
+    // TODO: Constant
+}
+
 // Starting FORTH: page 220
 #[repr(C)]
 pub struct DictionaryEntry {
@@ -37,7 +44,7 @@ pub struct DictionaryEntry {
     /// The code that is pointed to is called the "run-time code"
     /// because it's used when a word of that type is executed (not when
     /// a word of that type is defined or compiled).
-    pub(crate) code_pointer: WordFunc,
+    pub(crate) code_field: CodeField,
 
     /// data OR an array of compiled code.
     /// the first word is the "p(arameter)fa" or "c(ode)fa"
@@ -58,13 +65,6 @@ impl DictionaryEntry {
         let arr_size = core::mem::size_of::<Word>() * ct;
         let size = layout_me.size() + arr_size;
         Layout::from_size_align_unchecked(size, layout_me.align())
-    }
-
-    // TODO: This might be more sound if I make this part of the "find" function
-    pub unsafe fn get_run(this: NonNull<Self>) -> (WordFunc, NonNull<Word>) {
-        let de: &DictionaryEntry = this.as_ref();
-        let cfa = DictionaryEntry::pfa(this);
-        (de.code_pointer, cfa)
     }
 
     pub unsafe fn pfa(this: NonNull<Self>) -> NonNull<Word> {

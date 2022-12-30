@@ -15,6 +15,8 @@ use core::{
     str::FromStr,
 };
 
+use dictionary::CodeField;
+
 use crate::{
     dictionary::{BumpError, DictionaryBump, DictionaryEntry},
     fastr::{FaStr, TmpFaStr},
@@ -59,6 +61,8 @@ pub enum Error {
     BadCfaOffset,
     LoopBeforeDo,
     DoWithoutLoop,
+    BadCfaLen,
+    BuiltinHasNoNextValue,
 }
 
 impl From<StackError> for Error {
@@ -81,16 +85,24 @@ impl From<OutputError> for Error {
 
 #[derive(Copy, Clone)]
 pub struct Context {
-    cfa: *mut Word,
+    de: NonNull<DictionaryEntry>,
     idx: usize,
 }
 
 impl Context {
     fn get_next_val(&self) -> Result<i32, Error> {
         unsafe {
-            let sli = cfa_to_slice(self.cfa);
-            let req = self.idx + 1;
-            Ok(sli.get(req).ok_or(Error::CFAIdxInInvalid(req))?.data)
+            match self.de.as_ref().code_field {
+                CodeField::Interpret { len } => {
+                    let req = self.idx + 1;
+                    if req < len {
+                        Ok(DictionaryEntry::pfa(self.de).as_ptr().add(req).read().data)
+                    } else {
+                        Err(Error::BadCfaOffset)
+                    }
+                }
+                CodeField::Builtin { .. } => Err(Error::BuiltinHasNoNextValue),
+            }
         }
     }
 
@@ -105,13 +117,23 @@ impl Context {
         Ok(())
     }
 
-    fn cfa_arr(&self) -> &[Word] {
-        unsafe { cfa_to_slice(self.cfa) }
-    }
+    // fn cfa_arr(&self) -> &[Word] {
+    //     unsafe { cfa_to_slice(self.cfa) }
+    // }
 
     fn get_word_at_cur_idx(&self) -> Option<&Word> {
-        let arr = self.cfa_arr();
-        arr.get(self.idx)
+        unsafe {
+            match self.de.as_ref().code_field {
+                CodeField::Interpret { len } => {
+                    if self.idx < len {
+                        Some(&*DictionaryEntry::pfa(self.de).as_ptr().add(self.idx))
+                    } else {
+                        None
+                    }
+                }
+                CodeField::Builtin { .. } => None,
+            }
+        }
     }
 }
 
@@ -177,7 +199,7 @@ impl Forth {
                 dict_base.as_ptr().write(DictionaryEntry {
                     name,
                     link: last.take(),
-                    code_pointer: *func,
+                    code_field: CodeField::Builtin { ptr: *func },
                     parameter_field: [],
                 });
             }
@@ -235,11 +257,13 @@ impl Forth {
 
             match self.lookup(word)? {
                 Lookup::Dict { de } => {
-                    let (func, cfa) = unsafe { DictionaryEntry::get_run(de) };
-                    self.call_stack.push(Context {
-                        cfa: cfa.as_ptr(),
-                        idx: 0,
-                    })?;
+                    let func = unsafe {
+                        match de.as_ref().code_field {
+                            CodeField::Interpret { .. } => Forth::interpret,
+                            CodeField::Builtin { ptr } => ptr,
+                        }
+                    };
+                    self.call_stack.push(Context { de, idx: 0 })?;
                     let res = func(self);
                     self.call_stack.pop().ok_or(Error::CallStackCorrupted)?;
                     res?;
@@ -434,36 +458,24 @@ impl Forth {
         // TODO: Using `bump_write` here instead of just `bump` causes Miri to
         // get angry with a stacked borrows violation later when we attempt
         // to interpret a built word.
-        let mut dict_base = self.dict_alloc.bump::<DictionaryEntry>()?;
-        unsafe {
-            dict_base.as_ptr().write(DictionaryEntry {
-                name,
-                // Don't link until we know we have a "good" entry!
-                link: None,
-                code_pointer: Forth::interpret,
-                parameter_field: [],
-            });
-        }
+        let dict_base = self.dict_alloc.bump::<DictionaryEntry>()?;
 
-        // Rather than having an "exit" word, I'll prepend the
-        // cfa array with a length field (NOT including the length
-        // itself).
-        let len: &mut i32 = {
-            let len_word = self.dict_alloc.bump::<Word>()?;
-            unsafe {
-                len_word.as_ptr().write(Word::data(0));
-                &mut (*len_word.as_ptr()).data
-            }
-        };
+        let mut len = 0i32;
 
         // Begin compiling until we hit the end of the line or a semicolon.
-        while self.munch_one(len)? != 0 {}
+        while self.munch_one(&mut len)? != 0 {}
 
         // Did we successfully get to the end, marked by a semicolon?
         if self.input.cur_word() == Some(";") {
-            // Link to run dict
+            let len = usize::try_from(len).replace_err(Error::BadCfaLen)?;
             unsafe {
-                dict_base.as_mut().link = self.run_dict_tail.take();
+                dict_base.as_ptr().write(DictionaryEntry {
+                    name,
+                    // Don't link until we know we have a "good" entry!
+                    link: self.run_dict_tail.take(),
+                    code_field: CodeField::Interpret { len },
+                    parameter_field: [],
+                });
             }
             self.run_dict_tail = Some(dict_base);
             self.mode = old_mode;
@@ -671,17 +683,19 @@ impl Forth {
             if in_dict {
                 // If the word points to somewhere in the dictionary, then treat
                 // it as if it is a dictionary entry
-                let (wf, cfa) = unsafe {
-                    let de = NonNull::new_unchecked(ptr.cast::<DictionaryEntry>());
-                    DictionaryEntry::get_run(de)
+                let (func, de) = unsafe {
+                    let de_ptr = ptr.cast::<DictionaryEntry>();
+                    let func = match (*de_ptr).code_field {
+                        CodeField::Interpret { .. } => Forth::interpret,
+                        CodeField::Builtin { ptr } => ptr,
+                    };
+                    let de = NonNull::new_unchecked(de_ptr);
+                    (func, de)
                 };
 
                 self.call_stack.overwrite_back_n(0, me)?;
-                self.call_stack.push(Context {
-                    cfa: cfa.as_ptr(),
-                    idx: 0,
-                })?;
-                let result = wf(self);
+                self.call_stack.push(Context { de, idx: 0 })?;
+                let result = func(self);
                 self.call_stack.pop().unwrap();
                 result?;
                 me = self.call_stack.peek().unwrap();
@@ -697,12 +711,6 @@ impl Forth {
         }
         Ok(())
     }
-}
-
-unsafe fn cfa_to_slice<'a>(ptr: *mut Word) -> &'a [Word] {
-    // First is length
-    let len = (*ptr).data as usize;
-    core::slice::from_raw_parts(ptr.add(1), len)
 }
 
 pub enum Lookup {
@@ -739,6 +747,8 @@ pub mod leakbox {
         cell::UnsafeCell,
         mem::MaybeUninit,
     };
+
+    use crate::{input::WordStrBuf, output::OutputBuf, word::Word, Context, Forth};
 
     // Helper type that will un-leak the buffer once it is dropped.
     pub struct LeakBox<T> {
@@ -777,34 +787,82 @@ pub mod leakbox {
             }
         }
     }
+
+    pub struct LBForthParams {
+        pub data_stack_elems: usize,
+        pub return_stack_elems: usize,
+        pub control_stack_elems: usize,
+        pub input_buf_elems: usize,
+        pub output_buf_elems: usize,
+        pub dict_buf_elems: usize,
+    }
+
+    impl Default for LBForthParams {
+        fn default() -> Self {
+            Self {
+                data_stack_elems: 256,
+                return_stack_elems: 256,
+                control_stack_elems: 256,
+                input_buf_elems: 256,
+                output_buf_elems: 256,
+                dict_buf_elems: 4096,
+            }
+        }
+    }
+
+    pub struct LBForth {
+        pub forth: Forth,
+        _payload_dstack: LeakBox<Word>,
+        _payload_rstack: LeakBox<Word>,
+        _payload_cstack: LeakBox<Context>,
+        _input_buf: LeakBox<u8>,
+        _output_buf: LeakBox<u8>,
+        _dict_buf: LeakBox<u8>,
+    }
+    impl LBForth {
+        pub fn from_params(params: LBForthParams) -> Self {
+            let _payload_dstack: LeakBox<Word> = LeakBox::new(params.data_stack_elems);
+            let _payload_rstack: LeakBox<Word> = LeakBox::new(params.return_stack_elems);
+            let _payload_cstack: LeakBox<Context> = LeakBox::new(params.control_stack_elems);
+            let _input_buf: LeakBox<u8> = LeakBox::new(params.input_buf_elems);
+            let _output_buf: LeakBox<u8> = LeakBox::new(params.output_buf_elems);
+            let _dict_buf: LeakBox<u8> = LeakBox::new(params.dict_buf_elems);
+
+            let input = WordStrBuf::new(_input_buf.ptr(), _input_buf.len());
+            let output = OutputBuf::new(_output_buf.ptr(), _output_buf.len());
+            let forth = unsafe {
+                Forth::new(
+                    (_payload_dstack.ptr(), _payload_dstack.len()),
+                    (_payload_rstack.ptr(), _payload_rstack.len()),
+                    (_payload_cstack.ptr(), _payload_cstack.len()),
+                    (_dict_buf.ptr(), _dict_buf.len()),
+                    input,
+                    output,
+                )
+                .unwrap()
+            };
+
+            Self {
+                forth,
+                _payload_dstack,
+                _payload_rstack,
+                _payload_cstack,
+                _input_buf,
+                _output_buf,
+                _dict_buf,
+            }
+        }
+    }
 }
 
 #[cfg(test)]
 pub mod test {
-    use crate::{leakbox::LeakBox, output::OutputBuf, Context, Forth, Word, WordStrBuf};
+    use crate::leakbox::{LBForth, LBForthParams};
 
     #[test]
     fn forth() {
-        let payload_dstack: LeakBox<Word> = LeakBox::new(256);
-        let payload_rstack: LeakBox<Word> = LeakBox::new(256);
-        let payload_cstack: LeakBox<Context> = LeakBox::new(256);
-        let input_buf: LeakBox<u8> = LeakBox::new(256);
-        let output_buf: LeakBox<u8> = LeakBox::new(256);
-        let dict_buf: LeakBox<u8> = LeakBox::new(4096);
-
-        let input = WordStrBuf::new(input_buf.ptr(), input_buf.len());
-        let output = OutputBuf::new(output_buf.ptr(), output_buf.len());
-        let mut forth = unsafe {
-            Forth::new(
-                (payload_dstack.ptr(), payload_dstack.len()),
-                (payload_rstack.ptr(), payload_rstack.len()),
-                (payload_cstack.ptr(), payload_cstack.len()),
-                (dict_buf.ptr(), dict_buf.len()),
-                input,
-                output,
-            )
-            .unwrap()
-        };
+        let mut lbforth = LBForth::from_params(LBForthParams::default());
+        let forth = &mut lbforth.forth;
 
         let lines = &[
             ("2 3 + .", "5 ok.\n"),
