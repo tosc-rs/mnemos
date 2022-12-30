@@ -10,49 +10,34 @@ pub enum BumpError {
     CantAllocUtf8,
 }
 
-pub enum CodeField<T: 'static> {
-    Interpret { len: usize },
-    // TODO: "Builtin" isn't really the right word anymore. These
-    // are "Native" functions added at runtime.
-    Builtin { ptr: WordFunc<T> },
-    // TODO: Variable
-    // TODO: Constant
+#[repr(u16)]
+pub enum EntryKind {
+    StaticBuiltin,
+    RuntimeBuiltin,
+    Dictionary,
 }
 
 #[repr(C)]
-pub struct BuiltinEntry<T: 'static> {
-    pub name: FaStr,
+pub struct EntryHeader<T: 'static> {
     pub func: WordFunc<T>,
+    pub name: FaStr,
+    pub kind: EntryKind, // todo
+    pub len: u16,
+}
+
+
+#[repr(C)]
+pub struct BuiltinEntry<T: 'static> {
+    pub hdr: EntryHeader<T>,
 }
 
 // Starting FORTH: page 220
 #[repr(C)]
 pub struct DictionaryEntry<T: 'static> {
-    /// Precedence bit, length, and text characters
-    /// Precedence bit is used to determine if it runs at compile or run time
-    pub(crate) name: FaStr,
+    pub hdr: EntryHeader<T>,
+
     /// Link field, points back to the previous entry
     pub(crate) link: Option<NonNull<DictionaryEntry<T>>>,
-
-    // HEAD ^
-    // ------
-    // BODY v
-    /// Next is the "code pointer." The address contained in this
-    /// pointer is what distinguishes a variable from a constant or a
-    /// colon definition. It is the address of the instruction that is
-    /// executed first when the particular type of word is executed.
-    /// For example, in the case of a variable, the pointer points to code
-    /// that pushes the address of the variable onto the stack.
-    ///
-    /// In the case of a constant, the pointer points to code that pushes the
-    /// contents of the constant onto the stack. In the case of a colon
-    /// definition, the pointer points to code that executes the rest of
-    /// the words in the colon definition.
-    ///
-    /// The code that is pointed to is called the "run-time code"
-    /// because it's used when a word of that type is executed (not when
-    /// a word of that type is defined or compiled).
-    pub(crate) code_field: CodeField<T>,
 
     /// data OR an array of compiled code.
     /// the first word is the "p(arameter)fa" or "c(ode)fa"
@@ -79,51 +64,6 @@ impl<T: 'static> DictionaryEntry<T> {
         let ptr = this.as_ptr();
         let pfp: *mut [Word; 0] = addr_of_mut!((*ptr).parameter_field);
         NonNull::new_unchecked(pfp.cast::<Word>())
-    }
-
-    #[cfg(any(test, feature = "use-std"))]
-    pub(crate) unsafe fn contains(this: NonNull<Self>, target: *mut ()) -> bool {
-        let mut now = this;
-        loop {
-            let de = now.as_ref();
-            if let Some(cde) = de.link {
-                if cde.as_ptr().cast() == target {
-                    break true;
-                } else {
-                    now = cde;
-                }
-            } else {
-                break false;
-            }
-        }
-    }
-
-    #[cfg(any(test, feature = "use-std"))]
-    pub(crate) unsafe fn dump_recursive(this: NonNull<Self>) {
-        let cfa = DictionaryEntry::pfa(this);
-        let de = this.as_ref();
-        if let Some(cde) = de.link {
-            DictionaryEntry::dump_recursive(cde);
-        }
-
-        match de.code_field {
-            CodeField::Interpret { len } => {
-                let mut vee = format!(": {} ", de.name.as_str());
-                let sli = core::slice::from_raw_parts(cfa.as_ptr(), len);
-                for w in sli {
-                    if DictionaryEntry::contains(this, w.ptr.cast()) {
-                        vee += &format!("{} ", (*w.ptr.cast::<DictionaryEntry<T>>()).name.as_str());
-                    } else {
-                        vee += &format!("{} ", w.data);
-                    }
-                }
-                vee += ";";
-                println!("{}", vee);
-            }
-            CodeField::Builtin { .. } => {
-                println!("( builtin - '{}' )", de.name.as_str());
-            }
-        };
     }
 }
 
