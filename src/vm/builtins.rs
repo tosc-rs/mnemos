@@ -5,6 +5,7 @@ use crate::{
     fastr::comptime_fastr,
     output::OutputError,
     word::Word,
+    vm::TmpFaStr,
     CallContext, Error, Forth, Mode, ReplaceErr,
 };
 
@@ -67,7 +68,46 @@ impl<T: 'static> Forth<T> {
         builtin!("(jump-zero)", Self::jump_if_zero),
         builtin!("(jmp)", Self::jump),
         builtin!("(literal)", Self::literal),
+        builtin!("forget", Self::forget),
     ];
+
+    pub fn forget(&mut self) -> Result<(), Error> {
+        // TODO: If anything we've defined in the dict has escaped into
+        // the stack, variables, etc., we're definitely going to be in trouble.
+        //
+        // TODO: Check that we are in interpret and not compile mode?
+        self.input.advance();
+        let word = match self.input.cur_word() {
+            None => return Err(Error::ForgetWithoutWordName),
+            Some(s) => s,
+        };
+        let word_tmp = TmpFaStr::new_from(word);
+        let defn = match self.find_in_dict(&word_tmp) {
+            None => {
+                if self.find_in_bis(&word_tmp).is_some() {
+                    return Err(Error::CantForgetBuiltins);
+                } else {
+                    return Err(Error::ForgetNotInDict);
+                }
+            },
+            Some(d) => d,
+        };
+        self.run_dict_tail = unsafe { defn.as_ref().link };
+        let addr = defn.as_ptr();
+        let contains = self.dict_alloc.contains(addr.cast());
+        let ordered = (addr as usize) <= (self.dict_alloc.cur as usize);
+
+        if !(contains && ordered) {
+            return Err(Error::InternalError);
+        }
+
+        let len = (self.dict_alloc.cur as usize) - (addr as usize);
+        unsafe {
+            addr.write_bytes(0x00, len);
+        }
+        self.dict_alloc.cur = addr.cast();
+        Ok(())
+    }
 
     pub fn over(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_peek_back_n(1)?;

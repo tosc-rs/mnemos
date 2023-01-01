@@ -61,6 +61,10 @@ pub enum Error {
     LiteralStringTooLong,
     NullPointerInCFA,
     BadStrLiteral,
+    ForgetWithoutWordName,
+    ForgetNotInDict,
+    CantForgetBuiltins,
+    InternalError,
 }
 
 impl From<StackError> for Error {
