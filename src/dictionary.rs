@@ -159,12 +159,20 @@ impl DictionaryBump {
 #[cfg(test)]
 pub mod test {
     use std::alloc::Layout;
+    use core::mem::size_of;
 
     use crate::{
         dictionary::{DictionaryBump, DictionaryEntry},
         leakbox::LeakBox,
         Word,
     };
+
+    use super::EntryHeader;
+
+    #[test]
+    fn sizes() {
+        assert_eq!(size_of::<EntryHeader<()>>(), 4 * size_of::<usize>());
+    }
 
     #[test]
     fn do_a_bump() {
