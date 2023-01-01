@@ -27,35 +27,78 @@ macro_rules! builtin {
 impl<T: 'static> Forth<T> {
     pub const FULL_BUILTINS: &'static [BuiltinEntry<T>] = &[
         builtin!("+", Self::add),
+        builtin!("-", Self::minus),
         builtin!("/", Self::div),
+        builtin!("mod", Self::modu),
+        builtin!("/mod", Self::div_mod),
+        builtin!("*", Self::mul),
         builtin!("=", Self::equal),
         builtin!("not", Self::invert),
-        builtin!("mod", Self::modu),
-        builtin!("dup", Self::dup),
         builtin!("i", Self::loop_i),
         builtin!(".", Self::pop_print),
         builtin!(":", Self::colon),
-        builtin!("(literal)", Self::literal),
         builtin!("d>r", Self::data_to_return_stack),
         builtin!("2d>2r", Self::data2_to_return2_stack),
         builtin!("r>d", Self::return_to_data_stack),
-        builtin!("(jump-zero)", Self::jump_if_zero),
-        builtin!("(jmp)", Self::jump),
-        builtin!("(jmp-doloop)", Self::jump_doloop),
         builtin!("emit", Self::emit),
         builtin!("cr", Self::cr),
+        builtin!("space", Self::space),
         builtin!("spaces", Self::spaces),
         builtin!("(write-str)", Self::write_str_lit),
+        builtin!("(jmp-doloop)", Self::jump_doloop),
+        builtin!("(jump-zero)", Self::jump_if_zero),
+        builtin!("(jmp)", Self::jump),
+        builtin!("(literal)", Self::literal),
+        builtin!("swap", Self::swap),
+        builtin!("dup", Self::dup),
+        builtin!("over", Self::over),
+        builtin!("rot", Self::rot),
+        builtin!("drop", Self::ds_drop),
     ];
+
+    pub fn over(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_peek_back_n(1)?;
+        self.data_stack.push(a)?;
+        Ok(())
+    }
+
+    pub fn rot(&mut self) -> Result<(), Error> {
+        let n1 = self.data_stack.try_pop()?;
+        let n2 = self.data_stack.try_pop()?;
+        let n3 = self.data_stack.try_pop()?;
+        self.data_stack.push(n2)?;
+        self.data_stack.push(n1)?;
+        self.data_stack.push(n3)?;
+        Ok(())
+    }
+
+    pub fn ds_drop(&mut self) -> Result<(), Error> {
+        let _a = self.data_stack.try_pop()?;
+        Ok(())
+    }
+
+    pub fn swap(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        self.data_stack.push(a)?;
+        self.data_stack.push(b)?;
+        Ok(())
+    }
+
+    pub fn space(&mut self) -> Result<(), Error> {
+        self.output.push_bstr(b" ")?;
+        Ok(())
+    }
 
     pub fn spaces(&mut self) -> Result<(), Error> {
         let num = self.data_stack.try_pop()?;
         let num = unsafe { num.data };
+
         if num.is_negative() {
             return Err(Error::LoopCountIsNegative);
         }
         for _ in 0..num {
-            self.output.push_bstr(b" ")?;
+            self.space()?;
         }
         Ok(())
     }
@@ -90,6 +133,16 @@ impl<T: 'static> Forth<T> {
         } else {
             Word::data(0)
         };
+        self.data_stack.push(val)?;
+        Ok(())
+    }
+
+    pub fn div_mod(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        let rem = unsafe { Word::data(b.data % a.data) };
+        self.data_stack.push(rem)?;
+        let val = unsafe { Word::data(b.data / a.data) };
         self.data_stack.push(val)?;
         Ok(())
     }
@@ -194,6 +247,22 @@ impl<T: 'static> Forth<T> {
         let b = self.data_stack.try_pop()?;
         self.data_stack
             .push(Word::data(unsafe { a.data.wrapping_add(b.data) }))?;
+        Ok(())
+    }
+
+    pub fn mul(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        self.data_stack
+            .push(Word::data(unsafe { a.data.wrapping_mul(b.data) }))?;
+        Ok(())
+    }
+
+    pub fn minus(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        self.data_stack
+            .push(Word::data(unsafe { b.data.wrapping_sub(a.data) }))?;
         Ok(())
     }
 
