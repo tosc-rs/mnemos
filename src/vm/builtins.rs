@@ -54,23 +54,26 @@ impl<T: 'static> Forth<T> {
         builtin!("2dup", Self::dup_2),
         builtin!("2over", Self::over_2),
         builtin!("2drop", Self::ds_drop_2),
-        // Other
-        builtin!("i", Self::loop_i),
-        builtin!(".", Self::pop_print),
-        builtin!(":", Self::colon),
-        builtin!("d>r", Self::data_to_return_stack),
-        builtin!("2d>2r", Self::data2_to_return2_stack),
-        builtin!("r>d", Self::return_to_data_stack),
+        // String/Output operations
         builtin!("emit", Self::emit),
         builtin!("cr", Self::cr),
         builtin!("space", Self::space),
         builtin!("spaces", Self::spaces),
+        builtin!(".", Self::pop_print),
+        // Define/forget
+        builtin!(":", Self::colon),
+        builtin!("forget", Self::forget),
+        // Stack/Retstack operations
+        builtin!("d>r", Self::data_to_return_stack),
+        builtin!("2d>2r", Self::data2_to_return2_stack),
+        builtin!("r>d", Self::return_to_data_stack),
+        // Other
+        builtin!("i", Self::loop_i),
         builtin!("(write-str)", Self::write_str_lit),
         builtin!("(jmp-doloop)", Self::jump_doloop),
         builtin!("(jump-zero)", Self::jump_if_zero),
         builtin!("(jmp)", Self::jump),
         builtin!("(literal)", Self::literal),
-        builtin!("forget", Self::forget),
     ];
 
     pub fn forget(&mut self) -> Result<(), Error> {
