@@ -21,9 +21,9 @@ use crate::{
     dictionary::{BumpError, DictionaryEntry},
     output::OutputError,
     stack::StackError,
-    vm::Forth,
     word::Word,
 };
+pub use crate::vm::Forth;
 
 #[derive(Debug)]
 pub enum Mode {
@@ -56,6 +56,7 @@ pub enum Error {
     BadCfaLen,
     BuiltinHasNoNextValue,
     UntaggedCFAPtr,
+    LoopCountIsNegative,
 }
 
 impl From<StackError> for Error {

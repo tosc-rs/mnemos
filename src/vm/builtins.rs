@@ -43,7 +43,26 @@ impl<T: 'static> Forth<T> {
         builtin!("(jmp)", Self::jump),
         builtin!("(jmp-doloop)", Self::jump_doloop),
         builtin!("emit", Self::emit),
+        builtin!("cr", Self::cr),
+        builtin!("spaces", Self::spaces),
     ];
+
+    pub fn spaces(&mut self) -> Result<(), Error> {
+        let num = self.data_stack.try_pop()?;
+        let num = unsafe { num.data };
+        if num.is_negative() {
+            return Err(Error::LoopCountIsNegative);
+        }
+        for _ in 0..num {
+            self.output.push_bstr(b" ")?;
+        }
+        Ok(())
+    }
+
+    pub fn cr(&mut self) -> Result<(), Error> {
+        self.output.push_bstr(b"\n")?;
+        Ok(())
+    }
 
     fn skip_literal(&mut self) -> Result<(), Error> {
         let parent = self.call_stack.try_peek_back_n_mut(1)?;
