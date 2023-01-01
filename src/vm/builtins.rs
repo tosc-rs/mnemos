@@ -45,6 +45,12 @@ impl<T: 'static> Forth<T> {
         builtin!("rot", Self::rot),
         builtin!("drop", Self::ds_drop),
 
+        // Double operations
+        builtin!("2swap", Self::swap_2),
+        builtin!("2dup", Self::dup_2),
+        builtin!("2over", Self::over_2),
+        builtin!("2drop", Self::ds_drop_2),
+
         // Other
         builtin!("i", Self::loop_i),
         builtin!(".", Self::pop_print),
@@ -69,6 +75,14 @@ impl<T: 'static> Forth<T> {
         Ok(())
     }
 
+    pub fn over_2(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_peek_back_n(2)?;
+        let b = self.data_stack.try_peek_back_n(3)?;
+        self.data_stack.push(b)?;
+        self.data_stack.push(a)?;
+        Ok(())
+    }
+
     pub fn rot(&mut self) -> Result<(), Error> {
         let n1 = self.data_stack.try_pop()?;
         let n2 = self.data_stack.try_pop()?;
@@ -84,11 +98,29 @@ impl<T: 'static> Forth<T> {
         Ok(())
     }
 
+    pub fn ds_drop_2(&mut self) -> Result<(), Error> {
+        let _a = self.data_stack.try_pop()?;
+        let _b = self.data_stack.try_pop()?;
+        Ok(())
+    }
+
     pub fn swap(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack.push(a)?;
         self.data_stack.push(b)?;
+        Ok(())
+    }
+
+    pub fn swap_2(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        let c = self.data_stack.try_pop()?;
+        let d = self.data_stack.try_pop()?;
+        self.data_stack.push(b)?;
+        self.data_stack.push(a)?;
+        self.data_stack.push(d)?;
+        self.data_stack.push(c)?;
         Ok(())
     }
 
@@ -219,6 +251,16 @@ impl<T: 'static> Forth<T> {
     pub fn dup(&mut self) -> Result<(), Error> {
         let val = self.data_stack.try_peek()?;
         self.data_stack.push(val)?;
+        Ok(())
+    }
+
+    pub fn dup_2(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        self.data_stack.push(b)?;
+        self.data_stack.push(a)?;
+        self.data_stack.push(b)?;
+        self.data_stack.push(a)?;
         Ok(())
     }
 
