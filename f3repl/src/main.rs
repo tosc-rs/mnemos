@@ -1,6 +1,9 @@
-use std::io::{stdout, Write, stdin};
+use std::io::{stdin, stdout, Write};
 
-use forth3::{leakbox::{LBForth, LBForthParams}, Forth};
+use forth3::{
+    leakbox::{LBForth, LBForthParams},
+    Forth,
+};
 
 fn main() {
     let params = LBForthParams {
@@ -11,11 +14,7 @@ fn main() {
         output_buf_elems: 4096,
         dict_buf_elems: 16 * 1024,
     };
-    let mut lbf = LBForth::from_params(
-        params,
-        (),
-        Forth::FULL_BUILTINS,
-    );
+    let mut lbf = LBForth::from_params(params, (), Forth::FULL_BUILTINS);
     let forth = &mut lbf.forth;
 
     let mut inp = String::new();

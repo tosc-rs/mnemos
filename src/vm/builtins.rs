@@ -4,8 +4,8 @@ use crate::{
     dictionary::{BuiltinEntry, DictionaryEntry, EntryHeader, EntryKind},
     fastr::comptime_fastr,
     output::OutputError,
-    word::Word,
     vm::TmpFaStr,
+    word::Word,
     CallContext, Error, Forth, Mode, ReplaceErr,
 };
 
@@ -34,24 +34,26 @@ impl<T: 'static> Forth<T> {
         builtin!("mod", Self::modu),
         builtin!("/mod", Self::div_mod),
         builtin!("*", Self::mul),
-
         // Logic operations
-        builtin!("=", Self::equal),
         builtin!("not", Self::invert),
-
+        builtin!("and", Self::and),
+        builtin!("=", Self::equal),
+        builtin!(">", Self::greater),
+        builtin!("<", Self::less),
+        builtin!("0=", Self::zero_equal),
+        builtin!("0>", Self::zero_greater),
+        builtin!("0<", Self::zero_less),
         // Stack operations
         builtin!("swap", Self::swap),
         builtin!("dup", Self::dup),
         builtin!("over", Self::over),
         builtin!("rot", Self::rot),
         builtin!("drop", Self::ds_drop),
-
         // Double operations
         builtin!("2swap", Self::swap_2),
         builtin!("2dup", Self::dup_2),
         builtin!("2over", Self::over_2),
         builtin!("2drop", Self::ds_drop_2),
-
         // Other
         builtin!("i", Self::loop_i),
         builtin!(".", Self::pop_print),
@@ -89,7 +91,7 @@ impl<T: 'static> Forth<T> {
                 } else {
                     return Err(Error::ForgetNotInDict);
                 }
-            },
+            }
             Some(d) => d,
         };
         self.run_dict_tail = unsafe { defn.as_ref().link };
@@ -204,6 +206,18 @@ impl<T: 'static> Forth<T> {
         Ok(())
     }
 
+    pub fn and(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        let val = if unsafe { (a.data != 0) && (b.data != 0) } {
+            Word::data(-1)
+        } else {
+            Word::data(0)
+        };
+        self.data_stack.push(val)?;
+        Ok(())
+    }
+
     pub fn equal(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
@@ -214,6 +228,37 @@ impl<T: 'static> Forth<T> {
         };
         self.data_stack.push(val)?;
         Ok(())
+    }
+
+    pub fn greater(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        let val = if unsafe { b.data > a.data } { -1 } else { 0 };
+        self.data_stack.push(Word::data(val))?;
+        Ok(())
+    }
+
+    pub fn less(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        let val = if unsafe { b.data < a.data } { -1 } else { 0 };
+        self.data_stack.push(Word::data(val))?;
+        Ok(())
+    }
+
+    pub fn zero_equal(&mut self) -> Result<(), Error> {
+        self.data_stack.push(Word::data(0))?;
+        self.equal()
+    }
+
+    pub fn zero_greater(&mut self) -> Result<(), Error> {
+        self.data_stack.push(Word::data(0))?;
+        self.greater()
+    }
+
+    pub fn zero_less(&mut self) -> Result<(), Error> {
+        self.data_stack.push(Word::data(0))?;
+        self.less()
     }
 
     pub fn div_mod(&mut self) -> Result<(), Error> {
@@ -374,28 +419,34 @@ impl<T: 'static> Forth<T> {
         let mut len = 0u16;
 
         // Begin compiling until we hit the end of the line or a semicolon.
-        while self.munch_one(&mut len)? != 0 {}
-
-        // Did we successfully get to the end, marked by a semicolon?
-        if self.input.cur_word() == Some(";") {
-            unsafe {
-                dict_base.as_ptr().write(DictionaryEntry {
-                    hdr: EntryHeader {
-                        func: Self::interpret,
-                        name,
-                        kind: EntryKind::Dictionary,
-                        len,
-                    },
-                    // Don't link until we know we have a "good" entry!
-                    link: self.run_dict_tail.take(),
-                    parameter_field: [],
-                });
+        loop {
+            let munched = self.munch_one(&mut len)?;
+            if munched == 0 {
+                match self.input.cur_word() {
+                    Some(";") => {
+                        unsafe {
+                            dict_base.as_ptr().write(DictionaryEntry {
+                                hdr: EntryHeader {
+                                    func: Self::interpret,
+                                    name,
+                                    kind: EntryKind::Dictionary,
+                                    len,
+                                },
+                                // Don't link until we know we have a "good" entry!
+                                link: self.run_dict_tail.take(),
+                                parameter_field: [],
+                            });
+                        }
+                        self.run_dict_tail = Some(dict_base);
+                        self.mode = old_mode;
+                        return Ok(());
+                    }
+                    Some(_) => {}
+                    None => {
+                        return Err(Error::ColonCompileMissingSemicolon);
+                    }
+                }
             }
-            self.run_dict_tail = Some(dict_base);
-            self.mode = old_mode;
-            Ok(())
-        } else {
-            Err(Error::ColonCompileMissingSemicolon)
         }
     }
 
