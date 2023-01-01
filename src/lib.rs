@@ -17,13 +17,13 @@ use core::ptr::NonNull;
 
 use dictionary::{BuiltinEntry, EntryHeader, EntryKind};
 
+pub use crate::vm::Forth;
 use crate::{
     dictionary::{BumpError, DictionaryEntry},
     output::OutputError,
     stack::StackError,
     word::Word,
 };
-pub use crate::vm::Forth;
 
 #[derive(Debug)]
 pub enum Mode {
@@ -57,6 +57,10 @@ pub enum Error {
     BuiltinHasNoNextValue,
     UntaggedCFAPtr,
     LoopCountIsNegative,
+    LQuoteMissingRQuote,
+    LiteralStringTooLong,
+    NullPointerInCFA,
+    BadStrLiteral,
 }
 
 impl From<StackError> for Error {
@@ -96,6 +100,24 @@ impl<T: 'static> Clone for CallContext<T> {
 impl<T: 'static> Copy for CallContext<T> {}
 
 impl<T: 'static> CallContext<T> {
+    pub(crate) fn get_next_n_words(&self, n: u16) -> Result<&[Word], Error> {
+        let req_start = self.idx + 1;
+        let req_end = req_start + n;
+        if req_end > self.len {
+            return Err(Error::BadCfaOffset);
+        }
+        let eh = unsafe { self.eh.as_ref() };
+        match eh.kind {
+            EntryKind::StaticBuiltin => Err(Error::BuiltinHasNoNextValue),
+            EntryKind::RuntimeBuiltin => Err(Error::BuiltinHasNoNextValue),
+            EntryKind::Dictionary => unsafe {
+                let de = self.eh.cast::<DictionaryEntry<T>>();
+                let start = DictionaryEntry::pfa(de).as_ptr().add(req_start as usize);
+                Ok(core::slice::from_raw_parts(start, n as usize))
+            },
+        }
+    }
+
     fn get_next_val(&self) -> Result<i32, Error> {
         let req = self.idx + 1;
         if req >= self.len {
@@ -152,6 +174,8 @@ pub enum Lookup<T: 'static> {
     Dict { de: NonNull<DictionaryEntry<T>> },
     Literal { val: i32 },
     Builtin { bi: NonNull<BuiltinEntry<T>> },
+    LQuote,
+    LParen,
     Semicolon,
     If,
     Else,
@@ -232,6 +256,8 @@ pub mod test {
             ("count", "0 1 2 3 4 5 6 7 8 9 ok.\n"),
             (": smod 10 0 do i 3 mod not if star then loop ;", "ok.\n"),
             ("smod", "****ok.\n"),
+            (": beep .\" hello, world!\" ;", "ok.\n"),
+            ("beep", "hello, world!ok.\n"),
         ];
 
         for (line, out) in lines {

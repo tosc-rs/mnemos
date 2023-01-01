@@ -1,11 +1,11 @@
-use core::{fmt::Write, ptr::NonNull};
+use core::{fmt::Write, mem::size_of, ptr::NonNull};
 
 use crate::{
     dictionary::{BuiltinEntry, DictionaryEntry, EntryHeader, EntryKind},
     fastr::comptime_fastr,
     output::OutputError,
     word::Word,
-    CallContext, Error, Forth, Mode,
+    CallContext, Error, Forth, Mode, ReplaceErr,
 };
 
 // NOTE: This macro exists because we can't have const constructors that include
@@ -45,6 +45,7 @@ impl<T: 'static> Forth<T> {
         builtin!("emit", Self::emit),
         builtin!("cr", Self::cr),
         builtin!("spaces", Self::spaces),
+        builtin!("(write-str)", Self::write_str_lit),
     ];
 
     pub fn spaces(&mut self) -> Result<(), Error> {
@@ -240,13 +241,31 @@ impl<T: 'static> Forth<T> {
         }
     }
 
+    pub fn write_str_lit(&mut self) -> Result<(), Error> {
+        let parent = self.call_stack.try_peek_back_n_mut(1)?;
+
+        // The length in bytes is stored in the next word.
+        let len = parent.get_next_val()?;
+        let len_u16 = u16::try_from(len).replace_err(Error::LiteralStringTooLong)?;
+
+        // Now we need to figure out how many words our inline string takes up
+        let word_size = size_of::<Word>();
+        let len_words = 1 + ((usize::from(len_u16) + (word_size - 1)) / word_size);
+        let len_and_str = parent.get_next_n_words(len_words as u16)?;
+        unsafe {
+            // Skip the "len" word
+            let start = len_and_str.as_ptr().add(1).cast::<u8>();
+            // Then push the literal into the output buffer
+            let u8_sli = core::slice::from_raw_parts(start, len_u16.into());
+            self.output.push_bstr(u8_sli)?;
+        }
+        parent.offset(len_words as i32)?;
+        Ok(())
+    }
+
     /// `(literal)` is used mid-interpret to put the NEXT word of the parent's
     /// CFA array into the stack as a value.
     pub fn literal(&mut self) -> Result<(), Error> {
-        // Current stack SHOULD be:
-        // 0: OUR CFA (d/c)
-        // 1: Our parent's CFA offset
-        // 2: Out parent's CFA
         let parent = self.call_stack.try_peek_back_n_mut(1)?;
         let literal = parent.get_next_val()?;
         parent.offset(1)?;
@@ -264,7 +283,7 @@ impl<T: 'static> Forth<T> {
         //
         // NOTE: we DON'T use `Stack::try_peek_back_n_mut` because the callee
         // could pop off our item, which would lead to UB.
-        let mut me = self.call_stack.peek().unwrap();
+        let mut me = self.call_stack.try_peek()?;
 
         // For the remaining words, we do a while-let loop instead of
         // a for-loop, as some words (e.g. literals) require advancing
@@ -273,7 +292,7 @@ impl<T: 'static> Forth<T> {
             // We can safely assume that all items in the list are pointers,
             // EXCEPT for literals, but those are handled manually below.
             let ptr = unsafe { word.ptr.cast::<EntryHeader<T>>() };
-            let nn = NonNull::new(ptr).unwrap();
+            let nn = NonNull::new(ptr).ok_or(Error::NullPointerInCFA)?;
             let ehref = unsafe { nn.as_ref() };
 
             self.call_stack.overwrite_back_n(0, me)?;
@@ -283,9 +302,9 @@ impl<T: 'static> Forth<T> {
                 len: ehref.len,
             })?;
             let result = (ehref.func)(self);
-            self.call_stack.pop().unwrap();
+            self.call_stack.try_pop()?;
             result?;
-            me = self.call_stack.peek().unwrap();
+            me = self.call_stack.try_peek()?;
 
             me.offset(1)?;
             // TODO: If I want A4-style pausing here, I'd probably want to also

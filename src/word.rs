@@ -1,8 +1,4 @@
-use core::{
-    fmt::Debug,
-    mem::MaybeUninit,
-    ptr::addr_of_mut,
-};
+use core::{fmt::Debug, mem::MaybeUninit, ptr::addr_of_mut};
 
 // Use a union so that things work on both 32- and 64-bit systems,
 // so the *data* is always 32 bits, but the pointer is whatever the

@@ -1,13 +1,21 @@
-use core::{fmt::Write, ops::{Deref, Neg}, ptr::NonNull, str::FromStr};
+use core::{
+    fmt::Write,
+    mem::size_of,
+    ops::{Deref, Neg},
+    ptr::NonNull,
+    str::FromStr,
+};
 
 use crate::{
-    dictionary::{BuiltinEntry, DictionaryBump, DictionaryEntry, EntryHeader, EntryKind},
+    dictionary::{
+        BuiltinEntry, BumpError, DictionaryBump, DictionaryEntry, EntryHeader, EntryKind,
+    },
     fastr::{FaStr, TmpFaStr},
     input::WordStrBuf,
     output::{OutputBuf, OutputError},
     stack::Stack,
     word::Word,
-    CallContext, Error, Lookup, Mode, WordFunc,
+    CallContext, Error, Lookup, Mode, ReplaceErr, WordFunc,
 };
 
 pub mod builtins;
@@ -20,10 +28,10 @@ pub mod builtins;
 /// reasons.
 pub struct Forth<T: 'static> {
     mode: Mode,
-    data_stack: Stack<Word>,
+    pub(crate) data_stack: Stack<Word>,
     return_stack: Stack<Word>,
     call_stack: Stack<CallContext<T>>,
-    dict_alloc: DictionaryBump,
+    pub(crate) dict_alloc: DictionaryBump,
     run_dict_tail: Option<NonNull<DictionaryEntry<T>>>,
     pub input: WordStrBuf,
     pub output: OutputBuf,
@@ -136,6 +144,8 @@ impl<T> Forth<T> {
             "then" => Ok(Lookup::Then),
             "do" => Ok(Lookup::Do),
             "loop" => Ok(Lookup::Loop),
+            "(" => Ok(Lookup::LParen),
+            r#".""# => Ok(Lookup::LQuote),
             _ => {
                 let fastr = TmpFaStr::new_from(word);
                 if let Some(entry) = self.find_in_dict(&fastr) {
@@ -185,18 +195,25 @@ impl<T> Forth<T> {
                 Lookup::Literal { val } => {
                     self.data_stack.push(Word::data(val))?;
                 }
+                Lookup::LParen => {
+                    self.munch_comment(&mut 0)?;
+                }
                 Lookup::Semicolon => return Err(Error::InterpretingCompileOnlyWord),
                 Lookup::If => return Err(Error::InterpretingCompileOnlyWord),
                 Lookup::Else => return Err(Error::InterpretingCompileOnlyWord),
                 Lookup::Then => return Err(Error::InterpretingCompileOnlyWord),
                 Lookup::Do => return Err(Error::InterpretingCompileOnlyWord),
                 Lookup::Loop => return Err(Error::InterpretingCompileOnlyWord),
+                Lookup::LQuote => {
+                    self.input.advance_str().replace_err(Error::BadStrLiteral)?;
+                    let lit = self.input.cur_str_literal().unwrap();
+                    self.output.push_str(lit)?;
+                }
             }
         }
         writeln!(&mut self.output, "ok.").map_err(|_| OutputError::FormattingErr)?;
         Ok(())
     }
-
 
     fn munch_do(&mut self, len: &mut u16) -> Result<u16, Error> {
         let start = *len;
@@ -350,13 +367,63 @@ impl<T> Forth<T> {
             }
             Lookup::Do => return self.munch_do(len),
             Lookup::Loop => return Err(Error::LoopBeforeDo),
+            Lookup::LParen => return self.munch_comment(len),
+            Lookup::LQuote => return self.munch_str(len),
         }
         Ok(*len - start)
     }
-
 
     pub fn release(self) -> T {
         self.host_ctxt
     }
 
+    fn munch_comment(&mut self, _len: &mut u16) -> Result<u16, Error> {
+        loop {
+            self.input.advance();
+            match self.input.cur_word() {
+                Some(s) => {
+                    if s.ends_with(')') {
+                        return Ok(0);
+                    }
+                }
+                None => return Ok(0),
+            }
+        }
+    }
+
+    fn munch_str(&mut self, len: &mut u16) -> Result<u16, Error> {
+        let start = *len;
+        self.input
+            .advance_str()
+            .replace_err(Error::LQuoteMissingRQuote)?;
+        let lit_str = self
+            .input
+            .cur_str_literal()
+            .ok_or(Error::LQuoteMissingRQuote)?;
+        let str_len =
+            u16::try_from(lit_str.as_bytes().len()).replace_err(Error::LiteralStringTooLong)?;
+
+        let literal_writestr = self.find_word("(write-str)").ok_or(Error::WordNotInDict)?;
+        self.dict_alloc
+            .bump_write::<Word>(Word::ptr(literal_writestr.as_ptr()))?;
+        self.dict_alloc
+            .bump_write::<Word>(Word::data(str_len.into()))?;
+        *len += 2;
+
+        let start_ptr = self
+            .dict_alloc
+            .bump_u8s(lit_str.as_bytes().len())
+            .ok_or(Error::Bump(BumpError::OutOfMemory))?;
+
+        unsafe {
+            start_ptr
+                .as_ptr()
+                .copy_from_nonoverlapping(lit_str.as_bytes().as_ptr(), lit_str.as_bytes().len());
+        }
+        let word_size = size_of::<Word>();
+        let words_written = (str_len as usize + (word_size - 1)) / word_size;
+        *len += words_written as u16;
+
+        Ok(*len - start)
+    }
 }

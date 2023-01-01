@@ -25,7 +25,6 @@ pub struct EntryHeader<T: 'static> {
     pub len: u16,
 }
 
-
 #[repr(C)]
 pub struct BuiltinEntry<T: 'static> {
     pub hdr: EntryHeader<T>,
@@ -124,6 +123,12 @@ impl DictionaryBump {
 
     pub fn bump<T: Sized>(&mut self) -> Result<NonNull<T>, BumpError> {
         let offset = self.cur.align_offset(Layout::new::<T>().align());
+
+        // Zero out any padding bytes!
+        unsafe {
+            self.cur.write_bytes(0x00, offset);
+        }
+
         let align_cur = self.cur.wrapping_add(offset);
         let new_cur = align_cur.wrapping_add(Layout::new::<T>().size());
 
@@ -158,8 +163,8 @@ impl DictionaryBump {
 
 #[cfg(test)]
 pub mod test {
-    use std::alloc::Layout;
     use core::mem::size_of;
+    use std::alloc::Layout;
 
     use crate::{
         dictionary::{DictionaryBump, DictionaryEntry},
