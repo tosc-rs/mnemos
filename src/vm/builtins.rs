@@ -26,14 +26,26 @@ macro_rules! builtin {
 
 impl<T: 'static> Forth<T> {
     pub const FULL_BUILTINS: &'static [BuiltinEntry<T>] = &[
+        // Math operations
         builtin!("+", Self::add),
         builtin!("-", Self::minus),
         builtin!("/", Self::div),
         builtin!("mod", Self::modu),
         builtin!("/mod", Self::div_mod),
         builtin!("*", Self::mul),
+
+        // Logic operations
         builtin!("=", Self::equal),
         builtin!("not", Self::invert),
+
+        // Stack operations
+        builtin!("swap", Self::swap),
+        builtin!("dup", Self::dup),
+        builtin!("over", Self::over),
+        builtin!("rot", Self::rot),
+        builtin!("drop", Self::ds_drop),
+
+        // Other
         builtin!("i", Self::loop_i),
         builtin!(".", Self::pop_print),
         builtin!(":", Self::colon),
@@ -49,11 +61,6 @@ impl<T: 'static> Forth<T> {
         builtin!("(jump-zero)", Self::jump_if_zero),
         builtin!("(jmp)", Self::jump),
         builtin!("(literal)", Self::literal),
-        builtin!("swap", Self::swap),
-        builtin!("dup", Self::dup),
-        builtin!("over", Self::over),
-        builtin!("rot", Self::rot),
-        builtin!("drop", Self::ds_drop),
     ];
 
     pub fn over(&mut self) -> Result<(), Error> {
