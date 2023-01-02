@@ -34,8 +34,17 @@ impl<T: 'static> Forth<T> {
         builtin!("mod", Self::modu),
         builtin!("/mod", Self::div_mod),
         builtin!("*", Self::mul),
+        builtin!("abs", Self::abs),
+        builtin!("negate", Self::negate),
+        builtin!("min", Self::min),
+        builtin!("max", Self::max),
+        // Double intermediate math operations
+        builtin!("*/", Self::star_slash),
+        builtin!("*/mod", Self::star_slash_mod),
         // Logic operations
         builtin!("not", Self::invert),
+        // NOTE! This is `bitand`, not logical `and`!
+        // e.g. `&` not `&&`.
         builtin!("and", Self::and),
         builtin!("=", Self::equal),
         builtin!(">", Self::greater),
@@ -60,6 +69,7 @@ impl<T: 'static> Forth<T> {
         builtin!("space", Self::space),
         builtin!("spaces", Self::spaces),
         builtin!(".", Self::pop_print),
+        builtin!("u.", Self::unsigned_pop_print),
         // Define/forget
         builtin!(":", Self::colon),
         builtin!("forget", Self::forget),
@@ -67,8 +77,12 @@ impl<T: 'static> Forth<T> {
         builtin!("d>r", Self::data_to_return_stack),
         builtin!("2d>2r", Self::data2_to_return2_stack),
         builtin!("r>d", Self::return_to_data_stack),
-        // Other
+        // Loop operations
         builtin!("i", Self::loop_i),
+        builtin!("i'", Self::loop_itick),
+        builtin!("j", Self::loop_j),
+        builtin!("leave", Self::loop_leave),
+        // Other
         builtin!("(write-str)", Self::write_str_lit),
         builtin!("(jmp-doloop)", Self::jump_doloop),
         builtin!("(jump-zero)", Self::jump_if_zero),
@@ -212,11 +226,7 @@ impl<T: 'static> Forth<T> {
     pub fn and(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
-        let val = if unsafe { (a.data != 0) && (b.data != 0) } {
-            Word::data(-1)
-        } else {
-            Word::data(0)
-        };
+        let val = Word::data(unsafe { a.data & b.data });
         self.data_stack.push(val)?;
         Ok(())
     }
@@ -293,6 +303,26 @@ impl<T: 'static> Forth<T> {
     pub fn loop_i(&mut self) -> Result<(), Error> {
         let a = self.return_stack.try_peek()?;
         self.data_stack.push(a)?;
+        Ok(())
+    }
+
+    pub fn loop_itick(&mut self) -> Result<(), Error> {
+        let a = self.return_stack.try_peek_back_n(1)?;
+        self.data_stack.push(a)?;
+        Ok(())
+    }
+
+    pub fn loop_j(&mut self) -> Result<(), Error> {
+        let a = self.return_stack.try_peek_back_n(2)?;
+        self.data_stack.push(a)?;
+        Ok(())
+    }
+
+    pub fn loop_leave(&mut self) -> Result<(), Error> {
+        let _ = self.return_stack.try_pop()?;
+        let a = self.return_stack.try_peek()?;
+        self.return_stack
+            .push(unsafe { Word::data(a.data.wrapping_sub(1)) })?;
         Ok(())
     }
 
@@ -379,6 +409,13 @@ impl<T: 'static> Forth<T> {
         Ok(())
     }
 
+    pub fn unsigned_pop_print(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        write!(&mut self.output, "{} ", unsafe { a.data } as u32)
+            .map_err(|_| OutputError::FormattingErr)?;
+        Ok(())
+    }
+
     pub fn add(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
@@ -395,11 +432,68 @@ impl<T: 'static> Forth<T> {
         Ok(())
     }
 
+    pub fn abs(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        self.data_stack
+            .push(Word::data(unsafe { a.data.wrapping_abs() }))?;
+        Ok(())
+    }
+
+    pub fn negate(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        self.data_stack
+            .push(Word::data(unsafe { a.data.wrapping_neg() }))?;
+        Ok(())
+    }
+
+    pub fn min(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        self.data_stack
+            .push(Word::data(unsafe { a.data.min(b.data) }))?;
+        Ok(())
+    }
+
+    pub fn max(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        self.data_stack
+            .push(Word::data(unsafe { a.data.max(b.data) }))?;
+        Ok(())
+    }
+
     pub fn minus(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack
             .push(Word::data(unsafe { b.data.wrapping_sub(a.data) }))?;
+        Ok(())
+    }
+
+    pub fn star_slash(&mut self) -> Result<(), Error> {
+        let n3 = self.data_stack.try_pop()?;
+        let n2 = self.data_stack.try_pop()?;
+        let n1 = self.data_stack.try_pop()?;
+        self.data_stack.push(Word::data(unsafe {
+            (n1.data as i64)
+                .wrapping_mul(n2.data as i64)
+                .wrapping_div(n3.data as i64) as i32
+        }))?;
+        Ok(())
+    }
+
+    pub fn star_slash_mod(&mut self) -> Result<(), Error> {
+        let n3 = self.data_stack.try_pop()?;
+        let n2 = self.data_stack.try_pop()?;
+        let n1 = self.data_stack.try_pop()?;
+        unsafe {
+            let top = (n1.data as i64).wrapping_mul(n2.data as i64);
+            let div = n3.data as i64;
+            let quo = top / div;
+            let rem = top % div;
+            self.data_stack.push(Word::data(rem as i32))?;
+            self.data_stack.push(Word::data(quo as i32))?;
+        }
         Ok(())
     }
 
