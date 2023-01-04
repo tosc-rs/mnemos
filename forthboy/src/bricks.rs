@@ -1,6 +1,6 @@
 use std::{marker::PhantomData, ptr::NonNull};
 
-use crate::fancy::{rot_right, rot_left};
+use crate::fancy::{rot_left, rot_right};
 
 #[derive(Debug, PartialEq)]
 pub struct Bricks<const L: usize> {
@@ -11,21 +11,18 @@ pub struct Bricks<const L: usize> {
                               // hi..   => free
 }
 
-pub struct BrickIter<'a, const L: usize, I>
-{
+pub struct BrickIter<'a, const L: usize, I> {
     bricks: &'a [usize],
     collection: &'a [I],
 }
 
-pub struct BrickIterMut<'a, 'b, const L: usize, I>
-{
+pub struct BrickIterMut<'a, 'b, const L: usize, I> {
     bricks: &'a [usize],
     col_ptr: NonNull<[I]>,
     _cpd: PhantomData<&'b mut [I]>,
 }
 
-impl<'a, const L: usize, I> Iterator for BrickIter<'a, L, I>
-{
+impl<'a, const L: usize, I> Iterator for BrickIter<'a, L, I> {
     type Item = &'a I;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -35,16 +32,13 @@ impl<'a, const L: usize, I> Iterator for BrickIter<'a, L, I>
     }
 }
 
-impl<'a, 'b, const L: usize, I> Iterator for BrickIterMut<'a, 'b, L, I>
-{
+impl<'a, 'b, const L: usize, I> Iterator for BrickIterMut<'a, 'b, L, I> {
     type Item = &'b mut I;
 
     fn next(&mut self) -> Option<Self::Item> {
         let (now, remain) = self.bricks.split_first()?;
         self.bricks = remain;
-        unsafe {
-            Some(&mut *self.col_ptr.as_ptr().cast::<I>().add(*now))
-        }
+        unsafe { Some(&mut *self.col_ptr.as_ptr().cast::<I>().add(*now)) }
     }
 }
 
@@ -77,7 +71,10 @@ impl<const L: usize> Bricks<L> {
         }
     }
 
-    pub fn iter_user_editable_mut<'a, 'b, I>(&'a self, t: &'b mut [I]) -> BrickIterMut<'a, 'b, L, I> {
+    pub fn iter_user_editable_mut<'a, 'b, I>(
+        &'a self,
+        t: &'b mut [I],
+    ) -> BrickIterMut<'a, 'b, L, I> {
         BrickIterMut {
             bricks: &self.idx_buf[0..self.user_editable_end],
             col_ptr: NonNull::from(t),
@@ -85,7 +82,10 @@ impl<const L: usize> Bricks<L> {
         }
     }
 
-    pub fn iter_inco_editable_mut<'a, 'b, I>(&'a self, t: &'b mut [I]) -> BrickIterMut<'a, 'b, L, I> {
+    pub fn iter_inco_editable_mut<'a, 'b, I>(
+        &'a self,
+        t: &'b mut [I],
+    ) -> BrickIterMut<'a, 'b, L, I> {
         BrickIterMut {
             bricks: &self.idx_buf[self.user_editable_end..self.inco_editable_end],
             col_ptr: NonNull::from(t),
@@ -314,26 +314,45 @@ pub mod test {
             }
         );
 
-
         let mut buf = [10, 20, 30, 40, 50, 60, 70, 80];
         assert_eq!(
-            brick.iter_user_editable(&buf).copied().collect::<Vec<_>>().as_slice(),
+            brick
+                .iter_user_editable(&buf)
+                .copied()
+                .collect::<Vec<_>>()
+                .as_slice(),
             &[80, 70, 60],
         );
         assert_eq!(
-            brick.iter_user_editable_mut(&mut buf).map(|c| *c).collect::<Vec<_>>().as_slice(),
+            brick
+                .iter_user_editable_mut(&mut buf)
+                .map(|c| *c)
+                .collect::<Vec<_>>()
+                .as_slice(),
             &[80, 70, 60],
         );
         assert_eq!(
-            brick.iter_inco_editable(&buf).copied().collect::<Vec<_>>().as_slice(),
+            brick
+                .iter_inco_editable(&buf)
+                .copied()
+                .collect::<Vec<_>>()
+                .as_slice(),
             &[20, 10],
         );
         assert_eq!(
-            brick.iter_inco_editable_mut(&mut buf).map(|c| *c).collect::<Vec<_>>().as_slice(),
+            brick
+                .iter_inco_editable_mut(&mut buf)
+                .map(|c| *c)
+                .collect::<Vec<_>>()
+                .as_slice(),
             &[20, 10],
         );
         assert_eq!(
-            brick.iter_history(&buf).copied().collect::<Vec<_>>().as_slice(),
+            brick
+                .iter_history(&buf)
+                .copied()
+                .collect::<Vec<_>>()
+                .as_slice(),
             &[50, 40, 30],
         );
 
@@ -355,10 +374,5 @@ pub mod test {
         );
         brick.insert_ie_front().unwrap_err();
         assert_eq!(brick.insert_ue_front().unwrap(), 0);
-
-
-
     }
 }
-
-

@@ -1,4 +1,4 @@
-use std::{cmp::Ordering, ptr::{NonNull, addr_of_mut}, marker::PhantomData};
+use std::cmp::Ordering;
 
 use crate::bricks::Bricks;
 
@@ -164,11 +164,7 @@ pub(crate) fn rot_right<T: Sized>(sli: &mut [T]) {
     unsafe {
         let ptr = sli.as_mut_ptr();
         let last_val = ptr.add(len - 1).read();
-        core::ptr::copy(
-            ptr,
-            ptr.add(1),
-            len - 1,
-        );
+        core::ptr::copy(ptr, ptr.add(1), len - 1);
         ptr.write(last_val);
     }
 }
@@ -183,11 +179,7 @@ pub(crate) fn rot_left<T: Sized>(sli: &mut [T]) {
     unsafe {
         let ptr = sli.as_mut_ptr();
         let first_val = ptr.read();
-        core::ptr::copy(
-            ptr.add(1),
-            ptr,
-            len - 1,
-        );
+        core::ptr::copy(ptr.add(1), ptr, len - 1);
         ptr.add(len - 1).write(first_val);
     }
 }
@@ -400,9 +392,7 @@ mod test {
     }
 
     #[test]
-    fn smoke_ring() {
-
-    }
+    fn smoke_ring() {}
 
     #[test]
     fn smoke_line() {
@@ -413,7 +403,10 @@ mod test {
             assert_eq!(line.as_str(), &"hello"[..(i + 1)]);
         }
         for i in (line.len() + 1)..256 {
-            assert!(matches!(line.insert(i, b' ').unwrap_err(), LineError::WriteGap | LineError::Full));
+            assert!(matches!(
+                line.insert(i, b' ').unwrap_err(),
+                LineError::WriteGap | LineError::Full
+            ));
         }
         for c in b"world" {
             line.insert(0, *c).unwrap();
@@ -433,8 +426,14 @@ mod test {
         line.clear();
         assert_eq!(line.as_str(), "");
         for i in 1..256 {
-            assert!(matches!(line.overwrite(i, b' ').unwrap_err(), LineError::WriteGap | LineError::Full));
-            assert!(matches!(line.insert(i, b' ').unwrap_err(), LineError::WriteGap | LineError::Full));
+            assert!(matches!(
+                line.overwrite(i, b' ').unwrap_err(),
+                LineError::WriteGap | LineError::Full
+            ));
+            assert!(matches!(
+                line.insert(i, b' ').unwrap_err(),
+                LineError::WriteGap | LineError::Full
+            ));
         }
         line.overwrite(0, b'a').unwrap();
         assert_eq!(line.as_str(), "a");
@@ -452,8 +451,14 @@ mod test {
         assert_eq!(line.as_str(), "hellowor");
 
         line.clear();
-        assert_eq!(line.extend("hello\nworl").unwrap_err(), LineError::InvalidChar);
-        assert_eq!(line.extend("hello\rworl").unwrap_err(), LineError::InvalidChar);
+        assert_eq!(
+            line.extend("hello\nworl").unwrap_err(),
+            LineError::InvalidChar
+        );
+        assert_eq!(
+            line.extend("hello\rworl").unwrap_err(),
+            LineError::InvalidChar
+        );
         assert_eq!(line.extend("Späti").unwrap_err(), LineError::InvalidChar);
         assert_eq!(line.as_str(), "");
     }

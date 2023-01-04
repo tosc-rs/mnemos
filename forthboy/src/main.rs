@@ -12,17 +12,17 @@ use embedded_graphics::{
     text::Text,
     Drawable, Pixel,
 };
-use fancy::{RingLine, Source, Line};
-use forth3::{leakbox::{LBForth, LBForthParams}, Forth};
+use fancy::{Line, RingLine, Source};
+use forth3::{
+    leakbox::{LBForth, LBForthParams},
+    Forth,
+};
 use minifb::{Key, Scale, Window, WindowOptions};
 use profont::PROFONT_12_POINT;
-use std::{
-    // sync::atomic::{AtomicBool, AtomicU8, Ordering},
-    time::{Duration, Instant},
-};
+use std::time::Duration;
 
-pub mod fancy;
 pub mod bricks;
+pub mod fancy;
 
 const CHARS_X: usize = 40;
 const CHARS_Y: usize = 16;
@@ -48,84 +48,260 @@ struct GloboChar {
 }
 
 impl GloboChar {
-    fn scrollup(&mut self) {
-        // let mut window = self.grid.as_mut_slice();
-        // while !window.is_empty() {
-        //     let lwind = core::mem::take(&mut window);
-        //     let (write, remain) = match lwind.split_first_mut() {
-        //         Some(w) => w,
-        //         None => return,
-        //     };
-        //     let read = match remain.first() {
-        //         Some(r) => r,
-        //         None => {
-        //             write.fill(b' ');
-        //             return;
-        //         },
-        //     };
-        //     write.copy_from_slice(read);
-        //     window = remain;
-        // }
-    }
-
-    fn scrolldn(&mut self) {
-        // let mut window = self.grid.as_mut_slice();
-        // while !window.is_empty() {
-        //     let lwind = core::mem::take(&mut window);
-        //     let (write, remain) = match lwind.split_last_mut() {
-        //         Some(w) => w,
-        //         None => return,
-        //     };
-        //     let read = match remain.last() {
-        //         Some(r) => r,
-        //         None => {
-        //             write.fill(b' ');
-        //             return;
-        //         },
-        //     };
-        //     write.copy_from_slice(read);
-        //     window = remain;
-        // }
-    }
-
     fn key(&mut self, key: Key, shift: bool) {
         let draw = match key {
-            Key::Key0 => if !shift { Some(b'0') } else { Some(b')') },
-            Key::Key1 => if !shift { Some(b'1') } else { Some(b'!') },
-            Key::Key2 => if !shift { Some(b'2') } else { Some(b'@') },
-            Key::Key3 => if !shift { Some(b'3') } else { Some(b'#') },
-            Key::Key4 => if !shift { Some(b'4') } else { Some(b'$') },
-            Key::Key5 => if !shift { Some(b'5') } else { Some(b'%') },
-            Key::Key6 => if !shift { Some(b'6') } else { Some(b'^') },
-            Key::Key7 => if !shift { Some(b'7') } else { Some(b'&') },
-            Key::Key8 => if !shift { Some(b'8') } else { Some(b'*') },
-            Key::Key9 => if !shift { Some(b'9') } else { Some(b'(') },
-            Key::A => if !shift { Some(b'a') } else { Some(b'A') },
-            Key::B => if !shift { Some(b'b') } else { Some(b'B') },
-            Key::C => if !shift { Some(b'c') } else { Some(b'C') },
-            Key::D => if !shift { Some(b'd') } else { Some(b'D') },
-            Key::E => if !shift { Some(b'e') } else { Some(b'E') },
-            Key::F => if !shift { Some(b'f') } else { Some(b'F') },
-            Key::G => if !shift { Some(b'g') } else { Some(b'G') },
-            Key::H => if !shift { Some(b'h') } else { Some(b'H') },
-            Key::I => if !shift { Some(b'i') } else { Some(b'I') },
-            Key::J => if !shift { Some(b'j') } else { Some(b'J') },
-            Key::K => if !shift { Some(b'k') } else { Some(b'K') },
-            Key::L => if !shift { Some(b'l') } else { Some(b'L') },
-            Key::M => if !shift { Some(b'm') } else { Some(b'M') },
-            Key::N => if !shift { Some(b'n') } else { Some(b'N') },
-            Key::O => if !shift { Some(b'o') } else { Some(b'O') },
-            Key::P => if !shift { Some(b'p') } else { Some(b'P') },
-            Key::Q => if !shift { Some(b'q') } else { Some(b'Q') },
-            Key::R => if !shift { Some(b'r') } else { Some(b'R') },
-            Key::S => if !shift { Some(b's') } else { Some(b'S') },
-            Key::T => if !shift { Some(b't') } else { Some(b'T') },
-            Key::U => if !shift { Some(b'u') } else { Some(b'U') },
-            Key::V => if !shift { Some(b'v') } else { Some(b'V') },
-            Key::W => if !shift { Some(b'w') } else { Some(b'W') },
-            Key::X => if !shift { Some(b'x') } else { Some(b'X') },
-            Key::Y => if !shift { Some(b'y') } else { Some(b'Y') },
-            Key::Z => if !shift { Some(b'z') } else { Some(b'Z') },
+            Key::Key0 => {
+                if !shift {
+                    Some(b'0')
+                } else {
+                    Some(b')')
+                }
+            }
+            Key::Key1 => {
+                if !shift {
+                    Some(b'1')
+                } else {
+                    Some(b'!')
+                }
+            }
+            Key::Key2 => {
+                if !shift {
+                    Some(b'2')
+                } else {
+                    Some(b'@')
+                }
+            }
+            Key::Key3 => {
+                if !shift {
+                    Some(b'3')
+                } else {
+                    Some(b'#')
+                }
+            }
+            Key::Key4 => {
+                if !shift {
+                    Some(b'4')
+                } else {
+                    Some(b'$')
+                }
+            }
+            Key::Key5 => {
+                if !shift {
+                    Some(b'5')
+                } else {
+                    Some(b'%')
+                }
+            }
+            Key::Key6 => {
+                if !shift {
+                    Some(b'6')
+                } else {
+                    Some(b'^')
+                }
+            }
+            Key::Key7 => {
+                if !shift {
+                    Some(b'7')
+                } else {
+                    Some(b'&')
+                }
+            }
+            Key::Key8 => {
+                if !shift {
+                    Some(b'8')
+                } else {
+                    Some(b'*')
+                }
+            }
+            Key::Key9 => {
+                if !shift {
+                    Some(b'9')
+                } else {
+                    Some(b'(')
+                }
+            }
+            Key::A => {
+                if !shift {
+                    Some(b'a')
+                } else {
+                    Some(b'A')
+                }
+            }
+            Key::B => {
+                if !shift {
+                    Some(b'b')
+                } else {
+                    Some(b'B')
+                }
+            }
+            Key::C => {
+                if !shift {
+                    Some(b'c')
+                } else {
+                    Some(b'C')
+                }
+            }
+            Key::D => {
+                if !shift {
+                    Some(b'd')
+                } else {
+                    Some(b'D')
+                }
+            }
+            Key::E => {
+                if !shift {
+                    Some(b'e')
+                } else {
+                    Some(b'E')
+                }
+            }
+            Key::F => {
+                if !shift {
+                    Some(b'f')
+                } else {
+                    Some(b'F')
+                }
+            }
+            Key::G => {
+                if !shift {
+                    Some(b'g')
+                } else {
+                    Some(b'G')
+                }
+            }
+            Key::H => {
+                if !shift {
+                    Some(b'h')
+                } else {
+                    Some(b'H')
+                }
+            }
+            Key::I => {
+                if !shift {
+                    Some(b'i')
+                } else {
+                    Some(b'I')
+                }
+            }
+            Key::J => {
+                if !shift {
+                    Some(b'j')
+                } else {
+                    Some(b'J')
+                }
+            }
+            Key::K => {
+                if !shift {
+                    Some(b'k')
+                } else {
+                    Some(b'K')
+                }
+            }
+            Key::L => {
+                if !shift {
+                    Some(b'l')
+                } else {
+                    Some(b'L')
+                }
+            }
+            Key::M => {
+                if !shift {
+                    Some(b'm')
+                } else {
+                    Some(b'M')
+                }
+            }
+            Key::N => {
+                if !shift {
+                    Some(b'n')
+                } else {
+                    Some(b'N')
+                }
+            }
+            Key::O => {
+                if !shift {
+                    Some(b'o')
+                } else {
+                    Some(b'O')
+                }
+            }
+            Key::P => {
+                if !shift {
+                    Some(b'p')
+                } else {
+                    Some(b'P')
+                }
+            }
+            Key::Q => {
+                if !shift {
+                    Some(b'q')
+                } else {
+                    Some(b'Q')
+                }
+            }
+            Key::R => {
+                if !shift {
+                    Some(b'r')
+                } else {
+                    Some(b'R')
+                }
+            }
+            Key::S => {
+                if !shift {
+                    Some(b's')
+                } else {
+                    Some(b'S')
+                }
+            }
+            Key::T => {
+                if !shift {
+                    Some(b't')
+                } else {
+                    Some(b'T')
+                }
+            }
+            Key::U => {
+                if !shift {
+                    Some(b'u')
+                } else {
+                    Some(b'U')
+                }
+            }
+            Key::V => {
+                if !shift {
+                    Some(b'v')
+                } else {
+                    Some(b'V')
+                }
+            }
+            Key::W => {
+                if !shift {
+                    Some(b'w')
+                } else {
+                    Some(b'W')
+                }
+            }
+            Key::X => {
+                if !shift {
+                    Some(b'x')
+                } else {
+                    Some(b'X')
+                }
+            }
+            Key::Y => {
+                if !shift {
+                    Some(b'y')
+                } else {
+                    Some(b'Y')
+                }
+            }
+            Key::Z => {
+                if !shift {
+                    Some(b'z')
+                } else {
+                    Some(b'Z')
+                }
+            }
             Key::F1 => None,
             Key::F2 => None,
             Key::F3 => None,
@@ -157,7 +333,7 @@ impl GloboChar {
                 // }
                 // self.dirty = true;
                 None
-            },
+            }
             Key::Right => {
                 // if (self.curs_x + 1) < CHARS_X {
                 //     self.curs_x += 1;
@@ -167,30 +343,96 @@ impl GloboChar {
                 // }
                 // self.dirty = true;
                 None
-            },
+            }
             Key::Up => {
                 // if self.curs_y != 0 {
                 //     self.curs_y -= 1;
                 // }
                 // self.dirty = true;
                 None
-            },
-            Key::Apostrophe => if !shift { Some(b'\'') } else { Some(b'"') },
-            Key::Backquote => if !shift { Some(b'`') } else { Some(b'~') },
-            Key::Backslash => if !shift { Some(b'\\') } else { Some(b'|') },
-            Key::Comma => if !shift { Some(b',') } else { Some(b'<') },
-            Key::Equal => if !shift { Some(b'=') } else { Some(b'+') },
-            Key::LeftBracket => if !shift { Some(b'[') } else { Some(b'{') },
-            Key::Minus => if !shift { Some(b'-') } else { Some(b'_') },
-            Key::Period => if !shift { Some(b'.') } else { Some(b'>') },
-            Key::RightBracket => if !shift { Some(b']') } else { Some(b'}') },
-            Key::Semicolon => if !shift { Some(b';') } else { Some(b':') },
-            Key::Slash => if !shift { Some(b'/') } else { Some(b'?') },
+            }
+            Key::Apostrophe => {
+                if !shift {
+                    Some(b'\'')
+                } else {
+                    Some(b'"')
+                }
+            }
+            Key::Backquote => {
+                if !shift {
+                    Some(b'`')
+                } else {
+                    Some(b'~')
+                }
+            }
+            Key::Backslash => {
+                if !shift {
+                    Some(b'\\')
+                } else {
+                    Some(b'|')
+                }
+            }
+            Key::Comma => {
+                if !shift {
+                    Some(b',')
+                } else {
+                    Some(b'<')
+                }
+            }
+            Key::Equal => {
+                if !shift {
+                    Some(b'=')
+                } else {
+                    Some(b'+')
+                }
+            }
+            Key::LeftBracket => {
+                if !shift {
+                    Some(b'[')
+                } else {
+                    Some(b'{')
+                }
+            }
+            Key::Minus => {
+                if !shift {
+                    Some(b'-')
+                } else {
+                    Some(b'_')
+                }
+            }
+            Key::Period => {
+                if !shift {
+                    Some(b'.')
+                } else {
+                    Some(b'>')
+                }
+            }
+            Key::RightBracket => {
+                if !shift {
+                    Some(b']')
+                } else {
+                    Some(b'}')
+                }
+            }
+            Key::Semicolon => {
+                if !shift {
+                    Some(b';')
+                } else {
+                    Some(b':')
+                }
+            }
+            Key::Slash => {
+                if !shift {
+                    Some(b'/')
+                } else {
+                    Some(b'?')
+                }
+            }
             Key::Backspace => {
                 self.grid.pop_char();
                 self.dirty = true;
                 None
-            },
+            }
             Key::Delete => None,
             Key::End => {
                 // self.grid.iter_mut().flatten().for_each(|b| *b = b' ');
@@ -198,10 +440,15 @@ impl GloboChar {
                 // self.curs_y = 0;
                 // self.dirty = true;
                 None
-            },
+            }
             Key::Enter => {
                 if !shift {
-                    let input: Vec<&str> = self.grid.brick.iter_user_editable(&self.grid.lines).map(Line::as_str).collect();
+                    let input: Vec<&str> = self
+                        .grid
+                        .brick
+                        .iter_user_editable(&self.grid.lines)
+                        .map(Line::as_str)
+                        .collect();
                     let input: String = input.iter().rev().map(|s| *s).collect();
 
                     self.lb_forth.forth.input.fill(&input).unwrap();
@@ -211,7 +458,7 @@ impl GloboChar {
                         Ok(_) => {
                             println!("POSTOK...");
                             self.lb_forth.forth.output.as_str().to_string()
-                        },
+                        }
                         Err(e) => {
                             println!("POSTERR...");
                             let mut o = format!("ERROR: {:?}\n", e);
@@ -222,7 +469,7 @@ impl GloboChar {
                             }
                             o += "\n";
                             o
-                        },
+                        }
                     };
                     let RingLine { lines, brick } = &mut self.grid;
                     for line in out.lines() {
@@ -250,7 +497,7 @@ impl GloboChar {
                 // }
                 // self.dirty = true;
                 None
-            },
+            }
             Key::Escape => None,
             Key::Home => None,
             Key::Insert => None,
@@ -259,12 +506,12 @@ impl GloboChar {
                 // self.scrollup();
                 // self.dirty = true;
                 None
-            },
+            }
             Key::PageUp => {
                 // self.scrolldn();
                 // self.dirty = true;
                 None
-            },
+            }
             Key::Pause => None,
             Key::Space => Some(b' '),
             Key::Tab => None,
@@ -328,16 +575,12 @@ fn main() {
     let style = MonoTextStyle::new(&FONT, Rgb888::WHITE);
     let style_dark = MonoTextStyle::new(&FONT, Rgb888::BLACK);
 
-    let lb_forth = LBForth::from_params(
-        LBForthParams::default(),
-        (),
-        Forth::FULL_BUILTINS,
-    );
+    let lb_forth = LBForth::from_params(LBForthParams::default(), (), Forth::FULL_BUILTINS);
 
     let mut the_grid = GloboChar {
         grid: RingLine::new(),
         dirty: true,
-        lb_forth
+        lb_forth,
     };
     let _ = the_grid.grid.brick.insert_ue_front();
 
@@ -346,7 +589,6 @@ fn main() {
     // let mut loop_idx = 0;
 
     while window.is_open() && !window.is_key_down(Key::Escape) {
-
         // if input_tick.elapsed() >= Duration::from_millis(500) {
         //     input_tick = Instant::now();
         //     let RingLine { lines, brick } = &mut the_grid.grid;
@@ -392,92 +634,134 @@ fn main() {
         //     }
         // }
 
-        let shift = [Key::LeftShift, Key::RightShift].iter().any(|k| window.is_key_down(*k));
+        let shift = [Key::LeftShift, Key::RightShift]
+            .iter()
+            .any(|k| window.is_key_down(*k));
         for akey in window.get_keys_pressed(minifb::KeyRepeat::No) {
             the_grid.key(akey, shift);
         }
         if the_grid.dirty {
             the_grid.dirty = false;
             Rectangle::new(
-                Point { x: CHAR_PIXELS_X as i32, y: 0 },
-                Size { width: DISP_PIXELS_X as u32 - CHAR_PIXELS_X, height: DISP_PIXELS_Y as u32 }
-            ).draw_styled(&PrimitiveStyleBuilder::new().fill_color(Rgb888::BLACK).build(), &mut disp).unwrap();
+                Point {
+                    x: CHAR_PIXELS_X as i32,
+                    y: 0,
+                },
+                Size {
+                    width: DISP_PIXELS_X as u32 - CHAR_PIXELS_X,
+                    height: DISP_PIXELS_Y as u32,
+                },
+            )
+            .draw_styled(
+                &PrimitiveStyleBuilder::new()
+                    .fill_color(Rgb888::BLACK)
+                    .build(),
+                &mut disp,
+            )
+            .unwrap();
             let mut height = CHARS_Y - 1;
-            the_grid.grid.brick.iter_user_editable(&the_grid.grid.lines).for_each(|line| {
-                let bar_color = Rgb888::CSS_DARK_BLUE;
+            the_grid
+                .grid
+                .brick
+                .iter_user_editable(&the_grid.grid.lines)
+                .for_each(|line| {
+                    let bar_color = Rgb888::CSS_DARK_BLUE;
 
-                let bar = Rectangle::new(
-                    Point {
-                        x: CHAR_PIXELS_X as i32,
-                        y: ((height as i32) * CHAR_PIXELS_Y as i32),
-                    },
-                    Size {
-                        width: DISP_PIXELS_X as u32 - 2 * CHAR_PIXELS_X,
-                        height: CHAR_PIXELS_Y,
-                    },
-                );
-                let bstyle = PrimitiveStyleBuilder::new()
-                    .fill_color(bar_color)
-                    .build();
-                bar.draw_styled(&bstyle, &mut disp).unwrap();
+                    let bar = Rectangle::new(
+                        Point {
+                            x: CHAR_PIXELS_X as i32,
+                            y: ((height as i32) * CHAR_PIXELS_Y as i32),
+                        },
+                        Size {
+                            width: DISP_PIXELS_X as u32 - 2 * CHAR_PIXELS_X,
+                            height: CHAR_PIXELS_Y,
+                        },
+                    );
+                    let bstyle = PrimitiveStyleBuilder::new().fill_color(bar_color).build();
+                    bar.draw_styled(&bstyle, &mut disp).unwrap();
 
-                let y = height as i32 * CHAR_PIXELS_Y as i32 + FONT.baseline as i32;
-                Text::new(line.as_str(), Point { x: CHAR_PIXELS_X as i32 * 2, y }, style)
+                    let y = height as i32 * CHAR_PIXELS_Y as i32 + FONT.baseline as i32;
+                    Text::new(
+                        line.as_str(),
+                        Point {
+                            x: CHAR_PIXELS_X as i32 * 2,
+                            y,
+                        },
+                        style,
+                    )
                     .draw(&mut disp)
                     .unwrap();
-                height -= 1;
-            });
-            the_grid.grid.brick.iter_inco_editable(&the_grid.grid.lines).for_each(|line| {
-                let bar_color = Rgb888::CSS_DARK_GREEN;
+                    height -= 1;
+                });
+            the_grid
+                .grid
+                .brick
+                .iter_inco_editable(&the_grid.grid.lines)
+                .for_each(|line| {
+                    let bar_color = Rgb888::CSS_DARK_GREEN;
 
-                let bar = Rectangle::new(
-                    Point {
-                        x: CHAR_PIXELS_X as i32,
-                        y: ((height as i32) * CHAR_PIXELS_Y as i32),
-                    },
-                    Size {
-                        width: DISP_PIXELS_X as u32 - 2 * CHAR_PIXELS_X,
-                        height: CHAR_PIXELS_Y,
-                    },
-                );
-                let bstyle = PrimitiveStyleBuilder::new()
-                    .fill_color(bar_color)
-                    .build();
-                bar.draw_styled(&bstyle, &mut disp).unwrap();
+                    let bar = Rectangle::new(
+                        Point {
+                            x: CHAR_PIXELS_X as i32,
+                            y: ((height as i32) * CHAR_PIXELS_Y as i32),
+                        },
+                        Size {
+                            width: DISP_PIXELS_X as u32 - 2 * CHAR_PIXELS_X,
+                            height: CHAR_PIXELS_Y,
+                        },
+                    );
+                    let bstyle = PrimitiveStyleBuilder::new().fill_color(bar_color).build();
+                    bar.draw_styled(&bstyle, &mut disp).unwrap();
 
-                let y = height as i32 * CHAR_PIXELS_Y as i32 + FONT.baseline as i32;
-                Text::new(line.as_str(), Point { x: CHAR_PIXELS_X as i32 * 2, y }, style)
+                    let y = height as i32 * CHAR_PIXELS_Y as i32 + FONT.baseline as i32;
+                    Text::new(
+                        line.as_str(),
+                        Point {
+                            x: CHAR_PIXELS_X as i32 * 2,
+                            y,
+                        },
+                        style,
+                    )
                     .draw(&mut disp)
                     .unwrap();
-                height -= 1;
-            });
-            the_grid.grid.brick.iter_history(&the_grid.grid.lines).for_each(|line| {
-                let bar_color = match line.status {
-                    fancy::Source::Local => Rgb888::CSS_LIGHT_BLUE,
-                    fancy::Source::Remote => Rgb888::CSS_LIGHT_GREEN,
-                };
+                    height -= 1;
+                });
+            the_grid
+                .grid
+                .brick
+                .iter_history(&the_grid.grid.lines)
+                .for_each(|line| {
+                    let bar_color = match line.status {
+                        fancy::Source::Local => Rgb888::CSS_LIGHT_BLUE,
+                        fancy::Source::Remote => Rgb888::CSS_LIGHT_GREEN,
+                    };
 
-                let bar = Rectangle::new(
-                    Point {
-                        x: CHAR_PIXELS_X as i32,
-                        y: ((height as i32) * CHAR_PIXELS_Y as i32),
-                    },
-                    Size {
-                        width: DISP_PIXELS_X as u32 - 2 * CHAR_PIXELS_X,
-                        height: CHAR_PIXELS_Y,
-                    },
-                );
-                let bstyle = PrimitiveStyleBuilder::new()
-                    .fill_color(bar_color)
-                    .build();
-                bar.draw_styled(&bstyle, &mut disp).unwrap();
+                    let bar = Rectangle::new(
+                        Point {
+                            x: CHAR_PIXELS_X as i32,
+                            y: ((height as i32) * CHAR_PIXELS_Y as i32),
+                        },
+                        Size {
+                            width: DISP_PIXELS_X as u32 - 2 * CHAR_PIXELS_X,
+                            height: CHAR_PIXELS_Y,
+                        },
+                    );
+                    let bstyle = PrimitiveStyleBuilder::new().fill_color(bar_color).build();
+                    bar.draw_styled(&bstyle, &mut disp).unwrap();
 
-                let y = height as i32 * CHAR_PIXELS_Y as i32 + FONT.baseline as i32;
-                Text::new(line.as_str(), Point { x: CHAR_PIXELS_X as i32 * 2, y }, style_dark)
+                    let y = height as i32 * CHAR_PIXELS_Y as i32 + FONT.baseline as i32;
+                    Text::new(
+                        line.as_str(),
+                        Point {
+                            x: CHAR_PIXELS_X as i32 * 2,
+                            y,
+                        },
+                        style_dark,
+                    )
                     .draw(&mut disp)
                     .unwrap();
-                height -= 1;
-            });
+                    height -= 1;
+                });
         }
         window
             .update_with_buffer(&disp.pixels, DISP_PIXELS_X, DISP_PIXELS_Y)
