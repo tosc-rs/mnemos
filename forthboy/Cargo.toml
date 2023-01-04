@@ -1,0 +1,15 @@
+[package]
+name = "forthboy"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+embedded-graphics = "0.7.1"
+minifb = "0.23.0"
+profont = "0.6.1"
+
+[dependencies.forth3]
+path = "../"
+features = ["use-std"]
