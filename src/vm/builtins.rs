@@ -82,13 +82,68 @@ impl<T: 'static> Forth<T> {
         builtin!("i'", Self::loop_itick),
         builtin!("j", Self::loop_j),
         builtin!("leave", Self::loop_leave),
+        // Memory operations
+        builtin!("@", Self::var_load),
+        builtin!("!", Self::var_store),
+        builtin!("w+", Self::word_add),
         // Other
         builtin!("(write-str)", Self::write_str_lit),
         builtin!("(jmp-doloop)", Self::jump_doloop),
         builtin!("(jump-zero)", Self::jump_if_zero),
         builtin!("(jmp)", Self::jump),
         builtin!("(literal)", Self::literal),
+        builtin!("(constant)", Self::constant),
+        builtin!("(variable)", Self::variable),
     ];
+
+    // addr offset w+
+    pub fn word_add(&mut self) -> Result<(), Error> {
+        let w_offset = self.data_stack.try_pop()?;
+        let w_addr = self.data_stack.try_pop()?;
+        let new_addr = unsafe {
+            let offset = isize::try_from(w_offset.data).replace_err(Error::BadWordOffset)?;
+            w_addr.ptr.cast::<Word>().offset(offset)
+        };
+        self.data_stack.push(Word::ptr(new_addr))?;
+        Ok(())
+    }
+
+    // TODO: Check alignment?
+    pub fn var_load(&mut self) -> Result<(), Error> {
+        let w = self.data_stack.try_pop()?;
+        let ptr = unsafe { w.ptr.cast::<Word>() };
+        let val = unsafe { ptr.read() };
+        self.data_stack.push(val)?;
+        Ok(())
+    }
+
+    // TODO: Check alignment?
+    pub fn var_store(&mut self) -> Result<(), Error> {
+        let w_addr = self.data_stack.try_pop()?;
+        let w_val = self.data_stack.try_pop()?;
+        unsafe {
+            w_addr.ptr.cast::<Word>().write(w_val);
+        }
+        Ok(())
+    }
+
+    pub fn constant(&mut self) -> Result<(), Error> {
+        let me = self.call_stack.try_peek()?;
+        let de = me.eh.cast::<DictionaryEntry<T>>();
+        let cfa = unsafe { DictionaryEntry::<T>::pfa(de) };
+        let val = unsafe { cfa.as_ptr().read() };
+        self.data_stack.push(val)?;
+        Ok(())
+    }
+
+    pub fn variable(&mut self) -> Result<(), Error> {
+        let me = self.call_stack.try_peek()?;
+        let de = me.eh.cast::<DictionaryEntry<T>>();
+        let cfa = unsafe { DictionaryEntry::<T>::pfa(de) };
+        let val = Word::ptr(cfa.as_ptr());
+        self.data_stack.push(val)?;
+        Ok(())
+    }
 
     pub fn forget(&mut self) -> Result<(), Error> {
         // TODO: If anything we've defined in the dict has escaped into

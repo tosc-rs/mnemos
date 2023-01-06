@@ -3,7 +3,7 @@ use core::{
     mem::size_of,
     ops::{Deref, Neg},
     ptr::NonNull,
-    str::FromStr,
+    str::FromStr, num::NonZeroU16,
 };
 
 use crate::{
@@ -29,8 +29,8 @@ pub mod builtins;
 pub struct Forth<T: 'static> {
     mode: Mode,
     pub(crate) data_stack: Stack<Word>,
-    return_stack: Stack<Word>,
-    call_stack: Stack<CallContext<T>>,
+    pub(crate) return_stack: Stack<Word>,
+    pub(crate) call_stack: Stack<CallContext<T>>,
     pub(crate) dict_alloc: DictionaryBump,
     run_dict_tail: Option<NonNull<DictionaryEntry<T>>>,
     pub input: WordStrBuf,
@@ -145,6 +145,9 @@ impl<T> Forth<T> {
             "do" => Ok(Lookup::Do),
             "loop" => Ok(Lookup::Loop),
             "(" => Ok(Lookup::LParen),
+            "constant" => Ok(Lookup::Constant),
+            "variable" => Ok(Lookup::Variable),
+            "array" => Ok(Lookup::Array),
             r#".""# => Ok(Lookup::LQuote),
             _ => {
                 let fastr = TmpFaStr::new_from(word);
@@ -209,6 +212,15 @@ impl<T> Forth<T> {
                     let lit = self.input.cur_str_literal().unwrap();
                     self.output.push_str(lit)?;
                 }
+                Lookup::Constant => {
+                    self.munch_constant(&mut 0)?;
+                },
+                Lookup::Variable => {
+                    self.munch_variable(&mut 0)?;
+                },
+                Lookup::Array => {
+                    self.munch_array(&mut 0)?;
+                },
             }
         }
         writeln!(&mut self.output, "ok.").map_err(|_| OutputError::FormattingErr)?;
@@ -369,6 +381,9 @@ impl<T> Forth<T> {
             Lookup::Loop => return Err(Error::LoopBeforeDo),
             Lookup::LParen => return self.munch_comment(len),
             Lookup::LQuote => return self.munch_str(len),
+            Lookup::Constant => return self.munch_constant(len),
+            Lookup::Variable => return self.munch_variable(len),
+            Lookup::Array => return self.munch_array(len),
         }
         Ok(*len - start)
     }
@@ -425,5 +440,108 @@ impl<T> Forth<T> {
         *len += words_written as u16;
 
         Ok(*len - start)
+    }
+
+    // constant NAME VALUE
+    fn munch_constant(&mut self, _len: &mut u16) -> Result<u16, Error> {
+        self.input.advance();
+        let name = self
+            .input
+            .cur_word()
+            .ok_or(Error::ColonCompileMissingName)?;
+        let name = self.dict_alloc.bump_str(name)?;
+
+        self.input.advance();
+        let value = self
+            .input
+            .cur_word()
+            .ok_or(Error::ColonCompileMissingName)?;
+        let value_i32 = value.parse::<i32>().replace_err(Error::BadLiteral)?;
+
+        let dict_base = self.dict_alloc.bump::<DictionaryEntry<T>>()?;
+        self.dict_alloc.bump_write(Word::data(value_i32))?;
+        unsafe {
+            dict_base.as_ptr().write(DictionaryEntry {
+                hdr: EntryHeader {
+                    func: Self::constant,
+                    name,
+                    kind: EntryKind::Dictionary,
+                    len: 1,
+                },
+                // Don't link until we know we have a "good" entry!
+                link: self.run_dict_tail.take(),
+                parameter_field: [],
+            });
+        }
+        self.run_dict_tail = Some(dict_base);
+        Ok(0)
+    }
+
+    // variable NAME
+    fn munch_variable(&mut self, _len: &mut u16) -> Result<u16, Error> {
+        self.input.advance();
+        let name = self
+            .input
+            .cur_word()
+            .ok_or(Error::ColonCompileMissingName)?;
+        let name = self.dict_alloc.bump_str(name)?;
+
+        let dict_base = self.dict_alloc.bump::<DictionaryEntry<T>>()?;
+        self.dict_alloc.bump_write(Word::data(0))?;
+        unsafe {
+            dict_base.as_ptr().write(DictionaryEntry {
+                hdr: EntryHeader {
+                    func: Self::variable,
+                    name,
+                    kind: EntryKind::Dictionary,
+                    len: 1,
+                },
+                // Don't link until we know we have a "good" entry!
+                link: self.run_dict_tail.take(),
+                parameter_field: [],
+            });
+        }
+        self.run_dict_tail = Some(dict_base);
+        Ok(0)
+    }
+
+    // array NAME COUNT
+    fn munch_array(&mut self, _len: &mut u16) -> Result<u16, Error> {
+        self.input.advance();
+        let name = self
+            .input
+            .cur_word()
+            .ok_or(Error::ColonCompileMissingName)?;
+        let name = self.dict_alloc.bump_str(name)?;
+
+        self.input.advance();
+        let count = self
+            .input
+            .cur_word()
+            .ok_or(Error::ColonCompileMissingName)?;
+        let count_u16 = count.parse::<NonZeroU16>().replace_err(Error::BadArrayLength)?;
+
+        let dict_base = self.dict_alloc.bump::<DictionaryEntry<T>>()?;
+
+        for _ in 0..u16::from(count_u16) {
+            self.dict_alloc.bump_write(Word::data(0))?;
+        }
+
+        unsafe {
+            dict_base.as_ptr().write(DictionaryEntry {
+                hdr: EntryHeader {
+                    // TODO: Should arrays push length and ptr? Or just ptr?
+                    func: Self::variable,
+                    name,
+                    kind: EntryKind::Dictionary,
+                    len: count_u16.into(),
+                },
+                // Don't link until we know we have a "good" entry!
+                link: self.run_dict_tail.take(),
+                parameter_field: [],
+            });
+        }
+        self.run_dict_tail = Some(dict_base);
+        Ok(0)
     }
 }

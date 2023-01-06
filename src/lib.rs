@@ -65,6 +65,9 @@ pub enum Error {
     ForgetNotInDict,
     CantForgetBuiltins,
     InternalError,
+    BadLiteral,
+    BadWordOffset,
+    BadArrayLength,
 }
 
 impl From<StackError> for Error {
@@ -186,6 +189,9 @@ pub enum Lookup<T: 'static> {
     Then,
     Do,
     Loop,
+    Constant,
+    Variable,
+    Array,
 }
 
 trait ReplaceErr {
@@ -262,6 +268,17 @@ pub mod test {
             ("smod", "****ok.\n"),
             (": beep .\" hello, world!\" ;", "ok.\n"),
             ("beep", "hello, world!ok.\n"),
+            ("constant x 123", "ok.\n"),
+            ("x .", "123 ok.\n"),
+            ("4 x + .", "127 ok.\n"),
+            ("variable y", "ok.\n"),
+            ("y @ .", "0 ok.\n"),
+            ("10 y !", "ok.\n"),
+            ("y @ .", "10 ok.\n"),
+            ("array z 4", "ok.\n"),
+            ("z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .", "0 0 0 0 ok.\n"),
+            ("10 z ! 20 z 1 w+ ! 30 z 2 w+ ! 40 z 3 w+ !", "ok.\n"),
+            ("z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .", "10 20 30 40 ok.\n"),
         ];
 
         for (line, out) in lines {
@@ -273,32 +290,32 @@ pub mod test {
             forth.output.clear();
         }
 
-        // forth.input.fill(": derp boop yay").unwrap();
-        // assert!(forth.process_line().is_err());
-        // // TODO: Should handle this automatically...
-        // forth.return_stack.clear();
+        forth.input.fill(": derp boop yay").unwrap();
+        assert!(forth.process_line().is_err());
+        // TODO: Should handle this automatically...
+        forth.return_stack.clear();
 
-        // forth.input.fill(": doot yay yaay").unwrap();
-        // assert!(forth.process_line().is_err());
-        // // TODO: Should handle this automatically...
-        // forth.return_stack.clear();
+        forth.input.fill(": doot yay yaay").unwrap();
+        assert!(forth.process_line().is_err());
+        // TODO: Should handle this automatically...
+        forth.return_stack.clear();
 
-        // forth.output.clear();
-        // forth.input.fill("boop yay").unwrap();
-        // forth.process_line().unwrap();
-        // assert_eq!(forth.output.as_str(), "5 5 5 ok.\n");
+        forth.output.clear();
+        forth.input.fill("boop yay").unwrap();
+        forth.process_line().unwrap();
+        assert_eq!(forth.output.as_str(), "5 5 5 ok.\n");
 
-        // let mut any_stacks = false;
+        let mut any_stacks = false;
 
-        // while let Some(dsw) = forth.data_stack.pop() {
-        //     println!("DSW: {:?}", dsw);
-        //     any_stacks = true;
-        // }
-        // while let Some(rsw) = forth.return_stack.pop() {
-        //     println!("RSW: {:?}", rsw);
-        //     any_stacks = true;
-        // }
-        // assert!(!any_stacks);
+        while let Some(dsw) = forth.data_stack.pop() {
+            println!("DSW: {:?}", dsw);
+            any_stacks = true;
+        }
+        while let Some(rsw) = forth.return_stack.pop() {
+            println!("RSW: {:?}", rsw);
+            any_stacks = true;
+        }
+        assert!(!any_stacks);
 
         // Uncomment if you want to check how much of the dictionary
         // was used during a test run.
