@@ -86,6 +86,9 @@ impl<T: 'static> Forth<T> {
         builtin!("@", Self::var_load),
         builtin!("!", Self::var_store),
         builtin!("w+", Self::word_add),
+        // Constants
+        builtin!("0", Self::zero_const),
+        builtin!("1", Self::one_const),
         // Other
         builtin!("(write-str)", Self::write_str_lit),
         builtin!("(jmp-doloop)", Self::jump_doloop),
@@ -124,6 +127,16 @@ impl<T: 'static> Forth<T> {
         unsafe {
             w_addr.ptr.cast::<Word>().write(w_val);
         }
+        Ok(())
+    }
+
+    pub fn zero_const(&mut self) -> Result<(), Error> {
+        self.data_stack.push(Word::data(0))?;
+        Ok(())
+    }
+
+    pub fn one_const(&mut self) -> Result<(), Error> {
+        self.data_stack.push(Word::data(1))?;
         Ok(())
     }
 

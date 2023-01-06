@@ -278,7 +278,10 @@ pub mod test {
             ("array z 4", "ok.\n"),
             ("z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .", "0 0 0 0 ok.\n"),
             ("10 z ! 20 z 1 w+ ! 30 z 2 w+ ! 40 z 3 w+ !", "ok.\n"),
-            ("z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .", "10 20 30 40 ok.\n"),
+            (
+                "z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .",
+                "10 20 30 40 ok.\n",
+            ),
         ];
 
         for (line, out) in lines {

@@ -1,9 +1,10 @@
 use core::{
     fmt::Write,
     mem::size_of,
+    num::NonZeroU16,
     ops::{Deref, Neg},
     ptr::NonNull,
-    str::FromStr, num::NonZeroU16,
+    str::FromStr,
 };
 
 use crate::{
@@ -214,13 +215,13 @@ impl<T> Forth<T> {
                 }
                 Lookup::Constant => {
                     self.munch_constant(&mut 0)?;
-                },
+                }
                 Lookup::Variable => {
                     self.munch_variable(&mut 0)?;
-                },
+                }
                 Lookup::Array => {
                     self.munch_array(&mut 0)?;
-                },
+                }
             }
         }
         writeln!(&mut self.output, "ok.").map_err(|_| OutputError::FormattingErr)?;
@@ -519,7 +520,9 @@ impl<T> Forth<T> {
             .input
             .cur_word()
             .ok_or(Error::ColonCompileMissingName)?;
-        let count_u16 = count.parse::<NonZeroU16>().replace_err(Error::BadArrayLength)?;
+        let count_u16 = count
+            .parse::<NonZeroU16>()
+            .replace_err(Error::BadArrayLength)?;
 
         let dict_base = self.dict_alloc.bump::<DictionaryEntry<T>>()?;
 
