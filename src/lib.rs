@@ -68,6 +68,7 @@ pub enum Error {
     BadLiteral,
     BadWordOffset,
     BadArrayLength,
+    DivideByZero,
 }
 
 impl From<StackError> for Error {
@@ -126,6 +127,11 @@ impl<T: 'static> CallContext<T> {
     }
 
     fn get_next_val(&self) -> Result<i32, Error> {
+        let w = self.get_next_word()?;
+        Ok(unsafe { w.data })
+    }
+
+    fn get_next_word(&self) -> Result<Word, Error> {
         let req = self.idx + 1;
         if req >= self.len {
             return Err(Error::BadCfaOffset);
@@ -136,7 +142,8 @@ impl<T: 'static> CallContext<T> {
             EntryKind::RuntimeBuiltin => Err(Error::BuiltinHasNoNextValue),
             EntryKind::Dictionary => unsafe {
                 let de = self.eh.cast::<DictionaryEntry<T>>();
-                let val = (*DictionaryEntry::pfa(de).as_ptr().add(req as usize)).data;
+                let val_ptr = DictionaryEntry::pfa(de).as_ptr().add(req as usize);
+                let val = val_ptr.read();
                 Ok(val)
             },
         }
@@ -180,6 +187,7 @@ type WordFunc<T> = fn(&mut Forth<T>) -> Result<(), Error>;
 pub enum Lookup<T: 'static> {
     Dict { de: NonNull<DictionaryEntry<T>> },
     Literal { val: i32 },
+    LiteralF { val: f32 },
     Builtin { bi: NonNull<BuiltinEntry<T>> },
     LQuote,
     LParen,

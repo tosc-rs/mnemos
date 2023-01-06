@@ -158,6 +158,8 @@ impl<T> Forth<T> {
                     Ok(Lookup::Builtin { bi: bis })
                 } else if let Some(val) = Self::parse_num(word) {
                     Ok(Lookup::Literal { val })
+                } else if let Ok(fv) = word.parse::<f32>() {
+                    Ok(Lookup::LiteralF { val: fv })
                 } else {
                     Err(Error::LookupFailed)
                 }
@@ -198,6 +200,9 @@ impl<T> Forth<T> {
                 }
                 Lookup::Literal { val } => {
                     self.data_stack.push(Word::data(val))?;
+                }
+                Lookup::LiteralF { val } => {
+                    self.data_stack.push(Word::float(val))?;
                 }
                 Lookup::LParen => {
                     self.munch_comment(&mut 0)?;
@@ -367,6 +372,17 @@ impl<T> Forth<T> {
                 self.dict_alloc.bump_write(Word::ptr(bi.as_ptr()))?;
                 *len += 1;
             }
+            Lookup::LiteralF { val } => {
+                // Literals are added to the CFA as two items:
+                //
+                // 1. The address of the `literal()` dictionary item
+                // 2. The value of the literal, as a data word
+                let literal_dict = self.find_word("(literal)").ok_or(Error::WordNotInDict)?;
+                self.dict_alloc
+                    .bump_write(Word::ptr(literal_dict.as_ptr()))?;
+                self.dict_alloc.bump_write(Word::float(val))?;
+                *len += 2;
+            }
             Lookup::Literal { val } => {
                 // Literals are added to the CFA as two items:
                 //
@@ -464,6 +480,8 @@ impl<T> Forth<T> {
         unsafe {
             dict_base.as_ptr().write(DictionaryEntry {
                 hdr: EntryHeader {
+                    // TODO: Should we look up `(constant)` for consistency?
+                    // Use `find_word`?
                     func: Self::constant,
                     name,
                     kind: EntryKind::Dictionary,
@@ -492,6 +510,8 @@ impl<T> Forth<T> {
         unsafe {
             dict_base.as_ptr().write(DictionaryEntry {
                 hdr: EntryHeader {
+                    // TODO: Should we look up `(variable)` for consistency?
+                    // Use `find_word`?
                     func: Self::variable,
                     name,
                     kind: EntryKind::Dictionary,
@@ -534,6 +554,9 @@ impl<T> Forth<T> {
             dict_base.as_ptr().write(DictionaryEntry {
                 hdr: EntryHeader {
                     // TODO: Should arrays push length and ptr? Or just ptr?
+                    //
+                    // TODO: Should we look up `(variable)` for consistency?
+                    // Use `find_word`?
                     func: Self::variable,
                     name,
                     kind: EntryKind::Dictionary,

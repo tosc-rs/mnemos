@@ -7,6 +7,7 @@ use core::{fmt::Debug, mem::MaybeUninit, ptr::addr_of_mut};
 #[derive(Copy, Clone)]
 pub union Word {
     pub data: i32,
+    pub float: f32,
     pub ptr: *mut (),
 }
 
@@ -40,24 +41,7 @@ impl TryInto<usize> for Word {
     }
 }
 
-// pub enum PtrKind<T: 'static> {
-//     DictWord(NonNull<DictionaryEntry<T>>),
-//     BuiltinWord(NonNull<BuiltinEntry<T>>),
-//     Unknown(*mut ()),
-// }
-
 impl Word {
-    // #[inline]
-    // pub unsafe fn as_kinded_ptr<T: 'static>(&self) -> PtrKind<T> {
-    //     let ptr = self.ptr;
-    //     let val = (ptr as usize) & 0b11;
-    //     match val {
-    //         1 => PtrKind::DictWord(NonNull::new_unchecked(ptr.cast::<u8>().offset(-1).cast())),
-    //         2 => PtrKind::BuiltinWord(NonNull::new_unchecked(ptr.cast::<u8>().offset(-2).cast())),
-    //         _ => PtrKind::Unknown(ptr),
-    //     }
-    // }
-
     #[inline]
     pub fn data(data: i32) -> Self {
         let mut mu_word: MaybeUninit<Word> = MaybeUninit::zeroed();
@@ -67,19 +51,14 @@ impl Word {
         }
     }
 
-    // #[inline]
-    // pub fn kinded_ptr<T: 'static>(ptr: PtrKind<T>) -> Self {
-    //     let mut mu_word: MaybeUninit<Word> = MaybeUninit::zeroed();
-    //     let ptr: *mut () = match ptr {
-    //         PtrKind::DictWord(p) => p.cast::<u8>().as_ptr().wrapping_add(1).cast(),
-    //         PtrKind::BuiltinWord(p) => p.cast::<u8>().as_ptr().wrapping_add(2).cast(),
-    //         PtrKind::Unknown(p) => p,
-    //     };
-    //     unsafe {
-    //         addr_of_mut!((*mu_word.as_mut_ptr()).ptr).write(ptr);
-    //         mu_word.assume_init()
-    //     }
-    // }
+    #[inline]
+    pub fn float(f: f32) -> Self {
+        let mut mu_word: MaybeUninit<Word> = MaybeUninit::zeroed();
+        unsafe {
+            addr_of_mut!((*mu_word.as_mut_ptr()).float).write(f);
+            mu_word.assume_init()
+        }
+    }
 
     #[inline]
     pub fn ptr<T>(ptr: *mut T) -> Self {

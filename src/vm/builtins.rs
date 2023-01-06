@@ -1,4 +1,4 @@
-use core::{fmt::Write, mem::size_of, ptr::NonNull};
+use core::{fmt::Write, mem::size_of, ops::Neg, ptr::NonNull};
 
 use crate::{
     dictionary::{BuiltinEntry, DictionaryEntry, EntryHeader, EntryKind},
@@ -25,9 +25,13 @@ macro_rules! builtin {
     };
 }
 
+// let literal_dict = self.find_word("(literal)").ok_or(Error::WordNotInDict)?;
+
 impl<T: 'static> Forth<T> {
     pub const FULL_BUILTINS: &'static [BuiltinEntry<T>] = &[
+        //
         // Math operations
+        //
         builtin!("+", Self::add),
         builtin!("-", Self::minus),
         builtin!("/", Self::div),
@@ -38,13 +42,29 @@ impl<T: 'static> Forth<T> {
         builtin!("negate", Self::negate),
         builtin!("min", Self::min),
         builtin!("max", Self::max),
+        //
+        // Floating Math operations
+        //
+        builtin!("f+", Self::float_add),
+        builtin!("f-", Self::float_minus),
+        builtin!("f/", Self::float_div),
+        builtin!("fmod", Self::float_modu),
+        builtin!("f/mod", Self::float_div_mod),
+        builtin!("f*", Self::float_mul),
+        builtin!("fabs", Self::float_abs),
+        builtin!("fnegate", Self::float_negate),
+        builtin!("fmin", Self::float_min),
+        builtin!("fmax", Self::float_max),
+        //
         // Double intermediate math operations
+        //
         builtin!("*/", Self::star_slash),
         builtin!("*/mod", Self::star_slash_mod),
+        //
         // Logic operations
+        //
         builtin!("not", Self::invert),
-        // NOTE! This is `bitand`, not logical `and`!
-        // e.g. `&` not `&&`.
+        // NOTE! This is `bitand`, not logical `and`! e.g. `&` not `&&`.
         builtin!("and", Self::and),
         builtin!("=", Self::equal),
         builtin!(">", Self::greater),
@@ -52,50 +72,77 @@ impl<T: 'static> Forth<T> {
         builtin!("0=", Self::zero_equal),
         builtin!("0>", Self::zero_greater),
         builtin!("0<", Self::zero_less),
+        //
         // Stack operations
+        //
         builtin!("swap", Self::swap),
         builtin!("dup", Self::dup),
         builtin!("over", Self::over),
         builtin!("rot", Self::rot),
         builtin!("drop", Self::ds_drop),
+        //
         // Double operations
+        //
         builtin!("2swap", Self::swap_2),
         builtin!("2dup", Self::dup_2),
         builtin!("2over", Self::over_2),
         builtin!("2drop", Self::ds_drop_2),
+        //
         // String/Output operations
+        //
         builtin!("emit", Self::emit),
         builtin!("cr", Self::cr),
         builtin!("space", Self::space),
         builtin!("spaces", Self::spaces),
         builtin!(".", Self::pop_print),
         builtin!("u.", Self::unsigned_pop_print),
+        builtin!("f.", Self::float_pop_print),
+        //
         // Define/forget
+        //
         builtin!(":", Self::colon),
         builtin!("forget", Self::forget),
+        //
         // Stack/Retstack operations
+        //
         builtin!("d>r", Self::data_to_return_stack),
+        // NOTE: REQUIRED for `do/loop`
         builtin!("2d>2r", Self::data2_to_return2_stack),
         builtin!("r>d", Self::return_to_data_stack),
+        //
         // Loop operations
+        //
         builtin!("i", Self::loop_i),
         builtin!("i'", Self::loop_itick),
         builtin!("j", Self::loop_j),
         builtin!("leave", Self::loop_leave),
+        //
         // Memory operations
+        //
         builtin!("@", Self::var_load),
         builtin!("!", Self::var_store),
         builtin!("w+", Self::word_add),
+        //
         // Constants
+        //
         builtin!("0", Self::zero_const),
         builtin!("1", Self::one_const),
+        //
         // Other
+        //
+        // NOTE: REQUIRED for `."`
         builtin!("(write-str)", Self::write_str_lit),
+        // NOTE: REQUIRED for `do/loop`
         builtin!("(jmp-doloop)", Self::jump_doloop),
+        // NOTE: REQUIRED for `if/then` and `if/else/then`
         builtin!("(jump-zero)", Self::jump_if_zero),
+        // NOTE: REQUIRED for `if/else/then`
         builtin!("(jmp)", Self::jump),
+        // NOTE: REQUIRED for `:` (if you want literals)
         builtin!("(literal)", Self::literal),
+        // NOTE: REQUIRED for `constant`
         builtin!("(constant)", Self::constant),
+        // NOTE: REQUIRED for `variable` or `array`
         builtin!("(variable)", Self::variable),
     ];
 
@@ -342,9 +389,25 @@ impl<T: 'static> Forth<T> {
         self.less()
     }
 
+    pub fn float_div_mod(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        if unsafe { a.float == 0.0 } {
+            return Err(Error::DivideByZero);
+        }
+        let rem = unsafe { Word::float(b.float % a.float) };
+        self.data_stack.push(rem)?;
+        let val = unsafe { Word::float(b.float / a.float) };
+        self.data_stack.push(val)?;
+        Ok(())
+    }
+
     pub fn div_mod(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
+        if unsafe { a.data == 0 } {
+            return Err(Error::DivideByZero);
+        }
         let rem = unsafe { Word::data(b.data % a.data) };
         self.data_stack.push(rem)?;
         let val = unsafe { Word::data(b.data / a.data) };
@@ -352,10 +415,41 @@ impl<T: 'static> Forth<T> {
         Ok(())
     }
 
+    pub fn float_div(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        let val = unsafe {
+            if a.float == 0.0 {
+                return Err(Error::DivideByZero);
+            }
+            Word::float(b.float / a.float)
+        };
+        self.data_stack.push(val)?;
+        Ok(())
+    }
+
     pub fn div(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
-        let val = unsafe { Word::data(b.data / a.data) };
+        let val = unsafe {
+            if a.data == 0 {
+                return Err(Error::DivideByZero);
+            }
+            Word::data(b.data / a.data)
+        };
+        self.data_stack.push(val)?;
+        Ok(())
+    }
+
+    pub fn float_modu(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        let val = unsafe {
+            if a.float == 0.0 {
+                return Err(Error::DivideByZero);
+            }
+            Word::float(b.float % a.float)
+        };
         self.data_stack.push(val)?;
         Ok(())
     }
@@ -363,7 +457,12 @@ impl<T: 'static> Forth<T> {
     pub fn modu(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
-        let val = unsafe { Word::data(b.data % a.data) };
+        let val = unsafe {
+            if a.data == 0 {
+                return Err(Error::DivideByZero);
+            }
+            Word::data(b.data % a.data)
+        };
         self.data_stack.push(val)?;
         Ok(())
     }
@@ -484,11 +583,34 @@ impl<T: 'static> Forth<T> {
         Ok(())
     }
 
+    pub fn float_pop_print(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        write!(&mut self.output, "{} ", unsafe { a.float })
+            .map_err(|_| OutputError::FormattingErr)?;
+        Ok(())
+    }
+
+    pub fn float_add(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        self.data_stack
+            .push(Word::float(unsafe { a.float + b.float }))?;
+        Ok(())
+    }
+
     pub fn add(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack
             .push(Word::data(unsafe { a.data.wrapping_add(b.data) }))?;
+        Ok(())
+    }
+
+    pub fn float_mul(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        self.data_stack
+            .push(Word::float(unsafe { a.float * b.float }))?;
         Ok(())
     }
 
@@ -500,6 +622,27 @@ impl<T: 'static> Forth<T> {
         Ok(())
     }
 
+    #[cfg(feature = "use-std")]
+    pub fn float_abs(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        self.data_stack
+            .push(Word::float(unsafe { a.float.abs() }))?;
+        Ok(())
+    }
+
+    #[cfg(not(feature = "use-std"))]
+    pub fn float_abs(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        self.data_stack.push(Word::float(unsafe {
+            if a.float.is_sign_negative() {
+                a.float.neg()
+            } else {
+                a.float
+            }
+        }))?;
+        Ok(())
+    }
+
     pub fn abs(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         self.data_stack
@@ -507,10 +650,25 @@ impl<T: 'static> Forth<T> {
         Ok(())
     }
 
+    pub fn float_negate(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        self.data_stack
+            .push(Word::float(unsafe { a.float.neg() }))?;
+        Ok(())
+    }
+
     pub fn negate(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         self.data_stack
             .push(Word::data(unsafe { a.data.wrapping_neg() }))?;
+        Ok(())
+    }
+
+    pub fn float_min(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        self.data_stack
+            .push(Word::float(unsafe { a.float.min(b.float) }))?;
         Ok(())
     }
 
@@ -522,11 +680,27 @@ impl<T: 'static> Forth<T> {
         Ok(())
     }
 
+    pub fn float_max(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        self.data_stack
+            .push(Word::float(unsafe { a.float.max(b.float) }))?;
+        Ok(())
+    }
+
     pub fn max(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack
             .push(Word::data(unsafe { a.data.max(b.data) }))?;
+        Ok(())
+    }
+
+    pub fn float_minus(&mut self) -> Result<(), Error> {
+        let a = self.data_stack.try_pop()?;
+        let b = self.data_stack.try_pop()?;
+        self.data_stack
+            .push(Word::float(unsafe { b.float - a.float }))?;
         Ok(())
     }
 
@@ -592,6 +766,8 @@ impl<T: 'static> Forth<T> {
                         unsafe {
                             dict_base.as_ptr().write(DictionaryEntry {
                                 hdr: EntryHeader {
+                                    // TODO: Should we look up `(interpret)` for consistency?
+                                    // Use `find_word`?
                                     func: Self::interpret,
                                     name,
                                     kind: EntryKind::Dictionary,
@@ -641,9 +817,9 @@ impl<T: 'static> Forth<T> {
     /// CFA array into the stack as a value.
     pub fn literal(&mut self) -> Result<(), Error> {
         let parent = self.call_stack.try_peek_back_n_mut(1)?;
-        let literal = parent.get_next_val()?;
+        let literal = parent.get_next_word()?;
         parent.offset(1)?;
-        self.data_stack.push(Word::data(literal))?;
+        self.data_stack.push(literal)?;
         Ok(())
     }
 
