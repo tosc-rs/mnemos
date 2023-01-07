@@ -1,3 +1,5 @@
+use core::mem::size_of;
+
 pub struct Stack<T: Copy> {
     top: *mut T,
     cur: *mut T,
@@ -33,6 +35,11 @@ impl<T: Copy> Stack<T> {
             self.cur.write(item);
         }
         Ok(())
+    }
+
+    #[inline]
+    pub fn depth(&self) -> usize {
+        ((self.top as usize) - (self.cur as usize)) / size_of::<T>()
     }
 
     #[inline]

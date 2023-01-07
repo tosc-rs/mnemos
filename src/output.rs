@@ -1,3 +1,5 @@
+use crate::ReplaceErr;
+
 pub struct OutputBuf {
     start: *mut u8,
     cur: *mut u8,
@@ -8,6 +10,12 @@ pub struct OutputBuf {
 pub enum OutputError {
     OutputFull,
     FormattingErr,
+}
+
+impl From<core::fmt::Error> for OutputError {
+    fn from(_oe: core::fmt::Error) -> Self {
+        OutputError::FormattingErr
+    }
 }
 
 impl OutputBuf {
@@ -63,6 +71,6 @@ impl OutputBuf {
 
 impl core::fmt::Write for OutputBuf {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
-        self.push_str(s).map_err(|_| core::fmt::Error)
+        self.push_str(s).replace_err(core::fmt::Error)
     }
 }

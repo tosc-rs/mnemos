@@ -132,6 +132,7 @@ impl<T: 'static> Forth<T> {
         //
         builtin!("builtins", Self::list_builtins),
         builtin!("dict", Self::list_dict),
+        builtin!(".s", Self::list_stack),
         //
         // Other
         //
@@ -151,29 +152,46 @@ impl<T: 'static> Forth<T> {
         builtin!("(variable)", Self::variable),
     ];
 
-    pub fn list_builtins(&mut self) -> Result<(), Error> {
-        let Self { builtins, output, ..} = self;
-        output.write_str("builtins: ").replace_err(OutputError::FormattingErr)?;
-        for bi in builtins.iter() {
-            output.write_str(bi.hdr.name.as_str()).replace_err(OutputError::FormattingErr)?;
-            output.write_str(", ").replace_err(OutputError::FormattingErr)?;
+    pub fn list_stack(&mut self) -> Result<(), Error> {
+        let depth = self.data_stack.depth();
+        write!(&mut self.output, "<{}> ", depth)?;
+        for d in (0..depth).rev() {
+            let val = self.data_stack.try_peek_back_n(d)?;
+            write!(&mut self.output, "{} ", unsafe { val.data })?;
         }
-        output.write_str("\n").replace_err(OutputError::FormattingErr)?;
+        self.output.push_str("\n")?;
+        Ok(())
+    }
+
+    pub fn list_builtins(&mut self) -> Result<(), Error> {
+        let Self {
+            builtins, output, ..
+        } = self;
+        output.write_str("builtins: ")?;
+        for bi in builtins.iter() {
+            output.write_str(bi.hdr.name.as_str())?;
+            output.write_str(", ")?;
+        }
+        output.write_str("\n")?;
         Ok(())
     }
 
     pub fn list_dict(&mut self) -> Result<(), Error> {
-        let Self { run_dict_tail, output, ..} = self;
-        output.write_str("dictionary: ").replace_err(OutputError::FormattingErr)?;
+        let Self {
+            run_dict_tail,
+            output,
+            ..
+        } = self;
+        output.write_str("dictionary: ")?;
         let mut cur = *run_dict_tail;
 
         while let Some(item) = cur.take() {
             let item = unsafe { item.as_ref() };
-            output.write_str(item.hdr.name.as_str()).replace_err(OutputError::FormattingErr)?;
-            output.write_str(", ").replace_err(OutputError::FormattingErr)?;
+            output.write_str(item.hdr.name.as_str())?;
+            output.write_str(", ")?;
             cur = item.link;
         }
-        output.write_str("\n").replace_err(OutputError::FormattingErr)?;
+        output.write_str("\n")?;
         Ok(())
     }
 
@@ -602,22 +620,19 @@ impl<T: 'static> Forth<T> {
 
     pub fn pop_print(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
-        write!(&mut self.output, "{} ", unsafe { a.data })
-            .map_err(|_| OutputError::FormattingErr)?;
+        write!(&mut self.output, "{} ", unsafe { a.data })?;
         Ok(())
     }
 
     pub fn unsigned_pop_print(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
-        write!(&mut self.output, "{} ", unsafe { a.data } as u32)
-            .map_err(|_| OutputError::FormattingErr)?;
+        write!(&mut self.output, "{} ", unsafe { a.data } as u32)?;
         Ok(())
     }
 
     pub fn float_pop_print(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
-        write!(&mut self.output, "{} ", unsafe { a.float })
-            .map_err(|_| OutputError::FormattingErr)?;
+        write!(&mut self.output, "{} ", unsafe { a.float })?;
         Ok(())
     }
 

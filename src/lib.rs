@@ -89,6 +89,12 @@ impl From<OutputError> for Error {
     }
 }
 
+impl From<core::fmt::Error> for Error {
+    fn from(oe: core::fmt::Error) -> Self {
+        Error::Output(OutputError::FormattingErr)
+    }
+}
+
 pub struct CallContext<T: 'static> {
     eh: NonNull<EntryHeader<T>>,
     idx: u16,

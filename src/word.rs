@@ -1,5 +1,7 @@
 use core::{fmt::Debug, mem::MaybeUninit, ptr::addr_of_mut};
 
+use crate::ReplaceErr;
+
 // Use a union so that things work on both 32- and 64-bit systems,
 // so the *data* is always 32 bits, but the pointer is whatever the
 // native word size is.
@@ -27,7 +29,7 @@ impl TryFrom<usize> for Word {
     type Error = crate::Error;
 
     fn try_from(value: usize) -> Result<Self, Self::Error> {
-        let val = i32::try_from(value).map_err(|_| crate::Error::UsizeToWordInvalid(value))?;
+        let val = i32::try_from(value).replace_err(crate::Error::UsizeToWordInvalid(value))?;
         Ok(Word::data(val))
     }
 }
@@ -37,7 +39,7 @@ impl TryInto<usize> for Word {
 
     fn try_into(self) -> Result<usize, Self::Error> {
         let val = unsafe { self.data };
-        usize::try_from(val).map_err(|_| crate::Error::WordToUsizeInvalid(val))
+        usize::try_from(val).replace_err(crate::Error::WordToUsizeInvalid(val))
     }
 }
 

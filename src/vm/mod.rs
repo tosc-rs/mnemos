@@ -225,7 +225,7 @@ impl<T> Forth<T> {
                 }
             }
         }
-        writeln!(&mut self.output, "ok.").map_err(|_| OutputError::FormattingErr)?;
+        writeln!(&mut self.output, "ok.")?;
         Ok(())
     }
 
