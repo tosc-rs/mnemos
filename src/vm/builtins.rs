@@ -1,4 +1,4 @@
-use core::{fmt::Write, mem::size_of, ops::Neg, ptr::NonNull};
+use core::{fmt::Write, mem::size_of, ops::Neg};
 
 use crate::{
     dictionary::{BuiltinEntry, DictionaryEntry, EntryHeader, EntryKind},
@@ -6,7 +6,7 @@ use crate::{
     output::OutputError,
     vm::TmpFaStr,
     word::Word,
-    CallContext, Error, Forth, Mode, ReplaceErr,
+    Error, Forth, Mode, ReplaceErr,
 };
 
 // NOTE: This macro exists because we can't have const constructors that include
@@ -128,6 +128,11 @@ impl<T: 'static> Forth<T> {
         builtin!("0", Self::zero_const),
         builtin!("1", Self::one_const),
         //
+        // Introspection
+        //
+        builtin!("builtins", Self::list_builtins),
+        builtin!("dict", Self::list_dict),
+        //
         // Other
         //
         // NOTE: REQUIRED for `."`
@@ -145,6 +150,32 @@ impl<T: 'static> Forth<T> {
         // NOTE: REQUIRED for `variable` or `array`
         builtin!("(variable)", Self::variable),
     ];
+
+    pub fn list_builtins(&mut self) -> Result<(), Error> {
+        let Self { builtins, output, ..} = self;
+        output.write_str("builtins: ").replace_err(OutputError::FormattingErr)?;
+        for bi in builtins.iter() {
+            output.write_str(bi.hdr.name.as_str()).replace_err(OutputError::FormattingErr)?;
+            output.write_str(", ").replace_err(OutputError::FormattingErr)?;
+        }
+        output.write_str("\n").replace_err(OutputError::FormattingErr)?;
+        Ok(())
+    }
+
+    pub fn list_dict(&mut self) -> Result<(), Error> {
+        let Self { run_dict_tail, output, ..} = self;
+        output.write_str("dictionary: ").replace_err(OutputError::FormattingErr)?;
+        let mut cur = *run_dict_tail;
+
+        while let Some(item) = cur.take() {
+            let item = unsafe { item.as_ref() };
+            output.write_str(item.hdr.name.as_str()).replace_err(OutputError::FormattingErr)?;
+            output.write_str(", ").replace_err(OutputError::FormattingErr)?;
+            cur = item.link;
+        }
+        output.write_str("\n").replace_err(OutputError::FormattingErr)?;
+        Ok(())
+    }
 
     // addr offset w+
     pub fn word_add(&mut self) -> Result<(), Error> {
@@ -820,49 +851,6 @@ impl<T: 'static> Forth<T> {
         let literal = parent.get_next_word()?;
         parent.offset(1)?;
         self.data_stack.push(literal)?;
-        Ok(())
-    }
-
-    /// Interpret is the run-time target of the `:` (colon) word.
-    ///
-    /// It is NOT considered a "builtin", as it DOES take the cfa, where
-    /// other builtins do not.
-    pub fn interpret(&mut self) -> Result<(), Error> {
-        // Colon compiles into a list of words, where the first word
-        // is a `u32` of the `len` number of words.
-        //
-        // NOTE: we DON'T use `Stack::try_peek_back_n_mut` because the callee
-        // could pop off our item, which would lead to UB.
-        let mut me = self.call_stack.try_peek()?;
-
-        // For the remaining words, we do a while-let loop instead of
-        // a for-loop, as some words (e.g. literals) require advancing
-        // to the next word.
-        while let Some(word) = me.get_word_at_cur_idx() {
-            // We can safely assume that all items in the list are pointers,
-            // EXCEPT for literals, but those are handled manually below.
-            let ptr = unsafe { word.ptr.cast::<EntryHeader<T>>() };
-            let nn = NonNull::new(ptr).ok_or(Error::NullPointerInCFA)?;
-            let ehref = unsafe { nn.as_ref() };
-
-            self.call_stack.overwrite_back_n(0, me)?;
-            self.call_stack.push(CallContext {
-                eh: nn,
-                idx: 0,
-                len: ehref.len,
-            })?;
-            let result = (ehref.func)(self);
-            self.call_stack.try_pop()?;
-            result?;
-            me = self.call_stack.try_peek()?;
-
-            me.offset(1)?;
-            // TODO: If I want A4-style pausing here, I'd probably want to also
-            // push dictionary locations to the stack (under the CFA), which
-            // would allow for halting and resuming. Yield after loading "next",
-            // right before executing the function itself. This would also allow
-            // for cursed control flow
-        }
         Ok(())
     }
 }

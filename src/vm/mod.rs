@@ -38,9 +38,6 @@ pub struct Forth<T: 'static> {
     pub output: OutputBuf,
     pub host_ctxt: T,
     builtins: &'static [BuiltinEntry<T>],
-
-    // TODO: This will be for words that have compile time actions, I guess?
-    _comp_dict_tail: Option<NonNull<DictionaryEntry<T>>>,
 }
 
 impl<T> Forth<T> {
@@ -66,7 +63,6 @@ impl<T> Forth<T> {
             call_stack,
             dict_alloc,
             run_dict_tail: None,
-            _comp_dict_tail: None,
             input,
             output,
             host_ctxt,
@@ -230,6 +226,47 @@ impl<T> Forth<T> {
             }
         }
         writeln!(&mut self.output, "ok.").map_err(|_| OutputError::FormattingErr)?;
+        Ok(())
+    }
+
+
+    /// Interpret is the run-time target of the `:` (colon) word.
+    pub fn interpret(&mut self) -> Result<(), Error> {
+        // Colon compiles into a list of words, where the first word
+        // is a `u32` of the `len` number of words.
+        //
+        // NOTE: we DON'T use `Stack::try_peek_back_n_mut` because the callee
+        // could pop off our item, which would lead to UB.
+        let mut me = self.call_stack.try_peek()?;
+
+        // For the remaining words, we do a while-let loop instead of
+        // a for-loop, as some words (e.g. literals) require advancing
+        // to the next word.
+        while let Some(word) = me.get_word_at_cur_idx() {
+            // We can safely assume that all items in the list are pointers,
+            // EXCEPT for literals, but those are handled manually below.
+            let ptr = unsafe { word.ptr.cast::<EntryHeader<T>>() };
+            let nn = NonNull::new(ptr).ok_or(Error::NullPointerInCFA)?;
+            let ehref = unsafe { nn.as_ref() };
+
+            self.call_stack.overwrite_back_n(0, me)?;
+            self.call_stack.push(CallContext {
+                eh: nn,
+                idx: 0,
+                len: ehref.len,
+            })?;
+            let result = (ehref.func)(self);
+            self.call_stack.try_pop()?;
+            result?;
+            me = self.call_stack.try_peek()?;
+
+            me.offset(1)?;
+            // TODO: If I want A4-style pausing here, I'd probably want to also
+            // push dictionary locations to the stack (under the CFA), which
+            // would allow for halting and resuming. Yield after loading "next",
+            // right before executing the function itself. This would also allow
+            // for cursed control flow
+        }
         Ok(())
     }
 
