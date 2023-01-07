@@ -12,4 +12,4 @@ profont = "0.6.1"
 
 [dependencies.forth3]
 path = "../"
-features = ["use-std"]
+features = ["use-std", "floats"]
