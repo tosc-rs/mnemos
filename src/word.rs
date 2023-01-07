@@ -9,6 +9,7 @@ use crate::ReplaceErr;
 #[derive(Copy, Clone)]
 pub union Word {
     pub data: i32,
+    #[cfg(feature = "floats")]
     pub float: f32,
     pub ptr: *mut (),
 }
@@ -53,6 +54,7 @@ impl Word {
         }
     }
 
+    #[cfg(feature = "floats")]
     #[inline]
     pub fn float(f: f32) -> Self {
         let mut mu_word: MaybeUninit<Word> = MaybeUninit::zeroed();

@@ -54,8 +54,6 @@ impl<T> Forth<T> {
         let data_stack = Stack::new(dstack_buf.0, dstack_buf.1);
         let return_stack = Stack::new(rstack_buf.0, rstack_buf.1);
         let call_stack = Stack::new(cstack_buf.0, cstack_buf.1);
-        #[cfg(feature = "use-std")]
-        println!("DASTAR: {:016X}", dict_buf.0 as usize);
         let dict_alloc = DictionaryBump::new(dict_buf.0, dict_buf.1);
 
         Ok(Self {
@@ -156,9 +154,12 @@ impl<T> Forth<T> {
                     Ok(Lookup::Builtin { bi: bis })
                 } else if let Some(val) = Self::parse_num(word) {
                     Ok(Lookup::Literal { val })
-                } else if let Ok(fv) = word.parse::<f32>() {
-                    Ok(Lookup::LiteralF { val: fv })
                 } else {
+                    #[cfg(feature = "floats")]
+                    if let Ok(fv) = word.parse::<f32>() {
+                        return Ok(Lookup::LiteralF { val: fv });
+                    }
+
                     Err(Error::LookupFailed)
                 }
             }
@@ -199,6 +200,7 @@ impl<T> Forth<T> {
                 Lookup::Literal { val } => {
                     self.data_stack.push(Word::data(val))?;
                 }
+                #[cfg(feature = "floats")]
                 Lookup::LiteralF { val } => {
                     self.data_stack.push(Word::float(val))?;
                 }
@@ -230,7 +232,6 @@ impl<T> Forth<T> {
         writeln!(&mut self.output, "ok.")?;
         Ok(())
     }
-
 
     /// Interpret is the run-time target of the `:` (colon) word.
     pub fn interpret(&mut self) -> Result<(), Error> {
@@ -411,6 +412,7 @@ impl<T> Forth<T> {
                 self.dict_alloc.bump_write(Word::ptr(bi.as_ptr()))?;
                 *len += 1;
             }
+            #[cfg(feature = "floats")]
             Lookup::LiteralF { val } => {
                 // Literals are added to the CFA as two items:
                 //

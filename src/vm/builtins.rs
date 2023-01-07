@@ -1,4 +1,4 @@
-use core::{fmt::Write, mem::size_of, ops::Neg};
+use core::{fmt::Write, mem::size_of};
 
 use crate::{
     dictionary::{BuiltinEntry, DictionaryEntry, EntryHeader, EntryKind},
@@ -7,6 +7,9 @@ use crate::{
     word::Word,
     Error, Forth, Mode, ReplaceErr,
 };
+
+#[cfg(feature = "floats")]
+pub mod floats;
 
 // NOTE: This macro exists because we can't have const constructors that include
 // "mut" items, which unfortunately covers things like `fn(&mut T)`. Use a macro
@@ -21,6 +24,13 @@ macro_rules! builtin {
                 len: 0,
             },
         }
+    };
+}
+
+macro_rules! builtin_if_feature {
+    ($feature:literal, $name:literal, $func:expr) => {
+        #[cfg(feature = $feature)]
+        builtin!($name, $func)
     };
 }
 
@@ -44,16 +54,16 @@ impl<T: 'static> Forth<T> {
         //
         // Floating Math operations
         //
-        builtin!("f+", Self::float_add),
-        builtin!("f-", Self::float_minus),
-        builtin!("f/", Self::float_div),
-        builtin!("fmod", Self::float_modu),
-        builtin!("f/mod", Self::float_div_mod),
-        builtin!("f*", Self::float_mul),
-        builtin!("fabs", Self::float_abs),
-        builtin!("fnegate", Self::float_negate),
-        builtin!("fmin", Self::float_min),
-        builtin!("fmax", Self::float_max),
+        builtin_if_feature!("floats", "f+", Self::float_add),
+        builtin_if_feature!("floats", "f-", Self::float_minus),
+        builtin_if_feature!("floats", "f/", Self::float_div),
+        builtin_if_feature!("floats", "fmod", Self::float_modu),
+        builtin_if_feature!("floats", "f/mod", Self::float_div_mod),
+        builtin_if_feature!("floats", "f*", Self::float_mul),
+        builtin_if_feature!("floats", "fabs", Self::float_abs),
+        builtin_if_feature!("floats", "fnegate", Self::float_negate),
+        builtin_if_feature!("floats", "fmin", Self::float_min),
+        builtin_if_feature!("floats", "fmax", Self::float_max),
         //
         // Double intermediate math operations
         //
@@ -95,7 +105,7 @@ impl<T: 'static> Forth<T> {
         builtin!("spaces", Self::spaces),
         builtin!(".", Self::pop_print),
         builtin!("u.", Self::unsigned_pop_print),
-        builtin!("f.", Self::float_pop_print),
+        builtin_if_feature!("floats", "f.", Self::float_pop_print),
         //
         // Define/forget
         //
@@ -156,7 +166,11 @@ impl<T: 'static> Forth<T> {
         let capa = self.dict_alloc.capacity();
         let used = self.dict_alloc.used();
         let free = capa - used;
-        writeln!(&mut self.output, "{}/{} bytes free ({} used)", free, capa, used)?;
+        writeln!(
+            &mut self.output,
+            "{}/{} bytes free ({} used)",
+            free, capa, used
+        )?;
         Ok(())
     }
 
@@ -450,19 +464,6 @@ impl<T: 'static> Forth<T> {
         self.less()
     }
 
-    pub fn float_div_mod(&mut self) -> Result<(), Error> {
-        let a = self.data_stack.try_pop()?;
-        let b = self.data_stack.try_pop()?;
-        if unsafe { a.float == 0.0 } {
-            return Err(Error::DivideByZero);
-        }
-        let rem = unsafe { Word::float(b.float % a.float) };
-        self.data_stack.push(rem)?;
-        let val = unsafe { Word::float(b.float / a.float) };
-        self.data_stack.push(val)?;
-        Ok(())
-    }
-
     pub fn div_mod(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
@@ -476,19 +477,6 @@ impl<T: 'static> Forth<T> {
         Ok(())
     }
 
-    pub fn float_div(&mut self) -> Result<(), Error> {
-        let a = self.data_stack.try_pop()?;
-        let b = self.data_stack.try_pop()?;
-        let val = unsafe {
-            if a.float == 0.0 {
-                return Err(Error::DivideByZero);
-            }
-            Word::float(b.float / a.float)
-        };
-        self.data_stack.push(val)?;
-        Ok(())
-    }
-
     pub fn div(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
@@ -497,19 +485,6 @@ impl<T: 'static> Forth<T> {
                 return Err(Error::DivideByZero);
             }
             Word::data(b.data / a.data)
-        };
-        self.data_stack.push(val)?;
-        Ok(())
-    }
-
-    pub fn float_modu(&mut self) -> Result<(), Error> {
-        let a = self.data_stack.try_pop()?;
-        let b = self.data_stack.try_pop()?;
-        let val = unsafe {
-            if a.float == 0.0 {
-                return Err(Error::DivideByZero);
-            }
-            Word::float(b.float % a.float)
         };
         self.data_stack.push(val)?;
         Ok(())
@@ -642,33 +617,11 @@ impl<T: 'static> Forth<T> {
         Ok(())
     }
 
-    pub fn float_pop_print(&mut self) -> Result<(), Error> {
-        let a = self.data_stack.try_pop()?;
-        write!(&mut self.output, "{} ", unsafe { a.float })?;
-        Ok(())
-    }
-
-    pub fn float_add(&mut self) -> Result<(), Error> {
-        let a = self.data_stack.try_pop()?;
-        let b = self.data_stack.try_pop()?;
-        self.data_stack
-            .push(Word::float(unsafe { a.float + b.float }))?;
-        Ok(())
-    }
-
     pub fn add(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack
             .push(Word::data(unsafe { a.data.wrapping_add(b.data) }))?;
-        Ok(())
-    }
-
-    pub fn float_mul(&mut self) -> Result<(), Error> {
-        let a = self.data_stack.try_pop()?;
-        let b = self.data_stack.try_pop()?;
-        self.data_stack
-            .push(Word::float(unsafe { a.float * b.float }))?;
         Ok(())
     }
 
@@ -680,27 +633,6 @@ impl<T: 'static> Forth<T> {
         Ok(())
     }
 
-    #[cfg(feature = "use-std")]
-    pub fn float_abs(&mut self) -> Result<(), Error> {
-        let a = self.data_stack.try_pop()?;
-        self.data_stack
-            .push(Word::float(unsafe { a.float.abs() }))?;
-        Ok(())
-    }
-
-    #[cfg(not(feature = "use-std"))]
-    pub fn float_abs(&mut self) -> Result<(), Error> {
-        let a = self.data_stack.try_pop()?;
-        self.data_stack.push(Word::float(unsafe {
-            if a.float.is_sign_negative() {
-                a.float.neg()
-            } else {
-                a.float
-            }
-        }))?;
-        Ok(())
-    }
-
     pub fn abs(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         self.data_stack
@@ -708,25 +640,10 @@ impl<T: 'static> Forth<T> {
         Ok(())
     }
 
-    pub fn float_negate(&mut self) -> Result<(), Error> {
-        let a = self.data_stack.try_pop()?;
-        self.data_stack
-            .push(Word::float(unsafe { a.float.neg() }))?;
-        Ok(())
-    }
-
     pub fn negate(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         self.data_stack
             .push(Word::data(unsafe { a.data.wrapping_neg() }))?;
-        Ok(())
-    }
-
-    pub fn float_min(&mut self) -> Result<(), Error> {
-        let a = self.data_stack.try_pop()?;
-        let b = self.data_stack.try_pop()?;
-        self.data_stack
-            .push(Word::float(unsafe { a.float.min(b.float) }))?;
         Ok(())
     }
 
@@ -738,27 +655,11 @@ impl<T: 'static> Forth<T> {
         Ok(())
     }
 
-    pub fn float_max(&mut self) -> Result<(), Error> {
-        let a = self.data_stack.try_pop()?;
-        let b = self.data_stack.try_pop()?;
-        self.data_stack
-            .push(Word::float(unsafe { a.float.max(b.float) }))?;
-        Ok(())
-    }
-
     pub fn max(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack
             .push(Word::data(unsafe { a.data.max(b.data) }))?;
-        Ok(())
-    }
-
-    pub fn float_minus(&mut self) -> Result<(), Error> {
-        let a = self.data_stack.try_pop()?;
-        let b = self.data_stack.try_pop()?;
-        self.data_stack
-            .push(Word::float(unsafe { b.float - a.float }))?;
         Ok(())
     }
 
@@ -812,8 +713,6 @@ impl<T: 'static> Forth<T> {
         // get angry with a stacked borrows violation later when we attempt
         // to interpret a built word.
         let dict_base = self.dict_alloc.bump::<DictionaryEntry<T>>()?;
-        #[cfg(feature = "use-std")]
-        println!("ALLOCDEF: {} @ {:016X}", name.as_str(), dict_base.as_ptr() as usize);
 
         let mut len = 0u16;
 

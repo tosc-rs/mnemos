@@ -191,10 +191,19 @@ impl<T: 'static> CallContext<T> {
 type WordFunc<T> = fn(&mut Forth<T>) -> Result<(), Error>;
 
 pub enum Lookup<T: 'static> {
-    Dict { de: NonNull<DictionaryEntry<T>> },
-    Literal { val: i32 },
-    LiteralF { val: f32 },
-    Builtin { bi: NonNull<BuiltinEntry<T>> },
+    Dict {
+        de: NonNull<DictionaryEntry<T>>,
+    },
+    Literal {
+        val: i32,
+    },
+    #[cfg(feature = "floats")]
+    LiteralF {
+        val: f32,
+    },
+    Builtin {
+        bi: NonNull<BuiltinEntry<T>>,
+    },
     LQuote,
     LParen,
     Semicolon,
