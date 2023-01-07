@@ -90,7 +90,7 @@ impl From<OutputError> for Error {
 }
 
 impl From<core::fmt::Error> for Error {
-    fn from(oe: core::fmt::Error) -> Self {
+    fn from(_oe: core::fmt::Error) -> Self {
         Error::Output(OutputError::FormattingErr)
     }
 }
@@ -296,6 +296,11 @@ pub mod test {
                 "z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .",
                 "10 20 30 40 ok.\n",
             ),
+            ("forget z", "ok.\n"),
+            ("variable a", "ok.\n"),
+            ("100 a !", "ok.\n"),
+            ("array z 4", "ok.\n"),
+            ("z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .", "0 0 0 0 ok.\n"),
         ];
 
         for (line, out) in lines {

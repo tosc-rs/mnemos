@@ -40,6 +40,10 @@ impl FaStr {
         }
     }
 
+    pub fn as_ptr(&self) -> *const u8 {
+        self.ptr
+    }
+
     pub fn as_bytes(&self) -> &[u8] {
         let len = self.len_hash.len();
         unsafe { core::slice::from_raw_parts(self.ptr, len) }

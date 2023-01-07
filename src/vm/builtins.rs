@@ -3,7 +3,6 @@ use core::{fmt::Write, mem::size_of, ops::Neg};
 use crate::{
     dictionary::{BuiltinEntry, DictionaryEntry, EntryHeader, EntryKind},
     fastr::comptime_fastr,
-    output::OutputError,
     vm::TmpFaStr,
     word::Word,
     Error, Forth, Mode, ReplaceErr,
@@ -133,6 +132,7 @@ impl<T: 'static> Forth<T> {
         builtin!("builtins", Self::list_builtins),
         builtin!("dict", Self::list_dict),
         builtin!(".s", Self::list_stack),
+        builtin!("free", Self::dict_free),
         //
         // Other
         //
@@ -151,6 +151,14 @@ impl<T: 'static> Forth<T> {
         // NOTE: REQUIRED for `variable` or `array`
         builtin!("(variable)", Self::variable),
     ];
+
+    pub fn dict_free(&mut self) -> Result<(), Error> {
+        let capa = self.dict_alloc.capacity();
+        let used = self.dict_alloc.used();
+        let free = capa - used;
+        writeln!(&mut self.output, "{}/{} bytes free ({} used)", free, capa, used)?;
+        Ok(())
+    }
 
     pub fn list_stack(&mut self) -> Result<(), Error> {
         let depth = self.data_stack.depth();
@@ -275,20 +283,24 @@ impl<T: 'static> Forth<T> {
             }
             Some(d) => d,
         };
+
+        // NOTE: We use the *name* pointer for rewinding, as we allocate the name before the item.
+        let name_ptr = unsafe { defn.as_ref().hdr.name.as_ptr().cast_mut() };
         self.run_dict_tail = unsafe { defn.as_ref().link };
         let addr = defn.as_ptr();
+        let name_contains = self.dict_alloc.contains(name_ptr.cast());
         let contains = self.dict_alloc.contains(addr.cast());
         let ordered = (addr as usize) <= (self.dict_alloc.cur as usize);
 
-        if !(contains && ordered) {
+        if !(name_contains && contains && ordered) {
             return Err(Error::InternalError);
         }
 
-        let len = (self.dict_alloc.cur as usize) - (addr as usize);
+        let len = (self.dict_alloc.cur as usize) - (name_ptr as usize);
         unsafe {
-            addr.write_bytes(0x00, len);
+            name_ptr.write_bytes(0x00, len);
         }
-        self.dict_alloc.cur = addr.cast();
+        self.dict_alloc.cur = name_ptr;
         Ok(())
     }
 
@@ -800,6 +812,8 @@ impl<T: 'static> Forth<T> {
         // get angry with a stacked borrows violation later when we attempt
         // to interpret a built word.
         let dict_base = self.dict_alloc.bump::<DictionaryEntry<T>>()?;
+        #[cfg(feature = "use-std")]
+        println!("ALLOCDEF: {} @ {:016X}", name.as_str(), dict_base.as_ptr() as usize);
 
         let mut len = 0u16;
 

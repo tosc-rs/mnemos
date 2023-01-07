@@ -13,7 +13,7 @@ use crate::{
     },
     fastr::{FaStr, TmpFaStr},
     input::WordStrBuf,
-    output::{OutputBuf, OutputError},
+    output::OutputBuf,
     stack::Stack,
     word::Word,
     CallContext, Error, Lookup, Mode, ReplaceErr, WordFunc,
@@ -54,6 +54,8 @@ impl<T> Forth<T> {
         let data_stack = Stack::new(dstack_buf.0, dstack_buf.1);
         let return_stack = Stack::new(rstack_buf.0, rstack_buf.1);
         let call_stack = Stack::new(cstack_buf.0, cstack_buf.1);
+        #[cfg(feature = "use-std")]
+        println!("DASTAR: {:016X}", dict_buf.0 as usize);
         let dict_alloc = DictionaryBump::new(dict_buf.0, dict_buf.1);
 
         Ok(Self {

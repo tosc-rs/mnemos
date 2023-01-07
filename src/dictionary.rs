@@ -156,6 +156,10 @@ impl DictionaryBump {
         (pau >= sau) && (pau < eau)
     }
 
+    pub fn capacity(&self) -> usize {
+        (self.end as usize) - (self.start as usize)
+    }
+
     pub fn used(&self) -> usize {
         (self.cur as usize) - (self.start as usize)
     }
