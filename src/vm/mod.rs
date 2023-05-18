@@ -1,5 +1,4 @@
 use core::{
-    fmt::Write,
     mem::size_of,
     num::NonZeroU16,
     ops::{Deref, Neg},
@@ -14,12 +13,17 @@ use crate::{
     fastr::{FaStr, TmpFaStr},
     input::WordStrBuf,
     output::OutputBuf,
-    stack::Stack,
+    stack::{Stack, StackError},
     word::Word,
     CallContext, Error, Lookup, Mode, ReplaceErr, WordFunc,
 };
 
 pub mod builtins;
+
+pub enum Done {
+    Done,
+    NotDone,
+}
 
 /// Forth is the "context" of the VM/interpreter.
 ///
@@ -167,6 +171,18 @@ impl<T> Forth<T> {
     }
 
     pub fn process_line(&mut self) -> Result<(), Error> {
+        match self.process_line_inner() {
+            Ok(_) => Ok(()),
+            Err(e) => {
+                self.data_stack.clear();
+                self.return_stack.clear();
+                self.call_stack.clear();
+                Err(e)
+            }
+        }
+    }
+
+    fn process_line_inner(&mut self) -> Result<(), Error> {
         loop {
             self.input.advance();
             let word = match self.input.cur_word() {
@@ -182,19 +198,32 @@ impl<T> Forth<T> {
                         idx: 0,
                         len: dref.hdr.len,
                     })?;
-                    let res = (dref.hdr.func)(self);
-                    self.call_stack.pop().ok_or(Error::CallStackCorrupted)?;
+
+                    let res = loop {
+                        match self.steppa_pig() {
+                            Ok(Done::Done) => break Ok(()),
+                            Ok(Done::NotDone) => {}
+                            Err(e) => break Err(e),
+                        }
+                    };
+
                     res?;
                 }
                 Lookup::Builtin { bi } => {
-                    // TODO: Do I want to push builtins to the call stack?
                     self.call_stack.push(CallContext {
                         eh: bi.cast(),
                         idx: 0,
                         len: 0,
                     })?;
-                    let res = unsafe { (bi.as_ref().hdr.func)(self) };
-                    self.call_stack.pop().ok_or(Error::CallStackCorrupted)?;
+
+                    let res = loop {
+                        match self.steppa_pig() {
+                            Ok(Done::Done) => break Ok(()),
+                            Ok(Done::NotDone) => {}
+                            Err(e) => break Err(e),
+                        }
+                    };
+
                     res?;
                 }
                 Lookup::Literal { val } => {
@@ -229,48 +258,59 @@ impl<T> Forth<T> {
                 }
             }
         }
-        writeln!(&mut self.output, "ok.")?;
+        self.output.push_str("ok.\n")?;
         Ok(())
+    }
+
+    // Single step execution
+    fn steppa_pig(&mut self) -> Result<Done, Error> {
+        let top = match self.call_stack.try_peek() {
+            Ok(t) => t,
+            Err(StackError::StackEmpty) => return Ok(Done::Done),
+            Err(e) => return Err(Error::Stack(e)),
+        };
+
+        let eh = unsafe { top.eh.as_ref() };
+
+        match (eh.func)(self) {
+            Ok(_) => {
+                let _ = self.call_stack.pop();
+            }
+            Err(Error::PendingCallAgain) => {
+                // ok, just don't pop
+            }
+            Err(e) => return Err(e),
+        }
+
+        Ok(Done::NotDone)
     }
 
     /// Interpret is the run-time target of the `:` (colon) word.
     pub fn interpret(&mut self) -> Result<(), Error> {
-        // Colon compiles into a list of words, where the first word
-        // is a `u32` of the `len` number of words.
-        //
-        // NOTE: we DON'T use `Stack::try_peek_back_n_mut` because the callee
-        // could pop off our item, which would lead to UB.
-        let mut me = self.call_stack.try_peek()?;
+        let mut top = self.call_stack.try_peek()?;
 
-        // For the remaining words, we do a while-let loop instead of
-        // a for-loop, as some words (e.g. literals) require advancing
-        // to the next word.
-        while let Some(word) = me.get_word_at_cur_idx() {
-            // We can safely assume that all items in the list are pointers,
-            // EXCEPT for literals, but those are handled manually below.
+        if let Some(word) = top.get_word_at_cur_idx() {
+            // Push the item in the list to the top of stack, will be executed on next step
             let ptr = unsafe { word.ptr.cast::<EntryHeader<T>>() };
             let nn = NonNull::new(ptr).ok_or(Error::NullPointerInCFA)?;
             let ehref = unsafe { nn.as_ref() };
-
-            self.call_stack.overwrite_back_n(0, me)?;
-            self.call_stack.push(CallContext {
+            let callee = CallContext {
                 eh: nn,
                 idx: 0,
                 len: ehref.len,
-            })?;
-            let result = (ehref.func)(self);
-            self.call_stack.try_pop()?;
-            result?;
-            me = self.call_stack.try_peek()?;
+            };
 
-            me.offset(1)?;
-            // TODO: If I want A4-style pausing here, I'd probably want to also
-            // push dictionary locations to the stack (under the CFA), which
-            // would allow for halting and resuming. Yield after loading "next",
-            // right before executing the function itself. This would also allow
-            // for cursed control flow
+            // Increment to the next item
+            top.offset(1)?;
+            self.call_stack.overwrite_back_n(0, top)?;
+
+            // Then add the callee on top of the currently interpreted word
+            self.call_stack.push(callee)?;
+
+            Err(Error::PendingCallAgain)
+        } else {
+            Ok(())
         }
-        Ok(())
     }
 
     fn munch_do(&mut self, len: &mut u16) -> Result<u16, Error> {

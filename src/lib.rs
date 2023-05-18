@@ -69,6 +69,10 @@ pub enum Error {
     BadWordOffset,
     BadArrayLength,
     DivideByZero,
+
+    // Not *really* an error - but signals that a function should be called
+    // again. At the moment, only used for internal interpreter functions.
+    PendingCallAgain,
 }
 
 impl From<StackError> for Error {
@@ -115,7 +119,7 @@ impl<T: 'static> Copy for CallContext<T> {}
 
 impl<T: 'static> CallContext<T> {
     pub(crate) fn get_next_n_words(&self, n: u16) -> Result<&[Word], Error> {
-        let req_start = self.idx + 1;
+        let req_start = self.idx;
         let req_end = req_start + n;
         if req_end > self.len {
             return Err(Error::BadCfaOffset);
@@ -132,14 +136,13 @@ impl<T: 'static> CallContext<T> {
         }
     }
 
-    fn get_next_val(&self) -> Result<i32, Error> {
-        let w = self.get_next_word()?;
+    fn get_current_val(&self) -> Result<i32, Error> {
+        let w = self.get_current_word()?;
         Ok(unsafe { w.data })
     }
 
-    fn get_next_word(&self) -> Result<Word, Error> {
-        let req = self.idx + 1;
-        if req >= self.len {
+    fn get_current_word(&self) -> Result<Word, Error> {
+        if self.idx >= self.len {
             return Err(Error::BadCfaOffset);
         }
         let eh = unsafe { self.eh.as_ref() };
@@ -148,7 +151,7 @@ impl<T: 'static> CallContext<T> {
             EntryKind::RuntimeBuiltin => Err(Error::BuiltinHasNoNextValue),
             EntryKind::Dictionary => unsafe {
                 let de = self.eh.cast::<DictionaryEntry<T>>();
-                let val_ptr = DictionaryEntry::pfa(de).as_ptr().add(req as usize);
+                let val_ptr = DictionaryEntry::pfa(de).as_ptr().add(self.idx as usize);
                 let val = val_ptr.read();
                 Ok(val)
             },

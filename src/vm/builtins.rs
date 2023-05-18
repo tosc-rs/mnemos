@@ -564,7 +564,7 @@ impl<T: 'static> Forth<T> {
 
     pub fn jump(&mut self) -> Result<(), Error> {
         let parent = self.call_stack.try_peek_back_n_mut(1)?;
-        let offset = parent.get_next_val()?;
+        let offset = parent.get_current_val()?;
         parent.offset(offset)?;
         Ok(())
     }
@@ -754,7 +754,7 @@ impl<T: 'static> Forth<T> {
         let parent = self.call_stack.try_peek_back_n_mut(1)?;
 
         // The length in bytes is stored in the next word.
-        let len = parent.get_next_val()?;
+        let len = parent.get_current_val()?;
         let len_u16 = u16::try_from(len).replace_err(Error::LiteralStringTooLong)?;
 
         // Now we need to figure out how many words our inline string takes up
@@ -776,7 +776,7 @@ impl<T: 'static> Forth<T> {
     /// CFA array into the stack as a value.
     pub fn literal(&mut self) -> Result<(), Error> {
         let parent = self.call_stack.try_peek_back_n_mut(1)?;
-        let literal = parent.get_next_word()?;
+        let literal = parent.get_current_word()?;
         parent.offset(1)?;
         self.data_stack.push(literal)?;
         Ok(())

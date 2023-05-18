@@ -10,6 +10,7 @@ pub enum BumpError {
     CantAllocUtf8,
 }
 
+#[derive(Debug)]
 #[repr(u16)]
 pub enum EntryKind {
     StaticBuiltin,
@@ -50,15 +51,6 @@ pub struct DictionaryBump {
 }
 
 impl<T: 'static> DictionaryEntry<T> {
-    // Hmm, I probably won't ever actually "know" how many items I have,
-    // since the actual editor will be more... dynamic than that.
-    pub unsafe fn layout_for_arr(ct: usize) -> Layout {
-        let layout_me = Layout::new::<Self>();
-        let arr_size = core::mem::size_of::<Word>() * ct;
-        let size = layout_me.size() + arr_size;
-        Layout::from_size_align_unchecked(size, layout_me.align())
-    }
-
     pub unsafe fn pfa(this: NonNull<Self>) -> NonNull<Word> {
         let ptr = this.as_ptr();
         let pfp: *mut [Word; 0] = addr_of_mut!((*ptr).parameter_field);

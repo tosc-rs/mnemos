@@ -145,6 +145,11 @@ impl<T: Copy> Stack<T> {
     pub fn clear(&mut self) {
         self.cur = self.top;
     }
+
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.cur == self.top
+    }
 }
 
 #[cfg(test)]
