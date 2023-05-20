@@ -3,7 +3,7 @@ use core::{
     num::NonZeroU16,
     ops::{Deref, Neg},
     ptr::NonNull,
-    str::FromStr,
+    str::FromStr, marker::PhantomData,
 };
 
 use crate::{
@@ -18,12 +18,16 @@ use crate::{
     CallContext, Error, Lookup, Mode, ReplaceErr, WordFunc,
 };
 
+#[cfg(feature = "async")]
+use crate::dictionary::{AsyncBuiltinEntry, AsyncBuiltins};
+
 pub mod builtins;
 
-pub enum Done {
-    Done,
-    NotDone,
-}
+#[cfg(feature = "async")]
+mod async_vm;
+
+#[cfg(feature = "async")]
+pub use self::async_vm::AsyncForth;
 
 /// Forth is the "context" of the VM/interpreter.
 ///
@@ -33,7 +37,7 @@ pub enum Done {
 /// reasons.
 pub struct Forth<T: 'static> {
     mode: Mode,
-    pub(crate) data_stack: Stack<Word>,
+    pub data_stack: Stack<Word>,
     pub(crate) return_stack: Stack<Word>,
     pub(crate) call_stack: Stack<CallContext<T>>,
     pub(crate) dict_alloc: DictionaryBump,
@@ -42,6 +46,20 @@ pub struct Forth<T: 'static> {
     pub output: OutputBuf,
     pub host_ctxt: T,
     builtins: &'static [BuiltinEntry<T>],
+    #[cfg(feature = "async")]
+    async_builtins: &'static [AsyncBuiltinEntry<T>],
+}
+
+enum ProcessAction {
+    Continue,
+    Execute,
+    Done,
+}
+
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum Step {
+    Done,
+    NotDone,
 }
 
 impl<T> Forth<T> {
@@ -71,6 +89,41 @@ impl<T> Forth<T> {
             output,
             host_ctxt,
             builtins,
+
+            #[cfg(feature = "async")]
+            async_builtins: &[],
+        })
+    }
+
+    #[cfg(feature = "async")]
+     unsafe fn new_async(
+        dstack_buf: (*mut Word, usize),
+        rstack_buf: (*mut Word, usize),
+        cstack_buf: (*mut CallContext<T>, usize),
+        dict_buf: (*mut u8, usize),
+        input: WordStrBuf,
+        output: OutputBuf,
+        host_ctxt: T,
+        builtins: &'static [BuiltinEntry<T>],
+        async_builtins: &'static [AsyncBuiltinEntry<T>],
+    ) -> Result<Self, Error> {
+        let data_stack = Stack::new(dstack_buf.0, dstack_buf.1);
+        let return_stack = Stack::new(rstack_buf.0, rstack_buf.1);
+        let call_stack = Stack::new(cstack_buf.0, cstack_buf.1);
+        let dict_alloc = DictionaryBump::new(dict_buf.0, dict_buf.1);
+
+        Ok(Self {
+            mode: Mode::Run,
+            data_stack,
+            return_stack,
+            call_stack,
+            dict_alloc,
+            run_dict_tail: None,
+            input,
+            output,
+            host_ctxt,
+            builtins,
+            async_builtins,
         })
     }
 
@@ -94,11 +147,12 @@ impl<T> Forth<T> {
         unsafe {
             dict_base.as_ptr().write(DictionaryEntry {
                 hdr: EntryHeader {
-                    func: bi,
                     name,
                     kind: EntryKind::RuntimeBuiltin,
                     len: 0,
+                    _pd: PhantomData,
                 },
+                func: bi,
                 link: self.run_dict_tail.take(),
                 parameter_field: [],
             });
@@ -116,6 +170,14 @@ impl<T> Forth<T> {
         self.find_in_dict(&fastr)
             .map(NonNull::cast)
             .or_else(|| self.find_in_bis(&fastr).map(NonNull::cast))
+    }
+
+    #[cfg(feature = "async")]
+    fn find_in_async_bis(&self, fastr: &TmpFaStr<'_>) -> Option<NonNull<AsyncBuiltinEntry<T>>> {
+        self.async_builtins
+            .iter()
+            .find(|bi| &bi.hdr.name == fastr.deref())
+            .map(NonNull::from)
     }
 
     fn find_in_bis(&self, fastr: &TmpFaStr<'_>) -> Option<NonNull<BuiltinEntry<T>>> {
@@ -153,25 +215,47 @@ impl<T> Forth<T> {
             _ => {
                 let fastr = TmpFaStr::new_from(word);
                 if let Some(entry) = self.find_in_dict(&fastr) {
-                    Ok(Lookup::Dict { de: entry })
-                } else if let Some(bis) = self.find_in_bis(&fastr) {
-                    Ok(Lookup::Builtin { bi: bis })
-                } else if let Some(val) = Self::parse_num(word) {
-                    Ok(Lookup::Literal { val })
-                } else {
-                    #[cfg(feature = "floats")]
-                    if let Ok(fv) = word.parse::<f32>() {
-                        return Ok(Lookup::LiteralF { val: fv });
-                    }
-
-                    Err(Error::LookupFailed)
+                    return Ok(Lookup::Dict { de: entry });
                 }
+                if let Some(bis) = self.find_in_bis(&fastr) {
+                    return Ok(Lookup::Builtin { bi: bis });
+                }
+
+                #[cfg(feature = "async")]
+                if let Some(bi) = self.find_in_async_bis(&fastr) {
+                    return Ok(Lookup::Async { bi });
+                }
+
+                if let Some(val) = Self::parse_num(word) {
+                    return Ok(Lookup::Literal { val });
+                }
+
+                #[cfg(feature = "floats")]
+                if let Ok(fv) = word.parse::<f32>() {
+                    return Ok(Lookup::LiteralF { val: fv });
+                }
+
+                Err(Error::LookupFailed)
             }
         }
     }
 
     pub fn process_line(&mut self) -> Result<(), Error> {
-        match self.process_line_inner() {
+        let res = (|| {
+            loop {
+                match self.start_processing_line()? {
+                    ProcessAction::Done => {
+                        self.output.push_str("ok.\n")?;
+                        break Ok(());
+                    },
+                    ProcessAction::Continue => {},
+                    ProcessAction::Execute =>
+                        // Loop until execution completes.
+                        while self.steppa_pig()? != Step::Done {},
+                }
+            }
+        })();
+        match res {
             Ok(_) => Ok(()),
             Err(e) => {
                 self.data_stack.clear();
@@ -182,97 +266,105 @@ impl<T> Forth<T> {
         }
     }
 
-    fn process_line_inner(&mut self) -> Result<(), Error> {
-        loop {
-            self.input.advance();
-            let word = match self.input.cur_word() {
-                Some(w) => w,
-                None => break,
-            };
+    /// Returns `true` if we must call `steppa_pig` until it returns `Ready`,
+    /// false if not.
+    fn start_processing_line(&mut self) -> Result<ProcessAction, Error> {
+        self.input.advance();
+        let word = match self.input.cur_word() {
+            Some(w) => w,
+            None => return Ok(ProcessAction::Done),
+        };
 
-            match self.lookup(word)? {
-                Lookup::Dict { de } => {
-                    let dref = unsafe { de.as_ref() };
-                    self.call_stack.push(CallContext {
-                        eh: de.cast(),
-                        idx: 0,
-                        len: dref.hdr.len,
-                    })?;
+        match self.lookup(word)? {
+            Lookup::Dict { de } => {
+                let dref = unsafe { de.as_ref() };
+                self.call_stack.push(CallContext {
+                    eh: de.cast(),
+                    idx: 0,
+                    len: dref.hdr.len,
+                })?;
 
-                    let res = loop {
-                        match self.steppa_pig() {
-                            Ok(Done::Done) => break Ok(()),
-                            Ok(Done::NotDone) => {}
-                            Err(e) => break Err(e),
-                        }
-                    };
+                return Ok(ProcessAction::Execute);
+            }
+            Lookup::Builtin { bi } => {
+                self.call_stack.push(CallContext {
+                    eh: bi.cast(),
+                    idx: 0,
+                    len: 0,
+                })?;
 
-                    res?;
-                }
-                Lookup::Builtin { bi } => {
-                    self.call_stack.push(CallContext {
-                        eh: bi.cast(),
-                        idx: 0,
-                        len: 0,
-                    })?;
+                return Ok(ProcessAction::Execute);
+            }
+            #[cfg(feature = "async")]
+            Lookup::Async { bi } => {
+                self.call_stack.push(CallContext {
+                    eh: bi.cast(),
+                    idx: 0,
+                    len: 0,
+                })?;
 
-                    let res = loop {
-                        match self.steppa_pig() {
-                            Ok(Done::Done) => break Ok(()),
-                            Ok(Done::NotDone) => {}
-                            Err(e) => break Err(e),
-                        }
-                    };
-
-                    res?;
-                }
-                Lookup::Literal { val } => {
-                    self.data_stack.push(Word::data(val))?;
-                }
-                #[cfg(feature = "floats")]
-                Lookup::LiteralF { val } => {
-                    self.data_stack.push(Word::float(val))?;
-                }
-                Lookup::LParen => {
-                    self.munch_comment(&mut 0)?;
-                }
-                Lookup::Semicolon => return Err(Error::InterpretingCompileOnlyWord),
-                Lookup::If => return Err(Error::InterpretingCompileOnlyWord),
-                Lookup::Else => return Err(Error::InterpretingCompileOnlyWord),
-                Lookup::Then => return Err(Error::InterpretingCompileOnlyWord),
-                Lookup::Do => return Err(Error::InterpretingCompileOnlyWord),
-                Lookup::Loop => return Err(Error::InterpretingCompileOnlyWord),
-                Lookup::LQuote => {
-                    self.input.advance_str().replace_err(Error::BadStrLiteral)?;
-                    let lit = self.input.cur_str_literal().unwrap();
-                    self.output.push_str(lit)?;
-                }
-                Lookup::Constant => {
-                    self.munch_constant(&mut 0)?;
-                }
-                Lookup::Variable => {
-                    self.munch_variable(&mut 0)?;
-                }
-                Lookup::Array => {
-                    self.munch_array(&mut 0)?;
-                }
+                return Ok(ProcessAction::Execute);
+            },
+            Lookup::Literal { val } => {
+                self.data_stack.push(Word::data(val))?;
+            }
+            #[cfg(feature = "floats")]
+            Lookup::LiteralF { val } => {
+                self.data_stack.push(Word::float(val))?;
+            }
+            Lookup::LParen => {
+                self.munch_comment(&mut 0)?;
+            }
+            Lookup::Semicolon => return Err(Error::InterpretingCompileOnlyWord),
+            Lookup::If => return Err(Error::InterpretingCompileOnlyWord),
+            Lookup::Else => return Err(Error::InterpretingCompileOnlyWord),
+            Lookup::Then => return Err(Error::InterpretingCompileOnlyWord),
+            Lookup::Do => return Err(Error::InterpretingCompileOnlyWord),
+            Lookup::Loop => return Err(Error::InterpretingCompileOnlyWord),
+            Lookup::LQuote => {
+                self.input.advance_str().replace_err(Error::BadStrLiteral)?;
+                let lit = self.input.cur_str_literal().unwrap();
+                self.output.push_str(lit)?;
+            }
+            Lookup::Constant => {
+                self.munch_constant(&mut 0)?;
+            }
+            Lookup::Variable => {
+                self.munch_variable(&mut 0)?;
+            }
+            Lookup::Array => {
+                self.munch_array(&mut 0)?;
             }
         }
-        self.output.push_str("ok.\n")?;
-        Ok(())
+
+        Ok(ProcessAction::Continue)
     }
 
     // Single step execution
-    fn steppa_pig(&mut self) -> Result<Done, Error> {
+    fn steppa_pig(&mut self,) -> Result<Step, Error> {
         let top = match self.call_stack.try_peek() {
             Ok(t) => t,
-            Err(StackError::StackEmpty) => return Ok(Done::Done),
+            Err(StackError::StackEmpty) => return Ok(Step::Done),
             Err(e) => return Err(Error::Stack(e)),
         };
 
-        let eh = unsafe { top.eh.as_ref() };
+        let kind = unsafe { top.eh.as_ref().kind };
+        let res = unsafe { match kind {
+            EntryKind::StaticBuiltin => (top.eh.cast::<BuiltinEntry<T>>().as_ref().func)(self),
+            EntryKind::RuntimeBuiltin => (top.eh.cast::<BuiltinEntry<T>>().as_ref().func)(self),
+            EntryKind::Dictionary => (top.eh.cast::<DictionaryEntry<T>>().as_ref().func)(self),
 
-        match (eh.func)(self) {
+            #[cfg(feature = "async")]
+            EntryKind::AsyncBuiltin => {
+                unreachable!(
+                    "only an AsyncForth VM should have async builtins, and an \
+                    AsyncForth VM should never perform a non-async execution \
+                    step! this is a bug."
+                )
+            },
+        }};
+
+        match res {
             Ok(_) => {
                 let _ = self.call_stack.pop();
             }
@@ -282,7 +374,7 @@ impl<T> Forth<T> {
             Err(e) => return Err(e),
         }
 
-        Ok(Done::NotDone)
+        Ok(Step::NotDone)
     }
 
     /// Interpret is the run-time target of the `:` (colon) word.
@@ -452,6 +544,11 @@ impl<T> Forth<T> {
                 self.dict_alloc.bump_write(Word::ptr(bi.as_ptr()))?;
                 *len += 1;
             }
+            #[cfg(feature = "async")]
+            Lookup::Async { bi } => {
+                self.dict_alloc.bump_write(Word::ptr(bi.as_ptr()))?;
+                *len += 1;
+            }
             #[cfg(feature = "floats")]
             Lookup::LiteralF { val } => {
                 // Literals are added to the CFA as two items:
@@ -561,13 +658,14 @@ impl<T> Forth<T> {
         unsafe {
             dict_base.as_ptr().write(DictionaryEntry {
                 hdr: EntryHeader {
-                    // TODO: Should we look up `(constant)` for consistency?
-                    // Use `find_word`?
-                    func: Self::constant,
                     name,
                     kind: EntryKind::Dictionary,
                     len: 1,
+                    _pd: PhantomData,
                 },
+                // TODO: Should we look up `(constant)` for consistency?
+                // Use `find_word`?
+                func: Self::constant,
                 // Don't link until we know we have a "good" entry!
                 link: self.run_dict_tail.take(),
                 parameter_field: [],
@@ -591,13 +689,14 @@ impl<T> Forth<T> {
         unsafe {
             dict_base.as_ptr().write(DictionaryEntry {
                 hdr: EntryHeader {
-                    // TODO: Should we look up `(variable)` for consistency?
-                    // Use `find_word`?
-                    func: Self::variable,
                     name,
                     kind: EntryKind::Dictionary,
                     len: 1,
+                    _pd: PhantomData,
                 },
+                // TODO: Should we look up `(variable)` for consistency?
+                // Use `find_word`?
+                func: Self::variable,
                 // Don't link until we know we have a "good" entry!
                 link: self.run_dict_tail.take(),
                 parameter_field: [],
@@ -634,15 +733,17 @@ impl<T> Forth<T> {
         unsafe {
             dict_base.as_ptr().write(DictionaryEntry {
                 hdr: EntryHeader {
-                    // TODO: Should arrays push length and ptr? Or just ptr?
-                    //
-                    // TODO: Should we look up `(variable)` for consistency?
-                    // Use `find_word`?
-                    func: Self::variable,
                     name,
                     kind: EntryKind::Dictionary,
                     len: count_u16.into(),
+                    _pd: PhantomData
                 },
+                // TODO: Should arrays push length and ptr? Or just ptr?
+                //
+                // TODO: Should we look up `(variable)` for consistency?
+                // Use `find_word`?
+                func: Self::variable,
+
                 // Don't link until we know we have a "good" entry!
                 link: self.run_dict_tail.take(),
                 parameter_field: [],

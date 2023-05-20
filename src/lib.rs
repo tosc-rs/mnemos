@@ -1,6 +1,7 @@
 // For now...
 #![allow(clippy::missing_safety_doc)]
 #![cfg_attr(not(any(test, feature = "use-std")), no_std)]
+#![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 pub mod dictionary;
 pub mod fastr;
@@ -17,7 +18,12 @@ use core::ptr::NonNull;
 
 use dictionary::{BuiltinEntry, EntryHeader, EntryKind};
 
+#[cfg(feature = "async")]
+use dictionary::AsyncBuiltinEntry;
+
 pub use crate::vm::Forth;
+#[cfg(feature = "async")]
+pub use crate::vm::AsyncForth;
 use crate::{
     dictionary::{BumpError, DictionaryEntry},
     output::OutputError,
@@ -128,6 +134,8 @@ impl<T: 'static> CallContext<T> {
         match eh.kind {
             EntryKind::StaticBuiltin => Err(Error::BuiltinHasNoNextValue),
             EntryKind::RuntimeBuiltin => Err(Error::BuiltinHasNoNextValue),
+            #[cfg(feature = "async")]
+            EntryKind::AsyncBuiltin => Err(Error::BuiltinHasNoNextValue),
             EntryKind::Dictionary => unsafe {
                 let de = self.eh.cast::<DictionaryEntry<T>>();
                 let start = DictionaryEntry::pfa(de).as_ptr().add(req_start as usize);
@@ -149,6 +157,8 @@ impl<T: 'static> CallContext<T> {
         match eh.kind {
             EntryKind::StaticBuiltin => Err(Error::BuiltinHasNoNextValue),
             EntryKind::RuntimeBuiltin => Err(Error::BuiltinHasNoNextValue),
+            #[cfg(feature = "async")]
+            EntryKind::AsyncBuiltin => Err(Error::BuiltinHasNoNextValue),
             EntryKind::Dictionary => unsafe {
                 let de = self.eh.cast::<DictionaryEntry<T>>();
                 let val_ptr = DictionaryEntry::pfa(de).as_ptr().add(self.idx as usize);
@@ -167,10 +177,6 @@ impl<T: 'static> CallContext<T> {
         Ok(())
     }
 
-    // fn cfa_arr(&self) -> &[Word] {
-    //     unsafe { cfa_to_slice(self.cfa) }
-    // }
-
     fn get_word_at_cur_idx(&self) -> Option<&Word> {
         if self.idx >= self.len {
             return None;
@@ -179,6 +185,8 @@ impl<T: 'static> CallContext<T> {
         match eh.kind {
             EntryKind::StaticBuiltin => None,
             EntryKind::RuntimeBuiltin => None,
+            #[cfg(feature = "async")]
+            EntryKind::AsyncBuiltin => None,
             EntryKind::Dictionary => unsafe {
                 let de = self.eh.cast::<DictionaryEntry<T>>();
                 Some(&*DictionaryEntry::pfa(de).as_ptr().add(self.idx as usize))
@@ -206,6 +214,10 @@ pub enum Lookup<T: 'static> {
     },
     Builtin {
         bi: NonNull<BuiltinEntry<T>>,
+    },
+    #[cfg(feature = "async")]
+    Async {
+        bi: NonNull<AsyncBuiltinEntry<T>>,
     },
     LQuote,
     LParen,
@@ -238,11 +250,14 @@ impl<T, OE> ReplaceErr for Result<T, OE> {
 
 #[cfg(test)]
 pub mod test {
+    use core::{future::Future, cmp::Ordering, task::Poll};
+
     use crate::{
         dictionary::DictionaryEntry,
         leakbox::{LBForth, LBForthParams},
         word::Word,
         Forth,
+        Error,
     };
 
     #[derive(Default)]
@@ -251,19 +266,135 @@ pub mod test {
     }
 
     #[test]
-    fn forth() {
+    fn sizes() {
         use core::mem::{align_of, size_of};
         assert_eq!(5 * size_of::<usize>(), size_of::<DictionaryEntry<()>>());
         assert_eq!(5 * size_of::<usize>(), size_of::<DictionaryEntry<()>>());
         assert_eq!(1 * size_of::<usize>(), align_of::<Word>());
+    }
 
+    #[test]
+    fn forth() {
         let mut lbforth = LBForth::from_params(
             LBForthParams::default(),
             TestContext::default(),
             Forth::<TestContext>::FULL_BUILTINS,
         );
+
+        test_forth(&mut lbforth.forth,|forth| forth.process_line(), |forth| forth);
+
+        let context = lbforth.forth.release();
+        assert_eq!(&context.contents, &[6, 5, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    }
+
+    struct CountingFut<'forth> {
+        target: usize,
+        ctr: usize,
+        forth: &'forth mut Forth<TestContext>,
+    }
+
+    impl<'forth> Future for CountingFut<'forth> {
+        type Output = Result<(), Error>;
+
+        fn poll(mut self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
+            match self.ctr.cmp(&self.target) {
+                Ordering::Less => {
+                    self.ctr += 1;
+                    cx.waker().wake_by_ref();
+                    Poll::Pending
+                },
+                Ordering::Equal => {
+                    self.ctr += 1;
+                    let word = Word::data(self.ctr as i32);
+                    self.forth.data_stack.push(word)?;
+                    Poll::Ready(Ok(()))
+                },
+                Ordering::Greater => {
+                    Poll::Ready(Err(Error::InternalError))
+                },
+            }
+        }
+    }
+
+    #[cfg(feature = "async")]
+    #[test]
+    fn async_forth() {
+        use crate::{dictionary::{AsyncBuiltins, AsyncBuiltinEntry}, fastr::FaStr, async_builtin, leakbox::AsyncLBForth};
+
+        struct TestAsyncDispatcher;
+        impl<'forth> AsyncBuiltins<'forth, TestContext> for TestAsyncDispatcher {
+            type Future = CountingFut<'forth>;
+
+            const BUILTINS: &'static [AsyncBuiltinEntry<TestContext>] = &[
+                async_builtin!("counter"),
+            ];
+
+            fn dispatch_async(
+                &self,
+                id: &FaStr,
+                forth: &'forth mut Forth<TestContext>,
+            ) -> Self::Future {
+                match id.as_str() {
+                    "counter" => {
+                        // Get value from top of stack
+                        let val: usize = forth.data_stack.pop().unwrap().try_into().unwrap();
+                        CountingFut { ctr: 0, target: val, forth }
+                    }
+                    id => panic!("Unknown async builtin {id}")
+                }
+            }
+        }
+
+        let mut lbforth = AsyncLBForth::from_params(
+            LBForthParams::default(),
+            TestContext::default(),
+            Forth::<TestContext>::FULL_BUILTINS,
+            TestAsyncDispatcher,
+        );
         let forth = &mut lbforth.forth;
-        assert_eq!(0, forth.dict_alloc.used());
+
+        let lines = &[
+            ("5 counter", "ok.\n"),
+        ];
+
+        for (line, out) in lines {
+            println!("{}", line);
+            forth.input_mut().fill(line).unwrap();
+            futures::executor::block_on(forth.process_line()).unwrap();
+            print!(" => {}", forth.output().as_str());
+            assert_eq!(forth.output().as_str(), *out);
+            forth.output_mut().clear();
+        }
+    }
+
+    #[cfg(feature = "async")]
+    #[test]
+    fn async_forth_not() {
+        use crate::{dictionary::{AsyncBuiltins, AsyncBuiltinEntry}, fastr::FaStr, leakbox::AsyncLBForth, AsyncForth};
+
+        struct TestAsyncDispatcher;
+        impl<'forth> AsyncBuiltins<'forth, TestContext> for TestAsyncDispatcher {
+            type Future = futures::future::Ready<Result<(), Error>>;
+            const BUILTINS: &'static [AsyncBuiltinEntry<TestContext>] = &[];
+            fn dispatch_async(
+                &self,
+                _id: &FaStr,
+                _forth: &'forth mut Forth<TestContext>,
+            ) -> Self::Future {
+                 unreachable!("no async builtins should be called in this test")
+            }
+        }
+
+        let mut lbforth = AsyncLBForth::from_params(
+            LBForthParams::default(),
+            TestContext::default(),
+            Forth::<TestContext>::FULL_BUILTINS,
+            TestAsyncDispatcher);
+        test_forth(&mut lbforth.forth, |forth| futures::executor::block_on(forth.process_line()), AsyncForth::vm_mut)
+    }
+
+    fn test_forth<T>(forth: &mut T, process_line: impl Fn(&mut T) -> Result<(), Error>, get_forth: impl Fn(&mut T) -> &mut Forth<TestContext>) {
+        assert_eq!(0, get_forth(forth).dict_alloc.used());
         let lines = &[
             ("2 3 + .", "5 ok.\n"),
             (": yay 2 3 + . ;", "ok.\n"),
@@ -317,35 +448,35 @@ pub mod test {
 
         for (line, out) in lines {
             println!("{}", line);
-            forth.input.fill(line).unwrap();
-            forth.process_line().unwrap();
-            print!(" => {}", forth.output.as_str());
-            assert_eq!(forth.output.as_str(), *out);
-            forth.output.clear();
+            get_forth(forth).input.fill(line).unwrap();
+            process_line(forth).unwrap();
+            print!(" => {}", get_forth(forth).output.as_str());
+            assert_eq!(get_forth(forth).output.as_str(), *out);
+            get_forth(forth).output.clear();
         }
 
-        forth.input.fill(": derp boop yay").unwrap();
-        assert!(forth.process_line().is_err());
+        get_forth(forth).input.fill(": derp boop yay").unwrap();
+        assert!(process_line(forth).is_err());
         // TODO: Should handle this automatically...
-        forth.return_stack.clear();
+        get_forth(forth).return_stack.clear();
 
-        forth.input.fill(": doot yay yaay").unwrap();
-        assert!(forth.process_line().is_err());
+        get_forth(forth).input.fill(": doot yay yaay").unwrap();
+        assert!(process_line(forth).is_err());
         // TODO: Should handle this automatically...
-        forth.return_stack.clear();
+        get_forth(forth).return_stack.clear();
 
-        forth.output.clear();
-        forth.input.fill("boop yay").unwrap();
-        forth.process_line().unwrap();
-        assert_eq!(forth.output.as_str(), "5 5 5 ok.\n");
+        get_forth(forth).output.clear();
+        get_forth(forth).input.fill("boop yay").unwrap();
+        process_line(forth).unwrap();
+        assert_eq!(get_forth(forth).output.as_str(), "5 5 5 ok.\n");
 
         let mut any_stacks = false;
 
-        while let Some(dsw) = forth.data_stack.pop() {
+        while let Some(dsw) = get_forth(forth).data_stack.pop() {
             println!("DSW: {:?}", dsw);
             any_stacks = true;
         }
-        while let Some(rsw) = forth.return_stack.pop() {
+        while let Some(rsw) = get_forth(forth).return_stack.pop() {
             println!("RSW: {:?}", rsw);
             any_stacks = true;
         }
@@ -368,7 +499,7 @@ pub mod test {
             forth.host_ctxt.contents.push(unsafe { val.data });
             Ok(())
         }
-        forth.add_builtin("squirrel", squirrel).unwrap();
+        get_forth(forth).add_builtin("squirrel", squirrel).unwrap();
 
         let lines = &[
             ("5 6 squirrel squirrel", "ok.\n"),
@@ -376,17 +507,14 @@ pub mod test {
             ("sqloop", "ok.\n"),
         ];
 
-        forth.output.clear();
+        get_forth(forth).output.clear();
         for (line, out) in lines {
             println!("{}", line);
-            forth.input.fill(line).unwrap();
-            forth.process_line().unwrap();
-            print!(" => {}", forth.output.as_str());
-            assert_eq!(forth.output.as_str(), *out);
-            forth.output.clear();
+            get_forth(forth).input.fill(line).unwrap();
+            process_line(forth).unwrap();
+            print!(" => {}", get_forth(forth).output.as_str());
+            assert_eq!(get_forth(forth).output.as_str(), *out);
+            get_forth(forth).output.clear();
         }
-
-        let context = lbforth.forth.release();
-        assert_eq!(&context.contents, &[6, 5, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
     }
 }

@@ -1,4 +1,4 @@
-use core::{fmt::Write, mem::size_of};
+use core::{fmt::Write, mem::size_of, marker::PhantomData};
 
 use crate::{
     dictionary::{BuiltinEntry, DictionaryEntry, EntryHeader, EntryKind},
@@ -14,19 +14,41 @@ pub mod floats;
 // NOTE: This macro exists because we can't have const constructors that include
 // "mut" items, which unfortunately covers things like `fn(&mut T)`. Use a macro
 // until this is resolved.
+#[macro_export]
 macro_rules! builtin {
     ($name:literal, $func:expr) => {
         BuiltinEntry {
             hdr: EntryHeader {
                 name: comptime_fastr($name),
-                func: $func,
                 kind: EntryKind::StaticBuiltin,
                 len: 0,
+                _pd: core::marker::PhantomData,
+            },
+            func: $func,
+        }
+    };
+}
+
+/// Constructs an [`AsyncBuiltinEntry`](crate::dictionary::AsyncBuiltinEntry)
+/// for an asynchronous builtin word.
+///
+/// See the [documentation for `AsyncForth`](crate::AsyncForth) for details on
+/// using asynchronous builtin words.
+#[macro_export]
+macro_rules! async_builtin {
+    ($name:literal) => {
+        $crate::dictionary::AsyncBuiltinEntry {
+            hdr: $crate::dictionary::EntryHeader {
+                name: $crate::fastr::comptime_fastr($name),
+                kind: $crate::dictionary::EntryKind::AsyncBuiltin,
+                len: 0,
+                _pd: core::marker::PhantomData,
             },
         }
     };
 }
 
+#[macro_export]
 macro_rules! builtin_if_feature {
     ($feature:literal, $name:literal, $func:expr) => {
         #[cfg(feature = $feature)]
@@ -725,13 +747,14 @@ impl<T: 'static> Forth<T> {
                         unsafe {
                             dict_base.as_ptr().write(DictionaryEntry {
                                 hdr: EntryHeader {
-                                    // TODO: Should we look up `(interpret)` for consistency?
-                                    // Use `find_word`?
-                                    func: Self::interpret,
                                     name,
                                     kind: EntryKind::Dictionary,
                                     len,
+                                    _pd: PhantomData,
                                 },
+                                // TODO: Should we look up `(interpret)` for consistency?
+                                // Use `find_word`?
+                                func: Self::interpret,
                                 // Don't link until we know we have a "good" entry!
                                 link: self.run_dict_tail.take(),
                                 parameter_field: [],

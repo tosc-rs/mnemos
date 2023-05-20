@@ -5,8 +5,11 @@ use std::{
 };
 
 use crate::{
-    dictionary::BuiltinEntry, input::WordStrBuf, output::OutputBuf, word::Word, CallContext, Forth,
+    dictionary::{BuiltinEntry}, input::WordStrBuf, output::OutputBuf, word::Word, CallContext, Forth,
 };
+
+#[cfg(feature = "async")]
+use crate::{AsyncForth, dictionary::{AsyncBuiltins}};
 
 // Helper type that will un-leak the buffer once it is dropped.
 pub struct LeakBox<T> {
@@ -77,6 +80,18 @@ pub struct LBForth<T: 'static> {
     _output_buf: LeakBox<u8>,
     _dict_buf: LeakBox<u8>,
 }
+
+#[cfg(feature = "async")]
+pub struct AsyncLBForth<T: 'static, D> {
+    pub forth: AsyncForth<T, D>,
+    _payload_dstack: LeakBox<Word>,
+    _payload_rstack: LeakBox<Word>,
+    _payload_cstack: LeakBox<CallContext<T>>,
+    _input_buf: LeakBox<u8>,
+    _output_buf: LeakBox<u8>,
+    _dict_buf: LeakBox<u8>,
+}
+
 impl<T: 'static> LBForth<T> {
     pub fn from_params(
         params: LBForthParams,
@@ -102,6 +117,54 @@ impl<T: 'static> LBForth<T> {
                 output,
                 host_ctxt,
                 builtins,
+            )
+            .unwrap()
+        };
+
+        Self {
+            forth,
+            _payload_dstack,
+            _payload_rstack,
+            _payload_cstack,
+            _input_buf,
+            _output_buf,
+            _dict_buf,
+        }
+    }
+}
+
+#[cfg(feature = "async")]
+impl<T, D> AsyncLBForth<T, D>
+where
+    T: 'static,
+    D: for<'forth> AsyncBuiltins<'forth, T>,
+{
+    pub fn from_params(
+        params: LBForthParams,
+        host_ctxt: T,
+        sync_builtins: &'static [BuiltinEntry<T>],
+        dispatcher: D
+    ) -> Self {
+        let _payload_dstack: LeakBox<Word> = LeakBox::new(params.data_stack_elems);
+        let _payload_rstack: LeakBox<Word> = LeakBox::new(params.return_stack_elems);
+        let _payload_cstack: LeakBox<CallContext<T>> = LeakBox::new(params.control_stack_elems);
+        let _input_buf: LeakBox<u8> = LeakBox::new(params.input_buf_elems);
+        let _output_buf: LeakBox<u8> = LeakBox::new(params.output_buf_elems);
+        let _dict_buf: LeakBox<u8> = LeakBox::new(params.dict_buf_elems);
+
+        let input = WordStrBuf::new(_input_buf.ptr(), _input_buf.len());
+        let output = OutputBuf::new(_output_buf.ptr(), _output_buf.len());
+        let forth = unsafe {
+            AsyncForth::<T, D>::new(
+                (_payload_dstack.ptr(), _payload_dstack.len()),
+                (_payload_rstack.ptr(), _payload_rstack.len()),
+                (_payload_cstack.ptr(), _payload_cstack.len()),
+                (_dict_buf.ptr(), _dict_buf.len()),
+                input,
+                output,
+                host_ctxt,
+                sync_builtins,
+                dispatcher,
             )
             .unwrap()
         };
