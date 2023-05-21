@@ -75,6 +75,8 @@ pub enum Error {
     BadWordOffset,
     BadArrayLength,
     DivideByZero,
+    AddrOfMissingName,
+    AddrOfNotAWord,
 
     // Not *really* an error - but signals that a function should be called
     // again. At the moment, only used for internal interpreter functions.
@@ -285,6 +287,45 @@ pub mod test {
 
         let context = lbforth.forth.release();
         assert_eq!(&context.contents, &[6, 5, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    }
+
+    fn test_lines(name: &str, forth: &mut Forth<TestContext>, lines: &[(&str, &str)]) {
+        let pad = if name.is_empty() {
+            ""
+        } else {
+            ": "
+        };
+        for (line, out) in lines {
+            println!("{name}{pad}{line}");
+            forth.input.fill(line).unwrap();
+            forth.process_line().unwrap();
+            print!("{name}{pad}=> {}", forth.output.as_str());
+            assert_eq!(forth.output.as_str(), *out);
+            forth.output.clear();
+        }
+    }
+
+    #[test]
+    fn execute() {
+        let mut lbforth = LBForth::from_params(
+            LBForthParams::default(),
+            TestContext::default(),
+            Forth::<TestContext>::FULL_BUILTINS,
+        );
+
+        let forth = &mut lbforth.forth;
+
+        test_lines("", forth, &[
+            // define two words
+            (": hello .\" hello, world!\" ;", "ok.\n"),
+            (": goodbye .\" goodbye, world!\" ;", "ok.\n"),
+            // take their addresses
+            ("' goodbye", "ok.\n"),
+            ("' hello", "ok.\n"),
+            // and exec them!
+            ("execute", "hello, world!ok.\n"),
+            ("execute", "goodbye, world!ok.\n"),
+        ]);
     }
 
     struct CountingFut<'forth> {

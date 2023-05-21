@@ -1,11 +1,11 @@
-use core::{fmt::Write, mem::size_of, marker::PhantomData};
+use core::{fmt::Write, mem::size_of, marker::PhantomData, ptr::NonNull};
 
 use crate::{
     dictionary::{BuiltinEntry, DictionaryEntry, EntryHeader, EntryKind},
     fastr::comptime_fastr,
     vm::TmpFaStr,
     word::Word,
-    Error, Forth, Mode, ReplaceErr,
+    Error, Forth, Mode, ReplaceErr, Lookup,
 };
 
 #[cfg(feature = "floats")]
@@ -153,6 +153,8 @@ impl<T: 'static> Forth<T> {
         builtin!("@", Self::var_load),
         builtin!("!", Self::var_store),
         builtin!("w+", Self::word_add),
+        builtin!("'", Self::addr_of),
+        builtin!("execute", Self::execute),
         //
         // Constants
         //
@@ -803,5 +805,45 @@ impl<T: 'static> Forth<T> {
         parent.offset(1)?;
         self.data_stack.push(literal)?;
         Ok(())
+    }
+
+    /// Looks up a name in the dictionary and places its address on the stack.
+    pub fn addr_of(&mut self) -> Result<(), Error> {
+        self.input.advance();
+        let name = self
+            .input
+            .cur_word()
+            .ok_or(Error::AddrOfMissingName)?;
+        match self.lookup(name)? {
+            Lookup::Dict { de }=>
+                self.data_stack.push(Word::ptr(de.as_ptr()))?,
+
+            Lookup::Builtin { bi } =>
+                self.data_stack.push(Word::ptr(bi.as_ptr()))?,
+
+            #[cfg(feature = "async")]
+            Lookup::Async { bi } =>
+                self.data_stack.push(Word::ptr(bi.as_ptr()))?,
+            _ => return Err(Error::AddrOfNotAWord),
+        }
+
+        Ok(())
+    }
+
+    pub fn execute(&mut self) -> Result<(), Error> {
+        let w = self.data_stack.try_pop()?;
+        // pop the execute word off the stack
+        self.call_stack.pop();
+        unsafe {
+            // Safety: YOLO :D
+            let eh = w.ptr.cast::<EntryHeader<T>>();
+            self.call_stack.push(crate::vm::CallContext {
+                eh: NonNull::new_unchecked(eh),
+                len: (*eh).len,
+                idx: 0,
+            })?;
+        };
+
+        Err(Error::PendingCallAgain)
     }
 }
