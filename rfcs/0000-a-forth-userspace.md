@@ -41,6 +41,12 @@ this environment is likely suitable for two main things:
     * todo: is this all we need it for? what about variable addrs in variables?
 * We'll need some way of allocating + deepcopying dictionary fragments
 
+**Note**, some of these changes are already in-progress at the time of writing of this RFC:
+
+* [#3](https://github.com/jamesmunns/forth3/pull/3) - Adding dictionary deep copy
+* [#5](https://github.com/jamesmunns/forth3/pull/5) - Multitasking with tokio
+* [#6](https://github.com/jamesmunns/forth3/pull/6) - Adding copy-on-write dictionary fragments
+
 ### Changes to `mnemos`
 
 * We'll need to add some kind of pattern/interface for managing cooperative userspace tasks
