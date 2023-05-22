@@ -52,8 +52,7 @@ this environment is likely suitable for two main things:
 * We'll need to add some kind of pattern/interface for managing cooperative userspace tasks
     * We will probably NOT enforce preemptive multitasking for now
     * We will probably NOT enforce memory protection/mapping for now
-    * userspace tasks yield when they feel like it, kernel then serves each tasks's executor like a metaexecutor
-    * userspace tasks stay sleeping as long as nothing in the kernel sends them messages
+    * userspace tasks yield when they feel like it, maybe with some "VM fuel" cap to force cooperation
 * We'll need some sort of "trampoline" code to bolt the forth3 vm to whatever userspace tasks look like
     * Start the vm, get it running
     * Alloc dictionary fragments as necessary
