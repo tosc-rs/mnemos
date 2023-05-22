@@ -25,11 +25,11 @@ this environment is likely suitable for two main things:
 
 * The OS will spawn a single userspace entity at boot time
     * This entity will be a cooperative async task running an interactive forth vm
-    * It will be capable of interacting the userspace/kernel interface (sending/receiving kernel messages)
+    * It will be capable of interacting with the userspace/kernel interface (sending/receiving kernel messages)
 * This "task 0" forth environment will be capable of spawning other userspace tasks
     * It can only spawn other forth vms, running their own separate environments
-    * A snapshot of its dictionary will be made and shared with the child environment
-    * All forth vm tasks will be cooperative
+    * When spawning a new task, a snapshot of the current task's dictionary will be made and shared with the child environment
+    * All forth vm tasks will be cooperatively scheduled
 
 ## Details
 
