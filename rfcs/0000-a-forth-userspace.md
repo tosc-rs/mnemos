@@ -2,7 +2,7 @@
 
 ## Goal
 
-In order to make early prototyping and iterating on the design of mnemos, this RFC proposes the
+In order to make early prototyping and iterating on the design of mnemos **easier**, this RFC proposes the
 addition of a single kind of "userspace" environment, a `forth` vm that can act as a program
 or interactive shell interface. This RFC also proposes a minimal set of capabilities and interfaces
 necessary to make this possible.
