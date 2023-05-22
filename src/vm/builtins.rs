@@ -1,4 +1,4 @@
-use core::{fmt::Write, mem::size_of, marker::PhantomData, ptr::NonNull};
+use core::{fmt::Write, mem::size_of, ptr::NonNull};
 
 use crate::{
     dictionary::{BuiltinEntry, DictionaryEntry, EntryHeader, EntryKind},
@@ -152,6 +152,8 @@ impl<T: 'static> Forth<T> {
         //
         builtin!("@", Self::var_load),
         builtin!("!", Self::var_store),
+        builtin!("b@", Self::byte_var_load),
+        builtin!("b!", Self::byte_var_store),
         builtin!("w+", Self::word_add),
         builtin!("'", Self::addr_of),
         builtin!("execute", Self::execute),
@@ -250,6 +252,23 @@ impl<T: 'static> Forth<T> {
             w_addr.ptr.cast::<Word>().offset(offset)
         };
         self.data_stack.push(Word::ptr(new_addr))?;
+        Ok(())
+    }
+
+    pub fn byte_var_load(&mut self) -> Result<(), Error> {
+        let w = self.data_stack.try_pop()?;
+        let ptr = unsafe { w.ptr.cast::<u8>() };
+        let val = unsafe { Word::data(i32::from(ptr.read())) };
+        self.data_stack.push(val)?;
+        Ok(())
+    }
+
+    pub fn byte_var_store(&mut self) -> Result<(), Error> {
+        let w_addr = self.data_stack.try_pop()?;
+        let w_val = self.data_stack.try_pop()?;
+        unsafe {
+            w_addr.ptr.cast::<u8>().write((w_val.data & 0xFF) as u8);
+        }
         Ok(())
     }
 
@@ -644,8 +663,15 @@ impl<T: 'static> Forth<T> {
     pub fn add(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
+
+        // NOTE: CURSED BECAUSE OF POINTER MATH
+        // context: https://cohost.org/jamesmunns/post/851945-oops-it-segfaults
         self.data_stack
-            .push(Word::data(unsafe { a.data.wrapping_add(b.data) }))?;
+            .push(Word::ptr_data(unsafe {
+                let a = a.ptr as isize;
+                let b = b.ptr as isize;
+                a.wrapping_add(b)
+            }))?;
         Ok(())
     }
 
@@ -690,8 +716,14 @@ impl<T: 'static> Forth<T> {
     pub fn minus(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
+        // NOTE: CURSED BECAUSE OF POINTER MATH
+        // context: https://cohost.org/jamesmunns/post/851945-oops-it-segfaults
         self.data_stack
-            .push(Word::data(unsafe { b.data.wrapping_sub(a.data) }))?;
+            .push(Word::ptr_data(unsafe {
+                let a = a.ptr as isize;
+                let b = b.ptr as isize;
+                b.wrapping_sub(a)
+            }))?;
         Ok(())
     }
 
@@ -723,20 +755,8 @@ impl<T: 'static> Forth<T> {
     }
 
     pub fn colon(&mut self) -> Result<(), Error> {
-        self.input.advance();
-        let name = self
-            .input
-            .cur_word()
-            .ok_or(Error::ColonCompileMissingName)?;
         let old_mode = core::mem::replace(&mut self.mode, Mode::Compile);
-        let name = self.dict_alloc.bump_str(name)?;
-
-        // Allocate and initialize the dictionary entry
-        //
-        // TODO: Using `bump_write` here instead of just `bump` causes Miri to
-        // get angry with a stacked borrows violation later when we attempt
-        // to interpret a built word.
-        let dict_base = self.dict_alloc.bump::<DictionaryEntry<T>>()?;
+        let mut dict_base = self.take_name_alloc_dict(Self::interpret)?;
 
         let mut len = 0u16;
 
@@ -747,20 +767,9 @@ impl<T: 'static> Forth<T> {
                 match self.input.cur_word() {
                     Some(";") => {
                         unsafe {
-                            dict_base.as_ptr().write(DictionaryEntry {
-                                hdr: EntryHeader {
-                                    name,
-                                    kind: EntryKind::Dictionary,
-                                    len,
-                                    _pd: PhantomData,
-                                },
-                                // TODO: Should we look up `(interpret)` for consistency?
-                                // Use `find_word`?
-                                func: Self::interpret,
-                                // Don't link until we know we have a "good" entry!
-                                link: self.run_dict_tail.take(),
-                                parameter_field: [],
-                            });
+                            let mr = dict_base.as_mut();
+                            mr.hdr.len = len;
+                            mr.link = self.run_dict_tail.take();
                         }
                         self.run_dict_tail = Some(dict_base);
                         self.mode = old_mode;

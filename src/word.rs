@@ -11,6 +11,7 @@ pub union Word {
     pub data: i32,
     #[cfg(feature = "floats")]
     pub float: f32,
+    pub ptr_data: isize,
     pub ptr: *mut (),
 }
 
@@ -69,6 +70,15 @@ impl Word {
         let mut mu_word: MaybeUninit<Word> = MaybeUninit::zeroed();
         unsafe {
             addr_of_mut!((*mu_word.as_mut_ptr()).ptr).write(ptr.cast());
+            mu_word.assume_init()
+        }
+    }
+
+    #[inline]
+    pub fn ptr_data(ptr_data: isize) -> Self {
+        let mut mu_word: MaybeUninit<Word> = MaybeUninit::zeroed();
+        unsafe {
+            addr_of_mut!((*mu_word.as_mut_ptr()).ptr_data).write(ptr_data);
             mu_word.assume_init()
         }
     }

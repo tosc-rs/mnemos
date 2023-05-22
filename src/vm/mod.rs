@@ -30,11 +30,6 @@ mod async_vm;
 pub use self::async_vm::AsyncForth;
 
 /// Forth is the "context" of the VM/interpreter.
-///
-/// It does NOT include the input/output buffers, or any components that
-/// directly rely on those buffers. This Forth context is composed with
-/// the I/O buffers to create the `Fif` type. This is done for lifetime
-/// reasons.
 pub struct Forth<T: 'static> {
     mode: Mode,
     pub data_stack: Stack<Word>,
@@ -637,39 +632,54 @@ impl<T> Forth<T> {
         Ok(*len - start)
     }
 
-    // constant NAME VALUE
-    fn munch_constant(&mut self, _len: &mut u16) -> Result<u16, Error> {
+    /// Take the next token off of the input buffer as a name, and allocate a dictionary
+    /// entry for it. The entry has a starting length of zero items in the parameter field
+    fn take_name_alloc_dict(&mut self, f: WordFunc<T>) -> Result<NonNull<DictionaryEntry<T>>, Error> {
         self.input.advance();
         let name = self
             .input
             .cur_word()
             .ok_or(Error::ColonCompileMissingName)?;
         let name = self.dict_alloc.bump_str(name)?;
+        let dict_base = self.dict_alloc.bump::<DictionaryEntry<T>>()?;
+
+        unsafe {
+            dict_base.as_ptr().write(DictionaryEntry {
+                hdr: EntryHeader {
+                    name,
+                    kind: EntryKind::Dictionary,
+                    len: 0,
+                    _pd: PhantomData
+                },
+                // TODO: Should we look up `(constant)` for consistency?
+                // Use `find_word`?
+                func: f,
+                // Don't link until we know we have a "good" entry!
+                link: None,
+                parameter_field: [],
+            });
+        }
+
+        Ok(dict_base)
+    }
+
+    // constant NAME VALUE
+    fn munch_constant(&mut self, _len: &mut u16) -> Result<u16, Error> {
+        let mut dict_base = self.take_name_alloc_dict(Self::constant)?;
 
         self.input.advance();
         let value = self
             .input
             .cur_word()
             .ok_or(Error::ColonCompileMissingName)?;
-        let value_i32 = value.parse::<i32>().replace_err(Error::BadLiteral)?;
 
-        let dict_base = self.dict_alloc.bump::<DictionaryEntry<T>>()?;
+        let value_i32 = value.parse::<i32>().replace_err(Error::BadLiteral)?;
         self.dict_alloc.bump_write(Word::data(value_i32))?;
+
         unsafe {
-            dict_base.as_ptr().write(DictionaryEntry {
-                hdr: EntryHeader {
-                    name,
-                    kind: EntryKind::Dictionary,
-                    len: 1,
-                    _pd: PhantomData,
-                },
-                // TODO: Should we look up `(constant)` for consistency?
-                // Use `find_word`?
-                func: Self::constant,
-                // Don't link until we know we have a "good" entry!
-                link: self.run_dict_tail.take(),
-                parameter_field: [],
-            });
+            let mr = dict_base.as_mut();
+            mr.hdr.len = 1;
+            mr.link = self.run_dict_tail.take();
         }
         self.run_dict_tail = Some(dict_base);
         Ok(0)
@@ -677,30 +687,13 @@ impl<T> Forth<T> {
 
     // variable NAME
     fn munch_variable(&mut self, _len: &mut u16) -> Result<u16, Error> {
-        self.input.advance();
-        let name = self
-            .input
-            .cur_word()
-            .ok_or(Error::ColonCompileMissingName)?;
-        let name = self.dict_alloc.bump_str(name)?;
+        let mut dict_base = self.take_name_alloc_dict(Self::variable)?;
 
-        let dict_base = self.dict_alloc.bump::<DictionaryEntry<T>>()?;
         self.dict_alloc.bump_write(Word::data(0))?;
         unsafe {
-            dict_base.as_ptr().write(DictionaryEntry {
-                hdr: EntryHeader {
-                    name,
-                    kind: EntryKind::Dictionary,
-                    len: 1,
-                    _pd: PhantomData,
-                },
-                // TODO: Should we look up `(variable)` for consistency?
-                // Use `find_word`?
-                func: Self::variable,
-                // Don't link until we know we have a "good" entry!
-                link: self.run_dict_tail.take(),
-                parameter_field: [],
-            });
+            let mr = dict_base.as_mut();
+            mr.hdr.len = 1;
+            mr.link = self.run_dict_tail.take();
         }
         self.run_dict_tail = Some(dict_base);
         Ok(0)
@@ -708,12 +701,7 @@ impl<T> Forth<T> {
 
     // array NAME COUNT
     fn munch_array(&mut self, _len: &mut u16) -> Result<u16, Error> {
-        self.input.advance();
-        let name = self
-            .input
-            .cur_word()
-            .ok_or(Error::ColonCompileMissingName)?;
-        let name = self.dict_alloc.bump_str(name)?;
+        let mut dict_base = self.take_name_alloc_dict(Self::variable)?;
 
         self.input.advance();
         let count = self
@@ -724,30 +712,14 @@ impl<T> Forth<T> {
             .parse::<NonZeroU16>()
             .replace_err(Error::BadArrayLength)?;
 
-        let dict_base = self.dict_alloc.bump::<DictionaryEntry<T>>()?;
-
         for _ in 0..u16::from(count_u16) {
             self.dict_alloc.bump_write(Word::data(0))?;
         }
 
         unsafe {
-            dict_base.as_ptr().write(DictionaryEntry {
-                hdr: EntryHeader {
-                    name,
-                    kind: EntryKind::Dictionary,
-                    len: count_u16.into(),
-                    _pd: PhantomData
-                },
-                // TODO: Should arrays push length and ptr? Or just ptr?
-                //
-                // TODO: Should we look up `(variable)` for consistency?
-                // Use `find_word`?
-                func: Self::variable,
-
-                // Don't link until we know we have a "good" entry!
-                link: self.run_dict_tail.take(),
-                parameter_field: [],
-            });
+            let mr = dict_base.as_mut();
+            mr.hdr.len = count_u16.into();
+            mr.link = self.run_dict_tail.take();
         }
         self.run_dict_tail = Some(dict_base);
         Ok(0)

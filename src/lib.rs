@@ -8,7 +8,7 @@ pub mod fastr;
 pub mod input;
 pub mod output;
 pub mod stack;
-pub mod vm;
+pub(crate) mod vm;
 pub mod word;
 
 #[cfg(any(test, feature = "use-std"))]
@@ -303,6 +303,42 @@ pub mod test {
             assert_eq!(forth.output.as_str(), *out);
             forth.output.clear();
         }
+    }
+
+    // TODO: This test puns the heap-allocated cell into an array of bytes. This causes
+    // miri to complain that the write is without provenance, which, fair. We might want
+    // to look into some way of handling this particularly to be able to safely deal with
+    // ALLOT and other alloca-style bump allocations of variable-sized data.
+    #[cfg(not(miri))]
+    #[test]
+    fn ptr_math() {
+        let mut lbforth = LBForth::from_params(
+            LBForthParams::default(),
+            TestContext::default(),
+            Forth::<TestContext>::FULL_BUILTINS,
+        );
+
+        let forth = &mut lbforth.forth;
+
+        test_lines("", forth, &[
+            // declare a variable
+            ("variable ptrword", "ok.\n"),
+            // write an initial value `0x76543210` -> 1985229328
+            ("1985229328 ptrword !", "ok.\n"),
+            // Make sure it worked
+            ("ptrword @ .", "1985229328 ok.\n"),
+            // this assumes little endian lol sorry
+            (": reader 4 0 do ptrword i + b@ . loop ;", "ok.\n"),
+            // 0x10, 0x32, 0x54, 0x76
+            ("reader", "16 50 84 118 ok.\n"),
+            //                |------------| x = ptrword[i]
+            //                               |-| x += i
+            //                                   | -----------| ptrword[i] = x
+            (": writer 4 0 do i ptrword + b@ i + ptrword i + b! loop ;", "ok.\n"),
+            ("writer", "ok.\n"),
+            // 0x10, 0x33, 0x56, 0x79
+            ("reader", "16 51 86 121 ok.\n"),
+        ]);
     }
 
     #[test]

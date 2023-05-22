@@ -13,6 +13,7 @@ pub enum BumpError {
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u16)]
+#[non_exhaustive]
 pub enum EntryKind {
     StaticBuiltin,
     RuntimeBuiltin,
