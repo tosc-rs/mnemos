@@ -17,3 +17,12 @@ async = []
 
 [dev-dependencies]
 futures = "0.3.28"
+
+[workspace]
+# TODO: Move these all to a `crates/` folder once there
+# aren't as many in-flight PRs
+members = [
+    ".",
+    "f3repl",
+    "forthboy",
+]
