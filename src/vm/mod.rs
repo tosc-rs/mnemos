@@ -3,12 +3,13 @@ use core::{
     num::NonZeroU16,
     ops::{Deref, Neg},
     ptr::NonNull,
-    str::FromStr, marker::PhantomData,
+    str::FromStr,
 };
 
 use crate::{
     dictionary::{
-        BuiltinEntry, BumpError, DictionaryBump, DictionaryEntry, EntryHeader, EntryKind,
+        DictLocation, BuiltinEntry, BumpError, DictionaryEntry, EntryHeader,
+        EntryKind, OwnedDict,
     },
     fastr::{FaStr, TmpFaStr},
     input::WordStrBuf,
@@ -35,8 +36,7 @@ pub struct Forth<T: 'static> {
     pub data_stack: Stack<Word>,
     pub(crate) return_stack: Stack<Word>,
     pub(crate) call_stack: Stack<CallContext<T>>,
-    pub(crate) dict_alloc: DictionaryBump,
-    run_dict_tail: Option<NonNull<DictionaryEntry<T>>>,
+    pub(crate) dict: OwnedDict<T>,
     pub input: WordStrBuf,
     pub output: OutputBuf,
     pub host_ctxt: T,
@@ -62,7 +62,7 @@ impl<T> Forth<T> {
         dstack_buf: (*mut Word, usize),
         rstack_buf: (*mut Word, usize),
         cstack_buf: (*mut CallContext<T>, usize),
-        dict_buf: (*mut u8, usize),
+        dict: OwnedDict<T>,
         input: WordStrBuf,
         output: OutputBuf,
         host_ctxt: T,
@@ -71,15 +71,13 @@ impl<T> Forth<T> {
         let data_stack = Stack::new(dstack_buf.0, dstack_buf.1);
         let return_stack = Stack::new(rstack_buf.0, rstack_buf.1);
         let call_stack = Stack::new(cstack_buf.0, cstack_buf.1);
-        let dict_alloc = DictionaryBump::new(dict_buf.0, dict_buf.1);
 
         Ok(Self {
             mode: Mode::Run,
             data_stack,
             return_stack,
             call_stack,
-            dict_alloc,
-            run_dict_tail: None,
+            dict,
             input,
             output,
             host_ctxt,
@@ -90,12 +88,15 @@ impl<T> Forth<T> {
         })
     }
 
+    /// Pushes a task to the back of the local queue, skipping the LIFO
+    /// slot, and overflowing onto the injection queue if the local
+    /// queue is full.
     #[cfg(feature = "async")]
      unsafe fn new_async(
         dstack_buf: (*mut Word, usize),
         rstack_buf: (*mut Word, usize),
         cstack_buf: (*mut CallContext<T>, usize),
-        dict_buf: (*mut u8, usize),
+        dict: OwnedDict<T>,
         input: WordStrBuf,
         output: OutputBuf,
         host_ctxt: T,
@@ -105,15 +106,13 @@ impl<T> Forth<T> {
         let data_stack = Stack::new(dstack_buf.0, dstack_buf.1);
         let return_stack = Stack::new(rstack_buf.0, rstack_buf.1);
         let call_stack = Stack::new(cstack_buf.0, cstack_buf.1);
-        let dict_alloc = DictionaryBump::new(dict_buf.0, dict_buf.1);
 
         Ok(Self {
             mode: Mode::Run,
             data_stack,
             return_stack,
             call_stack,
-            dict_alloc,
-            run_dict_tail: None,
+            dict,
             input,
             output,
             host_ctxt,
@@ -122,37 +121,61 @@ impl<T> Forth<T> {
         })
     }
 
+    /// Constructs a new VM whose dictionary is a fork of this VM's dictionary.
+    ///
+    /// The current dictionary owned by this VM is frozen (made immutable), and
+    /// a reference to it is shared with this VM and the new child VM. When both
+    /// this VM and the child are dropped, the frozen dictionary is deallocated.
+    ///
+    /// This function takes two [`OwnedDict`]s as arguments: `new_dict` is the
+    /// dictionary allocation for the forked child VM, while `my_dict` is a new
+    /// allocation for this VM's mutable dictionary (which replaces the current
+    /// dictionary, as it will become frozen).
+    ///
+    /// The child VM is created with empty stacks, and the provided input and
+    /// output buffers.
+    ///
+    /// # Safety
+    ///
+    /// This method requires the same invariants be upheld as [`Forth::new`].
+    pub unsafe fn fork(
+        &mut self,
+        mut new_dict: OwnedDict<T>,
+        my_dict: OwnedDict<T>,
+        dstack_buf: (*mut Word, usize),
+        rstack_buf: (*mut Word, usize),
+        cstack_buf: (*mut CallContext<T>, usize),
+        input: WordStrBuf,
+        output: OutputBuf,
+        host_ctxt: T,
+    ) -> Result<Self, Error> {
+        let shared_dict = self.dict.fork_onto(my_dict);
+        new_dict.set_parent(shared_dict);
+        Self::new(
+            dstack_buf,
+            rstack_buf,
+            cstack_buf,
+            new_dict,
+            input,
+            output,
+            host_ctxt,
+            self.builtins,
+        )
+    }
+
     pub fn add_builtin_static_name(
         &mut self,
         name: &'static str,
         bi: WordFunc<T>,
     ) -> Result<(), Error> {
         let name = unsafe { FaStr::new(name.as_ptr(), name.len()) };
-        self.add_bi_fastr(name, bi)
+        self.dict.add_bi_fastr(name, bi)?;
+        Ok(())
     }
 
     pub fn add_builtin(&mut self, name: &str, bi: WordFunc<T>) -> Result<(), Error> {
-        let name = self.dict_alloc.bump_str(name)?;
-        self.add_bi_fastr(name, bi)
-    }
-
-    fn add_bi_fastr(&mut self, name: FaStr, bi: WordFunc<T>) -> Result<(), Error> {
-        // Allocate and initialize the dictionary entry
-        let dict_base = self.dict_alloc.bump::<DictionaryEntry<T>>()?;
-        unsafe {
-            dict_base.as_ptr().write(DictionaryEntry {
-                hdr: EntryHeader {
-                    name,
-                    kind: EntryKind::RuntimeBuiltin,
-                    len: 0,
-                    _pd: PhantomData,
-                },
-                func: bi,
-                link: self.run_dict_tail.take(),
-                parameter_field: [],
-            });
-        }
-        self.run_dict_tail = Some(dict_base);
+        let name = self.dict.alloc.bump_str(name)?;
+        self.dict.add_bi_fastr(name, bi)?;
         Ok(())
     }
 
@@ -163,7 +186,10 @@ impl<T> Forth<T> {
     fn find_word(&self, word: &str) -> Option<NonNull<EntryHeader<T>>> {
         let fastr = TmpFaStr::new_from(word);
         self.find_in_dict(&fastr)
-            .map(NonNull::cast)
+            .map(|entry| match entry {
+                DictLocation::Current(entry) => entry.cast(),
+                DictLocation::Parent(entry) => entry.cast(),
+            })
             .or_else(|| self.find_in_bis(&fastr).map(NonNull::cast))
     }
 
@@ -182,16 +208,9 @@ impl<T> Forth<T> {
             .map(NonNull::from)
     }
 
-    fn find_in_dict(&self, fastr: &TmpFaStr<'_>) -> Option<NonNull<DictionaryEntry<T>>> {
-        let mut optr: Option<NonNull<DictionaryEntry<T>>> = self.run_dict_tail;
-        while let Some(ptr) = optr.take() {
-            let de = unsafe { ptr.as_ref() };
-            if &de.hdr.name == fastr.deref() {
-                return Some(ptr);
-            }
-            optr = de.link;
-        }
-        None
+    fn find_in_dict(&self, fastr: &TmpFaStr<'_>) -> Option<DictLocation<T>> {
+        self.dict.entries()
+            .find(|de| &unsafe { de.entry().as_ref() }.hdr.name == fastr.deref())
     }
 
     pub fn lookup(&self, word: &str) -> Result<Lookup<T>, Error> {
@@ -210,7 +229,7 @@ impl<T> Forth<T> {
             _ => {
                 let fastr = TmpFaStr::new_from(word);
                 if let Some(entry) = self.find_in_dict(&fastr) {
-                    return Ok(Lookup::Dict { de: entry });
+                    return Ok(Lookup::Dict(entry));
                 }
                 if let Some(bis) = self.find_in_bis(&fastr) {
                     return Ok(Lookup::Builtin { bi: bis });
@@ -271,10 +290,49 @@ impl<T> Forth<T> {
         };
 
         match self.lookup(word)? {
-            Lookup::Dict { de } => {
+            // Found in the current dictionary, so call it.
+            Lookup::Dict(DictLocation::Current(de)) => {
                 let dref = unsafe { de.as_ref() };
                 self.call_stack.push(CallContext {
                     eh: de.cast(),
+                    idx: 0,
+                    len: dref.hdr.len,
+                })?;
+
+                return Ok(ProcessAction::Execute);
+            }
+            // Found in a parent (frozen) dictionary. If this is a variable, we
+            // may mutate it, so it must be copied into our dictionary.
+            // TODO(eliza): we probably only need to do this when it's a
+            // variable lookup?
+            Lookup::Dict(DictLocation::Parent(de)) => {
+                let dref = unsafe { de.as_ref() };
+                let mut builder = self.dict.build_entry()?;
+                unsafe {
+                    let mut p = DictionaryEntry::pfa(de).as_ptr();
+                    for _ in 0..dref.hdr.len {
+                        builder = builder.write_word(p.read())?;
+                        p = p.offset(1);
+                    }
+                }
+                let name = unsafe {
+                    // safety: a `FaStr` points to a string region stored in a
+                    // dictionary. we can alias the name because our dictionary
+                    // holds a reference to the parent dictionary, keeping it
+                    // alive as long as our dictionary exists, and the new
+                    // pointer will be in a value in our dictionary.
+                    //
+                    // IF IT WAS POSSIBLE FOR PARENTS TO BE DROPPED WHILE THEIR
+                    // FORKS EXIST, THIS WOULD BE A DANGLING POINTER. IF YOU
+                    // EVER CHANGE THE PARENT REFERENCE COUNTING RULES TO ALLOW
+                    // PARENTS TO BE DEALLOCATED WHILE A CHILD EXISTS, YOU MUST
+                    // CHANGE THIS TO DEEP COPY THE `FaStr` INTO THE CHILD
+                    // DICT'S ARENA.
+                    dref.hdr.name.copy_in_child()
+                };
+                let entry = builder.kind(dref.hdr.kind).finish(name, dref.func);
+                self.call_stack.push(CallContext {
+                    eh: entry.cast(),
                     idx: 0,
                     len: dref.hdr.len,
                 })?;
@@ -405,7 +463,7 @@ impl<T> Forth<T> {
 
         // Write a conditional jump, followed by space for a literal
         let literal_cj = self.find_word("2d>2r").ok_or(Error::WordNotInDict)?;
-        self.dict_alloc.bump_write(Word::ptr(literal_cj.as_ptr()))?;
+        self.dict.alloc.bump_write(Word::ptr(literal_cj.as_ptr()))?;
         *len += 1;
 
         let do_start = *len;
@@ -426,9 +484,9 @@ impl<T> Forth<T> {
         let delta = *len - do_start;
         let offset = i32::from(delta + 1).neg();
         let literal_dojmp = self.find_word("(jmp-doloop)").ok_or(Error::WordNotInDict)?;
-        self.dict_alloc
+        self.dict.alloc
             .bump_write(Word::ptr(literal_dojmp.as_ptr()))?;
-        self.dict_alloc.bump_write(Word::data(offset))?;
+        self.dict.alloc.bump_write(Word::data(offset))?;
         *len += 2;
 
         Ok(*len - start)
@@ -439,9 +497,9 @@ impl<T> Forth<T> {
 
         // Write a conditional jump, followed by space for a literal
         let literal_cj = self.find_word("(jump-zero)").ok_or(Error::WordNotInDict)?;
-        self.dict_alloc.bump_write(Word::ptr(literal_cj.as_ptr()))?;
+        self.dict.alloc.bump_write(Word::ptr(literal_cj.as_ptr()))?;
         let cj_offset: &mut i32 = {
-            let cj_offset_word = self.dict_alloc.bump::<Word>()?;
+            let cj_offset_word = self.dict.alloc.bump::<Word>()?;
             unsafe {
                 cj_offset_word.as_ptr().write(Word::data(0));
                 &mut (*cj_offset_word.as_ptr()).data
@@ -484,10 +542,10 @@ impl<T> Forth<T> {
 
         // Write a conditional jump, followed by space for a literal
         let literal_jmp = self.find_word("(jmp)").ok_or(Error::WordNotInDict)?;
-        self.dict_alloc
+        self.dict.alloc
             .bump_write(Word::ptr(literal_jmp.as_ptr()))?;
         let jmp_offset: &mut i32 = {
-            let jmp_offset_word = self.dict_alloc.bump::<Word>()?;
+            let jmp_offset_word = self.dict.alloc.bump::<Word>()?;
             unsafe {
                 jmp_offset_word.as_ptr().write(Word::data(0));
                 &mut (*jmp_offset_word.as_ptr()).data
@@ -529,19 +587,19 @@ impl<T> Forth<T> {
             Lookup::Else => return Err(Error::ElseBeforeIf),
             Lookup::Then => return Err(Error::ThenBeforeIf),
             Lookup::Semicolon => return Ok(0),
-            Lookup::Dict { de } => {
+            Lookup::Dict(DictLocation::Current(de)) | Lookup::Dict(DictLocation::Parent(de)) => {
                 // Dictionary items are put into the CFA array directly as
                 // a pointer to the dictionary entry
-                self.dict_alloc.bump_write(Word::ptr(de.as_ptr()))?;
+                self.dict.alloc.bump_write(Word::ptr(de.as_ptr()))?;
                 *len += 1;
             }
             Lookup::Builtin { bi } => {
-                self.dict_alloc.bump_write(Word::ptr(bi.as_ptr()))?;
+                self.dict.alloc.bump_write(Word::ptr(bi.as_ptr()))?;
                 *len += 1;
             }
             #[cfg(feature = "async")]
             Lookup::Async { bi } => {
-                self.dict_alloc.bump_write(Word::ptr(bi.as_ptr()))?;
+                self.dict.alloc.bump_write(Word::ptr(bi.as_ptr()))?;
                 *len += 1;
             }
             #[cfg(feature = "floats")]
@@ -551,9 +609,9 @@ impl<T> Forth<T> {
                 // 1. The address of the `literal()` dictionary item
                 // 2. The value of the literal, as a data word
                 let literal_dict = self.find_word("(literal)").ok_or(Error::WordNotInDict)?;
-                self.dict_alloc
+                self.dict.alloc
                     .bump_write(Word::ptr(literal_dict.as_ptr()))?;
-                self.dict_alloc.bump_write(Word::float(val))?;
+                self.dict.alloc.bump_write(Word::float(val))?;
                 *len += 2;
             }
             Lookup::Literal { val } => {
@@ -562,9 +620,9 @@ impl<T> Forth<T> {
                 // 1. The address of the `literal()` dictionary item
                 // 2. The value of the literal, as a data word
                 let literal_dict = self.find_word("(literal)").ok_or(Error::WordNotInDict)?;
-                self.dict_alloc
+                self.dict.alloc
                     .bump_write(Word::ptr(literal_dict.as_ptr()))?;
-                self.dict_alloc.bump_write(Word::data(val))?;
+                self.dict.alloc.bump_write(Word::data(val))?;
                 *len += 2;
             }
             Lookup::Do => return self.munch_do(len),
@@ -609,14 +667,14 @@ impl<T> Forth<T> {
             u16::try_from(lit_str.as_bytes().len()).replace_err(Error::LiteralStringTooLong)?;
 
         let literal_writestr = self.find_word("(write-str)").ok_or(Error::WordNotInDict)?;
-        self.dict_alloc
+        self.dict.alloc
             .bump_write::<Word>(Word::ptr(literal_writestr.as_ptr()))?;
-        self.dict_alloc
+        self.dict.alloc
             .bump_write::<Word>(Word::data(str_len.into()))?;
         *len += 2;
 
         let start_ptr = self
-            .dict_alloc
+            .dict.alloc
             .bump_u8s(lit_str.as_bytes().len())
             .ok_or(Error::Bump(BumpError::OutOfMemory))?;
 
@@ -632,76 +690,48 @@ impl<T> Forth<T> {
         Ok(*len - start)
     }
 
-    /// Take the next token off of the input buffer as a name, and allocate a dictionary
-    /// entry for it. The entry has a starting length of zero items in the parameter field
-    fn take_name_alloc_dict(&mut self, f: WordFunc<T>) -> Result<NonNull<DictionaryEntry<T>>, Error> {
+    /// Take the next token off of the input buffer as a name, and allocate the
+    /// name in the dictionary.
+    fn munch_name(&mut self) -> Result<FaStr, Error> {
         self.input.advance();
         let name = self
             .input
             .cur_word()
             .ok_or(Error::ColonCompileMissingName)?;
-        let name = self.dict_alloc.bump_str(name)?;
-        let dict_base = self.dict_alloc.bump::<DictionaryEntry<T>>()?;
-
-        unsafe {
-            dict_base.as_ptr().write(DictionaryEntry {
-                hdr: EntryHeader {
-                    name,
-                    kind: EntryKind::Dictionary,
-                    len: 0,
-                    _pd: PhantomData
-                },
-                // TODO: Should we look up `(constant)` for consistency?
-                // Use `find_word`?
-                func: f,
-                // Don't link until we know we have a "good" entry!
-                link: None,
-                parameter_field: [],
-            });
-        }
-
-        Ok(dict_base)
+        self.dict.alloc.bump_str(name).map_err(Into::into)
     }
 
     // constant NAME VALUE
     fn munch_constant(&mut self, _len: &mut u16) -> Result<u16, Error> {
-        let mut dict_base = self.take_name_alloc_dict(Self::constant)?;
+        let name = self.munch_name()?;
 
         self.input.advance();
         let value = self
             .input
             .cur_word()
             .ok_or(Error::ColonCompileMissingName)?;
-
         let value_i32 = value.parse::<i32>().replace_err(Error::BadLiteral)?;
-        self.dict_alloc.bump_write(Word::data(value_i32))?;
 
-        unsafe {
-            let mr = dict_base.as_mut();
-            mr.hdr.len = 1;
-            mr.link = self.run_dict_tail.take();
-        }
-        self.run_dict_tail = Some(dict_base);
+        self.dict.build_entry()?.write_word(Word::data(value_i32))?
+            // TODO: Should we look up `(constant)` for consistency?
+            // Use `find_word`?
+            .finish(name, Self::constant);
         Ok(0)
     }
 
     // variable NAME
     fn munch_variable(&mut self, _len: &mut u16) -> Result<u16, Error> {
-        let mut dict_base = self.take_name_alloc_dict(Self::variable)?;
-
-        self.dict_alloc.bump_write(Word::data(0))?;
-        unsafe {
-            let mr = dict_base.as_mut();
-            mr.hdr.len = 1;
-            mr.link = self.run_dict_tail.take();
-        }
-        self.run_dict_tail = Some(dict_base);
+        let name = self.munch_name()?;
+        self.dict.build_entry()?.write_word(Word::data(0))?
+            // TODO: Should we look up `(variable)` for consistency?
+            // Use `find_word`?
+            .finish(name, Self::variable);
         Ok(0)
     }
 
     // array NAME COUNT
     fn munch_array(&mut self, _len: &mut u16) -> Result<u16, Error> {
-        let mut dict_base = self.take_name_alloc_dict(Self::variable)?;
+        let name = self.munch_name()?;
 
         self.input.advance();
         let count = self
@@ -712,16 +742,15 @@ impl<T> Forth<T> {
             .parse::<NonZeroU16>()
             .replace_err(Error::BadArrayLength)?;
 
+        let mut entry = self.dict.build_entry()?;
         for _ in 0..u16::from(count_u16) {
-            self.dict_alloc.bump_write(Word::data(0))?;
+            entry = entry.write_word(Word::data(0))?;
         }
-
-        unsafe {
-            let mr = dict_base.as_mut();
-            mr.hdr.len = count_u16.into();
-            mr.link = self.run_dict_tail.take();
-        }
-        self.run_dict_tail = Some(dict_base);
+        // TODO: Should arrays push length and ptr? Or just ptr?
+        //
+        // TODO: Should we look up `(variable)` for consistency?
+        // Use `find_word`?
+        entry.finish(name, Self::variable);
         Ok(0)
     }
 }

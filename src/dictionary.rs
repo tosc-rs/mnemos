@@ -1,9 +1,13 @@
 use crate::fastr::FaStr;
 use crate::{Word, WordFunc};
-use core::alloc::Layout;
-use core::marker::PhantomData;
-use core::ptr::addr_of_mut;
-use core::ptr::NonNull;
+use core::{
+    alloc::{Layout, LayoutError},
+    marker::PhantomData,
+    mem::{self, MaybeUninit},
+    ptr::{self, addr_of_mut, NonNull},
+    ops::{Deref, DerefMut}
+};
+use portable_atomic::{Ordering::*, AtomicUsize};
 
 #[derive(Debug, PartialEq)]
 pub enum BumpError {
@@ -20,6 +24,14 @@ pub enum EntryKind {
     Dictionary,
     #[cfg(feature = "async")]
     AsyncBuiltin,
+}
+
+/// Where a dictionary entry was found
+pub enum DictLocation<T: 'static> {
+    /// The entry was found in the current (mutable) dictionary.
+    Parent(NonNull<DictionaryEntry<T>>),
+    /// The entry was found in a parent (frozen) dictionary.
+    Current(NonNull<DictionaryEntry<T>>),
 }
 
 #[repr(C)]
@@ -63,10 +75,62 @@ pub struct DictionaryEntry<T: 'static> {
     pub(crate) parameter_field: [Word; 0],
 }
 
-pub struct DictionaryBump {
+/// A handle to an owned, mutable dictionary allocation.
+pub struct OwnedDict<T: 'static>(NonNull<Dictionary<T>>);
+
+/// A handle to a shared, atomically reference counted dictionary allocation.
+///
+/// The contents of this dictionary are frozen and can no longer be mutated.
+/// However, a `SharedDict` can be inexpensively cloned by incrementing its
+/// reference count.
+///
+/// When a VM is forked into a child VM, its current [`OwnedDict`] is
+/// transformed into a `SharedDict`, which both its new `OwnedDict` and the
+/// child VM's `OwnedDict` will reference as their parents.
+pub(crate) struct SharedDict<T: 'static>(NonNull<Dictionary<T>>);
+
+pub struct Dictionary<T: 'static> {
+    pub(crate) tail: Option<NonNull<DictionaryEntry<T>>>,
+    pub(crate) alloc: DictionaryBump,
+    /// Reference count, used to determine when the dictionary can be dropped.
+    /// If this is `usize::MAX`, the dictionary is mutable.
+    refs: portable_atomic::AtomicUsize,
+    /// Parent dictionary.
+    ///
+    /// When looking up a binding that isn't present in `self`, we traverse this
+    /// chain of references. When dropping the dictionary, we decrement the
+    /// parent's ref count.
+    parent: Option<SharedDict<T>>,
+    deallocate: unsafe fn (ptr: NonNull<u8>, layout: Layout),
+}
+
+pub trait DropDict {
+    /// Deallocate a dictionary.
+    unsafe fn drop_dict(ptr: NonNull<u8>, layout: Layout);
+}
+
+pub(crate) struct EntryBuilder<'dict, T: 'static> {
+    dict: &'dict mut Dictionary<T>,
+    len: u16,
+    base: NonNull<DictionaryEntry<T>>,
+    kind: EntryKind,
+}
+
+pub(crate) struct DictionaryBump {
     pub(crate) start: *mut u8,
     pub(crate) cur: *mut u8,
     pub(crate) end: *mut u8,
+}
+
+/// Iterator over a [`Dictionary`]'s entries.
+pub(crate) struct Entries<'dict, T: 'static> {
+    next: Option<NonNull<DictionaryEntry<T>>>,
+    dict: CurrDict<'dict, T>,
+}
+
+enum CurrDict<'dict, T: 'static> {
+    Leaf(&'dict Dictionary<T>),
+    Parent(SharedDict<T>),
 }
 
 #[cfg(feature = "async")]
@@ -187,6 +251,325 @@ impl<T: 'static> DictionaryEntry<T> {
     }
 }
 
+impl<T: 'static> Dictionary<T> {
+    const MUTABLE: usize = usize::MAX;
+
+    /// Returns the [`Layout`] that must be allocated for a `Dictionary` of the
+    /// given `size`.
+    pub fn layout(size: usize) -> Result<Layout, LayoutError> {
+        let (layout, _) = Layout::new::<Self>().extend(Layout::array::<u8>(size)?)?;
+        Ok(layout.pad_to_align())
+    }
+
+    pub(crate) fn add_bi_fastr(&mut self, name: FaStr, bi: WordFunc<T>) -> Result<(), BumpError> {
+        debug_assert_eq!(self.refs.load(Acquire), Self::MUTABLE);
+        // Allocate and initialize the dictionary entry
+        let dict_base = self.alloc.bump::<DictionaryEntry<T>>()?;
+        unsafe {
+            dict_base.as_ptr().write(DictionaryEntry {
+                hdr: EntryHeader {
+                    name,
+                    kind: EntryKind::RuntimeBuiltin,
+                    len: 0,
+                    _pd: PhantomData,
+                },
+                func: bi,
+                link: self.tail.take(),
+                parameter_field: [],
+            });
+        }
+        self.tail = Some(dict_base);
+        Ok(())
+    }
+
+    pub(crate) fn build_entry(&mut self) -> Result<EntryBuilder<'_, T>, BumpError> {
+        let base = self.alloc.bump::<DictionaryEntry<T>>()?;
+        Ok(EntryBuilder {
+            base,
+            len: 0,
+            dict: self,
+            kind: EntryKind::Dictionary,
+        })
+    }
+
+    pub(crate) fn entries(&self) -> Entries<'_, T> {
+        Entries {
+            next: self.tail,
+            dict: CurrDict::Leaf(self),
+        }
+    }
+}
+
+// === SharedDict ===
+
+impl<T: 'static> SharedDict<T> {
+    const MAX_REFCOUNT: usize = Dictionary::<T>::MUTABLE - 1;
+
+    // Non-inlined part of `drop`.
+    #[inline(never)]
+    unsafe fn drop_slow(&mut self) {
+        unsafe {
+            let dealloc = self.deallocate;
+            let layout = Dictionary::<T>::layout(self.alloc.capacity()).unwrap();
+            ptr::drop_in_place(self.0.as_ptr());
+            (dealloc)(self.0.cast(), layout);
+        }
+    }
+}
+
+impl <T: 'static> Deref for SharedDict<T> {
+    type Target = Dictionary<T>;
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T: 'static> Clone for SharedDict<T>{
+    #[inline]
+    fn clone(&self) -> Self {
+        // Using a relaxed ordering is alright here, as knowledge of the
+        // original reference prevents other threads from erroneously deleting
+        // the object.
+        //
+        // As explained in the [Boost documentation][1], Increasing the
+        // reference counter can always be done with memory_order_relaxed: New
+        // references to an object can only be formed from an existing
+        // reference, and passing an existing reference from one thread to
+        // another must already provide any required synchronization.
+        //
+        // [1]: (www.boost.org/doc/libs/1_55_0/doc/html/atomic/usage_examples.html)
+        let old_size = self.refs.fetch_add(1, Relaxed);
+
+        // However we need to guard against massive refcounts in case someone is `mem::forget`ing
+        // `SharedDict`s. If we don't do this the count can overflow and users will use-after free. This
+        // branch will never be taken in any realistic program. We abort because such a program is
+        // incredibly degenerate, and we don't care to support it.
+        //
+        // This check is not 100% water-proof: we error when the refcount grows beyond `isize::MAX`.
+        // But we do that check *after* having done the increment, so there is a chance here that
+        // the worst already happened and we actually do overflow the `usize` counter. However, that
+        // requires the counter to grow from `isize::MAX` to `usize::MAX` between the increment
+        // above and the `abort` below, which seems exceedingly unlikely.
+        if old_size == Self::MAX_REFCOUNT {
+            unreachable!("bad news")
+        }
+
+        Self(self.0)
+    }
+}
+
+
+impl<T: 'static> Drop for SharedDict<T>{
+    #[inline]
+    fn drop(&mut self) {
+        // Because `fetch_sub` is already atomic, we do not need to synchronize
+        // with other threads unless we are going to delete the object. This
+        // same logic applies to the below `fetch_sub` to the `weak` count.
+        if self.refs.fetch_sub(1, Release) != 1 {
+            return;
+        }
+
+        // This fence is needed to prevent reordering of use of the data and
+        // deletion of the data. Because it is marked `Release`, the decreasing
+        // of the reference count synchronizes with this `Acquire` fence. This
+        // means that use of the data happens before decreasing the reference
+        // count, which happens before this fence, which happens before the
+        // deletion of the data.
+        //
+        // As explained in the [Boost documentation][1],
+        //
+        // > It is important to enforce any possible access to the object in one
+        // > thread (through an existing reference) to *happen before* deleting
+        // > the object in a different thread. This is achieved by a "release"
+        // > operation after dropping a reference (any access to the object
+        // > through this reference must obviously happened before), and an
+        // > "acquire" operation before deleting the object.
+        //
+        // In particular, while the contents of an Arc are usually immutable, it's
+        // possible to have interior writes to something like a Mutex<T>. Since a
+        // Mutex is not acquired when it is deleted, we can't rely on its
+        // synchronization logic to make writes in thread A visible to a destructor
+        // running in thread B.
+        //
+        // Also note that the Acquire fence here could probably be replaced with an
+        // Acquire load, which could improve performance in highly-contended
+        // situations. See [2].
+        //
+        // [1]: (www.boost.org/doc/libs/1_55_0/doc/html/atomic/usage_examples.html)
+        // [2]: (https://github.com/rust-lang/rust/pull/41714)
+        portable_atomic::fence(Acquire);
+
+        unsafe {
+            self.drop_slow();
+        }
+    }
+}
+
+// === OwnedDict ===
+
+impl<T: 'static> OwnedDict<T> {
+    pub fn new<D: DropDict>(dict: NonNull<MaybeUninit<Dictionary<T>>>, size: usize) -> Self {
+
+        // A helper type to provide proper layout generation for initialization
+        #[repr(C)]
+        struct DictionaryInner<T: 'static> {
+            pub(crate) header: Dictionary<T>,
+            bytes: [MaybeUninit<u8>; 0],
+        }
+
+        let ptr = dict.as_ptr().cast::<DictionaryInner<T>>();
+        unsafe {
+            let bump_base = addr_of_mut!((*ptr).bytes)
+                // TODO(eliza): don't ignore the `MaybeUninit`ness of the bump region...
+                .cast::<u8>();
+            // Initialize the header, using `write` instead of assignment via
+            // `=` to not call `drop` on the old, uninitialized value.
+            addr_of_mut!((*ptr).header).write(Dictionary {
+                tail: None,
+                refs: AtomicUsize::new(Dictionary::<T>::MUTABLE),
+                parent: None,
+                alloc: DictionaryBump::new(bump_base, size),
+                deallocate: D::drop_dict,
+            });
+        }
+        Self(dict.cast::<Dictionary<T>>())
+    }
+
+    fn into_shared(self) -> SharedDict<T> {
+        // don't let the destructor run, as it will deallocate the dictionary.
+        let this = mem::ManuallyDrop::new(self);
+        this.refs.compare_exchange(
+            Dictionary::<T>::MUTABLE,
+            1, AcqRel, Acquire
+        ).expect("dictionary must have been mutable");
+        SharedDict(this.0)
+    }
+
+    /// We swap `self` to the new, empty OwnedDict, and turn the old `self`
+    /// into a SharedDict, both as the parent of our new self, as well as
+    /// returning it for other use.
+    pub(crate) fn fork_onto(&mut self, new: OwnedDict<T>) -> SharedDict<T> {
+        let this = mem::replace(self, new).into_shared();
+        self.set_parent(this.clone());
+        this
+    }
+
+    pub(crate) fn set_parent(&mut self, parent: SharedDict<T>) {
+        let _prev = self.parent.replace(parent);
+        debug_assert!(_prev.is_none(), "parent dictionary shouldn't be clobbered!");
+    }
+}
+
+impl<T: 'static> Deref for OwnedDict<T> {
+    type Target = Dictionary<T>;
+    fn deref(&self) -> &Self::Target {
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl<T: 'static> DerefMut for OwnedDict<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe {
+            debug_assert_eq!(self.0.as_ref().refs.load(Acquire), Dictionary::<T>::MUTABLE);
+            self.0.as_mut()
+        }
+    }
+}
+
+impl<T: 'static> Drop for OwnedDict<T> {
+    fn drop(&mut self) {
+        unsafe {
+            let dealloc = self.deallocate;
+            let layout = Dictionary::<T>::layout(self.alloc.capacity()).unwrap();
+            ptr::drop_in_place(self.0.as_ptr());
+            (dealloc)(self.0.cast(), layout);
+        }
+    }
+}
+
+// === EntryBuilder ===
+
+impl<T: > EntryBuilder<'_, T> {
+    pub(crate) fn write_word(mut self, word: Word) -> Result<Self, BumpError> {
+        self.dict.alloc.bump_write(word)?;
+        self.len += 1;
+        Ok(self)
+    }
+
+    pub(crate) fn kind(self, kind: EntryKind) -> Self {
+        Self { kind, ..self }
+    }
+
+    pub(crate) fn finish(self, name: FaStr, func: WordFunc<T>) -> NonNull<DictionaryEntry<T>> {
+        unsafe {
+            self.base.as_ptr().write(DictionaryEntry {
+                hdr: EntryHeader {
+                    name,
+                    kind: self.kind,
+                    len: self.len,
+                    _pd: PhantomData
+                },
+                // TODO: Should arrays push length and ptr? Or just ptr?
+                //
+                // TODO: Should we look up `(variable)` for consistency?
+                // Use `find_word`?
+                func,
+
+                // Don't link until we know we have a "good" entry!
+                link: self.dict.tail.take(),
+                parameter_field: [],
+            });
+        }
+        self.dict.tail = Some(self.base);
+        self.base
+    }
+}
+
+// === impl Entries ===
+
+impl<'dict, T: 'static> Iterator for Entries<'dict, T> {
+    type Item = DictLocation<T>;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let entry = match self.next.take() {
+                Some(entry) => entry,
+                None => {
+                    // try to traverse the parent link
+                    if let Some(parent) = self.dict.dict().parent.clone() {
+                        self.next = parent.tail;
+                        self.dict = CurrDict::Parent(parent);
+                        continue;
+                    } else {
+                        return None;
+                    }
+                }
+            };
+            self.next = unsafe {
+                // Safety: `self.next` must be a pointer into the VM's dictionary
+                // entries. The caller who constructs a `Entries` iterator is
+                // responsible for ensuring this.
+                entry.as_ref().link
+            };
+            let found = match self.dict {
+                CurrDict::Leaf(_) => DictLocation::Current(entry),
+                CurrDict::Parent(_) => DictLocation::Parent(entry),
+            };
+            return Some(found);
+        }
+    }
+}
+
+impl<T> CurrDict<'_, T> {
+    fn dict(&self) -> &'_ Dictionary<T> {
+        match self {
+            Self::Leaf(dict) => dict,
+            Self::Parent(parent) => parent,
+        }
+    }
+}
+
 impl DictionaryBump {
     pub fn new(bottom: *mut u8, size: usize) -> Self {
         let end = bottom.wrapping_add(size);
@@ -286,21 +669,30 @@ impl DictionaryBump {
     }
 }
 
+impl<T: 'static> DictLocation<T> {
+    pub(crate) fn entry(&self) -> NonNull<DictionaryEntry<T>> {
+        match self {
+            Self::Current(entry) => *entry,
+            Self::Parent(entry) => *entry,
+        }
+    }
+}
+
 #[cfg(test)]
 pub mod test {
-    use core::mem::size_of;
+    use core::{mem::size_of, sync::atomic::Ordering};
     use std::alloc::Layout;
 
     use crate::{
-        dictionary::{DictionaryBump, DictionaryEntry, BuiltinEntry},
-        leakbox::LeakBox,
-        Word,
+        dictionary::{DictionaryBump, DictionaryEntry, BuiltinEntry, DictLocation},
+        leakbox::{LeakBox, alloc_dict, LeakBoxDict},
+        Word, Error, Forth,
     };
 
     #[cfg(feature = "async")]
     use super::AsyncBuiltinEntry;
 
-    use super::EntryHeader;
+    use super::{EntryHeader, OwnedDict};
 
     #[test]
     fn sizes() {
@@ -332,5 +724,88 @@ pub mod test {
             let w = bump.bump::<Word>().unwrap();
             assert_eq!(w.as_ptr().align_offset(walign), 0);
         }
+    }
+
+    // This test just checks that we can properly allocate and deallocate an OwnedDict
+    //
+    // Intended to be run with miri or valgrind where leaks are made apparent
+    #[test]
+    fn just_one_dict() {
+        let buf: OwnedDict<()> = alloc_dict::<(), LeakBoxDict>(512);
+        assert_eq!(buf.refs.load(Ordering::Relaxed), usize::MAX);
+    }
+
+    // This test just checks that we can properly allocate and deallocate a chain of dicts
+    //
+    // Intended to be run with miri or valgrind where leaks are made apparent
+    #[test]
+    fn nested_dicts() {
+        let buf_1: OwnedDict<()> = alloc_dict::<(), LeakBoxDict>(512);
+        let mut buf_2: OwnedDict<()> = alloc_dict::<(), LeakBoxDict>(256);
+        let buf_1 = buf_1.into_shared();
+        buf_2.parent = Some(buf_1);
+    }
+
+    // Similar to above, but making sure refcounting works properly
+    #[test]
+    fn shared_dicts() {
+        let buf_1: OwnedDict<()> = alloc_dict::<(), LeakBoxDict>(512);
+        let mut buf_2: OwnedDict<()> = alloc_dict::<(), LeakBoxDict>(256);
+        let mut buf_3: OwnedDict<()> = alloc_dict::<(), LeakBoxDict>(128);
+        let buf_1 = buf_1.into_shared();
+        assert_eq!(buf_1.refs.load(Ordering::Relaxed), 1);
+        buf_2.parent = Some(buf_1.clone());
+        assert_eq!(buf_1.refs.load(Ordering::Relaxed), 2);
+        buf_3.parent = Some(buf_1.clone());
+        assert_eq!(buf_1.refs.load(Ordering::Relaxed), 3);
+
+        drop(buf_2);
+        assert_eq!(buf_1.refs.load(Ordering::Relaxed), 2);
+
+        drop(buf_3);
+        assert_eq!(buf_1.refs.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn allocs_work() {
+        fn stubby(_f: &mut Forth<()>) -> Result<(), Error> {
+            panic!("Don't ACTUALLY call me!");
+        }
+
+        let mut buf: OwnedDict<()> = alloc_dict::<(), LeakBoxDict>(512);
+        assert!(buf.tail.is_none());
+
+        let strname = buf.alloc.bump_str("stubby").unwrap();
+        buf.add_bi_fastr(strname, stubby).unwrap();
+        assert_eq!(unsafe { buf.tail.as_ref().unwrap().as_ref().hdr.name.as_str() }, "stubby");
+    }
+
+    #[test]
+    fn fork_onto_works() {
+        fn stubby(_f: &mut Forth<()>) -> Result<(), Error> {
+            panic!("Don't ACTUALLY call me!");
+        }
+
+        // Put a builtin into the first slab
+        let mut buf_1: OwnedDict<()> = alloc_dict::<(), LeakBoxDict>(512);
+        let strname = buf_1.alloc.bump_str("stubby").unwrap();
+        buf_1.add_bi_fastr(strname, stubby).unwrap();
+
+        // Make a new dict slab, which "becomes" the mutable tip, with the original
+        // slab as the parent of the new mutable tip
+        let buf_2: OwnedDict<()> = alloc_dict::<(), LeakBoxDict>(512);
+        let buf_1_ro = buf_1.fork_onto(buf_2);
+
+        // Find the builtin in the original slab, it should say "current" here
+        let ro_find = buf_1_ro.entries().find(|e| {
+            unsafe { e.entry().as_ref() }.hdr.name.as_str() == "stubby"
+        }).unwrap();
+        assert!(matches!(ro_find, DictLocation::Current(_)));
+
+        // Now find the builtin in the new mutable slab, it should say "parent" here
+        let rw_find = buf_1.entries().find(|e| {
+            unsafe { e.entry().as_ref() }.hdr.name.as_str() == "stubby"
+        }).unwrap();
+        assert!(matches!(rw_find, DictLocation::Parent(_)));
     }
 }

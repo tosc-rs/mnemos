@@ -1,6 +1,6 @@
 // For now...
 #![allow(clippy::missing_safety_doc)]
-#![cfg_attr(not(any(test, feature = "use-std")), no_std)]
+#![cfg_attr(not(any(test, doctest, feature = "use-std")), no_std)]
 #![cfg_attr(docsrs, feature(doc_auto_cfg))]
 
 pub mod dictionary;
@@ -11,7 +11,7 @@ pub mod stack;
 pub(crate) mod vm;
 pub mod word;
 
-#[cfg(any(test, feature = "use-std"))]
+#[cfg(any(test, doctest, feature = "use-std"))]
 pub mod leakbox;
 
 #[cfg(any(test, doctest, feature = "_force_test_utils"))]
@@ -19,7 +19,7 @@ pub mod testutil;
 
 use core::ptr::NonNull;
 
-use dictionary::{BuiltinEntry, EntryHeader, EntryKind};
+use dictionary::{BuiltinEntry, EntryHeader, EntryKind, DictLocation};
 
 #[cfg(feature = "async")]
 use dictionary::AsyncBuiltinEntry;
@@ -207,9 +207,7 @@ impl<T: 'static> CallContext<T> {
 type WordFunc<T> = fn(&mut Forth<T>) -> Result<(), Error>;
 
 pub enum Lookup<T: 'static> {
-    Dict {
-        de: NonNull<DictionaryEntry<T>>,
-    },
+    Dict(DictLocation<T>),
     Literal {
         val: i32,
     },
@@ -288,7 +286,7 @@ pub mod test {
 
         let forth = &mut lbforth.forth;
 
-        assert_eq!(0, forth.dict_alloc.used());
+        assert_eq!(0, forth.dict.alloc.used());
 
         blocking_runtest_with(forth, r#"
             > : yay 2 3 + . ;
@@ -400,6 +398,255 @@ pub mod test {
             > execute
             < goodbye, world!ok.
         "#);
+    }
+
+    #[test]
+    fn it_still_works_when_forked() {
+        let mut lbforth1 = LBForth::from_params(
+            LBForthParams::default(),
+            TestContext::default(),
+            Forth::<TestContext>::FULL_BUILTINS,
+        );
+
+        // run all the tests on the first forth VM
+        println!("\n --- testing first forth VM --- \n");
+        blocking_runtest_with(&mut lbforth1.forth, r#"
+            > 2 3 + .
+            < 5 ok.
+            > : yay 2 3 + . ;
+            < ok.
+            > yay yay yay
+            < 5 5 5 ok.
+            > : boop yay yay ;
+            < ok.
+            > boop
+            < 5 5 ok.
+            > : err if boop boop boop else yay yay then ;
+            < ok.
+            > : erf if boop boop boop then yay yay ;
+            < ok.
+            > 0 err
+            < 5 5 ok.
+            > 1 err
+            < 5 5 5 5 5 5 ok.
+            > 0 erf
+            < 5 5 ok.
+            > 1 erf
+            < 5 5 5 5 5 5 5 5 ok.
+            > : one 1 . ;
+            < ok.
+            > : two 2 . ;
+            < ok.
+            > : six 6 . ;
+            < ok.
+            > : nif if one if two two else six then one then ;
+            < ok.
+            >   0 nif
+            < ok.
+            > 0 1 nif
+            < 1 6 1 ok.
+            > 1 1 nif
+            < 1 2 2 1 ok.
+            > 42 emit
+            < *ok.
+            > : star 42 emit ;
+            < ok.
+            > star star star
+            < ***ok.
+            > : sloop one 5 0 do star star loop six ;
+            < ok.
+            > sloop
+            < 1 **********6 ok.
+            > : count 10 0 do i . loop ;
+            < ok.
+            > count
+            < 0 1 2 3 4 5 6 7 8 9 ok.
+            > : smod 10 0 do i 3 mod not if star then loop ;
+            < ok.
+            > smod
+            < ****ok.
+            > : beep ." hello, world! " ;
+            < ok.
+            > beep
+            < hello, world! ok.
+            > constant x 123
+            < ok.
+            > x .
+            < 123 ok.
+            > 4 x + .
+            < 127 ok.
+            > variable y
+            < ok.
+            > y @ .
+            < 0 ok.
+            > 10 y !
+            < ok.
+            > y @ .
+            < 10 ok.
+            > array z 4
+            < ok.
+            > z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .
+            < 0 0 0 0 ok.
+            > 10 z ! 20 z 1 w+ ! 30 z 2 w+ ! 40 z 3 w+ !
+            < ok.
+            > z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .
+            < 10 20 30 40 ok.
+            > forget z
+            < ok.
+            > variable a
+            < ok.
+            > 100 a !
+            < ok.
+            > array z 4
+            < ok.
+            > z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .
+            < 0 0 0 0 ok.
+            "#
+        );
+        print_dict("forth1", &mut lbforth1.forth);
+
+        // create a new forth VM, and deep copy the first VM's dictionary into
+        // the second.
+        let mut lbforth2 = lbforth1.fork_with_params(
+            LBForthParams::default(),
+            TestContext::default(),
+        );
+
+        println!("\n --- testing second forth VM --- \n");
+        blocking_runtest_with(&mut lbforth2.forth, r#"
+            ( all the bindings in the old VM's dictionary should be present in the
+              new VM, and, it shouldn't segfault... :D )
+            > yay yay yay
+            < 5 5 5 ok.
+            > boop
+            < 5 5 ok.
+            > 0 err
+            < 5 5 ok.
+            > 1 err
+            < 5 5 5 5 5 5 ok.
+            > 0 erf
+            < 5 5 ok.
+            > 1 erf
+            < 5 5 5 5 5 5 5 5 ok.
+            >   0 nif
+            < ok.
+            > 0 1 nif
+            < 1 6 1 ok.
+            > 1 1 nif
+            < 1 2 2 1 ok.
+            > star star star
+            < ***ok.
+            > sloop
+            < 1 **********6 ok.
+            > count
+            < 0 1 2 3 4 5 6 7 8 9 ok.
+            > smod
+            < ****ok.
+            > beep
+            < hello, world! ok.
+            > x .
+            < 123 ok.
+            > 4 x + .
+            < 127 ok.
+
+            ( the existing `y` variable should have its second value from the
+              first test. )
+            > y @ .
+            < 10 ok.
+
+            ( reassigning `y` is okay )
+            > 100 y !
+            < ok.
+            > y @ .
+            < 100 ok.
+
+            ( also reassign `a` )
+            > 500 a !
+            < ok.
+
+            > z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .
+            < 0 0 0 0 ok.
+
+            ( define a new word in `forth2`. )
+            > : star3 star star star ;
+            < ok.
+            > star3
+            < ***ok.
+
+            ( define a new variable in forth2 )
+            > variable foo
+            < ok.
+            > foo @ .
+            < 0 ok.
+            > 123 foo !
+            < ok.
+            > foo @ .
+            < 123 ok.
+        "#);
+        print_dict("forth2", &mut lbforth2.forth);
+
+        // check that forth1's bindings aren't clobbered
+        println!("\n --- retesting first VM's bindings --- \n");
+        blocking_runtest_with(&mut lbforth1.forth, r#"
+            ( the existing `y` variable should have its second value from the
+              first test. )
+            > y @ .
+            < 10 ok.
+            > a @ .
+            < 100 ok.
+        "#);
+        // new words defined in forth2 don't exist in forth1
+        blocking_runtest_with(&mut lbforth1.forth, "x star3");
+        // and neither do new variables.
+        blocking_runtest_with(&mut lbforth1.forth, "x foo @ .");
+
+        // have forth1 change some of its bindings
+        blocking_runtest_with(&mut lbforth1.forth, r#"
+            ( change the value of `y` )
+            > 666 y !
+            < ok.
+            > y @ .
+            < 666 ok.
+
+            (redefine `beep` )
+            > : beep ." goodbye, world! " ;
+            < ok.
+            > beep
+            < goodbye, world! ok.
+
+            ( define a new var )
+            > variable q
+            < ok.
+            > q @ .
+            < 0 ok.
+            > 123 q !
+            < ok.
+            > q @ .
+            < 123 ok.
+        "#);
+
+        print_dict("forth1", &mut lbforth1.forth);
+
+        // the new changes should not effect forth2
+        println!("\n --- retesting second VM's bindings --- \n");
+        blocking_runtest_with(&mut lbforth2.forth, r#"
+            > y @ .
+            < 100 ok.
+            > beep
+            < hello, world! ok.
+        "#);
+
+        // variables defined in forth1 after forking should not be present.
+        blocking_runtest_with(&mut lbforth2.forth, "x q @ .");
+
+        print_dict("forth2", &mut lbforth2.forth);
+    }
+
+    fn print_dict(name: &str, forth: &mut Forth<TestContext>) {
+        forth.input.fill("dict").unwrap();
+        forth.process_line().unwrap();
+        println!("{name} {}", forth.output.as_str());
+        forth.output.clear();
     }
 
     struct CountingFut<'forth> {

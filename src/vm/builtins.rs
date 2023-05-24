@@ -1,7 +1,7 @@
-use core::{fmt::Write, mem::size_of, ptr::NonNull};
+use core::{fmt::Write, mem::size_of, ptr::NonNull, marker::PhantomData};
 
 use crate::{
-    dictionary::{BuiltinEntry, DictionaryEntry, EntryHeader, EntryKind},
+    dictionary::{BuiltinEntry, DictionaryEntry, EntryHeader, EntryKind, DictLocation},
     fastr::comptime_fastr,
     vm::TmpFaStr,
     word::Word,
@@ -189,8 +189,8 @@ impl<T: 'static> Forth<T> {
     ];
 
     pub fn dict_free(&mut self) -> Result<(), Error> {
-        let capa = self.dict_alloc.capacity();
-        let used = self.dict_alloc.used();
+        let capa = self.dict.alloc.capacity();
+        let used = self.dict.alloc.used();
         let free = capa - used;
         writeln!(
             &mut self.output,
@@ -225,19 +225,17 @@ impl<T: 'static> Forth<T> {
     }
 
     pub fn list_dict(&mut self) -> Result<(), Error> {
-        let Self {
-            run_dict_tail,
-            output,
-            ..
-        } = self;
+        let Self { output, dict, .. } = self;
         output.write_str("dictionary: ")?;
-        let mut cur = *run_dict_tail;
-
-        while let Some(item) = cur.take() {
-            let item = unsafe { item.as_ref() };
-            output.write_str(item.hdr.name.as_str())?;
+        for item in dict.entries() {
+            output.write_str(unsafe { item.entry().as_ref() }.hdr.name.as_str())?;
+            if let DictLocation::Parent(_) = item {
+                // indicate that this binding is inherited from a parent.
+                // XXX(eliza): i was initially gonna add "(inherited)" but that
+                // makes some of the tests overflow their output buffer, lol.
+                output.write_str("*")?;
+            }
             output.write_str(", ")?;
-            cur = item.link;
         }
         output.write_str("\n")?;
         Ok(())
@@ -341,23 +339,37 @@ impl<T: 'static> Forth<T> {
             Some(d) => d,
         };
 
-        // NOTE: We use the *name* pointer for rewinding, as we allocate the name before the item.
-        let name_ptr = unsafe { defn.as_ref().hdr.name.as_ptr().cast_mut() };
-        self.run_dict_tail = unsafe { defn.as_ref().link };
-        let addr = defn.as_ptr();
-        let name_contains = self.dict_alloc.contains(name_ptr.cast());
-        let contains = self.dict_alloc.contains(addr.cast());
-        let ordered = (addr as usize) <= (self.dict_alloc.cur as usize);
+        match defn {
+            // The definition is in the current (mutable) dictionary. We can
+            // forget it by zeroing out the entry in the current dictionary.
+            DictLocation::Current(defn) => {
+                // NOTE: We use the *name* pointer for rewinding, as we allocate the name before the item.
+                let name_ptr = unsafe { defn.as_ref().hdr.name.as_ptr().cast_mut() };
+                self.dict.tail = unsafe { defn.as_ref().link };
+                let addr = defn.as_ptr();
+                let name_contains = self.dict.alloc.contains(name_ptr.cast());
+                let contains = self.dict.alloc.contains(addr.cast());
+                let ordered = (addr as usize) <= (self.dict.alloc.cur as usize);
 
-        if !(name_contains && contains && ordered) {
-            return Err(Error::InternalError);
+                if !(name_contains && contains && ordered) {
+                    return Err(Error::InternalError);
+                }
+
+                let len = (self.dict.alloc.cur as usize) - (name_ptr as usize);
+                unsafe {
+                    name_ptr.write_bytes(0x00, len);
+                }
+                self.dict.alloc.cur = name_ptr;
+            },
+            // The definition is in a parent (frozen) dictionary. We can't
+            // mutate that dictionary, so we must create a new entry in the
+            // current dict saying that the definition is forgotten.
+            // XXX(eliza): or this could be a runtime error? IDK...
+            DictLocation::Parent(_de) => {
+                todo!("eliza: forget parent definitions");
+            }
         }
 
-        let len = (self.dict_alloc.cur as usize) - (name_ptr as usize);
-        unsafe {
-            name_ptr.write_bytes(0x00, len);
-        }
-        self.dict_alloc.cur = name_ptr;
         Ok(())
     }
 
@@ -766,7 +778,17 @@ impl<T: 'static> Forth<T> {
 
     pub fn colon(&mut self) -> Result<(), Error> {
         let old_mode = core::mem::replace(&mut self.mode, Mode::Compile);
-        let mut dict_base = self.take_name_alloc_dict(Self::interpret)?;
+        let name = self.munch_name()?;
+
+        // Allocate and initialize the dictionary entry
+        //
+        // TODO: Using `bump_write` here instead of just `bump` causes Miri to
+        // get angry with a stacked borrows violation later when we attempt
+        // to interpret a built word.
+        // TODO(eliza): it's unfortunate we cannot easily use the "EntryBuilder"
+        // type here, as it must mutably borrow the dictionary, and `munch_one`
+        // must perform lookups...hmm...
+        let dict_base = self.dict.alloc.bump::<DictionaryEntry<T>>()?;
 
         let mut len = 0u16;
 
@@ -777,11 +799,22 @@ impl<T: 'static> Forth<T> {
                 match self.input.cur_word() {
                     Some(";") => {
                         unsafe {
-                            let mr = dict_base.as_mut();
-                            mr.hdr.len = len;
-                            mr.link = self.run_dict_tail.take();
+                            dict_base.as_ptr().write(DictionaryEntry {
+                                hdr: EntryHeader {
+                                    name,
+                                    kind: EntryKind::Dictionary,
+                                    len,
+                                    _pd: PhantomData,
+                                },
+                                // TODO: Should we look up `(interpret)` for consistency?
+                                // Use `find_word`?
+                                func: Self::interpret,
+                                // Don't link until we know we have a "good" entry!
+                                link: self.dict.tail.take(),
+                                parameter_field: [],
+                            });
                         }
-                        self.run_dict_tail = Some(dict_base);
+                        self.dict.tail = Some(dict_base);
                         self.mode = old_mode;
                         return Ok(());
                     }
@@ -834,7 +867,13 @@ impl<T: 'static> Forth<T> {
             .cur_word()
             .ok_or(Error::AddrOfMissingName)?;
         match self.lookup(name)? {
-            Lookup::Dict { de }=>
+            // The definition is in the current dictionary --- just push it.
+            Lookup::Dict(DictLocation::Current(de)) =>
+                self.data_stack.push(Word::ptr(de.as_ptr()))?,
+
+            // The definition is in the parent (frozen) dictionary.
+            // TODO(eliza): what should we do here?
+            Lookup::Dict(DictLocation::Parent(de)) =>
                 self.data_stack.push(Word::ptr(de.as_ptr()))?,
 
             Lookup::Builtin { bi } =>

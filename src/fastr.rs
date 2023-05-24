@@ -56,6 +56,25 @@ impl FaStr {
     pub fn raw(&self) -> u32 {
         self.len_hash.inner
     }
+
+    /// Returns a copy of this `FaStr` pointing to the same data.
+    ///
+    /// # Safety
+    ///
+    /// This aliases the memory location pointed to by this `FaStr`, and
+    /// therefore is subject to the same invariants as `FaStr::new` --- the
+    /// memory area must live as long as the returned `FaStr` does. In practice
+    /// this is safe to call when the caller knows that the `Dictionary` bump
+    /// arena that `self` points into will live as long as the dictionary in
+    /// which the returned `FaStr` will be stored --- such as when the `FaStr`'s
+    /// dictionary is kept alive by a parent reference from a child dictionary
+    /// in which the new `FaStr` will be used.
+    pub(crate) unsafe fn copy_in_child(&self) -> Self {
+        Self {
+            ptr: self.ptr,
+            len_hash: LenHash { inner: self.len_hash.inner },
+        }
+    }
 }
 
 impl PartialEq for FaStr {

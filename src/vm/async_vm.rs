@@ -57,15 +57,50 @@ where
         dstack_buf: (*mut Word, usize),
         rstack_buf: (*mut Word, usize),
         cstack_buf: (*mut CallContext<T>, usize),
-        dict_buf: (*mut u8, usize),
+        dict: OwnedDict<T>,
         input: WordStrBuf,
         output: OutputBuf,
         host_ctxt: T,
         sync_builtins: &'static [BuiltinEntry<T>],
         async_builtins: A,
     ) -> Result<Self, Error> {
-        let vm = Forth::new_async(dstack_buf, rstack_buf, cstack_buf, dict_buf, input, output, host_ctxt, sync_builtins, A::BUILTINS)?;
+        let vm = Forth::new_async(dstack_buf, rstack_buf, cstack_buf, dict, input, output, host_ctxt, sync_builtins, A::BUILTINS)?;
         Ok(Self { vm, builtins: async_builtins })
+    }
+
+    /// Constructs a new VM whose dictionary is a fork of this VM's dictionary.
+    ///
+    /// The current dictionary owned by this VM is frozen (made immutable), and
+    /// a reference to it is shared with this VM and the new child VM. When both
+    /// this VM and the child are dropped, the frozen dictionary is deallocated.
+    ///
+    /// This function takes two [`OwnedDict`]s as arguments: `new_dict` is the
+    /// dictionary allocation for the forked child VM, while `my_dict` is a new
+    /// allocation for this VM's mutable dictionary (which replaces the current
+    /// dictionary, as it will become frozen).
+    ///
+    /// The child VM is created with empty stacks, and the provided input and
+    /// output buffers.
+    ///
+    /// # Safety
+    ///
+    /// This method requires the same invariants be upheld as
+    /// [`AsyncForth::new`].
+    pub unsafe fn fork(
+        &mut self,
+        new_dict: OwnedDict<T>,
+        my_dict: OwnedDict<T>,
+        dstack_buf: (*mut Word, usize),
+        rstack_buf: (*mut Word, usize),
+        cstack_buf: (*mut CallContext<T>, usize),
+        input: WordStrBuf,
+        output: OutputBuf,
+        host_ctxt: T,
+    ) -> Result<Self, Error>
+    where A: Clone,
+    {
+        let vm = self.vm.fork(new_dict, my_dict, dstack_buf, rstack_buf, cstack_buf, input, output, host_ctxt)?;
+        Ok(Self { vm, builtins: self.builtins.clone() })
     }
 
     pub fn output(&self) -> &OutputBuf {
