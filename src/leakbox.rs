@@ -59,6 +59,7 @@ impl<T> Drop for LeakBox<T> {
     }
 }
 
+#[derive(Debug)]
 pub struct LBForthParams {
     pub data_stack_elems: usize,
     pub return_stack_elems: usize,

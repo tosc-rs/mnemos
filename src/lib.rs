@@ -14,6 +14,9 @@ pub mod word;
 #[cfg(any(test, feature = "use-std"))]
 pub mod leakbox;
 
+#[cfg(any(test, doctest, feature = "_force_test_utils"))]
+pub mod testutil;
+
 use core::ptr::NonNull;
 
 use dictionary::{BuiltinEntry, EntryHeader, EntryKind};
@@ -259,7 +262,7 @@ pub mod test {
         leakbox::{LBForth, LBForthParams},
         word::Word,
         Forth,
-        Error,
+        Error, testutil::{all_runtest, blocking_runtest_with},
     };
 
     #[derive(Default)]
@@ -283,26 +286,56 @@ pub mod test {
             Forth::<TestContext>::FULL_BUILTINS,
         );
 
-        test_forth(&mut lbforth.forth,|forth| forth.process_line(), |forth| forth);
+        let forth = &mut lbforth.forth;
 
-        let context = lbforth.forth.release();
-        assert_eq!(&context.contents, &[6, 5, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
-    }
+        assert_eq!(0, forth.dict_alloc.used());
 
-    fn test_lines(name: &str, forth: &mut Forth<TestContext>, lines: &[(&str, &str)]) {
-        let pad = if name.is_empty() {
-            ""
-        } else {
-            ": "
-        };
-        for (line, out) in lines {
-            println!("{name}{pad}{line}");
-            forth.input.fill(line).unwrap();
-            forth.process_line().unwrap();
-            print!("{name}{pad}=> {}", forth.output.as_str());
-            assert_eq!(forth.output.as_str(), *out);
-            forth.output.clear();
+        blocking_runtest_with(forth, r#"
+            > : yay 2 3 + . ;
+            > : boop yay yay ;
+        "#);
+
+        blocking_runtest_with(forth, r#"
+            x : derp boop yay
+        "#);
+        assert!(forth.return_stack.is_empty());
+
+        blocking_runtest_with(forth, r#"
+            x : doot yay yaay
+        "#);
+        assert!(forth.return_stack.is_empty());
+
+        blocking_runtest_with(forth, r#"
+            > boop yay
+            < 5 5 5 ok.
+        "#);
+        assert!(forth.data_stack.is_empty());
+        assert!(forth.call_stack.is_empty());
+
+        // Uncomment if you want to check how much of the dictionary
+        // was used during a test run.
+        //
+        // assert_eq!(176, forth.dict_alloc.used());
+
+        // Takes one value off the stack, and stores it in the vec
+        fn squirrel(forth: &mut Forth<TestContext>) -> Result<(), crate::Error> {
+            let val = forth.data_stack.try_pop()?;
+            forth.host_ctxt.contents.push(unsafe { val.data });
+            Ok(())
         }
+        forth.add_builtin("squirrel", squirrel).unwrap();
+
+        blocking_runtest_with(forth, r#"
+            > 5 6 squirrel squirrel
+            < ok.
+            > : sqloop 10 0 do i squirrel loop ;
+            < ok.
+            > sqloop
+            < ok.
+        "#);
+
+        let expected = [6, 5, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+        assert_eq!(&expected, forth.host_ctxt.contents.as_slice());
     }
 
     // TODO: This test puns the heap-allocated cell into an array of bytes. This causes
@@ -312,56 +345,61 @@ pub mod test {
     #[cfg(not(miri))]
     #[test]
     fn ptr_math() {
-        let mut lbforth = LBForth::from_params(
-            LBForthParams::default(),
-            TestContext::default(),
-            Forth::<TestContext>::FULL_BUILTINS,
-        );
+        all_runtest(r#"
+            ( declare a variable )
+            > variable ptrword
+            < ok.
 
-        let forth = &mut lbforth.forth;
+            ( write an initial value `0x76543210` -> 1985229328 )
+            > 1985229328 ptrword !
+            < ok.
 
-        test_lines("", forth, &[
-            // declare a variable
-            ("variable ptrword", "ok.\n"),
-            // write an initial value `0x76543210` -> 1985229328
-            ("1985229328 ptrword !", "ok.\n"),
-            // Make sure it worked
-            ("ptrword @ .", "1985229328 ok.\n"),
-            // this assumes little endian lol sorry
-            (": reader 4 0 do ptrword i + b@ . loop ;", "ok.\n"),
-            // 0x10, 0x32, 0x54, 0x76
-            ("reader", "16 50 84 118 ok.\n"),
-            //                |------------| x = ptrword[i]
-            //                               |-| x += i
-            //                                   | -----------| ptrword[i] = x
-            (": writer 4 0 do i ptrword + b@ i + ptrword i + b! loop ;", "ok.\n"),
-            ("writer", "ok.\n"),
-            // 0x10, 0x33, 0x56, 0x79
-            ("reader", "16 51 86 121 ok.\n"),
-        ]);
+            ( Make sure it worked )
+            > ptrword @ .
+            < 1985229328 ok.
+
+            ( this assumes little endian lol sorry )
+            > : reader 4 0 do ptrword i + b@ . loop ;
+            < ok.
+
+            ( 0x10, 0x32, 0x54, 0x76 )
+            > reader
+            < 16 50 84 118 ok.
+
+            (                 |------------|                    x = ptrword[i] )
+            (                                |-|                x += i         )
+            (                                    | -----------| ptrword[i] = x )
+            > : writer 4 0 do i ptrword + b@ i + ptrword i + b! loop ;
+            < ok.
+            > writer
+            < ok.
+            ( 0x10, 0x33, 0x56, 0x79 )
+            > reader
+            < 16 51 86 121 ok.
+        "#);
     }
 
     #[test]
     fn execute() {
-        let mut lbforth = LBForth::from_params(
-            LBForthParams::default(),
-            TestContext::default(),
-            Forth::<TestContext>::FULL_BUILTINS,
-        );
+        all_runtest(r#"
+            ( define two words )
+            > : hello ." hello, world!" ;
+            < ok.
+            > : goodbye ." goodbye, world!" ;
+            < ok.
 
-        let forth = &mut lbforth.forth;
+            ( take their addresses )
+            > ' goodbye
+            < ok.
+            > ' hello
+            < ok.
 
-        test_lines("", forth, &[
-            // define two words
-            (": hello .\" hello, world!\" ;", "ok.\n"),
-            (": goodbye .\" goodbye, world!\" ;", "ok.\n"),
-            // take their addresses
-            ("' goodbye", "ok.\n"),
-            ("' hello", "ok.\n"),
-            // and exec them!
-            ("execute", "hello, world!ok.\n"),
-            ("execute", "goodbye, world!ok.\n"),
-        ]);
+            ( and exec them! )
+            > execute
+            < hello, world!ok.
+            > execute
+            < goodbye, world!ok.
+        "#);
     }
 
     struct CountingFut<'forth> {
@@ -381,9 +419,9 @@ pub mod test {
                     Poll::Pending
                 },
                 Ordering::Equal => {
-                    self.ctr += 1;
                     let word = Word::data(self.ctr as i32);
                     self.forth.data_stack.push(word)?;
+                    self.ctr += 1;
                     Poll::Ready(Ok(()))
                 },
                 Ordering::Greater => {
@@ -396,7 +434,7 @@ pub mod test {
     #[cfg(feature = "async")]
     #[test]
     fn async_forth() {
-        use crate::{dictionary::{AsyncBuiltins, AsyncBuiltinEntry}, fastr::FaStr, async_builtin, leakbox::AsyncLBForth};
+        use crate::{dictionary::{AsyncBuiltins, AsyncBuiltinEntry}, fastr::FaStr, async_builtin, testutil::async_blockon_runtest_with_dispatcher};
 
         struct TestAsyncDispatcher;
         impl<'forth> AsyncBuiltins<'forth, TestContext> for TestAsyncDispatcher {
@@ -422,176 +460,151 @@ pub mod test {
             }
         }
 
-        let mut lbforth = AsyncLBForth::from_params(
-            LBForthParams::default(),
+        async_blockon_runtest_with_dispatcher(
             TestContext::default(),
-            Forth::<TestContext>::FULL_BUILTINS,
-            TestAsyncDispatcher,
+            TestAsyncDispatcher, r#"
+                ( stack is empty... )
+                x .
+
+                ( async builtin... )
+                > 5 counter
+                < ok.
+
+                ( exactly 5 placed back on the stack )
+                > .
+                < 5 ok.
+                x .
+            "#
         );
-        let forth = &mut lbforth.forth;
-
-        let lines = &[
-            ("5 counter", "ok.\n"),
-        ];
-
-        for (line, out) in lines {
-            println!("{}", line);
-            forth.input_mut().fill(line).unwrap();
-            futures::executor::block_on(forth.process_line()).unwrap();
-            print!(" => {}", forth.output().as_str());
-            assert_eq!(forth.output().as_str(), *out);
-            forth.output_mut().clear();
-        }
     }
 
-    #[cfg(feature = "async")]
     #[test]
-    fn async_forth_not() {
-        use crate::{dictionary::{AsyncBuiltins, AsyncBuiltinEntry}, fastr::FaStr, leakbox::AsyncLBForth, AsyncForth};
-
-        struct TestAsyncDispatcher;
-        impl<'forth> AsyncBuiltins<'forth, TestContext> for TestAsyncDispatcher {
-            type Future = futures::future::Ready<Result<(), Error>>;
-            const BUILTINS: &'static [AsyncBuiltinEntry<TestContext>] = &[];
-            fn dispatch_async(
-                &self,
-                _id: &FaStr,
-                _forth: &'forth mut Forth<TestContext>,
-            ) -> Self::Future {
-                 unreachable!("no async builtins should be called in this test")
-            }
-        }
-
-        let mut lbforth = AsyncLBForth::from_params(
-            LBForthParams::default(),
-            TestContext::default(),
-            Forth::<TestContext>::FULL_BUILTINS,
-            TestAsyncDispatcher);
-        test_forth(&mut lbforth.forth, |forth| futures::executor::block_on(forth.process_line()), AsyncForth::vm_mut)
+    fn compile() {
+        all_runtest(r#"
+            > 2 3 + .
+            < 5 ok.
+            > : yay 2 3 + . ;
+            < ok.
+            > yay yay yay
+            < 5 5 5 ok.
+            > : boop yay yay ;
+            < ok.
+            > boop
+            x 5 5 ok.
+            > : err if boop boop boop else yay yay then ;
+            < ok.
+            > : erf if boop boop boop then yay yay ;
+            < ok.
+            > 0 err
+            < 5 5 ok.
+            > 1 err
+            < 5 5 5 5 5 5 ok.
+            > 0 erf
+            < 5 5 ok.
+            > 1 erf
+            < 5 5 5 5 5 5 5 5 ok.
+        "#);
     }
 
-    fn test_forth<T>(forth: &mut T, process_line: impl Fn(&mut T) -> Result<(), Error>, get_forth: impl Fn(&mut T) -> &mut Forth<TestContext>) {
-        assert_eq!(0, get_forth(forth).dict_alloc.used());
-        let lines = &[
-            ("2 3 + .", "5 ok.\n"),
-            (": yay 2 3 + . ;", "ok.\n"),
-            ("yay yay yay", "5 5 5 ok.\n"),
-            (": boop yay yay ;", "ok.\n"),
-            ("boop", "5 5 ok.\n"),
-            (": err if boop boop boop else yay yay then ;", "ok.\n"),
-            (": erf if boop boop boop then yay yay ;", "ok.\n"),
-            ("0 err", "5 5 ok.\n"),
-            ("1 err", "5 5 5 5 5 5 ok.\n"),
-            ("0 erf", "5 5 ok.\n"),
-            ("1 erf", "5 5 5 5 5 5 5 5 ok.\n"),
-            (": one 1 . ;", "ok.\n"),
-            (": two 2 . ;", "ok.\n"),
-            (": six 6 . ;", "ok.\n"),
-            (": nif if one if two two else six then one then ;", "ok.\n"),
-            ("  0 nif", "ok.\n"),
-            ("0 1 nif", "1 6 1 ok.\n"),
-            ("1 1 nif", "1 2 2 1 ok.\n"),
-            ("42 emit", "*ok.\n"),
-            (": star 42 emit ;", "ok.\n"),
-            ("star star star", "***ok.\n"),
-            (": sloop one 5 0 do star star loop six ;", "ok.\n"),
-            ("sloop", "1 **********6 ok.\n"),
-            (": count 10 0 do i . loop ;", "ok.\n"),
-            ("count", "0 1 2 3 4 5 6 7 8 9 ok.\n"),
-            (": smod 10 0 do i 3 mod not if star then loop ;", "ok.\n"),
-            ("smod", "****ok.\n"),
-            (": beep .\" hello, world!\" ;", "ok.\n"),
-            ("beep", "hello, world!ok.\n"),
-            ("constant x 123", "ok.\n"),
-            ("x .", "123 ok.\n"),
-            ("4 x + .", "127 ok.\n"),
-            ("variable y", "ok.\n"),
-            ("y @ .", "0 ok.\n"),
-            ("10 y !", "ok.\n"),
-            ("y @ .", "10 ok.\n"),
-            ("array z 4", "ok.\n"),
-            ("z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .", "0 0 0 0 ok.\n"),
-            ("10 z ! 20 z 1 w+ ! 30 z 2 w+ ! 40 z 3 w+ !", "ok.\n"),
-            (
-                "z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .",
-                "10 20 30 40 ok.\n",
-            ),
-            ("forget z", "ok.\n"),
-            ("variable a", "ok.\n"),
-            ("100 a !", "ok.\n"),
-            ("array z 4", "ok.\n"),
-            ("z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .", "0 0 0 0 ok.\n"),
-        ];
+    #[test]
+    fn nested_if_else() {
+        all_runtest(r#"
+            > : one 1 . ;
+            < ok.
+            > : two 2 . ;
+            < ok.
+            > : six 6 . ;
+            < ok.
+            > : nif if one if two two else six then one then ;
+            < ok.
+            >   0 nif
+            < ok.
+            > 0 1 nif
+            < 1 6 1 ok.
+            > 1 1 nif
+            < 1 2 2 1 ok.
+        "#);
+    }
 
-        for (line, out) in lines {
-            println!("{}", line);
-            get_forth(forth).input.fill(line).unwrap();
-            process_line(forth).unwrap();
-            print!(" => {}", get_forth(forth).output.as_str());
-            assert_eq!(get_forth(forth).output.as_str(), *out);
-            get_forth(forth).output.clear();
-        }
+    #[test]
+    fn do_loop() {
+        all_runtest(r#"
+            > : one 1 . ;
+            < ok.
+            > : six 6 . ;
+            < ok.
+            > 42 emit
+            < *ok.
+            > : star 42 emit ;
+            < ok.
+            > star star star
+            < ***ok.
+            > : sloop one 5 0 do star star loop six ;
+            < ok.
+            > sloop
+            < 1 **********6 ok.
+            > : count 10 0 do i . loop ;
+            < ok.
+            > count
+            < 0 1 2 3 4 5 6 7 8 9 ok.
+            > : smod 10 0 do i 3 mod not if star then loop ;
+            < ok.
+            > smod
+            < ****ok.
+        "#);
+    }
 
-        get_forth(forth).input.fill(": derp boop yay").unwrap();
-        assert!(process_line(forth).is_err());
-        // TODO: Should handle this automatically...
-        get_forth(forth).return_stack.clear();
+    #[test]
+    fn strings() {
+        all_runtest(r#"
+            > : beep ." hello, world!" ;
+            < ok.
+            > beep
+            < hello, world!ok.
+        "#);
+    }
 
-        get_forth(forth).input.fill(": doot yay yaay").unwrap();
-        assert!(process_line(forth).is_err());
-        // TODO: Should handle this automatically...
-        get_forth(forth).return_stack.clear();
+    #[test]
+    fn constants() {
+        all_runtest(r#"
+            > constant x 123
+            < ok.
+            > x .
+            < 123 ok.
+            > 4 x + .
+            < 127 ok.
+        "#);
+    }
 
-        get_forth(forth).output.clear();
-        get_forth(forth).input.fill("boop yay").unwrap();
-        process_line(forth).unwrap();
-        assert_eq!(get_forth(forth).output.as_str(), "5 5 5 ok.\n");
-
-        let mut any_stacks = false;
-
-        while let Some(dsw) = get_forth(forth).data_stack.pop() {
-            println!("DSW: {:?}", dsw);
-            any_stacks = true;
-        }
-        while let Some(rsw) = get_forth(forth).return_stack.pop() {
-            println!("RSW: {:?}", rsw);
-            any_stacks = true;
-        }
-        assert!(!any_stacks);
-
-        // Uncomment if you want to check how much of the dictionary
-        // was used during a test run.
-        //
-        // assert_eq!(176, forth.dict_alloc.used());
-
-        // Uncomment this if you want to see the output of the
-        // forth run. TODO: Remove this once we implement the
-        // output buffer.
-        //
-        // panic!("Test Passed! Manual inspection...");
-
-        // Takes one value off the stack, and stores it in the vec
-        fn squirrel(forth: &mut Forth<TestContext>) -> Result<(), crate::Error> {
-            let val = forth.data_stack.try_pop()?;
-            forth.host_ctxt.contents.push(unsafe { val.data });
-            Ok(())
-        }
-        get_forth(forth).add_builtin("squirrel", squirrel).unwrap();
-
-        let lines = &[
-            ("5 6 squirrel squirrel", "ok.\n"),
-            (": sqloop 10 0 do i squirrel loop ;", "ok.\n"),
-            ("sqloop", "ok.\n"),
-        ];
-
-        get_forth(forth).output.clear();
-        for (line, out) in lines {
-            println!("{}", line);
-            get_forth(forth).input.fill(line).unwrap();
-            process_line(forth).unwrap();
-            print!(" => {}", get_forth(forth).output.as_str());
-            assert_eq!(get_forth(forth).output.as_str(), *out);
-            get_forth(forth).output.clear();
-        }
+    #[test]
+    fn variables_and_arrays() {
+        all_runtest(r#"
+            > variable y
+            < ok.
+            > y @ .
+            < 0 ok.
+            > 10 y !
+            < ok.
+            > y @ .
+            < 10 ok.
+            > array z 4
+            < ok.
+            > z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .
+            < 0 0 0 0 ok.
+            > 10 z ! 20 z 1 w+ ! 30 z 2 w+ ! 40 z 3 w+ !
+            < ok.
+            > z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .
+            < 10 20 30 40 ok.
+            > forget z
+            < ok.
+            > variable a
+            < ok.
+            > 100 a !
+            < ok.
+            > array z 4
+            < ok.
+            > z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .
+            < 0 0 0 0 ok.
+        "#);
     }
 }

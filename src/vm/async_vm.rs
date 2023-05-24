@@ -154,4 +154,8 @@ where
 
         Ok(Step::NotDone)
     }
+
+    pub fn release(self) -> T {
+        self.vm.release()
+    }
 }
