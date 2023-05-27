@@ -10,8 +10,8 @@ use melpomene::{
     cli::{self, MelpomeneOptions},
     sim_drivers::{
         delay::Delay,
-        tcp_serial::TcpSerial,
         emb_display::{EmbDisplay, EmbDisplayHandle},
+        tcp_serial::TcpSerial,
     },
 };
 use mnemos_kernel::{
@@ -28,12 +28,11 @@ use tracing::Instrument;
 use embedded_graphics::{
     mono_font::MonoTextStyle,
     pixelcolor::Gray8,
-    prelude::{Primitive, Point, GrayColor, Drawable},
+    prelude::{Drawable, GrayColor, Point, Primitive},
     primitives::{Line, PrimitiveStyle},
     text::Text,
 };
 use profont::PROFONT_12_POINT;
-
 
 const HEAP_SIZE: usize = 192 * 1024;
 static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
@@ -172,23 +171,38 @@ fn kernel_entry(opts: MelpomeneOptions) {
         {
             let mut fc_0 = disp_hdl.get_framechunk(0, 0, 0, 400, char_y).await.unwrap();
             let text_style = MonoTextStyle::new(&PROFONT_12_POINT, Gray8::WHITE);
-            let text1 = Text::new("mnemOS", Point::new(0, PROFONT_12_POINT.baseline as i32), text_style);
+            let text1 = Text::new(
+                "mnemOS",
+                Point::new(0, PROFONT_12_POINT.baseline as i32),
+                text_style,
+            );
             text1.draw(&mut fc_0).unwrap();
 
             let title = "forth shell";
             let text2 = Text::new(
                 title,
-                Point::new(400 - ((title.len() as u32) * char_x) as i32, PROFONT_12_POINT.baseline as i32),
+                Point::new(
+                    400 - ((title.len() as u32) * char_x) as i32,
+                    PROFONT_12_POINT.baseline as i32,
+                ),
                 text_style,
             );
             text2.draw(&mut fc_0).unwrap();
 
             let line_style = PrimitiveStyle::with_stroke(Gray8::WHITE, 1);
             Line::new(
-                Point { x: 0, y: PROFONT_12_POINT.underline.offset as i32 },
-                Point { x: 400, y: PROFONT_12_POINT.underline.offset as i32 },
-            ).into_styled(line_style)
-            .draw(&mut fc_0).unwrap();
+                Point {
+                    x: 0,
+                    y: PROFONT_12_POINT.underline.offset as i32,
+                },
+                Point {
+                    x: 400,
+                    y: PROFONT_12_POINT.underline.offset as i32,
+                },
+            )
+            .into_styled(line_style)
+            .draw(&mut fc_0)
+            .unwrap();
             disp_hdl.draw_framechunk(fc_0).await.unwrap();
         }
 
@@ -230,7 +244,9 @@ fn kernel_entry(opts: MelpomeneOptions) {
                     // Wait until there is a frame buffer ready. There wouldn't be if we've spammed frames
                     // before they've been consumed.
                     let mut fc_0 = loop {
-                        let fc = disp_hdl.get_framechunk(0, 0, char_y as i32, 400, 240 - char_y).await;
+                        let fc = disp_hdl
+                            .get_framechunk(0, 0, char_y as i32, 400, 240 - char_y)
+                            .await;
                         if let Some(fc) = fc {
                             break fc;
                         } else {

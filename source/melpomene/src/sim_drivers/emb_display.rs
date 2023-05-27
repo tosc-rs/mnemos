@@ -1,6 +1,15 @@
 use std::time::Duration;
 
-use embedded_graphics_simulator::{OutputSettingsBuilder, BinaryColorTheme, SimulatorDisplay, Window, SimulatorEvent};
+use embedded_graphics::{
+    image::{Image, ImageRaw},
+    pixelcolor::{Gray8, GrayColor},
+    prelude::*,
+};
+use embedded_graphics_simulator::{
+    BinaryColorTheme, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
+};
+use maitake::sync::{Mutex, MutexGuard};
+use mnemos_alloc::containers::{HeapArc, HeapArray};
 use mnemos_kernel::{
     comms::{
         kchannel::{KChannel, KConsumer},
@@ -9,13 +18,6 @@ use mnemos_kernel::{
     registry::{Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo},
     Kernel,
 };
-use embedded_graphics::{
-    image::{ImageRaw, Image},
-    pixelcolor::{Gray8, GrayColor},
-    prelude::*,
-};
-use maitake::sync::{Mutex, MutexGuard};
-use mnemos_alloc::containers::{HeapArc, HeapArray};
 use uuid::Uuid;
 
 use super::delay::Delay;
@@ -109,10 +111,7 @@ impl EmbDisplay {
 
         let imutex = kernel
             .heap()
-            .allocate_arc(Mutex::new(DisplayInfo {
-                kernel,
-                frames,
-            }))
+            .allocate_arc(Mutex::new(DisplayInfo { kernel, frames }))
             .await;
         let (cmd_prod, cmd_cons) = KChannel::new_async(kernel, 1).await.split();
         let commander = CommanderTask {
@@ -121,7 +120,9 @@ impl EmbDisplay {
             fmutex: imutex,
         };
 
-        kernel.spawn(commander.run(width as u32, height as u32)).await;
+        kernel
+            .spawn(commander.run(width as u32, height as u32))
+            .await;
 
         kernel
             .with_registry(|reg| reg.register_konly::<EmbDisplay>(&cmd_prod))
@@ -163,25 +164,23 @@ impl EmbDisplayHandle {
         })
     }
 
-    pub async fn drop_framechunk(
-        &mut self,
-        chunk: FrameChunk,
-    ) -> Result<(), ()> {
-        self.prod.send(
-            Request::Drop(chunk),
-            ReplyTo::OneShot(self.reply.sender().map_err(drop)?),
-        ).await?;
+    pub async fn drop_framechunk(&mut self, chunk: FrameChunk) -> Result<(), ()> {
+        self.prod
+            .send(
+                Request::Drop(chunk),
+                ReplyTo::OneShot(self.reply.sender().map_err(drop)?),
+            )
+            .await?;
         Ok(())
     }
 
-    pub async fn draw_framechunk(
-        &mut self,
-        chunk: FrameChunk,
-    ) -> Result<(), ()> {
-        self.prod.send(
-            Request::Draw(chunk),
-            ReplyTo::OneShot(self.reply.sender().map_err(drop)?),
-        ).await?;
+    pub async fn draw_framechunk(&mut self, chunk: FrameChunk) -> Result<(), ()> {
+        self.prod
+            .send(
+                Request::Draw(chunk),
+                ReplyTo::OneShot(self.reply.sender().map_err(drop)?),
+            )
+            .await?;
         Ok(())
     }
 
@@ -228,13 +227,15 @@ impl DisplayInfo {
         width: u32,
         height: u32,
     ) -> Result<FrameChunk, FrameError> {
-        if self.frames.iter().any(|f| matches!(f, Some(FrameInfo { frame }) if *frame == frame_id)) {
+        if self
+            .frames
+            .iter()
+            .any(|f| matches!(f, Some(FrameInfo { frame }) if *frame == frame_id))
+        {
             return Err(FrameError::DuplicateItem);
         }
 
-        let found = self.frames
-            .iter_mut()
-            .find(|f| f.is_none());
+        let found = self.frames.iter_mut().find(|f| f.is_none());
 
         if let Some(slot) = found {
             *slot = Some(FrameInfo { frame: frame_id });
@@ -257,7 +258,8 @@ impl DisplayInfo {
     }
 
     fn remove_frame(&mut self, frame_id: u16) -> Result<(), FrameError> {
-        let found = self.frames
+        let found = self
+            .frames
             .iter_mut()
             .find(|f| matches!(f, Some(FrameInfo { frame }) if *frame == frame_id));
 
@@ -324,37 +326,43 @@ impl CommanderTask {
         // only whenever line characters actually arrive.
         let sdisp = SimulatorDisplay::<Gray8>::new(Size::new(width, height));
         let window = Window::new("mnemOS", &output_settings);
-        let mutex = self.kernel
+        let mutex = self
+            .kernel
             .heap()
             .allocate_arc(Mutex::new(Some((sdisp, window))))
             .await;
 
-        self.kernel.spawn({
-            let mutex = mutex.clone();
-            async move {
-                loop {
-                    Delay::new(Duration::from_micros(1_000_000 / 15)).await;
-                    let mut guard = mutex.lock().await;
-                    let mut done = false;
-                    if let Some((sdisp, window)) = (&mut *guard).as_mut() {
-                        window.update(&sdisp);
-                        if window.events().any(|e| e == SimulatorEvent::Quit) {
+        self.kernel
+            .spawn({
+                let mutex = mutex.clone();
+                async move {
+                    loop {
+                        Delay::new(Duration::from_micros(1_000_000 / 15)).await;
+                        let mut guard = mutex.lock().await;
+                        let mut done = false;
+                        if let Some((sdisp, window)) = (&mut *guard).as_mut() {
+                            window.update(&sdisp);
+                            if window.events().any(|e| e == SimulatorEvent::Quit) {
+                                done = true;
+                            }
+                        } else {
                             done = true;
                         }
-                    } else {
-                        done = true;
-                    }
-                    if done {
-                        let _ = guard.take();
-                        break;
+                        if done {
+                            let _ = guard.take();
+                            break;
+                        }
                     }
                 }
-            }
-        }).await;
+            })
+            .await;
 
         loop {
             let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
-            let Message { msg: mut req, reply } = msg;
+            let Message {
+                msg: mut req,
+                reply,
+            } = msg;
             match &mut req.body {
                 Request::NewFrameChunk {
                     frame_id,
@@ -391,10 +399,14 @@ impl CommanderTask {
                             }
                         }
                         Err(e) => {
-                            reply.reply_konly(req.reply_with(Err(e))).await.map_err(drop).unwrap();
+                            reply
+                                .reply_konly(req.reply_with(Err(e)))
+                                .await
+                                .map_err(drop)
+                                .unwrap();
                         }
                     }
-                },
+                }
                 Request::Drop(_) => todo!(),
             }
         }
