@@ -75,11 +75,11 @@ version = "0.6.1"
 
 [dependencies.input-mgr]
 git = "https://github.com/tosc-rs/teletype/"
-rev = "0aafcb087ebafaea4106ddaaf47aaaae33804a64"
+rev = "1940b48dd71b905251981336602a1665de18d181"
 
 [dependencies.ring-drawer]
 git = "https://github.com/tosc-rs/teletype/"
-rev = "0aafcb087ebafaea4106ddaaf47aaaae33804a64"
+rev = "1940b48dd71b905251981336602a1665de18d181"
 
 # Melpomene does not use any APIs from `maitake` directly. This dependency is
 # instead required in order to enable `maitake`'s support for `tracing` 0.1.x,

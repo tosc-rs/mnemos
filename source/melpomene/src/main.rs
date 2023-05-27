@@ -174,6 +174,32 @@ fn kernel_entry(opts: MelpomeneOptions) {
         // let text1 = Text::new("Welcome to mnemOS!", Point::new(10, 10), text_style);
         // let text2 = Text::new("A tiny operating system", Point::new(10, 20), text_style);
 
+        let char_y = PROFONT_12_POINT.character_size.height;
+        let char_x = PROFONT_12_POINT.character_size.width + PROFONT_12_POINT.character_spacing;
+
+        // Draw titlebar
+        {
+            let mut fc_0 = disp_hdl.get_framechunk(0, 0, 0, 400, char_y).await.unwrap();
+            let text_style = MonoTextStyle::new(&PROFONT_12_POINT, Gray8::WHITE);
+            let text1 = Text::new("mnemOS", Point::new(0, PROFONT_12_POINT.baseline as i32), text_style);
+            text1.draw(&mut fc_0).unwrap();
+
+            let title = "forth shell";
+            let text2 = Text::new(
+                title,
+                Point::new(400 - ((title.len() as u32) * char_x) as i32, PROFONT_12_POINT.baseline as i32),
+                text_style,
+            );
+            text2.draw(&mut fc_0).unwrap();
+
+            let line_style = PrimitiveStyle::with_stroke(Gray8::WHITE, 1);
+            Line::new(
+                Point { x: 0, y: PROFONT_12_POINT.underline.offset as i32 },
+                Point { x: 400, y: PROFONT_12_POINT.underline.offset as i32 },
+            ).into_styled(line_style)
+            .draw(&mut fc_0).unwrap();
+            disp_hdl.draw_framechunk(fc_0).await.unwrap();
+        }
 
         k.spawn(
             async move {
@@ -196,55 +222,10 @@ fn kernel_entry(opts: MelpomeneOptions) {
                         99 => rline.submit_remote_editing(),
                         _ => ctr = -1,
                     }
-                    let mut fc_0 = disp_hdl.get_framechunk(0, 0, 0, 400, 240).await.unwrap();
+                    let mut fc_0 = disp_hdl.get_framechunk(0, 0, char_y as i32, 400, 240 - char_y).await.unwrap();
                     ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
                     disp_hdl.draw_framechunk(fc_0).await.unwrap();
                 }
-
-
-                // 'running: loop {
-                //     // disp.clear(Gray8::BLACK).unwrap();
-
-                //     tline.draw(&mut fc_0).unwrap();
-                //     bline.draw(&mut fc_0).unwrap();
-                //     rline.draw(&mut fc_0).unwrap();
-                //     lline.draw(&mut fc_0).unwrap();
-
-                //     text1.draw(&mut fc_0).unwrap();
-                //     text2.draw(&mut fc_0).unwrap();
-
-                //     let time = Local::now();
-
-                //     let time_str = format!(
-                //         "{:02}:{:02}:{02}",
-                //         time.hour(),
-                //         time.minute(),
-                //         time.second()
-                //     );
-
-                //     let date_str =
-                //         format!("{:02}/{:02}/{:02}", time.month(), time.day(), time.year());
-
-                //     let date_text = Text::new(&date_str, Point::new(28, 35), datetime_style);
-                //     let time_text = Text::new(&time_str, Point::new(88, 35), datetime_style);
-
-                //     date_text.draw(&mut fc_0).unwrap();
-                //     time_text.draw(&mut fc_0).unwrap();
-                //     {
-                //         let raw_img = fc_0.frame_display().unwrap();
-                //         let image = Image::new(&raw_img, Point::new(80, 45));
-                //         image.draw(&mut sdisp).unwrap();
-
-                //         window.update(&sdisp);
-                //         if window.events().any(|e| e == SimulatorEvent::Quit) {
-                //             break 'running;
-                //         }
-
-                //         Delay::new(Duration::from_secs(1)).await;
-                //         sdisp.clear(Gray8::BLACK).unwrap();
-                //     }
-                //     fc_0.frame_clear();
-                // }
             }
             .instrument(tracing::info_span!("Update clock")),
         )

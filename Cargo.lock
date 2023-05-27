@@ -1004,7 +1004,7 @@ dependencies = [
 [[package]]
 name = "input-mgr"
 version = "0.1.0"
-source = "git+https://github.com/tosc-rs/teletype/?rev=0aafcb087ebafaea4106ddaaf47aaaae33804a64#0aafcb087ebafaea4106ddaaf47aaaae33804a64"
+source = "git+https://github.com/tosc-rs/teletype/?rev=1940b48dd71b905251981336602a1665de18d181#1940b48dd71b905251981336602a1665de18d181"
 
 [[package]]
 name = "instant"
@@ -1949,7 +1949,7 @@ dependencies = [
 [[package]]
 name = "ring-drawer"
 version = "0.1.0"
-source = "git+https://github.com/tosc-rs/teletype/?rev=0aafcb087ebafaea4106ddaaf47aaaae33804a64#0aafcb087ebafaea4106ddaaf47aaaae33804a64"
+source = "git+https://github.com/tosc-rs/teletype/?rev=1940b48dd71b905251981336602a1665de18d181#1940b48dd71b905251981336602a1665de18d181"
 dependencies = [
  "embedded-graphics",
  "input-mgr",
