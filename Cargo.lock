@@ -1175,6 +1175,7 @@ dependencies = [
  "maitake",
  "mnemos",
  "mnemos-abi",
+ "mnemos-alloc",
  "mnemos-std",
  "postcard 1.0.1",
  "profont",

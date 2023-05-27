@@ -28,6 +28,9 @@ features = ["serde"]
 package = "mnemos"
 path = "../kernel"
 
+[dependencies.mnemos-alloc]
+version = "0.1.0"
+
 [dependencies.mnemos-abi]
 path = "../abi"
 

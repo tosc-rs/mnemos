@@ -8,13 +8,14 @@ use clap::Parser;
 use input_mgr::RingLine;
 use melpomene::{
     cli::{self, MelpomeneOptions},
-    sim_drivers::{delay::Delay, tcp_serial::TcpSerial},
+    sim_drivers::{
+        delay::Delay,
+        tcp_serial::TcpSerial,
+        emb_display::{EmbDisplay, EmbDisplayHandle},
+    },
 };
 use mnemos_kernel::{
-    drivers::{
-        emb_display::{EmbDisplay, EmbDisplayHandle},
-        serial_mux::{SerialMux, SerialMuxHandle},
-    },
+    drivers::serial_mux::{SerialMux, SerialMuxHandle},
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -24,8 +25,7 @@ use tokio::{
 
 use tracing::Instrument;
 
-use chrono::{Datelike, Local, Timelike};
-
+#[allow(unused_imports)]
 use embedded_graphics::{
     image::{Image, ImageRaw},
     mono_font::{ascii::FONT_5X7, ascii::FONT_6X9, MonoTextStyle},
@@ -163,8 +163,6 @@ fn kernel_entry(opts: MelpomeneOptions) {
         EmbDisplay::register(k, 4, 400, 240).await.unwrap();
 
         let mut disp_hdl = EmbDisplayHandle::from_registry(k).await.unwrap();
-        let mut fc_0 = disp_hdl.get_framechunk(0, 0, 0, 400, 240).await.unwrap();
-        drop(disp_hdl);
 
         // let line_style = PrimitiveStyle::with_stroke(Gray8::WHITE, 1);
         // let tline = Line::new(Point::new(148, 2), Point::new(8, 2)).into_styled(line_style);
@@ -175,12 +173,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
         // let datetime_style = MonoTextStyle::new(&FONT_5X7, Gray8::WHITE);
         // let text1 = Text::new("Welcome to mnemOS!", Point::new(10, 10), text_style);
         // let text2 = Text::new("A tiny operating system", Point::new(10, 20), text_style);
-        let output_settings = OutputSettingsBuilder::new()
-            .theme(BinaryColorTheme::OledBlue)
-            .build();
 
-        let mut sdisp = SimulatorDisplay::<Gray8>::new(Size::new(400, 240));
-        let mut window = Window::new("mnemOS", &output_settings);
 
         k.spawn(
             async move {
@@ -193,7 +186,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
                 let mut rline = RingLine::<16, 46>::new();
 
                 let mut ctr = -1;
-                'running: loop {
+                loop {
                     Delay::new(Duration::from_millis(50)).await;
                     ctr += 1;
                     match ctr {
@@ -203,21 +196,9 @@ fn kernel_entry(opts: MelpomeneOptions) {
                         99 => rline.submit_remote_editing(),
                         _ => ctr = -1,
                     }
-                    println!("DING {:?}", fc_0.size());
-
+                    let mut fc_0 = disp_hdl.get_framechunk(0, 0, 0, 400, 240).await.unwrap();
                     ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
-                    {
-                        let raw_img = fc_0.frame_display().unwrap();
-                        println!("DANG {:?}", raw_img.size());
-                        let image = Image::new(&raw_img, Point::new(0, 0));
-                        // println!("DONG {:?}", image.size);
-                        image.draw(&mut sdisp).unwrap();
-
-                        window.update(&sdisp);
-                        if window.events().any(|e| e == SimulatorEvent::Quit) {
-                            break 'running;
-                        }
-                    }
+                    disp_hdl.draw_framechunk(fc_0).await.unwrap();
                 }
 
 

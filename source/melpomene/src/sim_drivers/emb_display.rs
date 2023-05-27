@@ -1,4 +1,5 @@
-use crate::{
+use embedded_graphics_simulator::{OutputSettingsBuilder, BinaryColorTheme, SimulatorDisplay, Window, SimulatorEvent};
+use mnemos_kernel::{
     comms::{
         kchannel::{KChannel, KConsumer},
         oneshot::Reusable,
@@ -7,12 +8,12 @@ use crate::{
     Kernel,
 };
 use embedded_graphics::{
-    image::ImageRaw,
+    image::{ImageRaw, Image},
     pixelcolor::{Gray8, GrayColor},
     prelude::*,
 };
-use maitake::sync::Mutex;
-use mnemos_alloc::containers::{HeapArc, HeapArray, HeapFixedVec};
+use maitake::sync::{Mutex, MutexGuard};
+use mnemos_alloc::containers::{HeapArc, HeapArray};
 use uuid::Uuid;
 
 const BYTES_PER_PIXEL: u32 = 1;
@@ -40,11 +41,14 @@ struct FrameInfo {
 pub enum FrameError {
     DuplicateItem,
     RegistryFull,
+    NoSuchFrame,
 }
 
 struct DisplayInfo {
     kernel: &'static Kernel,
-    frames: HeapFixedVec<FrameInfo>,
+    // TODO: HeapFixedVec has like none of the actual vec methods. For now
+    // use HeapArray with optionals to make it easier to find + pop individual items
+    frames: HeapArray<Option<FrameInfo>>,
     frame_size: usize,
 }
 
@@ -62,10 +66,13 @@ pub enum Request {
         width: u32,
         height: u32,
     },
+    Draw(FrameChunk),
+    Drop(FrameChunk),
 }
 
 pub enum Response {
     FrameChunkAllocated(FrameChunk),
+    FrameDrawn,
 }
 
 pub enum EmbDisplayError {
@@ -82,7 +89,7 @@ impl RegisteredDriver for EmbDisplay {
     type Request = Request;
     type Response = Response;
     type Error = FrameError;
-    const UUID: Uuid = crate::registry::known_uuids::kernel::EMB_DISPLAY;
+    const UUID: Uuid = mnemos_kernel::registry::known_uuids::kernel::EMB_DISPLAY;
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -98,7 +105,7 @@ impl EmbDisplay {
         width: usize,
         height: usize,
     ) -> Result<(), ()> {
-        let frames = kernel.heap().allocate_fixed_vec(max_frames).await;
+        let frames = kernel.heap().allocate_array_with(|| None, max_frames).await;
         let frame_size = width * height * BYTES_PER_PIXEL as usize;
 
         let imutex = kernel
@@ -115,7 +122,7 @@ impl EmbDisplay {
             fmutex: imutex,
         };
 
-        kernel.spawn(commander.run()).await;
+        kernel.spawn(commander.run(width as u32, height as u32)).await;
 
         kernel
             .with_registry(|reg| reg.register_konly::<EmbDisplay>(&cmd_prod))
@@ -157,6 +164,28 @@ impl EmbDisplayHandle {
         })
     }
 
+    pub async fn drop_framechunk(
+        &mut self,
+        chunk: FrameChunk,
+    ) -> Result<(), ()> {
+        self.prod.send(
+            Request::Drop(chunk),
+            ReplyTo::OneShot(self.reply.sender().map_err(drop)?),
+        ).await?;
+        Ok(())
+    }
+
+    pub async fn draw_framechunk(
+        &mut self,
+        chunk: FrameChunk,
+    ) -> Result<(), ()> {
+        self.prod.send(
+            Request::Draw(chunk),
+            ReplyTo::OneShot(self.reply.sender().map_err(drop)?),
+        ).await?;
+        Ok(())
+    }
+
     pub async fn get_framechunk(
         &mut self,
         frame_id: u16,
@@ -182,8 +211,11 @@ impl EmbDisplayHandle {
         let resp = self.reply.receive().await.ok()?;
         let body = resp.body.ok()?;
 
-        let Response::FrameChunkAllocated(frame) = body;
-        Some(frame)
+        if let Response::FrameChunkAllocated(frame) = body {
+            Some(frame)
+        } else {
+            None
+        }
     }
 }
 
@@ -197,29 +229,45 @@ impl DisplayInfo {
         width: u32,
         height: u32,
     ) -> Result<FrameChunk, FrameError> {
-        if self.frames.is_full() {
-            return Err(FrameError::RegistryFull);
-        }
-
-        if self.frames.iter().any(|f| f.frame == frame_id) {
+        if self.frames.iter().any(|f| matches!(f, Some(FrameInfo { frame }) if *frame == frame_id)) {
             return Err(FrameError::DuplicateItem);
         }
 
-        self.frames
-            .push(FrameInfo { frame: frame_id })
-            .map_err(|_| FrameError::RegistryFull)?;
+        let found = self.frames
+            .iter_mut()
+            .find(|f| f.is_none());
 
-        let size = (width * height) as usize;
-        let bytes = self.kernel.heap().allocate_array_with(|| 0, size).await;
-        let fc = FrameChunk {
-            frame_id,
-            bytes,
-            start_x,
-            start_y,
-            width,
-            height,
-        };
-        Ok(fc)
+        if let Some(slot) = found {
+            *slot = Some(FrameInfo { frame: frame_id });
+
+            let size = (width * height) as usize;
+            let bytes = self.kernel.heap().allocate_array_with(|| 0, size).await;
+            let fc = FrameChunk {
+                frame_id,
+                bytes,
+                start_x,
+                start_y,
+                width,
+                height,
+            };
+
+            Ok(fc)
+        } else {
+            Err(FrameError::RegistryFull)
+        }
+    }
+
+    fn remove_frame(&mut self, frame_id: u16) -> Result<(), FrameError> {
+        let found = self.frames
+            .iter_mut()
+            .find(|f| matches!(f, Some(FrameInfo { frame }) if *frame == frame_id));
+
+        if let Some(slot) = found {
+            *slot = None;
+            Ok(())
+        } else {
+            Err(FrameError::NoSuchFrame)
+        }
     }
 }
 
@@ -259,11 +307,19 @@ impl OriginDimensions for FrameChunk {
 }
 
 impl CommanderTask {
-    async fn run(self) {
-        loop {
+    async fn run(self, width: u32, height: u32) {
+        let output_settings = OutputSettingsBuilder::new()
+            .theme(BinaryColorTheme::OledBlue)
+            .build();
+
+
+        let mut sdisp = SimulatorDisplay::<Gray8>::new(Size::new(width, height));
+        let mut window = Window::new("mnemOS", &output_settings);
+
+        'running: loop {
             let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
-            let Message { msg: req, reply } = msg;
-            match req.body {
+            let Message { msg: mut req, reply } = msg;
+            match &mut req.body {
                 Request::NewFrameChunk {
                     frame_id,
                     start_x,
@@ -274,7 +330,7 @@ impl CommanderTask {
                     let res = {
                         let mut fmutex = self.fmutex.lock().await;
                         fmutex
-                            .new_frame(frame_id, start_x, start_y, width, height)
+                            .new_frame(*frame_id, *start_x, *start_y, *width, *height)
                             .await
                     }
                     .map(Response::FrameChunkAllocated);
@@ -283,6 +339,26 @@ impl CommanderTask {
 
                     reply.reply_konly(resp).await.map_err(drop).unwrap();
                 }
+                Request::Draw(fc) => {
+                    let mut fmutex: MutexGuard<DisplayInfo> = self.fmutex.lock().await;
+                    match fmutex.remove_frame(fc.frame_id) {
+                        Ok(_) => {
+                            let (x, y) = (fc.start_x, fc.start_y);
+                            let raw_img = fc.frame_display().unwrap();
+                            let image = Image::new(&raw_img, Point::new(x, y));
+                            image.draw(&mut sdisp).unwrap();
+
+                            window.update(&sdisp);
+                            if window.events().any(|e| e == SimulatorEvent::Quit) {
+                                break 'running;
+                            }
+                        }
+                        Err(e) => {
+                            reply.reply_konly(req.reply_with(Err(e))).await.map_err(drop).unwrap();
+                        }
+                    }
+                },
+                Request::Drop(_) => todo!(),
             }
         }
     }
