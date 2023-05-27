@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use embedded_graphics_simulator::{OutputSettingsBuilder, BinaryColorTheme, SimulatorDisplay, Window, SimulatorEvent};
 use mnemos_kernel::{
     comms::{
@@ -16,12 +18,10 @@ use maitake::sync::{Mutex, MutexGuard};
 use mnemos_alloc::containers::{HeapArc, HeapArray};
 use uuid::Uuid;
 
-const BYTES_PER_PIXEL: u32 = 1;
+use super::delay::Delay;
 
 // Registered driver
-pub struct EmbDisplay {
-    kernel: &'static Kernel,
-}
+pub struct EmbDisplay;
 
 // FrameChunk is recieved after client has sent a request for one
 pub struct FrameChunk {
@@ -49,7 +49,6 @@ struct DisplayInfo {
     // TODO: HeapFixedVec has like none of the actual vec methods. For now
     // use HeapArray with optionals to make it easier to find + pop individual items
     frames: HeapArray<Option<FrameInfo>>,
-    frame_size: usize,
 }
 
 // Client interface to EmbDisplay
@@ -80,6 +79,7 @@ pub enum EmbDisplayError {
 }
 
 struct CommanderTask {
+    kernel: &'static Kernel,
     cmd: KConsumer<Message<EmbDisplay>>,
     fmutex: HeapArc<Mutex<DisplayInfo>>,
 }
@@ -106,18 +106,17 @@ impl EmbDisplay {
         height: usize,
     ) -> Result<(), ()> {
         let frames = kernel.heap().allocate_array_with(|| None, max_frames).await;
-        let frame_size = width * height * BYTES_PER_PIXEL as usize;
 
         let imutex = kernel
             .heap()
             .allocate_arc(Mutex::new(DisplayInfo {
                 kernel,
                 frames,
-                frame_size,
             }))
             .await;
         let (cmd_prod, cmd_cons) = KChannel::new_async(kernel, 1).await.split();
         let commander = CommanderTask {
+            kernel,
             cmd: cmd_cons,
             fmutex: imutex,
         };
@@ -312,11 +311,48 @@ impl CommanderTask {
             .theme(BinaryColorTheme::OledBlue)
             .build();
 
+        // Create a mutex for the embedded graphics simulator objects.
+        //
+        // We do this because if we don't call "update" regularly, the window just
+        // sort of freezes. We also make the update loop check for "quit" events,
+        // because otherwise the gui window just swallows all the control-c events,
+        // which means you have to send a sigkill to actually get the simulator to
+        // fully stop.
+        //
+        // The update loop *needs* to drop the egsim items, otherwise they just exist
+        // in the mutex until the next time a frame is displayed, which right now is
+        // only whenever line characters actually arrive.
+        let sdisp = SimulatorDisplay::<Gray8>::new(Size::new(width, height));
+        let window = Window::new("mnemOS", &output_settings);
+        let mutex = self.kernel
+            .heap()
+            .allocate_arc(Mutex::new(Some((sdisp, window))))
+            .await;
 
-        let mut sdisp = SimulatorDisplay::<Gray8>::new(Size::new(width, height));
-        let mut window = Window::new("mnemOS", &output_settings);
+        self.kernel.spawn({
+            let mutex = mutex.clone();
+            async move {
+                loop {
+                    Delay::new(Duration::from_micros(1_000_000 / 15)).await;
+                    let mut guard = mutex.lock().await;
+                    let mut done = false;
+                    if let Some((sdisp, window)) = (&mut *guard).as_mut() {
+                        window.update(&sdisp);
+                        if window.events().any(|e| e == SimulatorEvent::Quit) {
+                            done = true;
+                        }
+                    } else {
+                        done = true;
+                    }
+                    if done {
+                        let _ = guard.take();
+                        break;
+                    }
+                }
+            }
+        }).await;
 
-        'running: loop {
+        loop {
             let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
             let Message { msg: mut req, reply } = msg;
             match &mut req.body {
@@ -346,11 +382,12 @@ impl CommanderTask {
                             let (x, y) = (fc.start_x, fc.start_y);
                             let raw_img = fc.frame_display().unwrap();
                             let image = Image::new(&raw_img, Point::new(x, y));
-                            image.draw(&mut sdisp).unwrap();
 
-                            window.update(&sdisp);
-                            if window.events().any(|e| e == SimulatorEvent::Quit) {
-                                break 'running;
+                            let mut guard = mutex.lock().await;
+                            if let Some((sdisp, _window)) = (&mut *guard).as_mut() {
+                                image.draw(sdisp).unwrap();
+                            } else {
+                                break;
                             }
                         }
                         Err(e) => {

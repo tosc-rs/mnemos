@@ -25,20 +25,15 @@ use tokio::{
 
 use tracing::Instrument;
 
-#[allow(unused_imports)]
 use embedded_graphics::{
-    image::{Image, ImageRaw},
-    mono_font::{ascii::FONT_5X7, ascii::FONT_6X9, MonoTextStyle},
-    pixelcolor::{Gray8, Rgb888},
-    prelude::*,
+    mono_font::MonoTextStyle,
+    pixelcolor::Gray8,
+    prelude::{Primitive, Point, GrayColor, Drawable},
     primitives::{Line, PrimitiveStyle},
     text::Text,
 };
 use profont::PROFONT_12_POINT;
 
-use embedded_graphics_simulator::{
-    BinaryColorTheme, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
-};
 
 const HEAP_SIZE: usize = 192 * 1024;
 static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
@@ -126,6 +121,9 @@ fn kernel_entry(opts: MelpomeneOptions) {
         let p1 = mux_hdl.open_port(1, 1024).await.unwrap();
         drop(mux_hdl);
 
+        // Spawn the graphics driver
+        EmbDisplay::register(k, 4, 400, 240).await.unwrap();
+
         k.spawn(
             async move {
                 loop {
@@ -155,25 +153,18 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
     k.initialize(initialization_future).unwrap();
 
-    // Creating a dummy task to use the embedded display driver
-    let graphics_init_future = async move {
-        // Delay for one second, just for funsies
-        Delay::new(Duration::from_secs(1)).await;
+    // Create the interactive console task
+    let graphics_console = async move {
+        // Delay for 1.5 seconds, just for funsies
+        Delay::new(Duration::from_millis(1_500)).await;
 
-        EmbDisplay::register(k, 4, 400, 240).await.unwrap();
+        // Take Port 2 from the serial mux. This corresponds to TCP port 10002 when
+        // you are running crowtty
+        let mut mux_hdl = SerialMuxHandle::from_registry(k).await.unwrap();
+        let p2 = mux_hdl.open_port(2, 1024).await.unwrap();
+        drop(mux_hdl);
 
         let mut disp_hdl = EmbDisplayHandle::from_registry(k).await.unwrap();
-
-        // let line_style = PrimitiveStyle::with_stroke(Gray8::WHITE, 1);
-        // let tline = Line::new(Point::new(148, 2), Point::new(8, 2)).into_styled(line_style);
-        // let bline = Line::new(Point::new(148, 24), Point::new(8, 24)).into_styled(line_style);
-        // let lline = Line::new(Point::new(7, 24), Point::new(7, 2)).into_styled(line_style);
-        // let rline = Line::new(Point::new(149, 24), Point::new(149, 2)).into_styled(line_style);
-        // let text_style = MonoTextStyle::new(&FONT_6X9, Gray8::WHITE);
-        // let datetime_style = MonoTextStyle::new(&FONT_5X7, Gray8::WHITE);
-        // let text1 = Text::new("Welcome to mnemOS!", Point::new(10, 10), text_style);
-        // let text2 = Text::new("A tiny operating system", Point::new(10, 20), text_style);
-
         let char_y = PROFONT_12_POINT.character_size.height;
         let char_x = PROFONT_12_POINT.character_size.width + PROFONT_12_POINT.character_spacing;
 
@@ -203,26 +194,49 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
         k.spawn(
             async move {
-
                 let style = ring_drawer::BwStyle {
                     background: Gray8::BLACK,
                     font: MonoTextStyle::new(&PROFONT_12_POINT, Gray8::WHITE),
                 };
 
+                // At 12-pt font, there is enough room for 16 lines, with 50 chars/line.
+                //
+                // Leave out 4 for the implicit margin of two characters on each gutter.
                 let mut rline = RingLine::<16, 46>::new();
 
-                let mut ctr = -1;
                 loop {
-                    Delay::new(Duration::from_millis(50)).await;
-                    ctr += 1;
-                    match ctr {
-                        0..=48 => rline.append_local_char(b'$').unwrap(),
-                        49 => rline.submit_local_editing(),
-                        50..=98 => rline.append_remote_char(b'#').unwrap(),
-                        99 => rline.submit_remote_editing(),
-                        _ => ctr = -1,
+                    let rgr = p2.consumer().read_grant().await;
+                    for b in rgr.iter() {
+                        match rline.append_local_char(*b) {
+                            Ok(_) => {}
+                            // backspace
+                            Err(_) if *b == 0x7F => {
+                                rline.pop_local_char();
+                            }
+                            Err(_) if *b == b'\n' => {
+                                rline.submit_local_editing();
+                                b"And the computer says hi.".iter().for_each(|b| {
+                                    let _ = rline.append_remote_char(*b);
+                                });
+                                rline.submit_remote_editing();
+                            }
+                            Err(_) => {
+                                println!("Got char: {:02X}", *b);
+                            }
+                        }
                     }
-                    let mut fc_0 = disp_hdl.get_framechunk(0, 0, char_y as i32, 400, 240 - char_y).await.unwrap();
+                    let len = rgr.len();
+                    rgr.release(len);
+                    // Wait until there is a frame buffer ready. There wouldn't be if we've spammed frames
+                    // before they've been consumed.
+                    let mut fc_0 = loop {
+                        let fc = disp_hdl.get_framechunk(0, 0, char_y as i32, 400, 240 - char_y).await;
+                        if let Some(fc) = fc {
+                            break fc;
+                        } else {
+                            Delay::new(Duration::from_millis(10)).await;
+                        }
+                    };
                     ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
                     disp_hdl.draw_framechunk(fc_0).await.unwrap();
                 }
@@ -233,7 +247,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
     }
     .instrument(tracing::info_span!("Initialize graphics driver"));
 
-    k.initialize(graphics_init_future).unwrap();
+    k.initialize(graphics_console).unwrap();
 
     //////////////////////////////////////////////////////////////////////////////
     // TODO: Userspace doesn't really do anything yet! Simulate initialization of
@@ -272,73 +286,3 @@ fn kernel_entry(opts: MelpomeneOptions) {
         KERNEL_LOCK.store(false, Ordering::Release);
     }
 }
-
-// fn userspace_entry() {
-//     use mstd::alloc::HEAP;
-
-//     // Set up kernel rings
-//     let u2k = unsafe { BBBuffer::take_framed_producer(abi::U2K_RING.load(Ordering::Acquire)) };
-//     let k2u = unsafe { BBBuffer::take_framed_consumer(abi::K2U_RING.load(Ordering::Acquire)) };
-
-//     // Set up allocator
-//     let mut hg = HEAP.init_exclusive(
-//         abi::HEAP_PTR.load(Ordering::Acquire) as usize,
-//         abi::HEAP_LEN.load(Ordering::Acquire),
-//     ).unwrap();
-
-//     // Set up executor
-//     let terpsichore = &mstd::executor::EXECUTOR;
-
-//     // Spawn the `main` task
-//     let mtask = mstd::executor::Task::new(async move {
-//         aman().await
-//     });
-//     let hbmtask = hg.alloc_box(mtask).map_err(drop).unwrap();
-//     drop(hg);
-//     let hg2 = HEAP.lock().unwrap();
-//     drop(hg2);
-//     let _mhdl = mstd::executor::spawn_allocated(hbmtask);
-
-//     let rings = Rings {
-//         u2k,
-//         k2u,
-//     };
-//     mstd::executor::mailbox::MAILBOX.set_rings(rings);
-
-//     let start = Instant::now();
-//     loop {
-//         *mstd::executor::time::CURRENT_TIME.borrow_mut().unwrap() = start.elapsed().as_micros() as u64;
-//         terpsichore.run();
-//         KERNEL_LOCK.store(true, Ordering::Release);
-//         while KERNEL_LOCK.load(Ordering::Acquire) {
-//             sleep(Duration::from_millis(50));
-//         }
-//     }
-
-// }
-
-// async fn aman() -> Result<(), ()> {
-//     mstd::executor::spawn(async {
-//         for _ in 0..3 {
-//             println!("[ST1] Hi, I'm aman's subtask!");
-//             Sleepy::new(Duration::from_secs(3)).await;
-//         }
-//         println!("[ST1] subtask done!");
-//     }).await;
-
-//     mstd::executor::spawn(async {
-//         for _ in 0..3 {
-//             let msg = UserRequestBody::Serial(SerialRequest::Flush);
-//             println!("[ST2] Sending to kernel: {:?}", msg);
-//             let resp = MAILBOX.request(msg).await;
-//             println!("[ST2] Kernel said: {:?}", resp);
-//             Sleepy::new(Duration::from_secs(2)).await;
-//         }
-//         println!("[ST2] subtask done!");
-//     }).await;
-
-//     loop {
-//         println!("[MT] Hi, I'm aman!");
-//         Sleepy::new(Duration::from_secs(1)).await;
-//     }
-// }

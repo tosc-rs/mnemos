@@ -56,7 +56,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // # connect to port N - stdio
     // stty -icanon -echo && ncat 127.0.0.1 $PORT
     // ```
-    for i in [0, 1].into_iter() {
+    for i in [0, 1, 2, 3].into_iter() {
         let (inp_send, inp_recv) = channel();
         let (out_send, out_recv) = channel();
 
