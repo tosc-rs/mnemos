@@ -169,7 +169,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
         // Draw titlebar
         {
-            let mut fc_0 = disp_hdl.get_framechunk(0, 0, 0, 400, char_y).await.unwrap();
+            let mut fc_0 = disp_hdl.get_framechunk(0, 0, 400, char_y).await.unwrap();
             let text_style = MonoTextStyle::new(&PROFONT_12_POINT, Gray8::WHITE);
             let text1 = Text::new(
                 "mnemOS",
@@ -219,6 +219,21 @@ fn kernel_entry(opts: MelpomeneOptions) {
                 let mut rline = RingLine::<16, 46>::new();
 
                 loop {
+                    // Wait until there is a frame buffer ready. There wouldn't be if we've spammed frames
+                    // before they've been consumed.
+                    let mut fc_0 = loop {
+                        let fc = disp_hdl
+                            .get_framechunk(0, char_y as i32, 400, 240 - char_y)
+                            .await;
+                        if let Some(fc) = fc {
+                            break fc;
+                        } else {
+                            Delay::new(Duration::from_millis(10)).await;
+                        }
+                    };
+                    ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
+                    disp_hdl.draw_framechunk(fc_0).await.unwrap();
+
                     let rgr = p2.consumer().read_grant().await;
                     for b in rgr.iter() {
                         match rline.append_local_char(*b) {
@@ -241,20 +256,6 @@ fn kernel_entry(opts: MelpomeneOptions) {
                     }
                     let len = rgr.len();
                     rgr.release(len);
-                    // Wait until there is a frame buffer ready. There wouldn't be if we've spammed frames
-                    // before they've been consumed.
-                    let mut fc_0 = loop {
-                        let fc = disp_hdl
-                            .get_framechunk(0, 0, char_y as i32, 400, 240 - char_y)
-                            .await;
-                        if let Some(fc) = fc {
-                            break fc;
-                        } else {
-                            Delay::new(Duration::from_millis(10)).await;
-                        }
-                    };
-                    ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
-                    disp_hdl.draw_framechunk(fc_0).await.unwrap();
                 }
             }
             .instrument(tracing::info_span!("Update clock")),
