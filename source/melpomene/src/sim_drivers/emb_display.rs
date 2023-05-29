@@ -65,8 +65,8 @@ impl EmbDisplay {
     pub async fn register(
         kernel: &'static Kernel,
         max_frames: usize,
-        width: usize,
-        height: usize,
+        width: u32,
+        height: u32,
     ) -> Result<(), FrameError> {
         let frames = kernel.heap().allocate_array_with(|| None, max_frames).await;
 
@@ -82,7 +82,7 @@ impl EmbDisplay {
         };
 
         kernel
-            .spawn(commander.run(width as u32, height as u32))
+            .spawn(commander.run(width, height))
             .await;
 
         kernel
@@ -211,12 +211,10 @@ impl CommanderTask {
                     width,
                     height,
                 } => {
-                    let res = {
-                        self.display_info
-                            .new_frame(*start_x, *start_y, *width, *height)
-                            .await
-                    }
-                    .map(Response::FrameChunkAllocated);
+                    let res = self.display_info
+                        .new_frame(*start_x, *start_y, *width, *height)
+                        .await
+                        .map(Response::FrameChunkAllocated);
 
                     let resp = req.reply_with(res);
 
@@ -284,7 +282,7 @@ impl EmbDisplayHandle {
         self.prod
             .send(
                 Request::Drop(chunk),
-                ReplyTo::OneShot(self.reply.sender().map_err(drop)?),
+                ReplyTo::OneShot(self.reply.sender().await.map_err(drop)?),
             )
             .await?;
         Ok(())
@@ -295,7 +293,7 @@ impl EmbDisplayHandle {
         self.prod
             .send(
                 Request::Draw(chunk),
-                ReplyTo::OneShot(self.reply.sender().map_err(drop)?),
+                ReplyTo::OneShot(self.reply.sender().await.map_err(drop)?),
             )
             .await?;
         Ok(())
@@ -317,7 +315,7 @@ impl EmbDisplayHandle {
                     width,
                     height,
                 },
-                ReplyTo::OneShot(self.reply.sender().ok()?),
+                ReplyTo::OneShot(self.reply.sender().await.unwrap()),
             )
             .await
             .ok()?;

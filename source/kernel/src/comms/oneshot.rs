@@ -88,22 +88,29 @@ impl<T> Reusable<T> {
     /// error will be immediately returned.
     ///
     /// This error can be cleared by awaiting [Reusable::receive].
-    pub fn sender(&self) -> Result<Sender<T>, ReusableError> {
-        let swap = self.inner.state.compare_exchange(
-            ROSC_IDLE,
-            ROSC_WAITING,
-            Ordering::AcqRel,
-            Ordering::Relaxed,
-        );
+    pub async fn sender(&self) -> Result<Sender<T>, ReusableError> {
+        loop {
+            let swap = self.inner.state.compare_exchange(
+                ROSC_IDLE,
+                ROSC_WAITING,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            );
 
-        match swap {
-            Ok(_) => Ok(Sender {
-                inner: self.inner.clone(),
-            }),
-            Err(ROSC_WAITING | ROSC_WRITING | ROSC_READY) => {
-                Err(ReusableError::SenderAlreadyActive)
+            match swap {
+                Ok(_) => return Ok(Sender {
+                    inner: self.inner.clone(),
+                }),
+                Err(val) => {
+                    if val == ROSC_READY {
+                        let _ = self.receive().await;
+                    } else if (val == ROSC_WAITING) | (val == ROSC_WRITING) {
+                        return Err(ReusableError::SenderAlreadyActive)
+                    } else {
+                        return Err(ReusableError::InternalError)
+                    }
+                }
             }
-            Err(_) => Err(ReusableError::InternalError),
         }
     }
 

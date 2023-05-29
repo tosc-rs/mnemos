@@ -34,7 +34,11 @@ use embedded_graphics::{
 };
 use profont::PROFONT_12_POINT;
 
+const DISPLAY_WIDTH_PX: u32 = 400;
+const DISPLAY_HEIGHT_PX: u32 = 240;
 const HEAP_SIZE: usize = 192 * 1024;
+
+
 static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
 
 fn main() {
@@ -121,7 +125,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
         drop(mux_hdl);
 
         // Spawn the graphics driver
-        EmbDisplay::register(k, 4, 400, 240).await.unwrap();
+        EmbDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX).await.unwrap();
 
         k.spawn(
             async move {
@@ -169,7 +173,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
         // Draw titlebar
         {
-            let mut fc_0 = disp_hdl.get_framechunk(0, 0, 400, char_y).await.unwrap();
+            let mut fc_0 = disp_hdl.get_framechunk(0, 0, DISPLAY_WIDTH_PX, char_y).await.unwrap();
             let text_style = MonoTextStyle::new(&PROFONT_12_POINT, Gray8::WHITE);
             let text1 = Text::new(
                 "mnemOS",
@@ -182,7 +186,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
             let text2 = Text::new(
                 title,
                 Point::new(
-                    400 - ((title.len() as u32) * char_x) as i32,
+                    (DISPLAY_WIDTH_PX as i32) - ((title.len() as u32) * char_x) as i32,
                     PROFONT_12_POINT.baseline as i32,
                 ),
                 text_style,
@@ -196,7 +200,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
                     y: PROFONT_12_POINT.underline.offset as i32,
                 },
                 Point {
-                    x: 400,
+                    x: DISPLAY_WIDTH_PX as i32,
                     y: PROFONT_12_POINT.underline.offset as i32,
                 },
             )
@@ -223,7 +227,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
                     // before they've been consumed.
                     let mut fc_0 = loop {
                         let fc = disp_hdl
-                            .get_framechunk(0, char_y as i32, 400, 240 - char_y)
+                            .get_framechunk(0, char_y as i32, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX - char_y)
                             .await;
                         if let Some(fc) = fc {
                             break fc;
@@ -245,11 +249,14 @@ fn kernel_entry(opts: MelpomeneOptions) {
                             Err(_) if *b == b'\n' => {
                                 rline.submit_local_editing();
                                 b"And the computer says hi.".iter().for_each(|b| {
+                                    // This would only fire if the buffer was full, or we sent invalid characters.
+                                    // This will not happen with our pre-prepared message
                                     let _ = rline.append_remote_char(*b);
                                 });
                                 rline.submit_remote_editing();
                             }
-                            Err(_) => {
+                            Err(e) => {
+                                tracing::debug!(?e, "rline append error");
                                 println!("Got char: {:02X}", *b);
                             }
                         }
