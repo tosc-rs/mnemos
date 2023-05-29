@@ -1002,6 +1002,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "input-mgr"
+version = "0.1.0"
+source = "git+https://github.com/tosc-rs/teletype/?rev=1940b48dd71b905251981336602a1665de18d181#1940b48dd71b905251981336602a1665de18d181"
+
+[[package]]
 name = "instant"
 version = "0.1.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1166,11 +1171,15 @@ dependencies = [
  "embedded-graphics",
  "embedded-graphics-simulator",
  "humantime",
+ "input-mgr",
  "maitake",
  "mnemos",
  "mnemos-abi",
+ "mnemos-alloc",
  "mnemos-std",
  "postcard 1.0.1",
+ "profont",
+ "ring-drawer",
  "tokio",
  "tracing 0.1.35",
  "tracing-modality",
@@ -1663,6 +1672,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "profont"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd908932b251e9f146130df7566e8f7c5b0c6ddb29f6d67571f3579f59043c36"
+dependencies = [
+ "embedded-graphics",
+]
+
+[[package]]
 name = "prost"
 version = "0.10.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1926,6 +1944,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3acd125665422973a33ac9d3dd2df85edad0f4ae9b00dafb1a05e43a9f5ef8e7"
 dependencies = [
  "winapi",
+]
+
+[[package]]
+name = "ring-drawer"
+version = "0.1.0"
+source = "git+https://github.com/tosc-rs/teletype/?rev=1940b48dd71b905251981336602a1665de18d181#1940b48dd71b905251981336602a1665de18d181"
+dependencies = [
+ "embedded-graphics",
+ "input-mgr",
+ "profont",
 ]
 
 [[package]]

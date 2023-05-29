@@ -192,7 +192,7 @@ impl SerialMuxHandle {
         self.prod
             .send(
                 Request::RegisterPort { port_id, capacity },
-                ReplyTo::OneShot(self.reply.sender().ok()?),
+                ReplyTo::OneShot(self.reply.sender().await.ok()?),
             )
             .await
             .ok()?;

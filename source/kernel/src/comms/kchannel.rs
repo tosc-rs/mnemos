@@ -61,7 +61,7 @@ impl<T> Deref for KChannel<T> {
 }
 
 impl<T> KChannel<T> {
-    /// Create a new KChannel<T> with room for `count` elements on the given
+    /// Create a new `KChannel<T>` with room for `count` elements on the given
     /// Kernel's allocator.
     pub async fn new_async(kernel: &'static Kernel, count: usize) -> Self {
         let func = || UnsafeCell::new(spitebuf::single_cell::<T>());
@@ -74,7 +74,7 @@ impl<T> KChannel<T> {
         }
     }
 
-    /// Create a new KChannel<T> with room for `count` elements on the given
+    /// Create a new `KChannel<T>` with room for `count` elements on the given
     /// Kernel's allocator. Used for pre-async initialization steps
     pub fn new(guard: &mut HeapGuard, count: usize) -> Self {
         let func = || UnsafeCell::new(spitebuf::single_cell::<T>());

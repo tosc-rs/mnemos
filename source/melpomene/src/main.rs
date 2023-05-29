@@ -5,15 +5,17 @@ use std::{
 
 use abi::bbqueue_ipc::BBBuffer;
 use clap::Parser;
+use input_mgr::RingLine;
 use melpomene::{
     cli::{self, MelpomeneOptions},
-    sim_drivers::{delay::Delay, tcp_serial::TcpSerial},
+    sim_drivers::{
+        delay::Delay,
+        emb_display::{EmbDisplay, EmbDisplayHandle},
+        tcp_serial::TcpSerial,
+    },
 };
 use mnemos_kernel::{
-    drivers::{
-        emb_display::{EmbDisplay, EmbDisplayHandle},
-        serial_mux::{SerialMux, SerialMuxHandle},
-    },
+    drivers::serial_mux::{SerialMux, SerialMuxHandle},
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -23,22 +25,19 @@ use tokio::{
 
 use tracing::Instrument;
 
-use chrono::{Datelike, Local, Timelike};
-
 use embedded_graphics::{
-    image::{Image, ImageRaw},
-    mono_font::{ascii::FONT_5X7, ascii::FONT_6X9, MonoTextStyle},
+    mono_font::MonoTextStyle,
     pixelcolor::Gray8,
-    prelude::*,
+    prelude::{Drawable, GrayColor, Point, Primitive},
     primitives::{Line, PrimitiveStyle},
     text::Text,
 };
+use profont::PROFONT_12_POINT;
 
-use embedded_graphics_simulator::{
-    BinaryColorTheme, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
-};
-
+const DISPLAY_WIDTH_PX: u32 = 400;
+const DISPLAY_HEIGHT_PX: u32 = 240;
 const HEAP_SIZE: usize = 192 * 1024;
+
 static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
 
 fn main() {
@@ -124,6 +123,11 @@ fn kernel_entry(opts: MelpomeneOptions) {
         let p1 = mux_hdl.open_port(1, 1024).await.unwrap();
         drop(mux_hdl);
 
+        // Spawn the graphics driver
+        EmbDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
+            .await
+            .unwrap();
+
         k.spawn(
             async move {
                 loop {
@@ -153,77 +157,121 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
     k.initialize(initialization_future).unwrap();
 
-    // Creating a dummy task to use the embedded display driver
-    let graphics_init_future = async move {
-        // Delay for one second, just for funsies
-        Delay::new(Duration::from_secs(1)).await;
+    // Create the interactive console task
+    let graphics_console = async move {
+        // Delay for 1.5 seconds, just for funsies
+        Delay::new(Duration::from_millis(1_500)).await;
 
-        EmbDisplay::register(k, 4, 160, 120).await.unwrap();
+        // Take Port 2 from the serial mux. This corresponds to TCP port 10002 when
+        // you are running crowtty
+        let mut mux_hdl = SerialMuxHandle::from_registry(k).await.unwrap();
+        let p2 = mux_hdl.open_port(2, 1024).await.unwrap();
+        drop(mux_hdl);
 
         let mut disp_hdl = EmbDisplayHandle::from_registry(k).await.unwrap();
-        let mut fc_0 = disp_hdl.get_framechunk(0, 80, 45, 160, 120).await.unwrap();
-        drop(disp_hdl);
+        let char_y = PROFONT_12_POINT.character_size.height;
+        let char_x = PROFONT_12_POINT.character_size.width + PROFONT_12_POINT.character_spacing;
 
-        let line_style = PrimitiveStyle::with_stroke(Gray8::WHITE, 1);
-        let tline = Line::new(Point::new(148, 2), Point::new(8, 2)).into_styled(line_style);
-        let bline = Line::new(Point::new(148, 24), Point::new(8, 24)).into_styled(line_style);
-        let lline = Line::new(Point::new(7, 24), Point::new(7, 2)).into_styled(line_style);
-        let rline = Line::new(Point::new(149, 24), Point::new(149, 2)).into_styled(line_style);
-        let text_style = MonoTextStyle::new(&FONT_6X9, Gray8::WHITE);
-        let datetime_style = MonoTextStyle::new(&FONT_5X7, Gray8::WHITE);
-        let text1 = Text::new("Welcome to mnemOS!", Point::new(10, 10), text_style);
-        let text2 = Text::new("A tiny operating system", Point::new(10, 20), text_style);
-        let output_settings = OutputSettingsBuilder::new()
-            .theme(BinaryColorTheme::OledBlue)
-            .build();
+        // Draw titlebar
+        {
+            let mut fc_0 = disp_hdl
+                .get_framechunk(0, 0, DISPLAY_WIDTH_PX, char_y)
+                .await
+                .unwrap();
+            let text_style = MonoTextStyle::new(&PROFONT_12_POINT, Gray8::WHITE);
+            let text1 = Text::new(
+                "mnemOS",
+                Point::new(0, PROFONT_12_POINT.baseline as i32),
+                text_style,
+            );
+            text1.draw(&mut fc_0).unwrap();
 
-        let mut sdisp = SimulatorDisplay::<Gray8>::new(Size::new(320, 240));
-        let mut window = Window::new("mnemOS", &output_settings);
+            let title = "forth shell";
+            let text2 = Text::new(
+                title,
+                Point::new(
+                    (DISPLAY_WIDTH_PX as i32) - ((title.len() as u32) * char_x) as i32,
+                    PROFONT_12_POINT.baseline as i32,
+                ),
+                text_style,
+            );
+            text2.draw(&mut fc_0).unwrap();
+
+            let line_style = PrimitiveStyle::with_stroke(Gray8::WHITE, 1);
+            Line::new(
+                Point {
+                    x: 0,
+                    y: PROFONT_12_POINT.underline.offset as i32,
+                },
+                Point {
+                    x: DISPLAY_WIDTH_PX as i32,
+                    y: PROFONT_12_POINT.underline.offset as i32,
+                },
+            )
+            .into_styled(line_style)
+            .draw(&mut fc_0)
+            .unwrap();
+            disp_hdl.draw_framechunk(fc_0).await.unwrap();
+        }
 
         k.spawn(
             async move {
-                'running: loop {
-                    // disp.clear(Gray8::BLACK).unwrap();
+                let style = ring_drawer::BwStyle {
+                    background: Gray8::BLACK,
+                    font: MonoTextStyle::new(&PROFONT_12_POINT, Gray8::WHITE),
+                };
 
-                    tline.draw(&mut fc_0).unwrap();
-                    bline.draw(&mut fc_0).unwrap();
-                    rline.draw(&mut fc_0).unwrap();
-                    lline.draw(&mut fc_0).unwrap();
+                // At 12-pt font, there is enough room for 16 lines, with 50 chars/line.
+                //
+                // Leave out 4 for the implicit margin of two characters on each gutter.
+                let mut rline = RingLine::<16, 46>::new();
 
-                    text1.draw(&mut fc_0).unwrap();
-                    text2.draw(&mut fc_0).unwrap();
-
-                    let time = Local::now();
-
-                    let time_str = format!(
-                        "{:02}:{:02}:{02}",
-                        time.hour(),
-                        time.minute(),
-                        time.second()
-                    );
-
-                    let date_str =
-                        format!("{:02}/{:02}/{:02}", time.month(), time.day(), time.year());
-
-                    let date_text = Text::new(&date_str, Point::new(28, 35), datetime_style);
-                    let time_text = Text::new(&time_str, Point::new(88, 35), datetime_style);
-
-                    date_text.draw(&mut fc_0).unwrap();
-                    time_text.draw(&mut fc_0).unwrap();
-                    {
-                        let raw_img = fc_0.frame_display().unwrap();
-                        let image = Image::new(&raw_img, Point::new(80, 45));
-                        image.draw(&mut sdisp).unwrap();
-
-                        window.update(&sdisp);
-                        if window.events().any(|e| e == SimulatorEvent::Quit) {
-                            break 'running;
+                loop {
+                    // Wait until there is a frame buffer ready. There wouldn't be if we've spammed frames
+                    // before they've been consumed.
+                    let mut fc_0 = loop {
+                        let fc = disp_hdl
+                            .get_framechunk(
+                                0,
+                                char_y as i32,
+                                DISPLAY_WIDTH_PX,
+                                DISPLAY_HEIGHT_PX - char_y,
+                            )
+                            .await;
+                        if let Some(fc) = fc {
+                            break fc;
+                        } else {
+                            Delay::new(Duration::from_millis(10)).await;
                         }
+                    };
+                    ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
+                    disp_hdl.draw_framechunk(fc_0).await.unwrap();
 
-                        Delay::new(Duration::from_secs(1)).await;
-                        sdisp.clear(Gray8::BLACK).unwrap();
+                    let rgr = p2.consumer().read_grant().await;
+                    for b in rgr.iter() {
+                        match rline.append_local_char(*b) {
+                            Ok(_) => {}
+                            // backspace
+                            Err(_) if *b == 0x7F => {
+                                rline.pop_local_char();
+                            }
+                            Err(_) if *b == b'\n' => {
+                                rline.submit_local_editing();
+                                b"And the computer says hi.".iter().for_each(|b| {
+                                    // This would only fire if the buffer was full, or we sent invalid characters.
+                                    // This will not happen with our pre-prepared message
+                                    let _ = rline.append_remote_char(*b);
+                                });
+                                rline.submit_remote_editing();
+                            }
+                            Err(e) => {
+                                tracing::debug!(?e, "rline append error");
+                                println!("Got char: {:02X}", *b);
+                            }
+                        }
                     }
-                    fc_0.frame_clear();
+                    let len = rgr.len();
+                    rgr.release(len);
                 }
             }
             .instrument(tracing::info_span!("Update clock")),
@@ -232,7 +280,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
     }
     .instrument(tracing::info_span!("Initialize graphics driver"));
 
-    k.initialize(graphics_init_future).unwrap();
+    k.initialize(graphics_console).unwrap();
 
     //////////////////////////////////////////////////////////////////////////////
     // TODO: Userspace doesn't really do anything yet! Simulate initialization of
@@ -271,73 +319,3 @@ fn kernel_entry(opts: MelpomeneOptions) {
         KERNEL_LOCK.store(false, Ordering::Release);
     }
 }
-
-// fn userspace_entry() {
-//     use mstd::alloc::HEAP;
-
-//     // Set up kernel rings
-//     let u2k = unsafe { BBBuffer::take_framed_producer(abi::U2K_RING.load(Ordering::Acquire)) };
-//     let k2u = unsafe { BBBuffer::take_framed_consumer(abi::K2U_RING.load(Ordering::Acquire)) };
-
-//     // Set up allocator
-//     let mut hg = HEAP.init_exclusive(
-//         abi::HEAP_PTR.load(Ordering::Acquire) as usize,
-//         abi::HEAP_LEN.load(Ordering::Acquire),
-//     ).unwrap();
-
-//     // Set up executor
-//     let terpsichore = &mstd::executor::EXECUTOR;
-
-//     // Spawn the `main` task
-//     let mtask = mstd::executor::Task::new(async move {
-//         aman().await
-//     });
-//     let hbmtask = hg.alloc_box(mtask).map_err(drop).unwrap();
-//     drop(hg);
-//     let hg2 = HEAP.lock().unwrap();
-//     drop(hg2);
-//     let _mhdl = mstd::executor::spawn_allocated(hbmtask);
-
-//     let rings = Rings {
-//         u2k,
-//         k2u,
-//     };
-//     mstd::executor::mailbox::MAILBOX.set_rings(rings);
-
-//     let start = Instant::now();
-//     loop {
-//         *mstd::executor::time::CURRENT_TIME.borrow_mut().unwrap() = start.elapsed().as_micros() as u64;
-//         terpsichore.run();
-//         KERNEL_LOCK.store(true, Ordering::Release);
-//         while KERNEL_LOCK.load(Ordering::Acquire) {
-//             sleep(Duration::from_millis(50));
-//         }
-//     }
-
-// }
-
-// async fn aman() -> Result<(), ()> {
-//     mstd::executor::spawn(async {
-//         for _ in 0..3 {
-//             println!("[ST1] Hi, I'm aman's subtask!");
-//             Sleepy::new(Duration::from_secs(3)).await;
-//         }
-//         println!("[ST1] subtask done!");
-//     }).await;
-
-//     mstd::executor::spawn(async {
-//         for _ in 0..3 {
-//             let msg = UserRequestBody::Serial(SerialRequest::Flush);
-//             println!("[ST2] Sending to kernel: {:?}", msg);
-//             let resp = MAILBOX.request(msg).await;
-//             println!("[ST2] Kernel said: {:?}", resp);
-//             Sleepy::new(Duration::from_secs(2)).await;
-//         }
-//         println!("[ST2] subtask done!");
-//     }).await;
-
-//     loop {
-//         println!("[MT] Hi, I'm aman!");
-//         Sleepy::new(Duration::from_secs(1)).await;
-//     }
-// }

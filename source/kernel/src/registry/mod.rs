@@ -673,7 +673,10 @@ pub mod simple_serial {
 
         pub async fn get_port(&mut self) -> Option<BidiHandle> {
             self.kprod
-                .send(Request::GetPort, ReplyTo::OneShot(self.rosc.sender().ok()?))
+                .send(
+                    Request::GetPort,
+                    ReplyTo::OneShot(self.rosc.sender().await.ok()?),
+                )
                 .await
                 .ok()?;
             let resp = self.rosc.receive().await.ok()?;

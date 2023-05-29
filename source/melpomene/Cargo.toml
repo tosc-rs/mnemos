@@ -28,6 +28,9 @@ features = ["serde"]
 package = "mnemos"
 path = "../kernel"
 
+[dependencies.mnemos-alloc]
+version = "0.1.0"
+
 [dependencies.mnemos-abi]
 path = "../abi"
 
@@ -66,6 +69,17 @@ version = "0.3.0"
 
 [dependencies.chrono]
 version = "0.4"
+
+[dependencies.profont]
+version = "0.6.1"
+
+[dependencies.input-mgr]
+git = "https://github.com/tosc-rs/teletype/"
+rev = "1940b48dd71b905251981336602a1665de18d181"
+
+[dependencies.ring-drawer]
+git = "https://github.com/tosc-rs/teletype/"
+rev = "1940b48dd71b905251981336602a1665de18d181"
 
 # Melpomene does not use any APIs from `maitake` directly. This dependency is
 # instead required in order to enable `maitake`'s support for `tracing` 0.1.x,
