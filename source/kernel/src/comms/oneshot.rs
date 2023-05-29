@@ -98,16 +98,18 @@ impl<T> Reusable<T> {
             );
 
             match swap {
-                Ok(_) => return Ok(Sender {
-                    inner: self.inner.clone(),
-                }),
+                Ok(_) => {
+                    return Ok(Sender {
+                        inner: self.inner.clone(),
+                    })
+                }
                 Err(val) => {
                     if val == ROSC_READY {
                         let _ = self.receive().await;
                     } else if (val == ROSC_WAITING) | (val == ROSC_WRITING) {
-                        return Err(ReusableError::SenderAlreadyActive)
+                        return Err(ReusableError::SenderAlreadyActive);
                     } else {
-                        return Err(ReusableError::InternalError)
+                        return Err(ReusableError::InternalError);
                     }
                 }
             }

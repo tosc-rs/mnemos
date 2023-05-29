@@ -81,9 +81,7 @@ impl EmbDisplay {
             },
         };
 
-        kernel
-            .spawn(commander.run(width, height))
-            .await;
+        kernel.spawn(commander.run(width, height)).await;
 
         kernel
             .with_registry(|reg| reg.register_konly::<EmbDisplay>(&cmd_prod))
@@ -211,7 +209,8 @@ impl CommanderTask {
                     width,
                     height,
                 } => {
-                    let res = self.display_info
+                    let res = self
+                        .display_info
                         .new_frame(*start_x, *start_y, *width, *height)
                         .await
                         .map(Response::FrameChunkAllocated);

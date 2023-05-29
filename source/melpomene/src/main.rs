@@ -38,7 +38,6 @@ const DISPLAY_WIDTH_PX: u32 = 400;
 const DISPLAY_HEIGHT_PX: u32 = 240;
 const HEAP_SIZE: usize = 192 * 1024;
 
-
 static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
 
 fn main() {
@@ -125,7 +124,9 @@ fn kernel_entry(opts: MelpomeneOptions) {
         drop(mux_hdl);
 
         // Spawn the graphics driver
-        EmbDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX).await.unwrap();
+        EmbDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
+            .await
+            .unwrap();
 
         k.spawn(
             async move {
@@ -173,7 +174,10 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
         // Draw titlebar
         {
-            let mut fc_0 = disp_hdl.get_framechunk(0, 0, DISPLAY_WIDTH_PX, char_y).await.unwrap();
+            let mut fc_0 = disp_hdl
+                .get_framechunk(0, 0, DISPLAY_WIDTH_PX, char_y)
+                .await
+                .unwrap();
             let text_style = MonoTextStyle::new(&PROFONT_12_POINT, Gray8::WHITE);
             let text1 = Text::new(
                 "mnemOS",
@@ -227,7 +231,12 @@ fn kernel_entry(opts: MelpomeneOptions) {
                     // before they've been consumed.
                     let mut fc_0 = loop {
                         let fc = disp_hdl
-                            .get_framechunk(0, char_y as i32, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX - char_y)
+                            .get_framechunk(
+                                0,
+                                char_y as i32,
+                                DISPLAY_WIDTH_PX,
+                                DISPLAY_HEIGHT_PX - char_y,
+                            )
                             .await;
                         if let Some(fc) = fc {
                             break fc;
