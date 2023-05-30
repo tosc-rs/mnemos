@@ -1,8 +1,6 @@
-use forth3::{AsyncForth, dictionary::{AsyncBuiltinEntry, AsyncBuiltins, OwnedDict}, fastr::FaStr, word::Word, CallContext,};
-use mnemos_alloc::{containers::{HeapBox, HeapFixedVec}, heap::Heap};
-use core::future::Future;
-use portable_atomic::{Ordering, AtomicPtr}
-
+use forth3::{AsyncForth, dictionary::{AsyncBuiltinEntry, AsyncBuiltins, OwnedDict, Dictionary, self}, fastr::FaStr, word::Word, CallContext, input::WordStrBuf, output::OutputBuf};
+use mnemos_alloc::{containers::{HeapFixedVec}, heap};
+use core::{future::Future, ptr::NonNull};
 use crate::{Kernel, comms::bbq};
 
 
@@ -13,11 +11,13 @@ pub struct Params {
     pub input_buf_size: usize,
     pub output_buf_size: usize,
     pub dictionary_size: usize,
+    pub stdin_capacity: usize,
+    pub stdout_capacity: usize,
 }
 
 pub struct Forth {
     forth: AsyncForth<MnemosContext, Dispatcher>,
-    bidi: bbq::BidiHandle,
+    stdio: bbq::BidiHandle,
     _payload_dstack: HeapFixedVec<Word>,
     _payload_rstack: HeapFixedVec<Word>,
     _payload_cstack: HeapFixedVec<CallContext<MnemosContext>>,
@@ -26,25 +26,93 @@ pub struct Forth {
 }
 
 impl Forth {
-    pub async fn new(kernel: &'static Kernel, params: Params) -> (Self, bbq::BidiHandle) {
+    pub async fn new(kernel: &'static Kernel, params: Params) -> Result<(Self, bbq::BidiHandle), &'static str> {
         let heap = kernel.heap();
-        let dstack_buf = heap.allocate_fixed_vec(params.stack_size).await;
-        let rstack_buf = heap.allocate_fixed_vec(params.stack_size).await;
-        let cstack_buf = heap.allocate_fixed_vec(params.stack_size).await;
-        let input_buf = heap.allocate_fixed_vec(params.input_buf_size).await;
-        let output_buf = heap.allocate_fixed_vec(params.output_buf_size).await;
-        let dict_buf = heap.allocate_fixed_vec(params.dictionary_size).await;
-        let dict = OwnedDict::new();
-        todo!("eliza")
+        let (stdio, streams) = bbq::new_bidi_channel(heap, params.stdout_capacity, params.stdin_capacity).await;
+        // TODO(eliza): group all of these into one struct so that we don't have
+        // to do a bunch of waiting for separate allocations?
+        let mut dstack_buf = heap.allocate_fixed_vec(params.stack_size).await;
+        let mut rstack_buf = heap.allocate_fixed_vec(params.stack_size).await;
+        let mut cstack_buf = heap.allocate_fixed_vec(params.stack_size).await;
+        let mut input_buf = heap.allocate_fixed_vec(params.input_buf_size).await;
+        let mut output_buf = heap.allocate_fixed_vec(params.output_buf_size).await;
+
+        let input = WordStrBuf::new(input_buf.as_mut_ptr(), input_buf.len());
+        let output = OutputBuf::new(output_buf.as_mut_ptr(), output_buf.len());
+        let dict = {
+            let layout = Dictionary::<MnemosContext>::layout(params.dictionary_size).map_err(|_| "invalid dictionary size")?;
+            let dict_buf = heap.allocate_raw(layout).await.cast::<core::mem::MaybeUninit<Dictionary<MnemosContext>>>();
+            OwnedDict::new::<DropDict>(dict_buf, params.dictionary_size)
+        };
+        let forth = unsafe {
+            AsyncForth::new(
+                (dstack_buf.as_mut_ptr(), params.stack_size),
+                (rstack_buf.as_mut_ptr(), params.stack_size),
+                (cstack_buf.as_mut_ptr(), params.stack_size),
+                dict,
+                input,
+                output,
+                MnemosContext { kernel },
+                forth3::Forth::FULL_BUILTINS,
+                Dispatcher
+            )
+                .map_err(|err| {
+                    tracing::error!(?err, "Failed to construct Forth VM");
+                    "failed to construct Forth VM"
+                })?
+
+        };
+        let forth = Self {
+            forth, stdio,
+            _payload_dstack: dstack_buf,
+            _payload_cstack: cstack_buf,
+            _payload_rstack: rstack_buf,
+            _input_buf: input_buf, _output_buf: output_buf,
+        };
+        Ok((forth, streams))
     }
 
-    pub async fn run(self) {
-        todo!("eliza")
+    pub async fn run(mut self) -> Result<(), ()> {
+        tracing::info!("forth running");
+        loop {
+            // read from stdin
+            {
+                let read = self.stdio.consumer().read_grant().await;
+                tracing::info!("got rgr");
+                let len = read.len();
+                match core::str::from_utf8(&read) {
+                    Ok(input) => {
+                        tracing::debug!(len, "> {input}");
+                        self.forth.input_mut().fill(input)?;
+                        read.release(len);
+                    },
+                    Err(_e) => todo!("eliza: what to do if the input is not utf8?"),
+                };
+            }
+
+            match self.forth.process_line().await {
+                Ok(()) => {
+                    let out_str = self.forth.output().as_str();
+                    let output = out_str.as_bytes();
+                    let len = output.len();
+                    tracing::debug!(len, "< {out_str}");
+                    let mut send = self.stdio.producer().send_grant_exact(output.len()).await;
+                    send.copy_from_slice(output);
+                    send.commit(len);
+                }
+                Err(error) => {
+                    tracing::error!(?error);
+                    // TODO(eliza): send error on stdout?
+                }
+            }
+
+            self.forth.output_mut().clear();
+        }
     }
 }
 
 struct MnemosContext {
-    // TODO(eliza): eventually the host context will have stuff in it...
+    kernel: &'static Kernel,
 }
 
 struct Dispatcher;
@@ -57,11 +125,28 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
     const BUILTINS: &'static [AsyncBuiltinEntry<MnemosContext>] = &[];
 
     fn dispatch_async(&self, id: &FaStr, forth: &'forth mut forth3::Forth<MnemosContext>) -> Self::Future {
+        tracing::warn!("unimplemented async builtin: {}", id.as_str());
         async {
             Ok(())
         }
     }
 }
 
-// workaround for no global allocator
-static ALLOCATOR: AtomicPtr<AHeap> = AtomicPtr::new(ptr::null_mut());
+impl dictionary::DropDict for DropDict {
+    unsafe fn drop_dict(ptr: NonNull<u8>, layout: core::alloc::Layout) {
+        heap::deallocate_raw(ptr.cast(), layout);
+    }
+}
+
+impl Params {
+    pub const fn new() -> Self {
+        Self {
+            stack_size: 256,
+            input_buf_size: 256,
+            output_buf_size: 256,
+            dictionary_size: 4096,
+            stdin_capacity: 1024,
+            stdout_capacity: 1024,
+        }
+    }
+}

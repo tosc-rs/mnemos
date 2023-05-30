@@ -17,7 +17,7 @@ use core::{
     mem::MaybeUninit,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
-use maitake::wait::{WaitCell, WaitQueue};
+use maitake::sync::{WaitCell, WaitQueue};
 use std::marker::PhantomData;
 
 pub unsafe trait Storage<T> {

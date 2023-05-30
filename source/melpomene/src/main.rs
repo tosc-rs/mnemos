@@ -15,6 +15,7 @@ use melpomene::{
     },
 };
 use mnemos_kernel::{
+    forth::{self, Forth},
     drivers::serial_mux::{SerialMux, SerialMuxHandle},
     Kernel, KernelSettings,
 };
@@ -216,6 +217,15 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
         k.spawn(
             async move {
+                // TODO(eliza): don't spawn the forth task from within the
+                // graphics driver lol...
+
+                let tid0 = {
+                    let (tid0, tid0_streams) = Forth::new(k, forth::Params::new()).await.expect("spawning forth should succeed");
+                    k.spawn(async move { tid0.run() }.instrument(tracing::info_span!("task", id = 0))).await;
+                    tid0_streams
+                };
+
                 let style = ring_drawer::BwStyle {
                     background: Gray8::BLACK,
                     font: MonoTextStyle::new(&PROFONT_12_POINT, Gray8::WHITE),
@@ -248,30 +258,48 @@ fn kernel_entry(opts: MelpomeneOptions) {
                     disp_hdl.draw_framechunk(fc_0).await.unwrap();
 
                     let rgr = p2.consumer().read_grant().await;
-                    for b in rgr.iter() {
-                        match rline.append_local_char(*b) {
+                    let mut read_amt = 0;
+                    'input: for &b in rgr.iter() {
+                        read_amt += 1;
+                        tracing::info!(?b, ?read_amt);
+                        match rline.append_local_char(b) {
                             Ok(_) => {}
                             // backspace
-                            Err(_) if *b == 0x7F => {
+                            Err(_) if b == 0x7F => {
                                 rline.pop_local_char();
                             }
-                            Err(_) if *b == b'\n' => {
+                            Err(_) if b == b'\n' => {
                                 rline.submit_local_editing();
-                                b"And the computer says hi.".iter().for_each(|b| {
-                                    // This would only fire if the buffer was full, or we sent invalid characters.
-                                    // This will not happen with our pre-prepared message
-                                    let _ = rline.append_remote_char(*b);
-                                });
-                                rline.submit_remote_editing();
+                                break 'input;
                             }
                             Err(e) => {
                                 tracing::debug!(?e, "rline append error");
-                                println!("Got char: {:02X}", *b);
+                                println!("Got char: {:02X}", b);
                             }
                         }
                     }
-                    let len = rgr.len();
-                    rgr.release(len);
+                    tracing::info!(?read_amt);
+
+                    // send line to tid 0
+                    {
+                        let mut tid0_wgr = tid0.producer().send_grant_exact(read_amt).await;
+                        tid0_wgr.copy_from_slice(&rgr[..read_amt]);
+                        tid0_wgr.commit(read_amt);
+                    }
+
+                    rgr.release(read_amt);
+                    tracing::info!("rgr released");
+                    // maitake::task::yield_now().await;
+
+                    let output = tid0.consumer().read_grant().await;
+                    tracing::info!("got output grant");
+                    let len = output.len();
+                    for &b in output.iter() {
+                        // TODO(eliza): what if this errors lol
+                        let _ = rline.append_remote_char(b);
+                    }
+                    output.release(len);
+                    rline.submit_remote_editing();
                 }
             }
             .instrument(tracing::info_span!("Update clock")),
