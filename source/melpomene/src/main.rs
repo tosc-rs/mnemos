@@ -223,7 +223,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
                 let tid0 = {
                     let (tid0, tid0_streams) = Forth::new(k, forth::Params::new()).await.expect("spawning forth should succeed");
-                    k.spawn(async move { tid0.run() }.instrument(tracing::info_span!("task", id = 0))).await;
+                    k.spawn(async move { tid0.run().await }.instrument(tracing::info_span!("task", id = 0))).await;
                     tid0_streams
                 };
 
