@@ -23,6 +23,7 @@ use tokio::{
     task,
     time::{self, Duration},
 };
+use futures::FutureExt; // fuse()
 
 use tracing::Instrument;
 
@@ -257,49 +258,48 @@ fn kernel_entry(opts: MelpomeneOptions) {
                     ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
                     disp_hdl.draw_framechunk(fc_0).await.unwrap();
 
-                    let rgr = p2.consumer().read_grant().await;
-                    let mut read_amt = 0;
-                    'input: for &b in rgr.iter() {
-                        read_amt += 1;
-                        tracing::info!(?b, ?read_amt);
-                        match rline.append_local_char(b) {
-                            Ok(_) => {}
-                            // backspace
-                            Err(_) if b == 0x7F => {
-                                rline.pop_local_char();
+                    futures::select! {
+                        rgr = p2.consumer().read_grant().fuse() => {
+                            let mut read_amt = 0;
+                            'input: for &b in rgr.iter() {
+                                read_amt += 1;
+                                tracing::info!(?b, ?read_amt);
+                                match rline.append_local_char(b) {
+                                    Ok(_) => {}
+                                    // backspace
+                                    Err(_) if b == 0x7F => {
+                                        rline.pop_local_char();
+                                    }
+                                    Err(_) if b == b'\n' => {
+                                        rline.submit_local_editing();
+                                        break 'input;
+                                    }
+                                    Err(e) => {
+                                        tracing::debug!(?e, "rline append error");
+                                        println!("Got char: {:02X}", b);
+                                    }
+                                }
                             }
-                            Err(_) if b == b'\n' => {
-                                rline.submit_local_editing();
-                                break 'input;
+                            // send line to tid 0
+                            {
+                                let mut tid0_wgr = tid0.producer().send_grant_exact(read_amt).await;
+                                tid0_wgr.copy_from_slice(&rgr[..read_amt]);
+                                tid0_wgr.commit(read_amt);
                             }
-                            Err(e) => {
-                                tracing::debug!(?e, "rline append error");
-                                println!("Got char: {:02X}", b);
+
+                            rgr.release(read_amt);
+                        },
+                        output = tid0.consumer().read_grant().fuse() => {
+                            tracing::info!("got output grant");
+                            let len = output.len();
+                            for &b in output.iter() {
+                                // TODO(eliza): what if this errors lol
+                                let _ = rline.append_remote_char(b);
                             }
+                            output.release(len);
+                            rline.submit_remote_editing();
                         }
                     }
-                    tracing::info!(?read_amt);
-
-                    // send line to tid 0
-                    {
-                        let mut tid0_wgr = tid0.producer().send_grant_exact(read_amt).await;
-                        tid0_wgr.copy_from_slice(&rgr[..read_amt]);
-                        tid0_wgr.commit(read_amt);
-                    }
-
-                    rgr.release(read_amt);
-                    tracing::info!("rgr released");
-                    // maitake::task::yield_now().await;
-
-                    let output = tid0.consumer().read_grant().await;
-                    tracing::info!("got output grant");
-                    let len = output.len();
-                    for &b in output.iter() {
-                        // TODO(eliza): what if this errors lol
-                        let _ = rline.append_remote_char(b);
-                    }
-                    output.release(len);
-                    rline.submit_remote_editing();
                 }
             }
             .instrument(tracing::info_span!("Update clock")),
