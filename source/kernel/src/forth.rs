@@ -37,8 +37,8 @@ impl Forth {
         let mut input_buf = heap.allocate_fixed_vec(params.input_buf_size).await;
         let mut output_buf = heap.allocate_fixed_vec(params.output_buf_size).await;
 
-        let input = WordStrBuf::new(input_buf.as_mut_ptr(), input_buf.len());
-        let output = OutputBuf::new(output_buf.as_mut_ptr(), output_buf.len());
+        let input = WordStrBuf::new(input_buf.as_mut_ptr(), params.input_buf_size);
+        let output = OutputBuf::new(output_buf.as_mut_ptr(), params.output_buf_size);
         let dict = {
             let layout = Dictionary::<MnemosContext>::layout(params.dictionary_size).map_err(|_| "invalid dictionary size")?;
             let dict_buf = heap.allocate_raw(layout).await.cast::<core::mem::MaybeUninit<Dictionary<MnemosContext>>>();
@@ -78,12 +78,11 @@ impl Forth {
             // read from stdin
             {
                 let read = self.stdio.consumer().read_grant().await;
-                tracing::info!("got rgr");
                 let len = read.len();
                 match core::str::from_utf8(&read) {
                     Ok(input) => {
-                        tracing::debug!(len, "> {input}");
-                        self.forth.input_mut().fill(input)?;
+                        tracing::debug!(len, "> {input:?}");
+                        self.forth.input_mut().fill(input).expect("eliza: why would this fail?");
                         read.release(len);
                     },
                     Err(_e) => todo!("eliza: what to do if the input is not utf8?"),

@@ -223,7 +223,10 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
                 let tid0 = {
                     let (tid0, tid0_streams) = Forth::new(k, forth::Params::new()).await.expect("spawning forth should succeed");
-                    k.spawn(async move { tid0.run().await }.instrument(tracing::info_span!("task", id = 0))).await;
+                    k.spawn(async move { match tid0.run().await {
+                        Ok(_) => tracing::info!("forth task exited successfully"),
+                        Err(_) => tracing::error!("forth task died!"),
+                    }}.instrument(tracing::info_span!("task", id = 0))).await;
                     tid0_streams
                 };
 
