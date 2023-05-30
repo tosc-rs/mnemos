@@ -89,6 +89,10 @@ rev = "1940b48dd71b905251981336602a1665de18d181"
 version = "0.1.0"
 features = ["tracing-01"]
 
+[dependencies.forth3]
+git = "https://github.com/jamesmunns/forth3"
+rev = "8743d9ef9eea0eb0e4420231e4d6d6cdadcfb2fc"
+features = ["async"]
 
 [features]
 # enables Tokio Console support

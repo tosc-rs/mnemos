@@ -1,9 +1,11 @@
 #![no_std]
 #![allow(clippy::missing_safety_doc)]
+#![feature(impl_trait_in_assoc_type)]
 
 pub mod comms;
 pub mod drivers;
 pub(crate) mod fmt;
+pub mod forth;
 pub mod registry;
 
 use abi::{
