@@ -314,7 +314,7 @@ impl EmbDisplayHandle {
                     width,
                     height,
                 },
-                ReplyTo::OneShot(self.reply.sender().await.unwrap()),
+                ReplyTo::OneShot(self.reply.sender().await.ok()?),
             )
             .await
             .ok()?;

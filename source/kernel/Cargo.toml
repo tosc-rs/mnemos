@@ -63,3 +63,11 @@ features = ["experimental-derive"]
 
 [dependencies.embedded-graphics]
 version = "0.7.1"
+
+[dependencies.forth3]
+git = "https://github.com/jamesmunns/forth3"
+rev = "8743d9ef9eea0eb0e4420231e4d6d6cdadcfb2fc"
+features = ["async"]
+
+[dependencies.portable-atomic]
+version = "1"

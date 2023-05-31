@@ -5,6 +5,7 @@ use std::{
 
 use abi::bbqueue_ipc::BBBuffer;
 use clap::Parser;
+use futures::FutureExt;
 use input_mgr::RingLine;
 use melpomene::{
     cli::{self, MelpomeneOptions},
@@ -16,12 +17,13 @@ use melpomene::{
 };
 use mnemos_kernel::{
     drivers::serial_mux::{SerialMux, SerialMuxHandle},
+    forth::{self, Forth},
     Kernel, KernelSettings,
 };
 use tokio::{
     task,
     time::{self, Duration},
-};
+}; // fuse()
 
 use tracing::Instrument;
 
@@ -214,8 +216,18 @@ fn kernel_entry(opts: MelpomeneOptions) {
             disp_hdl.draw_framechunk(fc_0).await.unwrap();
         }
 
+        let tid0 = {
+            let (tid0, tid0_streams) = Forth::new(k, forth::Params::new()).await.expect("spawning forth should succeed");
+            k.spawn(tid0.run()).await;
+            tracing::info!("Task 0 spawned!");
+            tid0_streams
+        };
+
         k.spawn(
             async move {
+                // TODO(eliza): don't spawn the forth task from within the
+                // graphics driver lol...
+
                 let style = ring_drawer::BwStyle {
                     background: Gray8::BLACK,
                     font: MonoTextStyle::new(&PROFONT_12_POINT, Gray8::WHITE),
@@ -247,31 +259,46 @@ fn kernel_entry(opts: MelpomeneOptions) {
                     ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
                     disp_hdl.draw_framechunk(fc_0).await.unwrap();
 
-                    let rgr = p2.consumer().read_grant().await;
-                    for b in rgr.iter() {
-                        match rline.append_local_char(*b) {
-                            Ok(_) => {}
-                            // backspace
-                            Err(_) if *b == 0x7F => {
-                                rline.pop_local_char();
+                    futures::select! {
+                        rgr = p2.consumer().read_grant().fuse() => {
+                            let mut used = 0;
+                            'input: for &b in rgr.iter() {
+                                used += 1;
+                                match rline.append_local_char(b) {
+                                    Ok(_) => {}
+                                    // backspace
+                                    Err(_) if b == 0x7F => {
+                                        rline.pop_local_char();
+                                    }
+                                    Err(_) if b == b'\n' => {
+                                        let needed = rline.local_editing_len();
+                                        if needed != 0 {
+                                            let mut tid0_wgr = tid0.producer().send_grant_exact(needed).await;
+                                            rline.copy_local_editing_to(&mut tid0_wgr).unwrap();
+                                            tid0_wgr.commit(needed);
+                                            rline.submit_local_editing();
+                                            break 'input;
+                                        }
+                                    }
+                                    Err(error) => {
+                                        tracing::warn!(?error, "Error appending char: {:02X}", b);
+                                    }
+                                }
                             }
-                            Err(_) if *b == b'\n' => {
-                                rline.submit_local_editing();
-                                b"And the computer says hi.".iter().for_each(|b| {
-                                    // This would only fire if the buffer was full, or we sent invalid characters.
-                                    // This will not happen with our pre-prepared message
-                                    let _ = rline.append_remote_char(*b);
-                                });
-                                rline.submit_remote_editing();
+
+                            rgr.release(used);
+                        },
+                        output = tid0.consumer().read_grant().fuse() => {
+                            let len = output.len();
+                            tracing::trace!(len, "Received output from TID0");
+                            for &b in output.iter() {
+                                // TODO(eliza): what if this errors lol
+                                let _ = rline.append_remote_char(b);
                             }
-                            Err(e) => {
-                                tracing::debug!(?e, "rline append error");
-                                println!("Got char: {:02X}", *b);
-                            }
+                            output.release(len);
+                            rline.submit_remote_editing();
                         }
                     }
-                    let len = rgr.len();
-                    rgr.release(len);
                 }
             }
             .instrument(tracing::info_span!("Update clock")),

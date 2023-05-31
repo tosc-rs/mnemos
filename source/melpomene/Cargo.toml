@@ -75,11 +75,11 @@ version = "0.6.1"
 
 [dependencies.input-mgr]
 git = "https://github.com/tosc-rs/teletype/"
-rev = "1940b48dd71b905251981336602a1665de18d181"
+rev = "de95e610cc79db6d59ad6b40eb2d82adebb4e033"
 
 [dependencies.ring-drawer]
 git = "https://github.com/tosc-rs/teletype/"
-rev = "1940b48dd71b905251981336602a1665de18d181"
+rev = "de95e610cc79db6d59ad6b40eb2d82adebb4e033"
 
 # Melpomene does not use any APIs from `maitake` directly. This dependency is
 # instead required in order to enable `maitake`'s support for `tracing` 0.1.x,
@@ -89,6 +89,15 @@ rev = "1940b48dd71b905251981336602a1665de18d181"
 version = "0.1.0"
 features = ["tracing-01"]
 
+[dependencies.forth3]
+git = "https://github.com/jamesmunns/forth3"
+rev = "8743d9ef9eea0eb0e4420231e4d6d6cdadcfb2fc"
+features = ["async"]
+
+[dependencies.futures]
+version = "0.3"
+default-features = false
+# features = 
 
 [features]
 # enables Tokio Console support
