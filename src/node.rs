@@ -88,6 +88,16 @@ pub(crate) struct ActiveArr<T> {
     data: [T; 0],
 }
 
+#[repr(C)]
+pub(crate) struct ActiveUnsized {
+    heap: *const AHeap,
+    // NOTE(eliza): we *could* make this know its own layout, too, if we wanted
+    // to...that would give us an `ActiveUnsized::deallocate` function that
+    // doesn't need a user-provided layout. But I didn't do that, because I
+    // didn't actually need it right now.
+    data: [u8; 0],
+}
+
 /// A Recycle node type
 ///
 /// Recycle is the "terminal state" of all allocations. After the actual
@@ -242,6 +252,83 @@ impl<T> ActiveArr<T> {
 
         (*heap).release_node(ptr);
     }
+}
+
+impl ActiveUnsized {
+    /// Obtain a valid layout for an ActiveUnsized with an inner allocation of
+    /// the requested `Layout`.
+    #[inline]
+    pub(crate) fn layout(layout_inner: Layout) -> Layout {
+        let layout_node = Layout::new::<Node<()>>();
+        let (mut layout, _offset) = Layout::new::<*const AHeap>().extend(layout_inner).unwrap();
+        debug_assert_eq!(0 - _offset as isize, Self::data_offset(), "this is real bad!");
+        // round up to ensure we can fit a `Node`
+        if layout_node.size() > layout.size() {
+            layout = layout_node;
+        }
+        layout
+    }
+
+    /// Set the heap pointer contained within the given `ActiveUnsized`.
+    ///
+    /// This should ONLY be used to initialize the `ActiveUnsized` at time of allocation.
+    #[inline(always)]
+    pub(crate) unsafe fn write_heap(this: NonNull<Self>, heap: *const AHeap) {
+        let ptr = this.as_ptr();
+        core::ptr::addr_of_mut!((*ptr).heap).write(heap);
+    }
+
+
+    /// Obtain a pointer to the start of the unsized storage,
+    #[inline(always)]
+    pub(crate) unsafe fn data(this: NonNull<Self>) -> NonNull<()> {
+        let tptr = this.as_ptr();
+        let daddr = core::ptr::addr_of_mut!((*tptr).data);
+        NonNull::new_unchecked(daddr.cast::<()>())
+    }
+
+    #[inline(always)]
+    pub(crate) unsafe fn from_raw(data: NonNull<()>) -> NonNull<Self> {
+        let ptr = data
+            .cast::<u8>()
+            .as_ptr()
+            .offset(Self::data_offset())
+            .cast::<Self>();
+        NonNull::new_unchecked(ptr)
+    }
+
+    #[inline(always)]
+    fn data_offset() -> isize {
+        let dummy: ActiveUnsized = ActiveUnsized {
+            heap: null(),
+            data: [],
+        };
+        let data_ptr = addr_of!(dummy.data);
+        let dummy_ptr: *const ActiveUnsized = &dummy;
+        unsafe { dummy_ptr.cast::<u8>().offset_from(data_ptr.cast::<u8>()) }
+    }
+
+    /// Convert an `ActiveUnsized` into a Recycle, and release it to be freed.
+    ///
+    /// # Safety
+    ///
+    /// The provided `Layout` *must* be the same as the `ActiveUnsized`'s
+    /// original allocated `Layout`!
+    #[inline]
+    pub(crate) unsafe fn yeet(mut ptr: NonNull<Self>, layout: Layout) {
+        let heap = ptr.as_mut().heap;
+
+        let ptr: NonNull<Recycle> = ptr.cast();
+        let layout = Self::layout(layout);
+
+        ptr.as_ptr().write(Recycle {
+            links: Links::new(),
+            node_layout: layout,
+        });
+
+        (*heap).release_node(ptr);
+    }
+
 }
 
 impl<T> Drop for Node<T> {

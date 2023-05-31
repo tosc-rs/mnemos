@@ -10,7 +10,7 @@ use core::{
 
 use crate::{
     containers::{HeapArray, HeapBox, ArcInner, HeapArc, HeapFixedVec},
-    node::{Active, ActiveArr, Node, NodeRef, Recycle},
+    node::{Active, ActiveArr, Node, NodeRef, Recycle, ActiveUnsized},
 };
 
 use cordyceps::mpsc_queue::{Links, MpscQueue};
@@ -275,6 +275,45 @@ impl AHeap {
             self.heap_wait.wait().await.unwrap();
         }
     }
+
+    pub async fn allocate_raw(&'static self, layout: Layout) -> NonNull<()> {
+        loop {
+            // Is the heap inhibited?
+            if !self.inhibit_alloc.load(Ordering::Acquire) {
+                // Can we get an exclusive heap handle?
+                if let Ok(mut hg) = self.lock() {
+                    match hg.alloc_raw(layout) {
+                        Ok(hb) => {
+                            // Yes! Return our allocated item
+                            return hb;
+                        }
+                        Err(_) => {
+                            // Nope, the allocation failed.
+                        }
+                    }
+                }
+                // We weren't inhibited before, but something failed. Inhibit
+                // further allocations to prevent starving waiting allocations
+                self.inhibit_alloc.store(true, Ordering::Release);
+            }
+
+            // Didn't succeed, wait until we've done some de-allocations
+            self.heap_wait.wait().await.unwrap();
+        }
+    }
+} 
+
+/// Deallocate an unsized allocation with the provided `Layout`.
+///
+/// # Safety
+///
+/// - `ptr` *must* have been returned by a call to [`Heap::allocate_raw`] or
+///   [`HeapGuard::alloc_raw`]!
+/// - `layout` *must* be the same `Layout` that was provided to the original
+///   call to [`Heap::allocate_raw`] or[`HeapGuard::alloc_raw`]!
+pub unsafe fn deallocate_raw(ptr: NonNull<()>, layout: Layout) {
+    let ptr = ActiveUnsized::from_raw(ptr);
+    ActiveUnsized::yeet(ptr, layout);
 }
 
 /// A guard type that provides mutually exclusive access to the allocator as
@@ -432,6 +471,24 @@ impl HeapGuard {
             pd: PhantomData,
             len: 0,
         })
+    }
+
+    pub fn alloc_raw(&mut self, layout: Layout) -> Result<NonNull<()>, ()> {
+        // Clean up any pending allocs
+        self.clean_allocs();
+
+        // calculate the layout of the requested allocation
+        let layout = ActiveUnsized::layout(layout);
+
+        // Then, attempt to allocate the requested T.
+        let nnu8 = self.get_heap().allocate_first_fit(layout)?;
+        let ptr = nnu8.cast::<ActiveUnsized>();
+
+        unsafe {
+            ActiveUnsized::write_heap(ptr, self.aheap);
+
+            Ok(ActiveUnsized::data(ptr))
+        }
     }
 }
 
