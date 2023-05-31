@@ -140,7 +140,7 @@ impl Forth {
                     // TODO(ajm): I need a "clear" function for the input. This wont properly
                     // clear string literals either.
                     let inp = self.forth.input_mut();
-                    while let Some(_) = inp.cur_word() {
+                    while inp.cur_word().is_some() {
                         inp.advance();
                     }
                 }
@@ -152,6 +152,7 @@ impl Forth {
 }
 
 struct MnemosContext {
+    #[allow(dead_code)] // this will be used later
     kernel: &'static Kernel,
 }
 
@@ -170,6 +171,7 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
         forth: &'forth mut forth3::Forth<MnemosContext>,
     ) -> Self::Future {
         tracing::warn!("unimplemented async builtin: {}", id.as_str());
+        let _ = forth;
         async { Ok(()) }
     }
 }
