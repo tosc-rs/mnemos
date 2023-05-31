@@ -226,7 +226,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
                     k.spawn(async move { match tid0.run().await {
                         Ok(_) => tracing::info!("forth task exited successfully"),
                         Err(_) => tracing::error!("forth task died!"),
-                    }}.instrument(tracing::info_span!("task", id = 0))).await;
+                    }}.instrument(tracing::info_span!(parent: None, "Forth", id = 0))).await;
                     tid0_streams
                 };
 
@@ -283,9 +283,8 @@ fn kernel_entry(opts: MelpomeneOptions) {
                                         rline.submit_local_editing();
                                         break 'input;
                                     }
-                                    Err(e) => {
-                                        tracing::debug!(?e, "rline append error");
-                                        println!("Got char: {:02X}", b);
+                                    Err(error) => {
+                                        tracing::warn!(?error, "Error appending char: {:02X}", b);
                                     }
                                 }
                             }
@@ -293,8 +292,8 @@ fn kernel_entry(opts: MelpomeneOptions) {
                             rgr.release(ttl_amt);
                         },
                         output = tid0.consumer().read_grant().fuse() => {
-                            tracing::info!("got output grant");
                             let len = output.len();
+                            tracing::trace!(len, "Received output from TID0");
                             for &b in output.iter() {
                                 // TODO(eliza): what if this errors lol
                                 let _ = rline.append_remote_char(b);
