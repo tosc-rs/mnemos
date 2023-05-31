@@ -5,6 +5,7 @@ use std::{
 
 use abi::bbqueue_ipc::BBBuffer;
 use clap::Parser;
+use futures::FutureExt;
 use input_mgr::RingLine;
 use melpomene::{
     cli::{self, MelpomeneOptions},
@@ -15,15 +16,14 @@ use melpomene::{
     },
 };
 use mnemos_kernel::{
-    forth::{self, Forth},
     drivers::serial_mux::{SerialMux, SerialMuxHandle},
+    forth::{self, Forth},
     Kernel, KernelSettings,
 };
 use tokio::{
     task,
     time::{self, Duration},
-};
-use futures::FutureExt; // fuse()
+}; // fuse()
 
 use tracing::Instrument;
 
@@ -261,8 +261,9 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
                     futures::select! {
                         rgr = p2.consumer().read_grant().fuse() => {
-                            let ttl_amt = rgr.len();
+                            let mut used = 0;
                             'input: for &b in rgr.iter() {
+                                used += 1;
                                 match rline.append_local_char(b) {
                                     Ok(_) => {}
                                     // backspace
@@ -270,16 +271,14 @@ fn kernel_entry(opts: MelpomeneOptions) {
                                         rline.pop_local_char();
                                     }
                                     Err(_) if b == b'\n' => {
-                                        // TODO(AJM): This is WRONG! It only takes the most recent line in the editing buffer,
-                                        // NOT the entire editing buffer! I need to add an interface for this.
-                                        if let Some(line) = rline.iter_local_editing().next() {
-                                            let mut tid0_wgr = tid0.producer().send_grant_exact(line.as_str().len()).await;
-                                            tid0_wgr.copy_from_slice(line.as_str().as_bytes());
-                                            let len = tid0_wgr.len();
-                                            tid0_wgr.commit(len);
+                                        let needed = rline.local_editing_len();
+                                        if needed != 0 {
+                                            let mut tid0_wgr = tid0.producer().send_grant_exact(needed).await;
+                                            rline.copy_local_editing_to(&mut tid0_wgr).unwrap();
+                                            tid0_wgr.commit(needed);
+                                            rline.submit_local_editing();
+                                            break 'input;
                                         }
-                                        rline.submit_local_editing();
-                                        break 'input;
                                     }
                                     Err(error) => {
                                         tracing::warn!(?error, "Error appending char: {:02X}", b);
@@ -287,7 +286,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
                                 }
                             }
 
-                            rgr.release(ttl_amt);
+                            rgr.release(used);
                         },
                         output = tid0.consumer().read_grant().fuse() => {
                             let len = output.len();

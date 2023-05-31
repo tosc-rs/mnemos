@@ -1,9 +1,15 @@
-use forth3::{AsyncForth, dictionary::{AsyncBuiltinEntry, AsyncBuiltins, OwnedDict, Dictionary, self}, fastr::FaStr, word::Word, CallContext, input::WordStrBuf, output::OutputBuf}; 
-use mnemos_alloc::{containers::{HeapFixedVec}, heap};
+use crate::{comms::bbq, Kernel};
 use core::{future::Future, ptr::NonNull};
+use forth3::{
+    dictionary::{self, AsyncBuiltinEntry, AsyncBuiltins, Dictionary, OwnedDict},
+    fastr::FaStr,
+    input::WordStrBuf,
+    output::OutputBuf,
+    word::Word,
+    AsyncForth, CallContext,
+};
+use mnemos_alloc::{containers::HeapFixedVec, heap};
 use portable_atomic::{AtomicUsize, Ordering};
-use crate::{Kernel, comms::bbq};
-
 
 #[derive(Copy, Clone, Debug)]
 #[non_exhaustive]
@@ -28,11 +34,15 @@ pub struct Forth {
 }
 
 impl Forth {
-    pub async fn new(kernel: &'static Kernel, params: Params) -> Result<(Self, bbq::BidiHandle), &'static str> {
+    pub async fn new(
+        kernel: &'static Kernel,
+        params: Params,
+    ) -> Result<(Self, bbq::BidiHandle), &'static str> {
         static NEXT_TASK_ID: AtomicUsize = AtomicUsize::new(0);
 
         let heap = kernel.heap();
-        let (stdio, streams) = bbq::new_bidi_channel(heap, params.stdout_capacity, params.stdin_capacity).await;
+        let (stdio, streams) =
+            bbq::new_bidi_channel(heap, params.stdout_capacity, params.stdin_capacity).await;
         // TODO(eliza): group all of these into one struct so that we don't have
         // to do a bunch of waiting for separate allocations?
         let mut dstack_buf = heap.allocate_fixed_vec(params.stack_size).await;
@@ -44,13 +54,15 @@ impl Forth {
         let input = WordStrBuf::new(input_buf.as_mut_ptr(), params.input_buf_size);
         let output = OutputBuf::new(output_buf.as_mut_ptr(), params.output_buf_size);
         let dict = {
-            let layout = Dictionary::<MnemosContext>::layout(params.dictionary_size).map_err(|_| "invalid dictionary size")?;
-            let dict_buf = heap.allocate_raw(layout).await.cast::<core::mem::MaybeUninit<Dictionary<MnemosContext>>>();
+            let layout = Dictionary::<MnemosContext>::layout(params.dictionary_size)
+                .map_err(|_| "invalid dictionary size")?;
+            let dict_buf = heap
+                .allocate_raw(layout)
+                .await
+                .cast::<core::mem::MaybeUninit<Dictionary<MnemosContext>>>();
             OwnedDict::new::<DropDict>(dict_buf, params.dictionary_size)
         };
-        let host_ctxt = MnemosContext {
-            kernel,
-        };
+        let host_ctxt = MnemosContext { kernel };
         let forth = unsafe {
             AsyncForth::new(
                 (dstack_buf.as_mut_ptr(), params.stack_size),
@@ -61,20 +73,21 @@ impl Forth {
                 output,
                 host_ctxt,
                 forth3::Forth::FULL_BUILTINS,
-                Dispatcher
+                Dispatcher,
             )
-                .map_err(|err| {
-                    tracing::error!(?err, "Failed to construct Forth VM");
-                    "failed to construct Forth VM"
-                })?
-
+            .map_err(|err| {
+                tracing::error!(?err, "Failed to construct Forth VM");
+                "failed to construct Forth VM"
+            })?
         };
         let forth = Self {
-            forth, stdio,
+            forth,
+            stdio,
             _payload_dstack: dstack_buf,
             _payload_cstack: cstack_buf,
             _payload_rstack: rstack_buf,
-            _input_buf: input_buf, _output_buf: output_buf,
+            _input_buf: input_buf,
+            _output_buf: output_buf,
             id: NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed),
         };
         Ok((forth, streams))
@@ -96,9 +109,12 @@ impl Forth {
                 match core::str::from_utf8(&read) {
                     Ok(input) => {
                         tracing::debug!(len, "> {:?}", input.trim());
-                        self.forth.input_mut().fill(input).expect("eliza: why would this fail?");
+                        self.forth
+                            .input_mut()
+                            .fill(input)
+                            .expect("eliza: why would this fail?");
                         read.release(len);
-                    },
+                    }
                     Err(_e) => todo!("eliza: what to do if the input is not utf8?"),
                 };
             }
@@ -116,7 +132,17 @@ impl Forth {
                 }
                 Err(error) => {
                     tracing::error!(?error);
-                    // TODO(eliza): send the error to the task's output stream?
+                    // TODO(ajm): Provide some kind of fixed length error string?
+                    const ERROR: &[u8] = b"ERROR.";
+                    let mut send = self.stdio.producer().send_grant_exact(ERROR.len()).await;
+                    send.copy_from_slice(ERROR);
+                    send.commit(ERROR.len());
+                    // TODO(ajm): I need a "clear" function for the input. This wont properly
+                    // clear string literals either.
+                    let inp = self.forth.input_mut();
+                    while let Some(_) = inp.cur_word() {
+                        inp.advance();
+                    }
                 }
             }
 
@@ -138,11 +164,13 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
 
     const BUILTINS: &'static [AsyncBuiltinEntry<MnemosContext>] = &[];
 
-    fn dispatch_async(&self, id: &FaStr, forth: &'forth mut forth3::Forth<MnemosContext>) -> Self::Future {
+    fn dispatch_async(
+        &self,
+        id: &FaStr,
+        forth: &'forth mut forth3::Forth<MnemosContext>,
+    ) -> Self::Future {
         tracing::warn!("unimplemented async builtin: {}", id.as_str());
-        async {
-            Ok(())
-        }
+        async { Ok(()) }
     }
 }
 
