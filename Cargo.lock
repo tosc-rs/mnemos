@@ -1333,7 +1333,7 @@ dependencies = [
 [[package]]
 name = "mnemos-alloc"
 version = "0.1.0"
-source = "git+https://github.com/tosc-rs/mnemos-alloc?branch=eliza/alloc-layout#c1ed0d5348189c044289eefbcdded1d73610c3a2"
+source = "git+https://github.com/tosc-rs/mnemos-alloc?rev=ee3be682a984e54fc13d55655de31a9b9ff004c7#ee3be682a984e54fc13d55655de31a9b9ff004c7"
 dependencies = [
  "cordyceps",
  "heapless",
