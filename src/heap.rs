@@ -3,14 +3,14 @@ use core::{
     alloc::Layout,
     cell::UnsafeCell,
     marker::PhantomData,
-    ptr::NonNull,
-    sync::atomic::{AtomicBool, AtomicUsize, AtomicU8, Ordering},
     mem::MaybeUninit,
+    ptr::NonNull,
+    sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering},
 };
 
 use crate::{
-    containers::{HeapArray, HeapBox, ArcInner, HeapArc, HeapFixedVec},
-    node::{Active, ActiveArr, Node, NodeRef, Recycle, ActiveUnsized},
+    containers::{ArcInner, HeapArc, HeapArray, HeapBox, HeapFixedVec},
+    node::{Active, ActiveArr, ActiveUnsized, Node, NodeRef, Recycle},
 };
 
 use cordyceps::mpsc_queue::{Links, MpscQueue};
@@ -301,7 +301,7 @@ impl AHeap {
             self.heap_wait.wait().await.unwrap();
         }
     }
-} 
+}
 
 /// Deallocate an unsized allocation with the provided `Layout`.
 ///
@@ -312,7 +312,7 @@ impl AHeap {
 /// - `layout` *must* be the same `Layout` that was provided to the original
 ///   call to [`Heap::allocate_raw`] or[`HeapGuard::alloc_raw`]!
 pub unsafe fn deallocate_raw(ptr: NonNull<()>, layout: Layout) {
-    let ptr = ActiveUnsized::from_raw(ptr);
+    let ptr = ActiveUnsized::from_raw(ptr, layout);
     ActiveUnsized::yeet(ptr, layout);
 }
 
@@ -390,7 +390,10 @@ impl HeapGuard {
         self.clean_allocs();
 
         // Then, attempt to allocate the requested T.
-        let nnu8 = match self.get_heap().allocate_first_fit(Layout::new::<Node<ArcInner<T>>>()) {
+        let nnu8 = match self
+            .get_heap()
+            .allocate_first_fit(Layout::new::<Node<ArcInner<T>>>())
+        {
             Ok(t) => t,
             Err(_) => return Err(data),
         };
@@ -399,7 +402,10 @@ impl HeapGuard {
         // And initialize it with the contents given to us
         unsafe {
             Active::<ArcInner<T>>::write_heap(nn, self.aheap);
-            Active::<ArcInner<T>>::data(nn).as_ptr().write(ArcInner { data, refcnt: AtomicUsize::new(1) });
+            Active::<ArcInner<T>>::data(nn).as_ptr().write(ArcInner {
+                data,
+                refcnt: AtomicUsize::new(1),
+            });
         }
 
         Ok(HeapArc {
@@ -441,8 +447,7 @@ impl HeapGuard {
         })
     }
 
-    pub fn alloc_fixed_vec<T>(&mut self, capacity: usize) -> Result<HeapFixedVec<T>, ()>
-    {
+    pub fn alloc_fixed_vec<T>(&mut self, capacity: usize) -> Result<HeapFixedVec<T>, ()> {
         // Clean up any pending allocs
         self.clean_allocs();
 
@@ -478,7 +483,7 @@ impl HeapGuard {
         self.clean_allocs();
 
         // calculate the layout of the requested allocation
-        let layout = ActiveUnsized::layout(layout);
+        let (layout, offset) = ActiveUnsized::layout(layout);
 
         // Then, attempt to allocate the requested T.
         let nnu8 = self.get_heap().allocate_first_fit(layout)?;
@@ -486,8 +491,8 @@ impl HeapGuard {
 
         unsafe {
             ActiveUnsized::write_heap(ptr, self.aheap);
-
-            Ok(ActiveUnsized::data(ptr))
+            let data_ptr = ptr.as_ptr().cast::<u8>().add(offset).cast::<()>();
+            Ok(NonNull::new_unchecked(data_ptr))
         }
     }
 }

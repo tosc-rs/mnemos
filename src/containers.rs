@@ -1,7 +1,7 @@
 use crate::node::{Active, ActiveArr};
 use core::marker::PhantomData;
 use core::mem::MaybeUninit;
-use core::ptr::{addr_of, drop_in_place, addr_of_mut};
+use core::ptr::{addr_of, addr_of_mut, drop_in_place};
 use core::slice::{from_raw_parts, from_raw_parts_mut};
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::{
@@ -104,9 +104,7 @@ impl<T> ArcInner<T> {
             refcnt: AtomicUsize::new(0),
         };
         let dummy_ptr: *const ArcInner<MaybeUninit<T>> = &dummy;
-        let data_ptr = unsafe {
-            addr_of!((*dummy_ptr).data)
-        };
+        let data_ptr = unsafe { addr_of!((*dummy_ptr).data) };
         unsafe { dummy_ptr.cast::<u8>().offset_from(data_ptr.cast::<u8>()) }
     }
 }

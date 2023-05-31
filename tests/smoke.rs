@@ -1,6 +1,7 @@
-use std::{ops::Deref, alloc::Layout};
-use std::ptr::{NonNull, addr_of_mut};
+use std::ptr::{addr_of_mut, NonNull};
+use std::{alloc::Layout, ops::Deref};
 
+use mnemos_alloc::heap::deallocate_raw;
 use mnemos_alloc::{
     containers::{HeapArray, HeapBox},
     heap::AHeap,
@@ -71,14 +72,23 @@ fn basic_raw() {
     struct Tail {
         a: u8,
         b: u128,
-        c: [u64; 0]
+        c: [u64; 0],
+    }
+
+    #[repr(align(32))]
+    struct Items {
+        d: [u8; 64],
     }
 
     let layout_1 = Layout::array::<f64>(ALLOC_1_F64S).unwrap();
-    let (layout_2, _) = Layout::new::<Tail>().extend(Layout::array::<u64>(ALLOC_2_U64S).unwrap()).unwrap();
+    let (layout_2, _) = Layout::new::<Tail>()
+        .extend(Layout::array::<u64>(ALLOC_2_U64S).unwrap())
+        .unwrap();
+    let layout_3 = Layout::new::<Items>();
 
     let alloc_1: NonNull<()> = guard.alloc_raw(layout_1).unwrap();
     let alloc_2: NonNull<()> = guard.alloc_raw(layout_2).unwrap();
+    let alloc_3: NonNull<()> = guard.alloc_raw(layout_3).unwrap();
 
     // Write the full contents of alloc 1
     for i in 0..ALLOC_1_F64S {
@@ -90,8 +100,8 @@ fn basic_raw() {
     let sli = unsafe { core::slice::from_raw_parts(alloc_1.cast::<f64>().as_ptr(), ALLOC_1_F64S) };
     assert!(sli.iter().all(|f| *f == 1.2345f64));
 
-    // Write the full contents of alloc 2
     unsafe {
+        // Write the full contents of alloc 2
         let ptr2 = alloc_2.cast::<Tail>().as_ptr();
         addr_of_mut!((*ptr2).a).write(10);
         addr_of_mut!((*ptr2).b).write(u128::MAX - 3);
@@ -99,13 +109,32 @@ fn basic_raw() {
         for i in 0..ALLOC_2_U64S {
             base.add(i).write(u64::MAX - (i as u64));
         }
+
+        // read it back
+        assert_eq!((&*ptr2).a, 10);
+        assert_eq!((&*ptr2).b, u128::MAX - 3);
         let sli = core::slice::from_raw_parts(base, ALLOC_2_U64S);
-        assert!(sli.iter().enumerate().all(|(i, u)| *u == (u64::MAX - i as u64)));
+        assert!(sli
+            .iter()
+            .enumerate()
+            .all(|(i, u)| *u == (u64::MAX - i as u64)));
     }
 
-    drop(alloc_1);
+    unsafe {
+        // Write the full contents of alloc 3
+        let ptr3 = alloc_3.cast::<Items>().as_ptr();
+        ptr3.as_mut().unwrap().d.iter_mut().for_each(|i| *i = 123);
+        (&*ptr3).d.iter().for_each(|i| assert_eq!(*i, 123));
+    }
+
+    unsafe {
+        deallocate_raw(alloc_1, layout_1);
+    }
     drop(guard);
-    drop(alloc_2);
+    unsafe {
+        deallocate_raw(alloc_2, layout_2);
+        deallocate_raw(alloc_3, layout_3);
+    }
 }
 
 #[test]
