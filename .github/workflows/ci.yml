@@ -40,7 +40,8 @@ jobs:
     - name: install libudev
       run: sudo apt-get update && sudo apt-get install -y libudev-dev
     - name: install rust toolchain
-      run: rustup component add rustfmt && rustup show
+      # NOTE: Keep in sync with root level `rust-toolchain.toml`!
+      run: rustup component add rustfmt --toolchain nightly-2023-05-29 && rustup show
     - uses: olix0r/cargo-action-fmt@ee1ef42932e44794821dab57ef1bf7a73df8b21f
     - uses: actions/checkout@v2
     - name: run cargo check
@@ -59,7 +60,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: install rust toolchain
-      run: rustup component add rustfmt && rustup show
+      # NOTE: Keep in sync with root level `rust-toolchain.toml`!
+      run: rustup component add rustfmt --toolchain nightly-2023-05-29 && rustup show
     - uses: actions/checkout@v2
     - name: run rustfmt
       run: cargo fmt --check
@@ -73,7 +75,8 @@ jobs:
     - name: install libudev
       run: sudo apt-get update && sudo apt-get install -y libudev-dev
     - name: install rust toolchain
-      run: rustup component add rustfmt && rustup show
+      # NOTE: Keep in sync with root level `rust-toolchain.toml`!
+      run: rustup component add rustfmt --toolchain nightly-2023-05-29 && rustup show
     - uses: actions/checkout@v2
     - uses: olix0r/cargo-action-fmt@ee1ef42932e44794821dab57ef1bf7a73df8b21f
     - name: run rustdoc
