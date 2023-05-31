@@ -12,7 +12,7 @@
 //! ## Creating the kernel
 //!
 //! To create the kernel, you give it a region of memory (as a `*mut u8` + `usize`), by calling
-//! `Kernel::new()`.
+//! [`Kernel::new()`].
 //!
 //! At this point, the system is in "blocking" mode.
 //!
@@ -30,7 +30,7 @@
 //! drivers for various system components.
 //!
 //! Since we are not running the executor yet, the kernel provides an interface,
-//! `Kernel::initialize()`, which takes a future and spawns it on the executor. Futures added with
+//! [`Kernel::initialize()`], which takes a future and spawns it on the executor. Futures added with
 //! `initialize` still do not run until the later "running" phase.
 //!
 //! Right now, it is generally suggested you use one or more `initialize`
@@ -39,7 +39,7 @@
 //! ## Running mode
 //!
 //! Once everything is prepared and initialized, the startup code is expected to call
-//! `Kernel::tick()` repeatedly. On each call to tick:
+//! [`Kernel::tick()`] repeatedly. On each call to tick:
 //!
 //! * The allocator frees any synchronously dropped allocations, making them available for
 //!   asynchronous allocation
@@ -53,7 +53,7 @@
 //!
 //! At the moment, there is SOME concept of a userspace, which interacts with the kernel via a
 //! bidirectional IPC ringbuffer. Space for this ringbuffer is allocated when calling
-//! `Kernel::new()`. Additionally this ringbuffer is polled on each call to `tick`, after freeing
+//! [`Kernel::new()`]. Additionally this ringbuffer is polled on each call to `tick`, after freeing
 //! allocations and before calling `tick` on the scheduler.
 //!
 //! This is an artifact of how mnemos 0.1 worked, where there was a single userspace executor that
