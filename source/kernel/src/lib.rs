@@ -1,3 +1,71 @@
+//! # The mnemos kernel
+//!
+//! The mnemos kernel is implemented as a library, with platform-specific code depending on the
+//! kernel library and producing the final binary.
+//!
+//! ## The "kernelspace" entry point
+//!
+//! At the moment, the kernel requires some "entry point" code, more or less the `main()` function
+//! that runs when the system boots, to perform any system-specific initialization.
+//!
+//! This entry point code is responsible for setting up any hardware or subsystems that exist
+//! outside the kernel (or are required by any kernel services), as well as starting and running
+//! the kernel itself.
+//!
+//! ## Creating the kernel
+//!
+//! To create the kernel, you give it a region of memory (as a `*mut u8` + `usize`), by calling
+//! [`Kernel::new()`].
+//!
+//! At this point, the system is in "blocking" mode.
+//!
+//! Using the given region of memory, the kernel bootstraps itself, and creates the following:
+//!
+//! * An async executor, intended for "kernel services"
+//! * A kernel service discovery registry
+//! * An async heap allocator, intended for use by kernel services
+//!
+//! After creation, the executor is *not* running yet.
+//!
+//! ## Initialization phase
+//!
+//! After creating the kernel, we need to register kernel services, which are expected to act as
+//! drivers for various system components.
+//!
+//! Since we are not running the executor yet, the kernel provides an interface,
+//! [`Kernel::initialize()`], which takes a future and spawns it on the executor. Futures added with
+//! `initialize` still do not run until the later "running" phase.
+//!
+//! Right now, it is generally suggested you use one or more `initialize`
+//! calls to register all (initial) kernel services.
+//!
+//! ## Running mode
+//!
+//! Once everything is prepared and initialized, the startup code is expected to call
+//! [`Kernel::tick()`] repeatedly. On each call to tick:
+//!
+//! * The allocator frees any synchronously dropped allocations, making them available for
+//!   asynchronous allocation
+//! * The async executor is polled
+//!
+//! AT THE MOMENT, there is no indication of whether all tasks are blocked, which could be use to
+//! inform whether we should put the CPU into some kind of sleep mode until a hardware event (like
+//! a timer or DMA transaction) is triggered, and an async task has potentially been awoken.
+//!
+//! ## Not covered: "userspace"
+//!
+//! At the moment, there is SOME concept of a userspace, which interacts with the kernel via a
+//! bidirectional IPC ringbuffer. Space for this ringbuffer is allocated when calling
+//! [`Kernel::new()`]. Additionally this ringbuffer is polled on each call to `tick`, after freeing
+//! allocations and before calling `tick` on the scheduler.
+//!
+//! This is an artifact of how mnemos 0.1 worked, where there was a single userspace executor that
+//! existed and interacted with the kernel executor.
+//!
+//! As of 2023-05-30, I don't think this is the right abstraction for multiple userspace processes.
+//! The pieces that exist currently are likely to be removed or reworked heavily before they are
+//! usable, and should be considered nonfunctional at the moment.
+
 #![no_std]
 #![allow(clippy::missing_safety_doc)]
 
