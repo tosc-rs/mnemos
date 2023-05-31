@@ -1,5 +1,8 @@
 //! # The mnemos kernel
 //!
+//! The mnemos kernel is implemented as a library, with platform-specific code depending on the
+//! kernel library and producing the final binary.
+//!
 //! ## The "kernelspace" entry point
 //!
 //! At the moment, the kernel requires some "entry point" code, more or less the `main()` function
