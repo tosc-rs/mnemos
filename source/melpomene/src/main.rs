@@ -263,10 +263,8 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
                     futures::select! {
                         rgr = p2.consumer().read_grant().fuse() => {
-                            let mut read_amt = 0;
+                            let ttl_amt = rgr.len();
                             'input: for &b in rgr.iter() {
-                                read_amt += 1;
-                                tracing::info!(?b, ?read_amt);
                                 match rline.append_local_char(b) {
                                     Ok(_) => {}
                                     // backspace
@@ -274,6 +272,14 @@ fn kernel_entry(opts: MelpomeneOptions) {
                                         rline.pop_local_char();
                                     }
                                     Err(_) if b == b'\n' => {
+                                        // TODO(AJM): This is WRONG! It only takes the most recent line in the editing buffer,
+                                        // NOT the entire editing buffer! I need to add an interface for this.
+                                        if let Some(line) = rline.iter_local_editing().next() {
+                                            let mut tid0_wgr = tid0.producer().send_grant_exact(line.as_str().len()).await;
+                                            tid0_wgr.copy_from_slice(line.as_str().as_bytes());
+                                            let len = tid0_wgr.len();
+                                            tid0_wgr.commit(len);
+                                        }
                                         rline.submit_local_editing();
                                         break 'input;
                                     }
@@ -283,14 +289,8 @@ fn kernel_entry(opts: MelpomeneOptions) {
                                     }
                                 }
                             }
-                            // send line to tid 0
-                            {
-                                let mut tid0_wgr = tid0.producer().send_grant_exact(read_amt).await;
-                                tid0_wgr.copy_from_slice(&rgr[..read_amt]);
-                                tid0_wgr.commit(read_amt);
-                            }
 
-                            rgr.release(read_amt);
+                            rgr.release(ttl_amt);
                         },
                         output = tid0.consumer().read_grant().fuse() => {
                             tracing::info!("got output grant");
