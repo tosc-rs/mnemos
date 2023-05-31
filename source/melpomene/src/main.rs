@@ -216,19 +216,17 @@ fn kernel_entry(opts: MelpomeneOptions) {
             disp_hdl.draw_framechunk(fc_0).await.unwrap();
         }
 
+        let tid0 = {
+            let (tid0, tid0_streams) = Forth::new(k, forth::Params::new()).await.expect("spawning forth should succeed");
+            k.spawn(tid0.run()).await;
+            tracing::info!("Task 0 spawned!");
+            tid0_streams
+        };
+
         k.spawn(
             async move {
                 // TODO(eliza): don't spawn the forth task from within the
                 // graphics driver lol...
-
-                let tid0 = {
-                    let (tid0, tid0_streams) = Forth::new(k, forth::Params::new()).await.expect("spawning forth should succeed");
-                    k.spawn(async move { match tid0.run().await {
-                        Ok(_) => tracing::info!("forth task exited successfully"),
-                        Err(_) => tracing::error!("forth task died!"),
-                    }}.instrument(tracing::info_span!(parent: None, "Forth", id = 0))).await;
-                    tid0_streams
-                };
 
                 let style = ring_drawer::BwStyle {
                     background: Gray8::BLACK,

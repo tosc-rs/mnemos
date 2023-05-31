@@ -1,6 +1,7 @@
-use forth3::{AsyncForth, dictionary::{AsyncBuiltinEntry, AsyncBuiltins, OwnedDict, Dictionary, self}, fastr::FaStr, word::Word, CallContext, input::WordStrBuf, output::OutputBuf};
+use forth3::{AsyncForth, dictionary::{AsyncBuiltinEntry, AsyncBuiltins, OwnedDict, Dictionary, self}, fastr::FaStr, word::Word, CallContext, input::WordStrBuf, output::OutputBuf}; 
 use mnemos_alloc::{containers::{HeapFixedVec}, heap};
 use core::{future::Future, ptr::NonNull};
+use portable_atomic::{AtomicUsize, Ordering};
 use crate::{Kernel, comms::bbq};
 
 
@@ -23,10 +24,13 @@ pub struct Forth {
     _payload_cstack: HeapFixedVec<CallContext<MnemosContext>>,
     _input_buf: HeapFixedVec<u8>,
     _output_buf: HeapFixedVec<u8>,
+    id: usize,
 }
 
 impl Forth {
     pub async fn new(kernel: &'static Kernel, params: Params) -> Result<(Self, bbq::BidiHandle), &'static str> {
+        static NEXT_TASK_ID: AtomicUsize = AtomicUsize::new(0);
+
         let heap = kernel.heap();
         let (stdio, streams) = bbq::new_bidi_channel(heap, params.stdout_capacity, params.stdin_capacity).await;
         // TODO(eliza): group all of these into one struct so that we don't have
@@ -44,6 +48,9 @@ impl Forth {
             let dict_buf = heap.allocate_raw(layout).await.cast::<core::mem::MaybeUninit<Dictionary<MnemosContext>>>();
             OwnedDict::new::<DropDict>(dict_buf, params.dictionary_size)
         };
+        let host_ctxt = MnemosContext {
+            kernel,
+        };
         let forth = unsafe {
             AsyncForth::new(
                 (dstack_buf.as_mut_ptr(), params.stack_size),
@@ -52,7 +59,7 @@ impl Forth {
                 dict,
                 input,
                 output,
-                MnemosContext { kernel },
+                host_ctxt,
                 forth3::Forth::FULL_BUILTINS,
                 Dispatcher
             )
@@ -68,12 +75,19 @@ impl Forth {
             _payload_cstack: cstack_buf,
             _payload_rstack: rstack_buf,
             _input_buf: input_buf, _output_buf: output_buf,
+            id: NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed),
         };
         Ok((forth, streams))
     }
 
-    pub async fn run(mut self) -> Result<(), ()> {
-        tracing::info!("forth running");
+    #[tracing::instrument(
+        level = tracing::Level::INFO,
+        "Forth",
+        skip(self),
+        fields(id = self.id)
+    )]
+    pub async fn run(mut self) {
+        tracing::info!("VM running");
         loop {
             // read from stdin
             {
@@ -81,7 +95,7 @@ impl Forth {
                 let len = read.len();
                 match core::str::from_utf8(&read) {
                     Ok(input) => {
-                        tracing::debug!(len, "> {input:?}");
+                        tracing::debug!(len, "> {:?}", input.trim());
                         self.forth.input_mut().fill(input).expect("eliza: why would this fail?");
                         read.release(len);
                     },
@@ -93,6 +107,7 @@ impl Forth {
                 Ok(()) => {
                     let out_str = self.forth.output().as_str();
                     let output = out_str.as_bytes();
+                    // write the task's output to stdout
                     let len = output.len();
                     tracing::debug!(len, "< {out_str}");
                     let mut send = self.stdio.producer().send_grant_exact(output.len()).await;
@@ -101,7 +116,7 @@ impl Forth {
                 }
                 Err(error) => {
                     tracing::error!(?error);
-                    // TODO(eliza): send error on stdout?
+                    // TODO(eliza): send the error to the task's output stream?
                 }
             }
 
