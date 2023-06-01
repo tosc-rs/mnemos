@@ -182,27 +182,12 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
 
     fn dispatch_async(
         &self,
-        id: &FaStr,
+        id: &'static FaStr,
         forth: &'forth mut forth3::Forth<MnemosContext>,
     ) -> Self::Future {
-        // grumble grumble lifetimes
-        enum Matchy {
-            SermuxOpenPort,
-            SermuxWriteOutbuf,
-        }
-
-        let m = match id.as_str() {
-            "sermux::open_port" => Some(Matchy::SermuxOpenPort),
-            "sermux::write_outbuf" => Some(Matchy::SermuxWriteOutbuf),
-            _ => {
-                tracing::warn!("unimplemented async builtin: {}", id.as_str());
-                None
-            }
-        };
-
-        async move {
-            match m {
-                Some(Matchy::SermuxOpenPort) => {
+        async {
+            match id.as_str() {
+                "sermux::open_port" => {
                     let sz = unsafe { forth.data_stack.try_pop()?.data as usize };
                     let port = unsafe { forth.data_stack.try_pop()?.data as u16 };
                     let mut mux_hdl = SerialMuxHandle::from_registry(forth.host_ctxt.kernel)
@@ -213,13 +198,16 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
                     forth.data_stack.push(Word::data(idx))?;
                     Ok(())
                 }
-                Some(Matchy::SermuxWriteOutbuf) => {
+                "sermux::write_outbuf" => {
                     let idx = unsafe { forth.data_stack.try_pop()?.data };
                     let port: &PortHandle = forth.host_ctxt.boh.get(idx).unwrap();
                     port.send(forth.output.as_str().as_bytes()).await;
                     Ok(())
                 }
-                None => Err(forth3::Error::WordNotInDict),
+                _ => {
+                    tracing::warn!("unimplemented async builtin: {}", id.as_str());
+                    Err(forth3::Error::WordNotInDict)
+                }
             }
         }
     }
