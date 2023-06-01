@@ -262,12 +262,14 @@ async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     Ok(())
 }
 
-/// Binding for [SerialMuxHandle::open_port()]
+/// Binding for [PortHandle::send()]
 ///
-/// Call: `PORT SZ sermux::open_port`
-/// Return: `BOH_TOKEN` on stack
+/// Writes the current contents of the output buffer to the [PortHandle].
 ///
-/// Errors on any invalid parameters
+/// Call: `BOH_TOKEN sermux::write_outbuf`
+/// Return: No change
+///
+/// Errors if the provided handle is incorrect
 async fn sermux_write_outbuf(
     forth: &mut forth3::Forth<MnemosContext>,
 ) -> Result<(), forth3::Error> {
