@@ -81,7 +81,7 @@ impl EmbDisplay {
             },
         };
 
-        kernel.spawn(commander.run(width, height)).await;
+        tokio::task::spawn_local(commander.run(width, height));
 
         kernel
             .with_registry(|reg| reg.register_konly::<EmbDisplay>(&cmd_prod))
@@ -167,30 +167,28 @@ impl CommanderTask {
             .await;
 
         // Spawn a task that draws the framebuffer at a regular rate of 15Hz.
-        self.kernel
-            .spawn({
-                let mutex = mutex.clone();
-                async move {
-                    loop {
-                        Delay::new(Duration::from_micros(1_000_000 / 15)).await;
-                        let mut guard = mutex.lock().await;
-                        let mut done = false;
-                        if let Some((sdisp, window)) = (&mut *guard).as_mut() {
-                            window.update(&sdisp);
-                            if window.events().any(|e| e == SimulatorEvent::Quit) {
-                                done = true;
-                            }
-                        } else {
+        tokio::task::spawn_local({
+            let mutex = mutex.clone();
+            async move {
+                loop {
+                    Delay::new(Duration::from_micros(1_000_000 / 15)).await;
+                    let mut guard = mutex.lock().await;
+                    let mut done = false;
+                    if let Some((sdisp, window)) = (&mut *guard).as_mut() {
+                        window.update(&sdisp);
+                        if window.events().any(|e| e == SimulatorEvent::Quit) {
                             done = true;
                         }
-                        if done {
-                            let _ = guard.take();
-                            break;
-                        }
+                    } else {
+                        done = true;
+                    }
+                    if done {
+                        let _ = guard.take();
+                        break;
                     }
                 }
-            })
-            .await;
+            }
+        });
 
         // This loop services incoming client requests.
         //
