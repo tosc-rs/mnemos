@@ -237,10 +237,13 @@ pub trait AsyncBuiltins<'forth, T: 'static> {
     /// for each builtin name. See [the `AsyncBuiltin` trait's
     /// documentation][impling] for details on implementing this method.
     ///
+    /// The `id` parameter is `'static`, as we will only resolve function names
+    /// from the provided [`Self::BUILTINS`], which must be `'static`.
+    ///
     /// [`Future`]: core::future::Future
     /// [`match`]: https://doc.rust-lang.org/stable/std/keyword.match.html
     /// [impling]: #implementing-async-builtins
-    fn dispatch_async(&self, id: &FaStr, forth: &'forth mut crate::Forth<T>) -> Self::Future;
+    fn dispatch_async(&self, id: &'static FaStr, forth: &'forth mut crate::Forth<T>) -> Self::Future;
 }
 
 impl<T: 'static> DictionaryEntry<T> {
