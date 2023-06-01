@@ -421,7 +421,7 @@ impl BagOfHolding {
 struct BohValue {
     /// The type id of the `T` pointed to by `leaked`
     tid: TypeId,
-    /// A non-null pointer to a `T`, contained in a leaked HeapBox<T>.
+    /// A non-null pointer to a `T`, contained in a leaked `HeapBox<T>`.
     leaked: NonNull<()>,
     /// A type-erased function that will un-leak the `HeapBox<T>`, and drop it
     dropfn: fn(NonNull<()>),
