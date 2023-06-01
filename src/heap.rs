@@ -15,7 +15,7 @@ use crate::{
 
 use cordyceps::mpsc_queue::{Links, MpscQueue};
 use linked_list_allocator::Heap;
-use maitake::wait::WaitQueue;
+use maitake::sync::WaitQueue;
 
 /// An Anachro Heap item
 pub struct AHeap {

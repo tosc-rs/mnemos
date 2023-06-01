@@ -27,8 +27,8 @@ default-features = false
 
 [patch.crates-io.maitake]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "23db951d19cf410e07ed4c2c47ead20d2b592d21"
+rev = "5e46e35cae131d5f60f527e6659dc53b18e30ebb"
 
 [patch.crates-io.cordyceps]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "23db951d19cf410e07ed4c2c47ead20d2b592d21"
+rev = "5e46e35cae131d5f60f527e6659dc53b18e30ebb"
