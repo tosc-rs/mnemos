@@ -1,6 +1,11 @@
-use crate::{comms::bbq, Kernel};
+use crate::{
+    comms::bbq,
+    drivers::serial_mux::{PortHandle, SerialMuxHandle},
+    Kernel,
+};
 use core::{future::Future, ptr::NonNull};
 use forth3::{
+    async_builtin,
     dictionary::{self, AsyncBuiltinEntry, AsyncBuiltins, Dictionary, OwnedDict},
     fastr::FaStr,
     input::WordStrBuf,
@@ -8,7 +13,10 @@ use forth3::{
     word::Word,
     AsyncForth, CallContext,
 };
-use mnemos_alloc::{containers::HeapFixedVec, heap};
+use mnemos_alloc::{
+    containers::{HeapBox, HeapFixedVec},
+    heap,
+};
 use portable_atomic::{AtomicUsize, Ordering};
 
 #[derive(Copy, Clone, Debug)]
@@ -62,7 +70,10 @@ impl Forth {
                 .cast::<core::mem::MaybeUninit<Dictionary<MnemosContext>>>();
             OwnedDict::new::<DropDict>(dict_buf, params.dictionary_size)
         };
-        let host_ctxt = MnemosContext { kernel };
+        let host_ctxt = MnemosContext {
+            kernel,
+            boh: Boh::new(kernel, 16).await,
+        };
         let forth = unsafe {
             AsyncForth::new(
                 (dstack_buf.as_mut_ptr(), params.stack_size),
@@ -154,6 +165,7 @@ impl Forth {
 struct MnemosContext {
     #[allow(dead_code)] // this will be used later
     kernel: &'static Kernel,
+    boh: Boh,
 }
 
 struct Dispatcher;
@@ -161,18 +173,55 @@ struct Dispatcher;
 struct DropDict;
 
 impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
-    type Future = impl Future<Output = Result<(), forth3::Error>>;
+    type Future = impl Future<Output = Result<(), forth3::Error>> + 'forth;
 
-    const BUILTINS: &'static [AsyncBuiltinEntry<MnemosContext>] = &[];
+    const BUILTINS: &'static [AsyncBuiltinEntry<MnemosContext>] = &[
+        async_builtin!("sermux::open_port"),
+        async_builtin!("sermux::write_outbuf"),
+    ];
 
     fn dispatch_async(
         &self,
         id: &FaStr,
         forth: &'forth mut forth3::Forth<MnemosContext>,
     ) -> Self::Future {
-        tracing::warn!("unimplemented async builtin: {}", id.as_str());
-        let _ = forth;
-        async { Ok(()) }
+        // grumble grumble lifetimes
+        enum Matchy {
+            SermuxOpenPort,
+            SermuxWriteOutbuf,
+        }
+
+        let m = match id.as_str() {
+            "sermux::open_port" => Some(Matchy::SermuxOpenPort),
+            "sermux::write_outbuf" => Some(Matchy::SermuxWriteOutbuf),
+            _ => {
+                tracing::warn!("unimplemented async builtin: {}", id.as_str());
+                None
+            }
+        };
+
+        async move {
+            match m {
+                Some(Matchy::SermuxOpenPort) => {
+                    let sz = unsafe { forth.data_stack.try_pop()?.data as usize };
+                    let port = unsafe { forth.data_stack.try_pop()?.data as u16 };
+                    let mut mux_hdl = SerialMuxHandle::from_registry(forth.host_ctxt.kernel)
+                        .await
+                        .unwrap();
+                    let port = mux_hdl.open_port(port, sz).await.unwrap();
+                    let idx = forth.host_ctxt.boh.register(port).await.unwrap();
+                    forth.data_stack.push(Word::data(idx))?;
+                    Ok(())
+                }
+                Some(Matchy::SermuxWriteOutbuf) => {
+                    let idx = unsafe { forth.data_stack.try_pop()?.data };
+                    let port: &PortHandle = forth.host_ctxt.boh.get(idx).unwrap();
+                    port.send(forth.output.as_str().as_bytes()).await;
+                    Ok(())
+                }
+                None => Err(forth3::Error::WordNotInDict),
+            }
+        }
     }
 }
 
@@ -192,5 +241,95 @@ impl Params {
             stdin_capacity: 1024,
             stdout_capacity: 1024,
         }
+    }
+}
+
+// ----
+
+use core::any::TypeId;
+
+struct Val {
+    tid: TypeId,
+    leaked: NonNull<()>,
+    dropfn: fn(NonNull<()>),
+}
+
+impl Drop for Val {
+    fn drop(&mut self) {
+        (self.dropfn)(self.leaked);
+    }
+}
+
+pub struct Boh {
+    idx: i32,
+    inner: HeapFixedVec<(i32, Val)>,
+    kernel: &'static Kernel,
+}
+
+// hah hah!
+fn dropfn<T>(bs: NonNull<()>) {
+    let i: NonNull<T> = bs.cast();
+    unsafe {
+        let _ = HeapBox::from_leaked(i);
+    }
+}
+
+impl Boh {
+    pub async fn new(kernel: &'static Kernel, max: usize) -> Self {
+        let inner = kernel.heap().allocate_fixed_vec(max).await;
+        Boh {
+            idx: 0,
+            inner,
+            kernel,
+        }
+    }
+
+    pub fn next_idx(&mut self) -> i32 {
+        // todo we could do better lol
+        loop {
+            self.idx = self.idx.wrapping_add(1);
+            if self.idx == 0 {
+                continue;
+            }
+            if !self.inner.iter().any(|(idx, _)| *idx == self.idx) {
+                return self.idx;
+            }
+        }
+    }
+
+    pub async fn register<T>(&mut self, item: T) -> Result<i32, ()>
+    where
+        T: 'static,
+    {
+        if self.inner.is_full() {
+            return Err(());
+        }
+        let leaked = self.kernel.heap().allocate(item).await.leak().cast::<()>();
+        let idx = self.next_idx();
+        let tid = TypeId::of::<T>();
+        self.inner
+            .push((
+                idx,
+                Val {
+                    tid,
+                    leaked,
+                    dropfn: dropfn::<T>,
+                },
+            ))
+            .map_err(drop)?;
+        Ok(idx)
+    }
+
+    pub fn get<T>(&self, idx: i32) -> Option<&T>
+    where
+        T: 'static,
+    {
+        let val = &self.inner.iter().find(|(i, _item)| *i == idx)?.1;
+        let tid = TypeId::of::<T>();
+        if val.tid != tid {
+            return None;
+        }
+        let t = val.leaked.cast::<T>();
+        unsafe { Some(t.as_ref()) }
     }
 }
