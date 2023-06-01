@@ -3,7 +3,7 @@ use crate::{
     drivers::serial_mux::{PortHandle, SerialMuxHandle},
     Kernel,
 };
-use core::{future::Future, ptr::NonNull};
+use core::{any::TypeId, future::Future, ptr::NonNull};
 use forth3::{
     async_builtin,
     dictionary::{self, AsyncBuiltinEntry, AsyncBuiltins, Dictionary, OwnedDict},
@@ -28,6 +28,7 @@ pub struct Params {
     pub dictionary_size: usize,
     pub stdin_capacity: usize,
     pub stdout_capacity: usize,
+    pub bag_of_holding_capacity: usize,
 }
 
 pub struct Forth {
@@ -72,7 +73,7 @@ impl Forth {
         };
         let host_ctxt = MnemosContext {
             kernel,
-            boh: Boh::new(kernel, 16).await,
+            boh: BagOfHolding::new(kernel, params.bag_of_holding_capacity).await,
         };
         let forth = unsafe {
             AsyncForth::new(
@@ -163,9 +164,8 @@ impl Forth {
 }
 
 struct MnemosContext {
-    #[allow(dead_code)] // this will be used later
     kernel: &'static Kernel,
-    boh: Boh,
+    boh: BagOfHolding,
 }
 
 struct Dispatcher;
@@ -187,30 +187,99 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
     ) -> Self::Future {
         async {
             match id.as_str() {
-                "sermux::open_port" => {
-                    let sz = unsafe { forth.data_stack.try_pop()?.data as usize };
-                    let port = unsafe { forth.data_stack.try_pop()?.data as u16 };
-                    let mut mux_hdl = SerialMuxHandle::from_registry(forth.host_ctxt.kernel)
-                        .await
-                        .unwrap();
-                    let port = mux_hdl.open_port(port, sz).await.unwrap();
-                    let idx = forth.host_ctxt.boh.register(port).await.unwrap();
-                    forth.data_stack.push(Word::data(idx))?;
-                    Ok(())
-                }
-                "sermux::write_outbuf" => {
-                    let idx = unsafe { forth.data_stack.try_pop()?.data };
-                    let port: &PortHandle = forth.host_ctxt.boh.get(idx).unwrap();
-                    port.send(forth.output.as_str().as_bytes()).await;
-                    Ok(())
-                }
+                "sermux::open_port" => sermux_open_port(forth).await,
+                "sermux::write_outbuf" => sermux_write_outbuf(forth).await,
                 _ => {
                     tracing::warn!("unimplemented async builtin: {}", id.as_str());
                     Err(forth3::Error::WordNotInDict)
                 }
-            }
+            }?;
+            Ok(())
         }
     }
+}
+
+/// Temporary helper extension trait. Should probably be upstreamed
+/// into `forth3` at a later date.
+trait ConvertWord {
+    fn as_usize(self) -> Result<usize, forth3::Error>;
+    fn as_u16(self) -> Result<u16, forth3::Error>;
+    fn as_i32(self) -> i32;
+}
+
+impl ConvertWord for Word {
+    fn as_usize(self) -> Result<usize, forth3::Error> {
+        let data: i32 = unsafe { self.data };
+        data.try_into()
+            .map_err(|_| forth3::Error::WordToUsizeInvalid(data))
+    }
+
+    fn as_u16(self) -> Result<u16, forth3::Error> {
+        let data: i32 = unsafe { self.data };
+        // TODO: not totally correct error type
+        data.try_into()
+            .map_err(|_| forth3::Error::WordToUsizeInvalid(data))
+    }
+
+    fn as_i32(self) -> i32 {
+        unsafe { self.data }
+    }
+}
+
+/// Binding for [SerialMuxHandle::open_port()]
+///
+/// Call: `PORT SZ sermux::open_port`
+/// Return: BOH_TOKEN on stack
+///
+/// Errors on any invalid parameters
+async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<(), forth3::Error> {
+    let sz = forth.data_stack.try_pop()?.as_usize()?;
+    let port = forth.data_stack.try_pop()?.as_u16()?;
+
+    // TODO: These two steps could be considered "non-execeptional" if failed.
+    // We could codify that zero is an invalid BOH_TOKEN, and put zero on the
+    // stack instead, to allow userspace to handle errors if wanted.
+    //
+    let mut mux_hdl = SerialMuxHandle::from_registry(forth.host_ctxt.kernel)
+        .await
+        .ok_or(forth3::Error::InternalError)?;
+
+    let port = mux_hdl
+        .open_port(port, sz)
+        .await
+        .ok_or(forth3::Error::InternalError)?;
+    //
+    // End TODO
+
+    let idx = forth
+        .host_ctxt
+        .boh
+        .register(port)
+        .await
+        .map_err(|_| forth3::Error::InternalError)?;
+
+    forth.data_stack.push(Word::data(idx))?;
+    Ok(())
+}
+
+/// Binding for [SerialMuxHandle::open_port()]
+///
+/// Call: `PORT SZ sermux::open_port`
+/// Return: `BOH_TOKEN` on stack
+///
+/// Errors on any invalid parameters
+async fn sermux_write_outbuf(
+    forth: &mut forth3::Forth<MnemosContext>,
+) -> Result<(), forth3::Error> {
+    let idx = forth.data_stack.try_pop()?.as_i32();
+    let port: &PortHandle = forth
+        .host_ctxt
+        .boh
+        .get(idx)
+        .ok_or(forth3::Error::InternalError)?;
+
+    port.send(forth.output.as_str().as_bytes()).await;
+    Ok(())
 }
 
 impl dictionary::DropDict for DropDict {
@@ -228,51 +297,52 @@ impl Params {
             dictionary_size: 4096,
             stdin_capacity: 1024,
             stdout_capacity: 1024,
+            bag_of_holding_capacity: 16,
         }
     }
 }
 
 // ----
 
-use core::any::TypeId;
-
-struct Val {
-    tid: TypeId,
-    leaked: NonNull<()>,
-    dropfn: fn(NonNull<()>),
-}
-
-impl Drop for Val {
-    fn drop(&mut self) {
-        (self.dropfn)(self.leaked);
-    }
-}
-
-pub struct Boh {
+/// The Bag of Holding
+///
+/// The Bag of Holding contains type-erased items that can be retrieved with
+/// a provided `i32` token. A token is provided on calling [BagOfHolding::register()].
+/// At the registration time, the TypeId of the item is also recorded, and the item
+/// is moved into [`HeapBox<T>`], which is leaked and type erased.
+///
+/// When retrieving items from the Bag of Holding, the same token and type parameter
+/// `T` must be used for access. This access is made by calling [BagOfHolding::get()].
+///
+/// The purpose of this structure is to allow the forth userspace to use an i32 token,
+/// which fits into a single stack value, to refer to specific instances of data. This
+/// allows for forth-bound builtin functions to retrieve the referred objects in a
+/// type safe way.
+pub struct BagOfHolding {
     idx: i32,
-    inner: HeapFixedVec<(i32, Val)>,
+    inner: HeapFixedVec<(i32, BohValue)>,
     kernel: &'static Kernel,
 }
 
-// hah hah!
-fn dropfn<T>(bs: NonNull<()>) {
-    let i: NonNull<T> = bs.cast();
-    unsafe {
-        let _ = HeapBox::from_leaked(i);
-    }
-}
-
-impl Boh {
+impl BagOfHolding {
+    /// Create a new BagOfHolding with a given max size
+    ///
+    /// The `kernel` parameter is used to allocate `HeapBox` elements to
+    /// store the type-erased elements residing in the BagOfHolding.
     pub async fn new(kernel: &'static Kernel, max: usize) -> Self {
         let inner = kernel.heap().allocate_fixed_vec(max).await;
-        Boh {
+        BagOfHolding {
             idx: 0,
             inner,
             kernel,
         }
     }
 
-    pub fn next_idx(&mut self) -> i32 {
+    /// Generate a new, currently unused, Bag of Holding token.
+    ///
+    /// This token will never be zero, and a given bag of holding will never
+    /// contain two items with the same token.
+    fn next_idx(&mut self) -> i32 {
         // todo we could do better lol
         loop {
             self.idx = self.idx.wrapping_add(1);
@@ -285,6 +355,15 @@ impl Boh {
         }
     }
 
+    /// Place an item into the bag of holding
+    ///
+    /// The item will be allocated into a `HeapBox`, and a non-zero i32 token will
+    /// be returned on success.
+    ///
+    /// Returns an error if the Bag of Holding is full.
+    ///
+    /// At the moment there is no way to "unregister" an item, it will exist until
+    /// the BagOfHolding is dropped.
     pub async fn register<T>(&mut self, item: T) -> Result<i32, ()>
     where
         T: 'static,
@@ -295,10 +374,12 @@ impl Boh {
         let leaked = self.kernel.heap().allocate(item).await.leak().cast::<()>();
         let idx = self.next_idx();
         let tid = TypeId::of::<T>();
+
+        // Should never fail - we checked whether we are full above already
         self.inner
             .push((
                 idx,
-                Val {
+                BohValue {
                     tid,
                     leaked,
                     dropfn: dropfn::<T>,
@@ -308,6 +389,18 @@ impl Boh {
         Ok(idx)
     }
 
+    /// Attempt to retrieve an item from the Bag of Holding
+    ///
+    /// This will only succeed if the same `T` is used as was used when calling
+    /// [`BagOfHolding::register()`], and if the token matches the one returned
+    /// by `register()`.
+    ///
+    /// If the token is unknown, or the `T` does not match, `None` will be returned
+    ///
+    /// At the moment, no `get_mut` functionality is provided. It *could* be, as the
+    /// Bag of Holding represents ownership of the contained items, however it would
+    /// not be possible to retrieve multiple mutable items at the same time. This
+    /// could be added in the future if desired.
     pub fn get<T>(&self, idx: i32) -> Option<&T>
     where
         T: 'static,
@@ -319,5 +412,32 @@ impl Boh {
         }
         let t = val.leaked.cast::<T>();
         unsafe { Some(t.as_ref()) }
+    }
+}
+
+/// A container item for a type-erased object
+struct BohValue {
+    /// The type id of the `T` pointed to by `leaked`
+    tid: TypeId,
+    /// A non-null pointer to a `T`, contained in a leaked HeapBox<T>.
+    leaked: NonNull<()>,
+    /// A type-erased function that will un-leak the `HeapBox<T>`, and drop it
+    dropfn: fn(NonNull<()>),
+}
+
+/// Implementing drop on BohValue allows for dropping of a `BagOfHolding` to properly
+/// drop the elements it is holding, without knowing what types they are.
+impl Drop for BohValue {
+    fn drop(&mut self) {
+        (self.dropfn)(self.leaked);
+    }
+}
+
+/// A free function which is used by [BagOfHolding::register()] to
+/// monomorphize a drop function to be held in a [BohValue].
+fn dropfn<T>(bs: NonNull<()>) {
+    let i: NonNull<T> = bs.cast();
+    unsafe {
+        let _ = HeapBox::from_leaked(i);
     }
 }
