@@ -170,7 +170,7 @@ impl<T> KConsumer<T> {
 
 impl Clone for ErasedKProducer {
     fn clone(&self) -> Self {
-        unsafe { (self.cloner)(&self) }
+        unsafe { (self.cloner)(self) }
     }
 }
 

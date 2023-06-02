@@ -66,6 +66,10 @@ where
 }
 
 impl Terpsichore {
+    /// # Safety
+    ///
+    /// - `heap_start` must be a valid pointer to a region of memory of size `heap_len`.
+    /// - The region of memory pointed to by `heap_start` must not be mutably aliased.
     // TODO: This is *probably* something that needs to be called by the entrypoint, which
     // might be provided per-platform.
     //

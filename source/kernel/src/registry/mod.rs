@@ -313,8 +313,7 @@ impl Registry {
         if self.items.iter().any(|i| i.key == RD::UUID) {
             return Err(RegistrationError::UuidAlreadyRegistered);
         }
-        let result = self
-            .items
+        self.items
             .push(RegistryItem {
                 key: RD::UUID,
                 value: RegistryValue {
@@ -327,7 +326,7 @@ impl Registry {
             .map_err(|_| RegistrationError::RegistryFull)?;
         info!(uuid = ?RD::UUID, service_id = self.counter, "Registered KOnly");
         self.counter = self.counter.wrapping_add(1);
-        Ok(result)
+        Ok(())
     }
 
     /// Register a driver service for use in the kernel (including drivers) as
@@ -350,8 +349,7 @@ impl Registry {
         if self.items.iter().any(|i| i.key == RD::UUID) {
             return Err(RegistrationError::UuidAlreadyRegistered);
         }
-        let result = self
-            .items
+        self.items
             .push(RegistryItem {
                 key: RD::UUID,
                 value: RegistryValue {
@@ -364,7 +362,7 @@ impl Registry {
             .map_err(|_| RegistrationError::RegistryFull)?;
         info!(uuid = ?RD::UUID, service_id = self.counter, "Registered");
         self.counter = self.counter.wrapping_add(1);
-        Ok(result)
+        Ok(())
     }
 
     /// Get a kernelspace (including drivers) handle of a given driver service.
@@ -419,7 +417,7 @@ impl Registry {
         RD::Request: Serialize + DeserializeOwned,
         RD::Response: Serialize + DeserializeOwned,
     {
-        let item = self.items.iter().find(|i| &i.key == &RD::UUID)?;
+        let item = self.items.iter().find(|i| i.key == RD::UUID)?;
         let client_id = self.counter;
         info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
         self.counter = self.counter.wrapping_add(1);
@@ -553,8 +551,7 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
     pub async fn send(&mut self, msg: RD::Request, reply: ReplyTo<RD>) -> Result<(), ()> {
         let request_id = RequestResponseId::new(self.request_ctr, MessageKind::Request);
         self.request_ctr = self.request_ctr.wrapping_add(1);
-        let result = self
-            .prod
+        self.prod
             .enqueue_async(Message {
                 msg: Envelope {
                     body: msg,
@@ -572,7 +569,7 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
             request_id = request_id.id(),
             "Sent Request"
         );
-        Ok(result)
+        Ok(())
     }
 }
 

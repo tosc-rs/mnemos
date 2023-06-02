@@ -252,8 +252,13 @@ impl Kernel {
         F: Future + 'static,
     {
         let task = self.new_task(fut);
-        let mut guard = self.heap().lock().map_err(drop)?;
-        let task_box = guard.alloc_box(task).map_err(drop)?;
+        let mut guard = self
+            .heap()
+            .lock()
+            .map_err(|_| "kernel heap already locked")?;
+        let task_box = guard
+            .alloc_box(task)
+            .map_err(|_| "could not allocate task storage")?;
         Ok(self.spawn_allocated(task_box))
     }
 
