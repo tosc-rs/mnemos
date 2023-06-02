@@ -127,9 +127,7 @@ impl SerialMux {
             idx: 0,
         };
 
-        kernel
-            .spawn(commander.run())
-            .await;
+        kernel.spawn(commander.run()).await;
 
         kernel
             .spawn(async move {

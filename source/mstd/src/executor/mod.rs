@@ -5,12 +5,12 @@
 pub mod mailbox;
 pub mod time;
 
+pub use maitake::task::JoinHandle;
 use maitake::{
     self,
     scheduler::{StaticScheduler, TaskStub},
-    task::{Task as MaitakeTask, Storage},
+    task::{Storage, Task as MaitakeTask},
 };
-pub use maitake::task::JoinHandle;
 
 use core::{
     future::Future,
@@ -21,7 +21,7 @@ use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 
 #[repr(transparent)]
 pub struct Task<F>(MaitakeTask<&'static StaticScheduler, F, HBStorage>)
-where 
+where
     F: Future + Send + 'static,
     F::Output: Send;
 
@@ -51,7 +51,7 @@ struct HBStorage;
 impl<F> Storage<&'static StaticScheduler, F> for HBStorage
 where
     F: Future + Send + 'static,
-    F::Output: Send
+    F::Output: Send,
 {
     type StoredTask = HeapBox<Task<F>>;
 

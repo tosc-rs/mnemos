@@ -87,8 +87,8 @@ use comms::kchannel::KChannel;
 use maitake::{
     self,
     scheduler::{LocalStaticScheduler, TaskStub},
-    task::{Storage, JoinHandle, Task as MaitakeTask},
     sync::Mutex,
+    task::{JoinHandle, Storage, Task as MaitakeTask},
 };
 use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 use registry::Registry;
@@ -261,7 +261,7 @@ impl Kernel {
     where
         F: Future + 'static,
     {
-        Task(MaitakeTask::new( fut))
+        Task(MaitakeTask::new(fut))
     }
 
     pub async fn spawn<F>(&'static self, fut: F) -> JoinHandle<F::Output>
@@ -300,12 +300,16 @@ struct HBStorage;
 impl<F: Future + 'static> Storage<&'static LocalStaticScheduler, F> for HBStorage {
     type StoredTask = HeapBox<Task<F>>;
 
-    fn into_raw(task: HeapBox<Task<F>>) -> NonNull<MaitakeTask<&'static LocalStaticScheduler, F, Self>> {
+    fn into_raw(
+        task: HeapBox<Task<F>>,
+    ) -> NonNull<MaitakeTask<&'static LocalStaticScheduler, F, Self>> {
         task.leak()
             .cast::<MaitakeTask<&'static LocalStaticScheduler, F, HBStorage>>()
     }
 
-    fn from_raw(ptr: NonNull<MaitakeTask<&'static LocalStaticScheduler, F, Self>>) -> HeapBox<Task<F>> {
+    fn from_raw(
+        ptr: NonNull<MaitakeTask<&'static LocalStaticScheduler, F, Self>>,
+    ) -> HeapBox<Task<F>> {
         unsafe { HeapBox::from_leaked(ptr.cast::<Task<F>>()) }
     }
 }

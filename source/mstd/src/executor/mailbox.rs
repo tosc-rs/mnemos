@@ -48,7 +48,10 @@ use abi::{
     },
 };
 use futures_util::pin_mut;
-use maitake::sync::{wait_map::{self, WaitMap}, WaitQueue};
+use maitake::sync::{
+    wait_map::{self, WaitMap},
+    WaitQueue,
+};
 
 pub static MAILBOX: MailBox = MailBox::new();
 
