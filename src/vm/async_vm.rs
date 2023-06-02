@@ -103,16 +103,39 @@ where
         Ok(Self { vm, builtins: self.builtins.clone() })
     }
 
+    /// Borrows this VM's [`OutputBuf`].
+    #[inline]
+    #[must_use]
     pub fn output(&self) -> &OutputBuf {
         &self.vm.output
     }
 
+    /// Mutably borrows this VM's [`OutputBuf`].
+    #[inline]
+    #[must_use]
     pub fn output_mut(&mut self) -> &mut OutputBuf {
         &mut self.vm.output
     }
 
+    /// Mutably borrows this VM's input [`WordStrBuf`].
+    #[inline]
+    #[must_use]
     pub fn input_mut(&mut self) -> &mut WordStrBuf {
         &mut self.vm.input
+    }
+
+    /// Borrows this VM's host context.
+    #[inline]
+    #[must_use]
+    pub fn host_ctxt(&self) -> &T {
+        &self.vm.host_ctxt
+    }
+
+    /// Mutably borrows this VM's host context.
+    #[inline]
+    #[must_use]
+    pub fn host_ctxt_mut(&mut self) -> &mut T {
+        &mut self.vm.host_ctxt
     }
 
     pub fn add_sync_builtin_static_name(
