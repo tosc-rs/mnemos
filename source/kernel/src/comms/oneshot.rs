@@ -10,7 +10,7 @@ use core::{
     sync::atomic::{AtomicU8, Ordering},
 };
 
-use maitake::wait::{Closed, WaitCell};
+use maitake::sync::{Closed, WaitCell};
 use mnemos_alloc::containers::HeapArc;
 
 use crate::Kernel;
