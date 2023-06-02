@@ -86,7 +86,7 @@ use abi::{
 use comms::kchannel::KChannel;
 use maitake::{
     self,
-    scheduler::{StaticScheduler, TaskStub},
+    scheduler::{LocalStaticScheduler, TaskStub},
     task::{Storage, JoinHandle, Task as MaitakeTask},
     sync::Mutex,
 };
@@ -126,7 +126,7 @@ unsafe impl Sync for Kernel {}
 pub struct KernelInner {
     u2k_ring: BBBuffer,
     k2u_ring: BBBuffer,
-    scheduler: StaticScheduler,
+    scheduler: LocalStaticScheduler,
 }
 
 impl Kernel {
@@ -167,7 +167,7 @@ impl Kernel {
             .map_err(|_| "failed to allocate task stub")?
             .leak()
             .as_ref();
-        let scheduler = StaticScheduler::new_with_static_stub(stub);
+        let scheduler = LocalStaticScheduler::new_with_static_stub(stub);
 
         let inner = KernelInner {
             u2k_ring,
@@ -295,19 +295,19 @@ impl Kernel {
 use core::{future::Future, ptr::NonNull};
 
 #[repr(transparent)]
-pub struct Task<F: Future + 'static>(MaitakeTask<&'static StaticScheduler, F, HBStorage>);
+pub struct Task<F: Future + 'static>(MaitakeTask<&'static LocalStaticScheduler, F, HBStorage>);
 
 struct HBStorage;
 
-impl<F: Future + 'static> Storage<&'static StaticScheduler, F> for HBStorage {
+impl<F: Future + 'static> Storage<&'static LocalStaticScheduler, F> for HBStorage {
     type StoredTask = HeapBox<Task<F>>;
 
-    fn into_raw(task: HeapBox<Task<F>>) -> NonNull<MaitakeTask<&'static StaticScheduler, F, Self>> {
+    fn into_raw(task: HeapBox<Task<F>>) -> NonNull<MaitakeTask<&'static LocalStaticScheduler, F, Self>> {
         task.leak()
-            .cast::<MaitakeTask<&'static StaticScheduler, F, HBStorage>>()
+            .cast::<MaitakeTask<&'static LocalStaticScheduler, F, HBStorage>>()
     }
 
-    fn from_raw(ptr: NonNull<MaitakeTask<&'static StaticScheduler, F, Self>>) -> HeapBox<Task<F>> {
+    fn from_raw(ptr: NonNull<MaitakeTask<&'static LocalStaticScheduler, F, Self>>) -> HeapBox<Task<F>> {
         unsafe { HeapBox::from_leaked(ptr.cast::<Task<F>>()) }
     }
 }
