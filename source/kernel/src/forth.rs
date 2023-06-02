@@ -231,7 +231,8 @@ impl ConvertWord for Word {
 /// Call: `PORT SZ sermux::open_port`
 /// Return: BOH_TOKEN on stack
 ///
-/// Errors on any invalid parameters
+/// Errors on any invalid parameters. See [BagOfHolding] for details
+/// on bag of holding tokens
 async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<(), forth3::Error> {
     let sz = forth.data_stack.try_pop()?.as_usize()?;
     let port = forth.data_stack.try_pop()?.as_u16()?;
@@ -256,7 +257,7 @@ async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
         .boh
         .register(port)
         .await
-        .map_err(|_| forth3::Error::InternalError)?;
+        .ok_or(forth3::Error::InternalError)?;
 
     forth.data_stack.push(Word::data(idx))?;
     Ok(())
@@ -269,7 +270,8 @@ async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
 /// Call: `BOH_TOKEN sermux::write_outbuf`
 /// Return: No change
 ///
-/// Errors if the provided handle is incorrect
+/// Errors if the provided handle is incorrect. See [BagOfHolding] for details
+/// on bag of holding tokens
 async fn sermux_write_outbuf(
     forth: &mut forth3::Forth<MnemosContext>,
 ) -> Result<(), forth3::Error> {
@@ -366,29 +368,34 @@ impl BagOfHolding {
     ///
     /// At the moment there is no way to "unregister" an item, it will exist until
     /// the BagOfHolding is dropped.
-    pub async fn register<T>(&mut self, item: T) -> Result<i32, ()>
+    pub async fn register<T>(&mut self, item: T) -> Option<i32>
     where
         T: 'static,
     {
         if self.inner.is_full() {
-            return Err(());
+            return None;
         }
-        let leaked = self.kernel.heap().allocate(item).await.leak().cast::<()>();
+        let value_ptr = self.kernel.heap().allocate(item).await.leak().cast::<()>();
         let idx = self.next_idx();
         let tid = TypeId::of::<T>();
 
         // Should never fail - we checked whether we are full above already
-        self.inner
-            .push((
-                idx,
-                BohValue {
-                    tid,
-                    leaked,
-                    dropfn: dropfn::<T>,
-                },
-            ))
-            .map_err(drop)?;
-        Ok(idx)
+        let pushed = self.inner.push((
+            idx,
+            BohValue {
+                tid,
+                value_ptr,
+                dropfn: dropfn::<T>,
+            },
+        ));
+
+        match pushed {
+            Ok(_) => Some(idx),
+            Err(_) => {
+                debug_assert!(false, "We already checked if this was full?");
+                None
+            }
+        }
     }
 
     /// Attempt to retrieve an item from the Bag of Holding
@@ -412,7 +419,7 @@ impl BagOfHolding {
         if val.tid != tid {
             return None;
         }
-        let t = val.leaked.cast::<T>();
+        let t = val.value_ptr.cast::<T>();
         unsafe { Some(t.as_ref()) }
     }
 }
@@ -422,7 +429,7 @@ struct BohValue {
     /// The type id of the `T` pointed to by `leaked`
     tid: TypeId,
     /// A non-null pointer to a `T`, contained in a leaked `HeapBox<T>`.
-    leaked: NonNull<()>,
+    value_ptr: NonNull<()>,
     /// A type-erased function that will un-leak the `HeapBox<T>`, and drop it
     dropfn: fn(NonNull<()>),
 }
@@ -431,7 +438,7 @@ struct BohValue {
 /// drop the elements it is holding, without knowing what types they are.
 impl Drop for BohValue {
     fn drop(&mut self) {
-        (self.dropfn)(self.leaked);
+        (self.dropfn)(self.value_ptr);
     }
 }
 
