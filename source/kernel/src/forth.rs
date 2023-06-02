@@ -1,6 +1,11 @@
-use crate::{comms::bbq, Kernel};
-use core::{future::Future, ptr::NonNull};
+use crate::{
+    comms::bbq,
+    drivers::serial_mux::{PortHandle, SerialMuxHandle},
+    Kernel,
+};
+use core::{any::TypeId, future::Future, ptr::NonNull};
 use forth3::{
+    async_builtin,
     dictionary::{self, AsyncBuiltinEntry, AsyncBuiltins, Dictionary, OwnedDict},
     fastr::FaStr,
     input::WordStrBuf,
@@ -8,7 +13,10 @@ use forth3::{
     word::Word,
     AsyncForth, CallContext,
 };
-use mnemos_alloc::{containers::HeapFixedVec, heap};
+use mnemos_alloc::{
+    containers::{HeapBox, HeapFixedVec},
+    heap,
+};
 use portable_atomic::{AtomicUsize, Ordering};
 
 #[derive(Copy, Clone, Debug)]
@@ -20,6 +28,7 @@ pub struct Params {
     pub dictionary_size: usize,
     pub stdin_capacity: usize,
     pub stdout_capacity: usize,
+    pub bag_of_holding_capacity: usize,
 }
 
 pub struct Forth {
@@ -62,7 +71,10 @@ impl Forth {
                 .cast::<core::mem::MaybeUninit<Dictionary<MnemosContext>>>();
             OwnedDict::new::<DropDict>(dict_buf, params.dictionary_size)
         };
-        let host_ctxt = MnemosContext { kernel };
+        let host_ctxt = MnemosContext {
+            kernel,
+            boh: BagOfHolding::new(kernel, params.bag_of_holding_capacity).await,
+        };
         let forth = unsafe {
             AsyncForth::new(
                 (dstack_buf.as_mut_ptr(), params.stack_size),
@@ -152,8 +164,8 @@ impl Forth {
 }
 
 struct MnemosContext {
-    #[allow(dead_code)] // this will be used later
     kernel: &'static Kernel,
+    boh: BagOfHolding,
 }
 
 struct Dispatcher;
@@ -161,19 +173,117 @@ struct Dispatcher;
 struct DropDict;
 
 impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
-    type Future = impl Future<Output = Result<(), forth3::Error>>;
+    type Future = impl Future<Output = Result<(), forth3::Error>> + 'forth;
 
-    const BUILTINS: &'static [AsyncBuiltinEntry<MnemosContext>] = &[];
+    const BUILTINS: &'static [AsyncBuiltinEntry<MnemosContext>] = &[
+        async_builtin!("sermux::open_port"),
+        async_builtin!("sermux::write_outbuf"),
+    ];
 
     fn dispatch_async(
         &self,
-        id: &FaStr,
+        id: &'static FaStr,
         forth: &'forth mut forth3::Forth<MnemosContext>,
     ) -> Self::Future {
-        tracing::warn!("unimplemented async builtin: {}", id.as_str());
-        let _ = forth;
-        async { Ok(()) }
+        async {
+            match id.as_str() {
+                "sermux::open_port" => sermux_open_port(forth).await,
+                "sermux::write_outbuf" => sermux_write_outbuf(forth).await,
+                _ => {
+                    tracing::warn!("unimplemented async builtin: {}", id.as_str());
+                    Err(forth3::Error::WordNotInDict)
+                }
+            }?;
+            Ok(())
+        }
     }
+}
+
+/// Temporary helper extension trait. Should probably be upstreamed
+/// into `forth3` at a later date.
+trait ConvertWord {
+    fn as_usize(self) -> Result<usize, forth3::Error>;
+    fn as_u16(self) -> Result<u16, forth3::Error>;
+    fn as_i32(self) -> i32;
+}
+
+impl ConvertWord for Word {
+    fn as_usize(self) -> Result<usize, forth3::Error> {
+        let data: i32 = unsafe { self.data };
+        data.try_into()
+            .map_err(|_| forth3::Error::WordToUsizeInvalid(data))
+    }
+
+    fn as_u16(self) -> Result<u16, forth3::Error> {
+        let data: i32 = unsafe { self.data };
+        // TODO: not totally correct error type
+        data.try_into()
+            .map_err(|_| forth3::Error::WordToUsizeInvalid(data))
+    }
+
+    fn as_i32(self) -> i32 {
+        unsafe { self.data }
+    }
+}
+
+/// Binding for [SerialMuxHandle::open_port()]
+///
+/// Call: `PORT SZ sermux::open_port`
+/// Return: BOH_TOKEN on stack
+///
+/// Errors on any invalid parameters. See [BagOfHolding] for details
+/// on bag of holding tokens
+async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<(), forth3::Error> {
+    let sz = forth.data_stack.try_pop()?.as_usize()?;
+    let port = forth.data_stack.try_pop()?.as_u16()?;
+
+    // TODO: These two steps could be considered "non-execeptional" if failed.
+    // We could codify that zero is an invalid BOH_TOKEN, and put zero on the
+    // stack instead, to allow userspace to handle errors if wanted.
+    //
+    let mut mux_hdl = SerialMuxHandle::from_registry(forth.host_ctxt.kernel)
+        .await
+        .ok_or(forth3::Error::InternalError)?;
+
+    let port = mux_hdl
+        .open_port(port, sz)
+        .await
+        .ok_or(forth3::Error::InternalError)?;
+    //
+    // End TODO
+
+    let idx = forth
+        .host_ctxt
+        .boh
+        .register(port)
+        .await
+        .ok_or(forth3::Error::InternalError)?;
+
+    forth.data_stack.push(Word::data(idx))?;
+    Ok(())
+}
+
+/// Binding for [PortHandle::send()]
+///
+/// Writes the current contents of the output buffer to the [PortHandle].
+///
+/// Call: `BOH_TOKEN sermux::write_outbuf`
+/// Return: No change
+///
+/// Errors if the provided handle is incorrect. See [BagOfHolding] for details
+/// on bag of holding tokens
+async fn sermux_write_outbuf(
+    forth: &mut forth3::Forth<MnemosContext>,
+) -> Result<(), forth3::Error> {
+    let idx = forth.data_stack.try_pop()?.as_i32();
+    let port: &PortHandle = forth
+        .host_ctxt
+        .boh
+        .get(idx)
+        .ok_or(forth3::Error::InternalError)?;
+
+    port.send(forth.output.as_str().as_bytes()).await;
+    Ok(())
 }
 
 impl dictionary::DropDict for DropDict {
@@ -191,6 +301,152 @@ impl Params {
             dictionary_size: 4096,
             stdin_capacity: 1024,
             stdout_capacity: 1024,
+            bag_of_holding_capacity: 16,
         }
+    }
+}
+
+// ----
+
+/// The Bag of Holding
+///
+/// The Bag of Holding contains type-erased items that can be retrieved with
+/// a provided `i32` token. A token is provided on calling [BagOfHolding::register()].
+/// At the registration time, the TypeId of the item is also recorded, and the item
+/// is moved into [`HeapBox<T>`], which is leaked and type erased.
+///
+/// When retrieving items from the Bag of Holding, the same token and type parameter
+/// `T` must be used for access. This access is made by calling [BagOfHolding::get()].
+///
+/// The purpose of this structure is to allow the forth userspace to use an i32 token,
+/// which fits into a single stack value, to refer to specific instances of data. This
+/// allows for forth-bound builtin functions to retrieve the referred objects in a
+/// type safe way.
+pub struct BagOfHolding {
+    idx: i32,
+    inner: HeapFixedVec<(i32, BohValue)>,
+    kernel: &'static Kernel,
+}
+
+impl BagOfHolding {
+    /// Create a new BagOfHolding with a given max size
+    ///
+    /// The `kernel` parameter is used to allocate `HeapBox` elements to
+    /// store the type-erased elements residing in the BagOfHolding.
+    pub async fn new(kernel: &'static Kernel, max: usize) -> Self {
+        let inner = kernel.heap().allocate_fixed_vec(max).await;
+        BagOfHolding {
+            idx: 0,
+            inner,
+            kernel,
+        }
+    }
+
+    /// Generate a new, currently unused, Bag of Holding token.
+    ///
+    /// This token will never be zero, and a given bag of holding will never
+    /// contain two items with the same token.
+    fn next_idx(&mut self) -> i32 {
+        // todo we could do better lol
+        loop {
+            self.idx = self.idx.wrapping_add(1);
+            if self.idx == 0 {
+                continue;
+            }
+            if !self.inner.iter().any(|(idx, _)| *idx == self.idx) {
+                return self.idx;
+            }
+        }
+    }
+
+    /// Place an item into the bag of holding
+    ///
+    /// The item will be allocated into a `HeapBox`, and a non-zero i32 token will
+    /// be returned on success.
+    ///
+    /// Returns an error if the Bag of Holding is full.
+    ///
+    /// At the moment there is no way to "unregister" an item, it will exist until
+    /// the BagOfHolding is dropped.
+    pub async fn register<T>(&mut self, item: T) -> Option<i32>
+    where
+        T: 'static,
+    {
+        if self.inner.is_full() {
+            return None;
+        }
+        let value_ptr = self.kernel.heap().allocate(item).await.leak().cast::<()>();
+        let idx = self.next_idx();
+        let tid = TypeId::of::<T>();
+
+        // Should never fail - we checked whether we are full above already
+        let pushed = self.inner.push((
+            idx,
+            BohValue {
+                tid,
+                value_ptr,
+                dropfn: dropfn::<T>,
+            },
+        ));
+
+        match pushed {
+            Ok(_) => Some(idx),
+            Err(_) => {
+                debug_assert!(false, "We already checked if this was full?");
+                None
+            }
+        }
+    }
+
+    /// Attempt to retrieve an item from the Bag of Holding
+    ///
+    /// This will only succeed if the same `T` is used as was used when calling
+    /// [`BagOfHolding::register()`], and if the token matches the one returned
+    /// by `register()`.
+    ///
+    /// If the token is unknown, or the `T` does not match, `None` will be returned
+    ///
+    /// At the moment, no `get_mut` functionality is provided. It *could* be, as the
+    /// Bag of Holding represents ownership of the contained items, however it would
+    /// not be possible to retrieve multiple mutable items at the same time. This
+    /// could be added in the future if desired.
+    pub fn get<T>(&self, idx: i32) -> Option<&T>
+    where
+        T: 'static,
+    {
+        let val = &self.inner.iter().find(|(i, _item)| *i == idx)?.1;
+        let tid = TypeId::of::<T>();
+        if val.tid != tid {
+            return None;
+        }
+        let t = val.value_ptr.cast::<T>();
+        unsafe { Some(t.as_ref()) }
+    }
+}
+
+/// A container item for a type-erased object
+struct BohValue {
+    /// The type id of the `T` pointed to by `leaked`
+    tid: TypeId,
+    /// A non-null pointer to a `T`, contained in a leaked `HeapBox<T>`.
+    value_ptr: NonNull<()>,
+    /// A type-erased function that will un-leak the `HeapBox<T>`, and drop it
+    dropfn: fn(NonNull<()>),
+}
+
+/// Implementing drop on BohValue allows for dropping of a `BagOfHolding` to properly
+/// drop the elements it is holding, without knowing what types they are.
+impl Drop for BohValue {
+    fn drop(&mut self) {
+        (self.dropfn)(self.value_ptr);
+    }
+}
+
+/// A free function which is used by [BagOfHolding::register()] to
+/// monomorphize a drop function to be held in a [BohValue].
+fn dropfn<T>(bs: NonNull<()>) {
+    let i: NonNull<T> = bs.cast();
+    unsafe {
+        let _ = HeapBox::from_leaked(i);
     }
 }
