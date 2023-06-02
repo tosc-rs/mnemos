@@ -754,3 +754,19 @@ impl<T> Forth<T> {
         Ok(0)
     }
 }
+
+/// # Safety
+///
+/// A `Forth` VM contains raw pointers. However, these raw pointers point into
+/// regions which are exclusively owned by the `Forth` VM, and they are only
+/// mutably dereferenced by methods which take ownership over the Forth VM. The
+/// Constructing a new VM via `Forth::new` is unsafe, as the caller is
+/// responsible for ensuring that the pointed memory regions are exclusively
+/// owned by the `Forth` VM and that they live at least as long as the VM does,
+/// but as long as those invariants are upheld, the VM may be shared across
+/// thread boundaries.
+// TODO(eliza): it would be nicer if there was a way to have a version of
+// `LBForth` or something that bundles a `Forth` VM together with its owned
+// buffers, but without requiring `liballoc`...idk what that would look like.
+unsafe impl<T: Send> Send for Forth<T> {}
+unsafe impl<T: Sync> Sync for Forth<T> {}

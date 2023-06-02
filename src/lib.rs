@@ -268,12 +268,26 @@ pub mod test {
         contents: Vec<i32>,
     }
 
+    fn assert_send<T: Send>() {}
+
     #[test]
     fn sizes() {
         use core::mem::{align_of, size_of};
         assert_eq!(5 * size_of::<usize>(), size_of::<DictionaryEntry<()>>());
         assert_eq!(5 * size_of::<usize>(), size_of::<DictionaryEntry<()>>());
         assert_eq!(1 * size_of::<usize>(), align_of::<Word>());
+    }
+
+    #[test]
+    fn is_send() {
+        assert_send::<Forth<()>>();
+    }
+
+    #[test]
+    #[cfg(feature = "async")]
+    fn async_forth_is_send() {
+        use crate::AsyncForth;
+        assert_send::<AsyncForth<(), ()>>();
     }
 
     #[test]
