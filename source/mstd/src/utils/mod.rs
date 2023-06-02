@@ -1,10 +1,10 @@
 use core::{
     cell::UnsafeCell,
+    fmt,
     marker::PhantomData,
     ops::{Deref, DerefMut},
     ptr::NonNull,
     sync::atomic::{AtomicUsize, Ordering},
-    fmt,
 };
 
 /// Atomic ReFCell - ArfCell

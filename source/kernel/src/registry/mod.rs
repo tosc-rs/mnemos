@@ -313,8 +313,7 @@ impl Registry {
         if self.items.iter().any(|i| i.key == RD::UUID) {
             return Err(RegistrationError::UuidAlreadyRegistered);
         }
-        self
-            .items
+        self.items
             .push(RegistryItem {
                 key: RD::UUID,
                 value: RegistryValue {
@@ -350,8 +349,7 @@ impl Registry {
         if self.items.iter().any(|i| i.key == RD::UUID) {
             return Err(RegistrationError::UuidAlreadyRegistered);
         }
-        self
-            .items
+        self.items
             .push(RegistryItem {
                 key: RD::UUID,
                 value: RegistryValue {
@@ -553,8 +551,7 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
     pub async fn send(&mut self, msg: RD::Request, reply: ReplyTo<RD>) -> Result<(), ()> {
         let request_id = RequestResponseId::new(self.request_ctr, MessageKind::Request);
         self.request_ctr = self.request_ctr.wrapping_add(1);
-        self
-            .prod
+        self.prod
             .enqueue_async(Message {
                 msg: Envelope {
                     body: msg,
