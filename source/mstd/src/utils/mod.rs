@@ -82,7 +82,7 @@ impl<T> ArfCell<T> {
         }
     }
 
-    pub fn borrow_mut<'a>(&'a self) -> Result<MutArfGuard<'a, T>, BorrowError> {
+    pub fn borrow_mut(&self) -> Result<MutArfGuard<'_, T>, BorrowError> {
         self.state
             .compare_exchange(
                 0,
@@ -99,7 +99,7 @@ impl<T> ArfCell<T> {
         })
     }
 
-    pub fn borrow<'a>(&'a self) -> Result<ArfGuard<'a, T>, BorrowError> {
+    pub fn borrow(&self) -> Result<ArfGuard<'_, T>, BorrowError> {
         // proactive check we aren't mutably locked
         if self.state.load(Ordering::Acquire) >= Self::MUTLOCK {
             return Err(BorrowError { mutable: true });
