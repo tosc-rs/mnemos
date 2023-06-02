@@ -4,6 +4,7 @@ use core::{
     ops::{Deref, DerefMut},
     ptr::NonNull,
     sync::atomic::{AtomicUsize, Ordering},
+    fmt,
 };
 
 /// Atomic ReFCell - ArfCell
@@ -13,6 +14,11 @@ use core::{
 pub struct ArfCell<T> {
     state: AtomicUsize,
     item: UnsafeCell<T>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BorrowError {
+    mutable: bool,
 }
 
 unsafe impl<T> Sync for ArfCell<T> where T: Send {}
@@ -76,7 +82,7 @@ impl<T> ArfCell<T> {
         }
     }
 
-    pub fn borrow_mut<'a>(&'a self) -> Result<MutArfGuard<'a, T>, ()> {
+    pub fn borrow_mut<'a>(&'a self) -> Result<MutArfGuard<'a, T>, BorrowError> {
         self.state
             .compare_exchange(
                 0,
@@ -85,7 +91,7 @@ impl<T> ArfCell<T> {
                 Ordering::SeqCst,
                 Ordering::SeqCst,
             )
-            .map_err(drop)?;
+            .map_err(|_| BorrowError { mutable: false })?;
 
         Ok(MutArfGuard {
             cell: unsafe { NonNull::new_unchecked(self as *const Self as *mut Self) },
@@ -93,10 +99,10 @@ impl<T> ArfCell<T> {
         })
     }
 
-    pub fn borrow<'a>(&'a self) -> Result<ArfGuard<'a, T>, ()> {
+    pub fn borrow<'a>(&'a self) -> Result<ArfGuard<'a, T>, BorrowError> {
         // proactive check we aren't mutably locked
         if self.state.load(Ordering::Acquire) >= Self::MUTLOCK {
-            return Err(());
+            return Err(BorrowError { mutable: true });
         }
 
         // TODO: Check the old value to see if we're close to overflowing the refcnt?
@@ -109,12 +115,24 @@ impl<T> ArfCell<T> {
             // unconditionally reset to zero, and future borrowers will hopefully be
             // caught by the proactive check above to reduce the chance of
             // overflowing the refcount.
-            return Err(());
+            return Err(BorrowError { mutable: true });
         }
 
         Ok(ArfGuard {
             cell: unsafe { NonNull::new_unchecked(self as *const Self as *mut Self) },
             plt: PhantomData,
         })
+    }
+}
+
+// === impl BorrowError ===
+
+impl fmt::Display for BorrowError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.mutable {
+            write!(f, "already mutably borrowed")
+        } else {
+            write!(f, "already borrowed")
+        }
     }
 }

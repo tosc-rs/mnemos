@@ -245,10 +245,10 @@ impl Kernel {
 
     // TODO: This prooooobably should instead use a joinhandle, and poll on the initialize future
     // to completion, to make sure that certain actions actually complete.
-    pub fn initialize<F: Future + 'static>(&'static self, fut: F) -> Result<(), ()> {
+    pub fn initialize<F: Future + 'static>(&'static self, fut: F) -> Result<(), &'static str> {
         let task = self.new_task(fut);
-        let mut guard = self.heap().lock().map_err(drop)?;
-        let task_box = guard.alloc_box(task).map_err(drop)?;
+        let mut guard = self.heap().lock().map_err(|_| "kernel heap already locked")?;
+        let task_box = guard.alloc_box(task).map_err(|_| "could not allocate task storage")?;
         self.spawn_allocated(task_box);
         Ok(())
     }
