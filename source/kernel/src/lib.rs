@@ -126,6 +126,8 @@ unsafe impl Sync for Kernel {}
 pub struct KernelInner {
     u2k_ring: BBBuffer,
     k2u_ring: BBBuffer,
+    /// MnemOS currently only targets single-threaded platforms, so we can use a
+    /// `maitake` scheduler capable of running `!Send` futures.
     scheduler: LocalStaticScheduler,
 }
 
@@ -247,8 +249,7 @@ impl Kernel {
     // to completion, to make sure that certain actions actually complete.
     pub fn initialize<F>(&'static self, fut: F) -> Result<JoinHandle<F::Output>, ()>
     where
-        F: Future + Send + 'static,
-        F::Output: Send,
+        F: Future + 'static,
     {
         let task = self.new_task(fut);
         let mut guard = self.heap().lock().map_err(drop)?;
@@ -258,16 +259,14 @@ impl Kernel {
 
     pub fn new_task<F>(&'static self, fut: F) -> Task<F>
     where
-        F: Future + Send + 'static,
-        F::Output: Send,
+        F: Future + 'static,
     {
         Task(MaitakeTask::new( fut))
     }
 
     pub async fn spawn<F>(&'static self, fut: F) -> JoinHandle<F::Output>
     where
-        F: Future + Send + 'static,
-        F::Output: Send,
+        F: Future + 'static,
     {
         let task = Task(MaitakeTask::new(fut));
         let atask = self.heap().allocate(task).await;
@@ -284,8 +283,7 @@ impl Kernel {
 
     pub fn spawn_allocated<F>(&'static self, task: HeapBox<Task<F>>) -> JoinHandle<F::Output>
     where
-        F: Future + Send + 'static,
-        F::Output: Send,
+        F: Future + 'static,
     {
         self.inner.scheduler.spawn_allocated::<F, HBStorage>(task)
     }
