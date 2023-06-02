@@ -654,7 +654,7 @@ dependencies = [
 [[package]]
 name = "forth3"
 version = "0.1.0"
-source = "git+https://github.com/jamesmunns/forth3?rev=8743d9ef9eea0eb0e4420231e4d6d6cdadcfb2fc#8743d9ef9eea0eb0e4420231e4d6d6cdadcfb2fc"
+source = "git+https://github.com/jamesmunns/forth3?rev=5ce6f8fc6115e276506070d7c94c13f407464848#5ce6f8fc6115e276506070d7c94c13f407464848"
 dependencies = [
  "cfg-if 1.0.0",
  "hash32 0.3.1",
@@ -1222,7 +1222,7 @@ dependencies = [
  "console-subscriber",
  "embedded-graphics",
  "embedded-graphics-simulator",
- "forth3 0.1.0 (git+https://github.com/jamesmunns/forth3?rev=8743d9ef9eea0eb0e4420231e4d6d6cdadcfb2fc)",
+ "forth3 0.1.0 (git+https://github.com/jamesmunns/forth3?rev=5ce6f8fc6115e276506070d7c94c13f407464848)",
  "futures",
  "humantime",
  "input-mgr",

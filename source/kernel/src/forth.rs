@@ -15,7 +15,7 @@ use forth3::{
 };
 use mnemos_alloc::{
     containers::{HeapBox, HeapFixedVec},
-    heap,
+    heap::{self, AHeap},
 };
 use portable_atomic::{AtomicUsize, Ordering};
 
@@ -34,52 +34,39 @@ pub struct Params {
 pub struct Forth {
     forth: AsyncForth<MnemosContext, Dispatcher>,
     stdio: bbq::BidiHandle,
-    _payload_dstack: HeapFixedVec<Word>,
-    _payload_rstack: HeapFixedVec<Word>,
-    _payload_cstack: HeapFixedVec<CallContext<MnemosContext>>,
-    _input_buf: HeapFixedVec<u8>,
-    _output_buf: HeapFixedVec<u8>,
-    id: usize,
+    bufs: Bufs,
 }
+
+/// Owns the heap allocations for a `Forth` task.
+struct Bufs {
+    dstack: HeapFixedVec<Word>,
+    rstack: HeapFixedVec<Word>,
+    cstack: HeapFixedVec<CallContext<MnemosContext>>,
+    input: HeapFixedVec<u8>,
+    output: HeapFixedVec<u8>,
+}
+
 
 impl Forth {
     pub async fn new(
         kernel: &'static Kernel,
         params: Params,
     ) -> Result<(Self, bbq::BidiHandle), &'static str> {
-        static NEXT_TASK_ID: AtomicUsize = AtomicUsize::new(0);
 
         let heap = kernel.heap();
-        let (stdio, streams) =
-            bbq::new_bidi_channel(heap, params.stdout_capacity, params.stdin_capacity).await;
-        // TODO(eliza): group all of these into one struct so that we don't have
-        // to do a bunch of waiting for separate allocations?
-        let mut dstack_buf = heap.allocate_fixed_vec(params.stack_size).await;
-        let mut rstack_buf = heap.allocate_fixed_vec(params.stack_size).await;
-        let mut cstack_buf = heap.allocate_fixed_vec(params.stack_size).await;
-        let mut input_buf = heap.allocate_fixed_vec(params.input_buf_size).await;
-        let mut output_buf = heap.allocate_fixed_vec(params.output_buf_size).await;
+        let (stdio, streams) = params.alloc_stdio(heap).await;
+        let mut bufs = params.alloc_bufs(heap).await;
+        let dict = params.alloc_dict(heap).await?;
 
-        let input = WordStrBuf::new(input_buf.as_mut_ptr(), params.input_buf_size);
-        let output = OutputBuf::new(output_buf.as_mut_ptr(), params.output_buf_size);
-        let dict = {
-            let layout = Dictionary::<MnemosContext>::layout(params.dictionary_size)
-                .map_err(|_| "invalid dictionary size")?;
-            let dict_buf = heap
-                .allocate_raw(layout)
-                .await
-                .cast::<core::mem::MaybeUninit<Dictionary<MnemosContext>>>();
-            OwnedDict::new::<DropDict>(dict_buf, params.dictionary_size)
-        };
-        let host_ctxt = MnemosContext {
-            kernel,
-            boh: BagOfHolding::new(kernel, params.bag_of_holding_capacity).await,
-        };
+        let input = WordStrBuf::new(bufs.input.as_mut_ptr(), params.input_buf_size);
+        let output = OutputBuf::new(bufs.output.as_mut_ptr(), params.output_buf_size);
+        let host_ctxt = params.alloc_ctxt(kernel).await;
+
         let forth = unsafe {
             AsyncForth::new(
-                (dstack_buf.as_mut_ptr(), params.stack_size),
-                (rstack_buf.as_mut_ptr(), params.stack_size),
-                (cstack_buf.as_mut_ptr(), params.stack_size),
+                (bufs.dstack.as_mut_ptr(), params.stack_size),
+                (bufs.rstack.as_mut_ptr(), params.stack_size),
+                (bufs.cstack.as_mut_ptr(), params.stack_size),
                 dict,
                 input,
                 output,
@@ -95,12 +82,7 @@ impl Forth {
         let forth = Self {
             forth,
             stdio,
-            _payload_dstack: dstack_buf,
-            _payload_cstack: cstack_buf,
-            _payload_rstack: rstack_buf,
-            _input_buf: input_buf,
-            _output_buf: output_buf,
-            id: NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed),
+            bufs,
         };
         Ok((forth, streams))
     }
@@ -109,7 +91,7 @@ impl Forth {
         level = tracing::Level::INFO,
         "Forth",
         skip(self),
-        fields(id = self.id)
+        fields(id = self.fort.host_ctxt().id)
     )]
     pub async fn run(mut self) {
         tracing::info!("VM running");
@@ -166,8 +148,14 @@ impl Forth {
 struct MnemosContext {
     kernel: &'static Kernel,
     boh: BagOfHolding,
+    /// Used for allocating child VMs
+    params: Params,
+    /// Forth task ID.
+    // TODO(eliza): should we just use the `maitake` task ID, instead?
+    id: usize,
 }
 
+#[derive(Copy, Clone)]
 struct Dispatcher;
 
 struct DropDict;
@@ -178,6 +166,7 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
     const BUILTINS: &'static [AsyncBuiltinEntry<MnemosContext>] = &[
         async_builtin!("sermux::open_port"),
         async_builtin!("sermux::write_outbuf"),
+        async_builtin!("spawn"),
     ];
 
     fn dispatch_async(
@@ -189,6 +178,7 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
             match id.as_str() {
                 "sermux::open_port" => sermux_open_port(forth).await,
                 "sermux::write_outbuf" => sermux_write_outbuf(forth).await,
+                "spawn" => spawn_forth_task(forth).await,
                 _ => {
                     tracing::warn!("unimplemented async builtin: {}", id.as_str());
                     Err(forth3::Error::WordNotInDict)
@@ -197,6 +187,52 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
             Ok(())
         }
     }
+}
+
+impl Params {
+    /// Allocate a host context.
+    async fn alloc_ctxt(&self, kernel: &'static Kernel) -> MnemosContext {
+        static NEXT_TASK_ID: AtomicUsize = AtomicUsize::new(0);
+        MnemosContext {
+            kernel,
+            boh: BagOfHolding::new(kernel, self.bag_of_holding_capacity).await,
+            id: NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed),
+            params: self,
+        }
+    }
+
+    /// Allocate new input and output streams with the configured capacity.
+    async fn alloc_stdio(&self, heap: &'static AHeap) -> (bbq::BidiHandle, bbq::BidiHandle) {
+        bbq::new_bidi_channel(heap, self.stdout_capacity, self.stdin_capacity).await
+    }
+
+    /// Allocate the buffers for a new `Forth` task, based on the provided `Params`.
+    async fn alloc_bufs(&self, heap: &'static AHeap) -> Bufs {
+        // TODO(eliza): can we lock the heap once and then make *all* of these allocations?
+        Bufs {
+            dstack: heap.allocate_fixed_vec(self.stack_size).await,
+            rstack: heap.allocate_fixed_vec(self.stack_size).await,
+            cstack: heap.allocate_fixed_vec(self.stack_size).await,
+            input: heap.allocate_fixed_vec(self.input_buf_size).await,
+            output: heap.allocate_fixed_vec(self.output_buf_size).await,
+        }
+    }
+
+    /// Allocate a new `OwnedDict` with this `Params`' dictionary size.
+    async fn alloc_dict(&self, heap: &'static AHeap) -> Result<OwnedDict<MnemosContext>, &'static str> {
+        let layout = Dictionary::<MnemosContext>::layout(self.dictionary_size)
+            .map_err(|_| "invalid dictionary size")?;
+        let dict_buf = heap
+            .allocate_raw(layout)
+            .await
+            .cast::<core::mem::MaybeUninit<Dictionary<MnemosContext>>>();
+        tracing::trace!(size = self.dictionary_size, addr = &format_args!("{dict_buf:p}"), "Allocated dictionary");
+        Ok(OwnedDict::new::<DropDict>(dict_buf, self.dictionary_size))
+    }
+}
+
+impl Bufs {
+
 }
 
 /// Temporary helper extension trait. Should probably be upstreamed
@@ -284,6 +320,50 @@ async fn sermux_write_outbuf(
 
     port.send(forth.output.as_str().as_bytes()).await;
     Ok(())
+}
+
+/// Binding for [`Kernel::spawn()`]
+/// 
+/// Spawns a new Forth task that inherits from this task's dictionary. The task
+/// will begin executing the provided function address.
+/// 
+/// Call: `XT spawn`.
+/// Return: the task ID of the spawned Forth task.
+async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<(), forth3::Error> {
+    let xt = forth.data_stack.try_pop()?.as_usize()?;
+    tracing::debug!("Forking Forth VM...");
+    let params = forth.host_ctxt.params;
+    let heap = forth.host_ctxt.kernel.heap();
+    let (stdio, streams) = params.alloc_stdio(heap).await;
+    let mut bufs = params.alloc_bufs(heap).await;
+    let new_dict = params.alloc_dict(heap).await?;
+    let my_dict = params.alloc_dict(heap).await?;
+
+    let input = WordStrBuf::new(bufs.input.as_mut_ptr(), params.input_buf_size);
+    let output = OutputBuf::new(bufs.output.as_mut_ptr(), params.output_buf_size);
+
+
+    let forth = unsafe {
+        forth.fork(
+            new_dict, my_dict, 
+            (bufs.dstack.as_mut_ptr(), self.params.stack_size),
+            (bufs.rstack.as_mut_ptr(), self.params.stack_size),
+            (bufs.cstack.as_mut_ptr(), self.params.stack_size),
+            input,
+            output,
+            host_ctxt,
+        )
+    }.map_err(|err| {
+        tracing::error!(?err, "Failed to construct Forth VM");
+        "failed to construct Forth VM"
+    })?;
+
+    let child = Self {
+        forth, stdio, bufs,
+    };
+
+    tracing::info!(parent.id = self.id, child.id, "Forked Forth VM!");
+    Ok((child, streams))
 }
 
 impl dictionary::DropDict for DropDict {
