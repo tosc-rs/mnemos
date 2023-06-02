@@ -86,10 +86,10 @@ use abi::{
 use comms::kchannel::KChannel;
 use maitake::{
     self,
-    scheduler::{StaticScheduler, TaskStub},
-    task::Storage,
+    scheduler::{LocalStaticScheduler, TaskStub},
+    sync::Mutex,
+    task::{JoinHandle, Storage, Task as MaitakeTask},
 };
-use maitake::{sync::Mutex, task::Task as MaitakeTask};
 use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 use registry::Registry;
 use tracing::info;
@@ -126,7 +126,9 @@ unsafe impl Sync for Kernel {}
 pub struct KernelInner {
     u2k_ring: BBBuffer,
     k2u_ring: BBBuffer,
-    scheduler: StaticScheduler,
+    /// MnemOS currently only targets single-threaded platforms, so we can use a
+    /// `maitake` scheduler capable of running `!Send` futures.
+    scheduler: LocalStaticScheduler,
 }
 
 impl Kernel {
@@ -167,7 +169,7 @@ impl Kernel {
             .map_err(|_| "failed to allocate task stub")?
             .leak()
             .as_ref();
-        let scheduler = StaticScheduler::new_with_static_stub(stub);
+        let scheduler = LocalStaticScheduler::new_with_static_stub(stub);
 
         let inner = KernelInner {
             u2k_ring,
@@ -245,7 +247,10 @@ impl Kernel {
 
     // TODO: This prooooobably should instead use a joinhandle, and poll on the initialize future
     // to completion, to make sure that certain actions actually complete.
-    pub fn initialize<F: Future + 'static>(&'static self, fut: F) -> Result<(), &'static str> {
+    pub fn initialize<F>(&'static self, fut: F) -> Result<JoinHandle<F::Output>, ()>
+    where
+        F: Future + 'static,
+    {
         let task = self.new_task(fut);
         let mut guard = self
             .heap()
@@ -254,18 +259,23 @@ impl Kernel {
         let task_box = guard
             .alloc_box(task)
             .map_err(|_| "could not allocate task storage")?;
-        self.spawn_allocated(task_box);
-        Ok(())
+        Ok(self.spawn_allocated(task_box))
     }
 
-    pub fn new_task<F: Future + 'static>(&'static self, fut: F) -> Task<F> {
-        Task(MaitakeTask::new(&self.inner.scheduler, fut))
+    pub fn new_task<F>(&'static self, fut: F) -> Task<F>
+    where
+        F: Future + 'static,
+    {
+        Task(MaitakeTask::new(fut))
     }
 
-    pub async fn spawn<F: Future + 'static>(&'static self, fut: F) {
-        let task = Task(MaitakeTask::new(&self.inner.scheduler, fut));
+    pub async fn spawn<F>(&'static self, fut: F) -> JoinHandle<F::Output>
+    where
+        F: Future + 'static,
+    {
+        let task = Task(MaitakeTask::new(fut));
         let atask = self.heap().allocate(task).await;
-        self.spawn_allocated(atask);
+        self.spawn_allocated(atask)
     }
 
     pub async fn with_registry<F, R>(&'static self, f: F) -> R
@@ -276,7 +286,10 @@ impl Kernel {
         f(&mut guard)
     }
 
-    pub fn spawn_allocated<F: Future + 'static>(&'static self, task: HeapBox<Task<F>>) {
+    pub fn spawn_allocated<F>(&'static self, task: HeapBox<Task<F>>) -> JoinHandle<F::Output>
+    where
+        F: Future + 'static,
+    {
         self.inner.scheduler.spawn_allocated::<F, HBStorage>(task)
     }
 }
@@ -285,19 +298,23 @@ impl Kernel {
 use core::{future::Future, ptr::NonNull};
 
 #[repr(transparent)]
-pub struct Task<F: Future + 'static>(MaitakeTask<&'static StaticScheduler, F, HBStorage>);
+pub struct Task<F: Future + 'static>(MaitakeTask<&'static LocalStaticScheduler, F, HBStorage>);
 
 struct HBStorage;
 
-impl<F: Future + 'static> Storage<&'static StaticScheduler, F> for HBStorage {
+impl<F: Future + 'static> Storage<&'static LocalStaticScheduler, F> for HBStorage {
     type StoredTask = HeapBox<Task<F>>;
 
-    fn into_raw(task: HeapBox<Task<F>>) -> NonNull<MaitakeTask<&'static StaticScheduler, F, Self>> {
+    fn into_raw(
+        task: HeapBox<Task<F>>,
+    ) -> NonNull<MaitakeTask<&'static LocalStaticScheduler, F, Self>> {
         task.leak()
-            .cast::<MaitakeTask<&'static StaticScheduler, F, HBStorage>>()
+            .cast::<MaitakeTask<&'static LocalStaticScheduler, F, HBStorage>>()
     }
 
-    fn from_raw(ptr: NonNull<MaitakeTask<&'static StaticScheduler, F, Self>>) -> HeapBox<Task<F>> {
+    fn from_raw(
+        ptr: NonNull<MaitakeTask<&'static LocalStaticScheduler, F, Self>>,
+    ) -> HeapBox<Task<F>> {
         unsafe { HeapBox::from_leaked(ptr.cast::<Task<F>>()) }
     }
 }

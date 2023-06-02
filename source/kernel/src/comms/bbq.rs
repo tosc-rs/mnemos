@@ -13,7 +13,7 @@ use crate::fmt;
 use abi::bbqueue_ipc::{BBBuffer, Consumer as InnerConsumer, Producer as InnerProducer};
 use abi::bbqueue_ipc::{GrantR as InnerGrantR, GrantW as InnerGrantW};
 use maitake::sync::Mutex;
-use maitake::wait::WaitCell;
+use maitake::sync::WaitCell;
 use mnemos_alloc::{
     containers::{HeapArc, HeapArray},
     heap::AHeap,
@@ -199,6 +199,9 @@ impl GrantR {
         }
     }
 }
+
+unsafe impl Send for GrantR {}
+unsafe impl Sync for GrantR {}
 
 #[inline]
 async fn producer_send_grant_max(
