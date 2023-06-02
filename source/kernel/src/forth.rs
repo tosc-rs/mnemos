@@ -91,27 +91,12 @@ impl Forth {
         level = tracing::Level::INFO,
         "Forth",
         skip(self),
-        fields(id = self.fort.host_ctxt().id)
+        fields(id = self.forth.host_ctxt().id)
     )]
     pub async fn run(mut self) {
         tracing::info!("VM running");
         loop {
-            // read from stdin
-            {
-                let read = self.stdio.consumer().read_grant().await;
-                let len = read.len();
-                match core::str::from_utf8(&read) {
-                    Ok(input) => {
-                        tracing::debug!(len, "> {:?}", input.trim());
-                        self.forth
-                            .input_mut()
-                            .fill(input)
-                            .expect("eliza: why would this fail?");
-                        read.release(len);
-                    }
-                    Err(_e) => todo!("eliza: what to do if the input is not utf8?"),
-                };
-            }
+            self.forth.output_mut().clear();
 
             match self.forth.process_line().await {
                 Ok(()) => {
@@ -140,7 +125,22 @@ impl Forth {
                 }
             }
 
-            self.forth.output_mut().clear();
+            // read from stdin
+            {
+                let read = self.stdio.consumer().read_grant().await;
+                let len = read.len();
+                match core::str::from_utf8(&read) {
+                    Ok(input) => {
+                        tracing::debug!(len, "> {:?}", input.trim());
+                        self.forth
+                            .input_mut()
+                            .fill(input)
+                            .expect("eliza: why would this fail?");
+                        read.release(len);
+                    }
+                    Err(_e) => todo!("eliza: what to do if the input is not utf8?"),
+                };
+            }
         }
     }
 }
@@ -197,7 +197,7 @@ impl Params {
             kernel,
             boh: BagOfHolding::new(kernel, self.bag_of_holding_capacity).await,
             id: NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed),
-            params: self,
+            params: *self,
         }
     }
 
@@ -323,47 +323,69 @@ async fn sermux_write_outbuf(
 }
 
 /// Binding for [`Kernel::spawn()`]
-/// 
+///
 /// Spawns a new Forth task that inherits from this task's dictionary. The task
 /// will begin executing the provided function address.
-/// 
+///
 /// Call: `XT spawn`.
 /// Return: the task ID of the spawned Forth task.
 async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<(), forth3::Error> {
-    let xt = forth.data_stack.try_pop()?.as_usize()?;
+    let xt = forth.data_stack.try_pop()?;
     tracing::debug!("Forking Forth VM...");
     let params = forth.host_ctxt.params;
-    let heap = forth.host_ctxt.kernel.heap();
+    let kernel = forth.host_ctxt.kernel;
+    let heap = kernel.heap();
+
+    // TODO(eliza): store the child's stdio in the
+    // parent's host context so we can actually do something with it...
     let (stdio, streams) = params.alloc_stdio(heap).await;
     let mut bufs = params.alloc_bufs(heap).await;
-    let new_dict = params.alloc_dict(heap).await?;
-    let my_dict = params.alloc_dict(heap).await?;
-
+    let new_dict = params.alloc_dict(heap).await.map_err(|err| {
+        tracing::error!(?err, "Failed to allocate dictionary for child VM");
+        forth3::Error::InternalError
+    })?;
+    let my_dict = params.alloc_dict(heap).await.map_err(|err| {
+        tracing::error!(?err, "Failed to allocate replacement dictionary for parent VM");
+        forth3::Error::InternalError
+    })?;
+    let host_ctxt = params.alloc_ctxt(kernel).await;
+    let child_id = host_ctxt.id;
     let input = WordStrBuf::new(bufs.input.as_mut_ptr(), params.input_buf_size);
     let output = OutputBuf::new(bufs.output.as_mut_ptr(), params.output_buf_size);
 
 
-    let forth = unsafe {
+    let mut child = unsafe {
         forth.fork(
-            new_dict, my_dict, 
-            (bufs.dstack.as_mut_ptr(), self.params.stack_size),
-            (bufs.rstack.as_mut_ptr(), self.params.stack_size),
-            (bufs.cstack.as_mut_ptr(), self.params.stack_size),
+            new_dict, my_dict,
+            (bufs.dstack.as_mut_ptr(), params.stack_size),
+            (bufs.rstack.as_mut_ptr(), params.stack_size),
+            (bufs.cstack.as_mut_ptr(), params.stack_size),
             input,
             output,
             host_ctxt,
         )
     }.map_err(|err| {
         tracing::error!(?err, "Failed to construct Forth VM");
-        "failed to construct Forth VM"
+        forth3::Error::InternalError
     })?;
 
-    let child = Self {
-        forth, stdio, bufs,
+    // start the child running the popped execution token.
+    child.data_stack.push(xt)?;
+    // TODO(eliza): it would be nicer if we could just push a call context for
+    // the execution token...
+    child.input.fill("execute");
+
+    let child = Forth {
+        forth: AsyncForth::from_forth(child, Dispatcher), stdio, bufs,
     };
 
-    tracing::info!(parent.id = self.id, child.id, "Forked Forth VM!");
-    Ok((child, streams))
+    tracing::info!(parent.id = forth.host_ctxt.id, child.id = child_id, "Forked Forth VM!");
+
+    // TODO(eliza): store the child's joinhandle in the
+    // parent's host context so we can actually do something with it...
+    kernel.spawn(child.run()).await;
+
+    Ok(())
 }
 
 impl dictionary::DropDict for DropDict {
