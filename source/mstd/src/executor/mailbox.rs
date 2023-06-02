@@ -48,7 +48,7 @@ use abi::{
     },
 };
 use futures_util::pin_mut;
-use maitake::wait::{WaitMap, WaitQueue};
+use maitake::sync::{wait_map::{self, WaitMap}, WaitQueue};
 
 pub static MAILBOX: MailBox = MailBox::new();
 
@@ -140,7 +140,7 @@ impl MailBox {
         let nonce = self.nonce.fetch_add(1, Ordering::AcqRel);
 
         // Start listening for the response BEFORE we send the request
-        let rx: maitake::wait::map::Wait<u32, KernelResponseBody> = MAILBOX.recv_wait.wait(nonce);
+        let rx: wait_map::Wait<u32, KernelResponseBody> = MAILBOX.recv_wait.wait(nonce);
         pin_mut!(rx);
         rx.as_mut().enqueue().await.map_err(drop)?;
         self.send_inner(nonce, msg).await?;

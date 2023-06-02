@@ -218,7 +218,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
         let tid0 = {
             let (tid0, tid0_streams) = Forth::new(k, forth::Params::new()).await.expect("spawning forth should succeed");
-            k.spawn(tid0.run()).await;
+            tokio::task::spawn_local(tid0.run());
             tracing::info!("Task 0 spawned!");
             tid0_streams
         };

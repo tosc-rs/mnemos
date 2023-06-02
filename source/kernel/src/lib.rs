@@ -87,9 +87,9 @@ use comms::kchannel::KChannel;
 use maitake::{
     self,
     scheduler::{StaticScheduler, TaskStub},
-    task::Storage,
+    task::{Storage, JoinHandle, Task as MaitakeTask},
+    sync::Mutex,
 };
-use maitake::{sync::Mutex, task::Task as MaitakeTask};
 use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 use registry::Registry;
 use tracing::info;
@@ -245,22 +245,33 @@ impl Kernel {
 
     // TODO: This prooooobably should instead use a joinhandle, and poll on the initialize future
     // to completion, to make sure that certain actions actually complete.
-    pub fn initialize<F: Future + 'static>(&'static self, fut: F) -> Result<(), ()> {
+    pub fn initialize<F>(&'static self, fut: F) -> Result<JoinHandle<F::Output>, ()>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send,
+    {
         let task = self.new_task(fut);
         let mut guard = self.heap().lock().map_err(drop)?;
         let task_box = guard.alloc_box(task).map_err(drop)?;
-        self.spawn_allocated(task_box);
-        Ok(())
+        Ok(self.spawn_allocated(task_box))
     }
 
-    pub fn new_task<F: Future + 'static>(&'static self, fut: F) -> Task<F> {
-        Task(MaitakeTask::new(&self.inner.scheduler, fut))
+    pub fn new_task<F>(&'static self, fut: F) -> Task<F>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send,
+    {
+        Task(MaitakeTask::new( fut))
     }
 
-    pub async fn spawn<F: Future + 'static>(&'static self, fut: F) {
-        let task = Task(MaitakeTask::new(&self.inner.scheduler, fut));
+    pub async fn spawn<F>(&'static self, fut: F) -> JoinHandle<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send,
+    {
+        let task = Task(MaitakeTask::new(fut));
         let atask = self.heap().allocate(task).await;
-        self.spawn_allocated(atask);
+        self.spawn_allocated(atask)
     }
 
     pub async fn with_registry<F, R>(&'static self, f: F) -> R
@@ -271,7 +282,11 @@ impl Kernel {
         f(&mut guard)
     }
 
-    pub fn spawn_allocated<F: Future + 'static>(&'static self, task: HeapBox<Task<F>>) {
+    pub fn spawn_allocated<F>(&'static self, task: HeapBox<Task<F>>) -> JoinHandle<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send,
+    {
         self.inner.scheduler.spawn_allocated::<F, HBStorage>(task)
     }
 }

@@ -5,12 +5,12 @@
 pub mod mailbox;
 pub mod time;
 
-use maitake::task::Task as MaitakeTask;
 use maitake::{
     self,
     scheduler::{StaticScheduler, TaskStub},
-    task::Storage,
+    task::{Task as MaitakeTask, Storage},
 };
+pub use maitake::task::JoinHandle;
 
 use core::{
     future::Future,
@@ -20,11 +20,18 @@ use core::{
 use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 
 #[repr(transparent)]
-pub struct Task<F: Future + 'static>(MaitakeTask<&'static StaticScheduler, F, HBStorage>);
+pub struct Task<F>(MaitakeTask<&'static StaticScheduler, F, HBStorage>)
+where 
+    F: Future + Send + 'static,
+    F::Output: Send;
 
-impl<F: Future + 'static> Task<F> {
+impl<F> Task<F>
+where
+    F: Future + Send + 'static,
+    F::Output: Send,
+{
     pub fn new(fut: F) -> Self {
-        Self(MaitakeTask::new(&EXECUTOR.scheduler, fut))
+        Self(MaitakeTask::new(fut))
     }
 }
 
@@ -41,7 +48,11 @@ pub static EXECUTOR: Terpsichore = Terpsichore {
 
 struct HBStorage;
 
-impl<F: Future + 'static> Storage<&'static StaticScheduler, F> for HBStorage {
+impl<F> Storage<&'static StaticScheduler, F> for HBStorage
+where
+    F: Future + Send + 'static,
+    F::Output: Send
+{
     type StoredTask = HeapBox<Task<F>>;
 
     fn into_raw(task: HeapBox<Task<F>>) -> NonNull<MaitakeTask<&'static StaticScheduler, F, Self>> {
@@ -82,13 +93,21 @@ impl Terpsichore {
         unsafe { cptr.as_ref() }.unwrap()
     }
 
-    pub async fn spawn<F: Future + 'static>(&'static self, fut: F) {
-        let task = Task(MaitakeTask::new(&EXECUTOR.scheduler, fut));
+    pub async fn spawn<F>(&'static self, fut: F) -> JoinHandle<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send,
+    {
+        let task = Task(MaitakeTask::new(fut));
         let atask = self.get_alloc().allocate(task).await;
-        self.spawn_allocated(atask);
+        self.spawn_allocated(atask)
     }
 
-    pub fn spawn_allocated<F: Future + 'static>(&'static self, task: HeapBox<Task<F>>) {
+    pub fn spawn_allocated<F>(&'static self, task: HeapBox<Task<F>>) -> JoinHandle<F::Output>
+    where
+        F: Future + Send + 'static,
+        F::Output: Send,
+    {
         self.scheduler.spawn_allocated::<F, HBStorage>(task)
     }
 }
