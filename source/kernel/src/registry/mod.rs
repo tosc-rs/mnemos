@@ -419,7 +419,7 @@ impl Registry {
         RD::Request: Serialize + DeserializeOwned,
         RD::Response: Serialize + DeserializeOwned,
     {
-        let item = self.items.iter().find(|i| &i.key == &RD::UUID)?;
+        let item = self.items.iter().find(|i| i.key == RD::UUID)?;
         let client_id = self.counter;
         info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
         self.counter = self.counter.wrapping_add(1);

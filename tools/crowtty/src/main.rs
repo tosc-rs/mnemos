@@ -140,7 +140,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut nmsg = Vec::new();
                 nmsg.extend_from_slice(&port_idx.to_le_bytes());
                 nmsg.extend_from_slice(&msg);
-                let mut enc_msg = cobs::encode_vec(&mut nmsg);
+                let mut enc_msg = cobs::encode_vec(&nmsg);
                 enc_msg.push(0);
                 println!("Sending {} bytes to port {}", enc_msg.len(), port_idx);
                 port.write_all(&enc_msg)?;
