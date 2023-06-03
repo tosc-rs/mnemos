@@ -358,7 +358,7 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
 
     // TODO(eliza): store the child's stdio in the
     // parent's host context so we can actually do something with it...
-    let (stdio, streams) = params.alloc_stdio(heap).await;
+    let (stdio, _streams) = params.alloc_stdio(heap).await;
     let mut bufs = params.alloc_bufs(heap).await;
     let new_dict = params.alloc_dict(heap).await.map_err(|error| {
         tracing::error!(?error, "Failed to allocate dictionary for child VM");
