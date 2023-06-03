@@ -419,6 +419,45 @@ impl dictionary::DropDict for DropDict {
 }
 
 /// Handle for spawning new Forth tasks.
+///
+/// This is a channel producer that communicates with the background task
+/// created by [`Spawnulator::start_spawnulating`]. This type can be cloned
+/// inexpensively by cloning the inner channel producer.
+///
+/// # The Unfortunate Necessity of the Spawnulator
+///
+/// Forth tasks may spawn other, child Forth tasks. This is currently
+/// accomplished by sending the forked child [`Forth`] VM over a channel to a
+/// background task, which actually spawns its [`Forth::run()`] method.  At a
+/// glance, this indirection seems unnecessary (and inefficient): why can't the
+/// parent task simply call `kernel.spawn(child.run()).await` in the
+/// implementation of its `spawn` builtin?
+///
+/// The answer is that this is, unfortunately, not possible. The function
+/// implementing the `spawn` builtin, [`spawn_forth_task()`], *must* be `async`,
+/// as it needs to perform allocations for the child task's dictionary, stacks,
+/// etc Therefore, calling [`spawn_forth_task()`] returns an `impl Future` which
+/// is awaited inside the `Dispatcher::dispatch_async()` future, which is itself
+/// awaited inside `Forth::process_line()` in the  parent VM's [`Forth::run()`]
+/// async method. This means the *layout* of the future generated for
+/// [`spawn_forth_task()`] must be known in order to determine the layout of the
+/// future generated for [`Forth::run()`]. In order to spawn a new child task, we
+/// must call [`Forth::run()`] and then pass the returned `impl Future` to
+/// [`Kernel::spawn()`]. This means that the generated `impl Future` for
+/// [`Forth::run()`] becomes a local variable in [`Forth::run()`] --- meaning
+/// that, in order to compute the layout for [`Forth::run()`], the compiler must
+/// first compute the layout for [`Forth::run()`]...which is, naturally,
+/// impossible.
+///
+/// We can solve this problem by moving the actual
+/// `kernel.spawn(forth.run()).await` into a separate task (the spawnulator), to
+/// which we send new child [`Forth`] VMs to over a channel, without having
+/// called their `run()` methods. Now, the [`Forth::run()`] call does not occur
+/// inside of [`Forth::run()`], and its layout is no longer cyclical. I don't
+/// feel great about the fact that this requires us to, essentially, place child
+/// tasks in a queue in order to wait for the priveliege of being put in a
+/// different queue (the scheduler's run queue), but I couldn't easily come up
+/// with another solution...
 #[derive(Clone)]
 pub struct Spawnulator(KProducer<Forth>);
 
