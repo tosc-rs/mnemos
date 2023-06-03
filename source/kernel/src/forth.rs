@@ -423,9 +423,7 @@ impl dictionary::DropDict for DropDict {
 pub struct Spawnulator(KProducer<Forth>);
 
 impl Spawnulator {
-    /// originally i made this 256 but apparently if it's that big, the
-    /// allocation request hangs forever lol...
-    const SPAWN_QUEUE_CAPACITY: usize = 16;
+    const SPAWN_QUEUE_CAPACITY: usize = 16; // 100% arbitrary! :D
 
     /// Start the spawnulator background task, returning a handle that can be
     /// used to spawn new `Forth` VMs.

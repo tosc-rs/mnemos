@@ -173,6 +173,8 @@ fn kernel_entry(opts: MelpomeneOptions) {
     .instrument(tracing::info_span!("Initialize"));
 
     k.initialize(initialization_future).unwrap();
+    let tid0_future = k.initialize_forth_tid0(Default::default());
+
 
     // Create the interactive console task
     let graphics_console = async move {
@@ -231,8 +233,6 @@ fn kernel_entry(opts: MelpomeneOptions) {
             disp_hdl.draw_framechunk(fc_0).await.unwrap();
         }
 
-        let tid0 = k.spawn_forth_tid0(Default::default()).await;
-
         k.spawn(
             async move {
                 // TODO(eliza): don't spawn the forth task from within the
@@ -247,6 +247,8 @@ fn kernel_entry(opts: MelpomeneOptions) {
                 //
                 // Leave out 4 for the implicit margin of two characters on each gutter.
                 let mut rline = RingLine::<16, 46>::new();
+
+                let tid0 = tid0_future.await.expect("TID 0 initialization task must succeed");
 
                 loop {
                     // Wait until there is a frame buffer ready. There wouldn't be if we've spammed frames

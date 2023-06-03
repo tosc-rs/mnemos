@@ -249,16 +249,18 @@ impl Kernel {
     /// the spawned task's standard input and standard output streams.
     ///
     /// This should only be called once.
-    pub async fn spawn_forth_tid0(&'static self, params: forth::Params) -> crate::comms::bbq::BidiHandle {
+    pub fn initialize_forth_tid0(&'static self, params: forth::Params) -> JoinHandle<crate::comms::bbq::BidiHandle> {
         use forth::{Forth, Spawnulator};
-        tracing::debug!("spawning Task 0...");
-        // TODO(eliza): maybe the spawnulator should live in the driver registry
-        // or something.
-        let spawnulator = Spawnulator::start_spawnulating(self).await;
-        let (tid0, tid0_streams) = Forth::new(self, params, spawnulator).await.expect("spawning forth TID0 should succeed");
-        self.spawn(tid0.run()).await;
-        tracing::info!("Task 0 spawned!");
-        tid0_streams
+        self.initialize(async move {
+            tracing::debug!("spawning Task 0...");
+            // TODO(eliza): maybe the spawnulator should live in the driver registry
+            // or something.
+            let spawnulator = Spawnulator::start_spawnulating(self).await;
+            let (tid0, tid0_streams) = Forth::new(self, params, spawnulator).await.expect("spawning forth TID0 should succeed");
+            self.spawn(tid0.run()).await;
+            tracing::info!("Task 0 spawned!");
+            tid0_streams
+        }).expect("spawning forth TID0 should succeed")
     }
 
     pub fn initialize<F>(&'static self, fut: F) -> Result<JoinHandle<F::Output>, &'static str>
