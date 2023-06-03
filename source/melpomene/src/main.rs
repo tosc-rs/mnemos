@@ -101,7 +101,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
         let sz = slice.len();
         (slice.as_mut_ptr().cast(), sz)
     }
-    
+
     let (heap_start, heap_size) = alloc_heap();
     let (user_heap, user_heap_size) = alloc_heap();
 
@@ -174,7 +174,6 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
     k.initialize(initialization_future).unwrap();
     let tid0_future = k.initialize_forth_tid0(Default::default());
-
 
     // Create the interactive console task
     let graphics_console = async move {

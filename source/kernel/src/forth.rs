@@ -1,5 +1,8 @@
 use crate::{
-    comms::{bbq, kchannel::{KChannel, KProducer, KConsumer}},
+    comms::{
+        bbq,
+        kchannel::{KChannel, KConsumer, KProducer},
+    },
     drivers::serial_mux::{PortHandle, SerialMuxHandle},
     Kernel,
 };
@@ -46,14 +49,12 @@ struct Bufs {
     output: HeapFixedVec<u8>,
 }
 
-
 impl Forth {
     pub async fn new(
         kernel: &'static Kernel,
         params: Params,
         spawnulator: Spawnulator,
     ) -> Result<(Self, bbq::BidiHandle), &'static str> {
-
         let heap = kernel.heap();
         let (stdio, streams) = params.alloc_stdio(heap).await;
         let mut bufs = params.alloc_bufs(heap).await;
@@ -223,14 +224,21 @@ impl Params {
     }
 
     /// Allocate a new `OwnedDict` with this `Params`' dictionary size.
-    async fn alloc_dict(&self, heap: &'static AHeap) -> Result<OwnedDict<MnemosContext>, &'static str> {
+    async fn alloc_dict(
+        &self,
+        heap: &'static AHeap,
+    ) -> Result<OwnedDict<MnemosContext>, &'static str> {
         let layout = Dictionary::<MnemosContext>::layout(self.dictionary_size)
             .map_err(|_| "invalid dictionary size")?;
         let dict_buf = heap
             .allocate_raw(layout)
             .await
             .cast::<core::mem::MaybeUninit<Dictionary<MnemosContext>>>();
-        tracing::trace!(size = self.dictionary_size, addr = &format_args!("{dict_buf:p}"), "Allocated dictionary");
+        tracing::trace!(
+            size = self.dictionary_size,
+            addr = &format_args!("{dict_buf:p}"),
+            "Allocated dictionary"
+        );
         Ok(OwnedDict::new::<DropDict>(dict_buf, self.dictionary_size))
     }
 }
@@ -365,7 +373,10 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
         forth3::Error::InternalError
     })?;
     let my_dict = params.alloc_dict(heap).await.map_err(|error| {
-        tracing::error!(?error, "Failed to allocate replacement dictionary for parent VM");
+        tracing::error!(
+            ?error,
+            "Failed to allocate replacement dictionary for parent VM"
+        );
         forth3::Error::InternalError
     })?;
     let host_ctxt = MnemosContext::new(kernel, params, forth.host_ctxt.spawnulator.clone()).await;
@@ -373,10 +384,10 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     let input = WordStrBuf::new(bufs.input.as_mut_ptr(), params.input_buf_size);
     let output = OutputBuf::new(bufs.output.as_mut_ptr(), params.output_buf_size);
 
-
     let mut child = unsafe {
         forth.fork(
-            new_dict, my_dict,
+            new_dict,
+            my_dict,
             (bufs.dstack.as_mut_ptr(), params.stack_size),
             (bufs.rstack.as_mut_ptr(), params.stack_size),
             (bufs.cstack.as_mut_ptr(), params.stack_size),
@@ -384,7 +395,8 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
             output,
             host_ctxt,
         )
-    }.map_err(|error| {
+    }
+    .map_err(|error| {
         tracing::error!(?error, "Failed to construct Forth VM");
         forth3::Error::InternalError
     })?;
@@ -399,15 +411,26 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     })?;
 
     let child = Forth {
-        forth: AsyncForth::from_forth(child, Dispatcher), stdio, _bufs: bufs,
+        forth: AsyncForth::from_forth(child, Dispatcher),
+        stdio,
+        _bufs: bufs,
     };
 
-    tracing::info!(parent.id = forth.host_ctxt.id, child.id = child_id, "Forked Forth VM!");
+    tracing::info!(
+        parent.id = forth.host_ctxt.id,
+        child.id = child_id,
+        "Forked Forth VM!"
+    );
 
-    forth.host_ctxt.spawnulator.spawn(child).await.map_err(|error| {
-        tracing::error!(?error, "Failed to enqueue child task to spawn!");
-        forth3::Error::InternalError
-    })?;
+    forth
+        .host_ctxt
+        .spawnulator
+        .spawn(child)
+        .await
+        .map_err(|error| {
+            tracing::error!(?error, "Failed to enqueue child task to spawn!");
+            forth3::Error::InternalError
+        })?;
 
     Ok(())
 }
@@ -468,7 +491,9 @@ impl Spawnulator {
     /// used to spawn new `Forth` VMs.
     #[tracing::instrument(level = tracing::Level::DEBUG, skip(kernel))]
     pub async fn start_spawnulating(kernel: &'static Kernel) -> Self {
-        let (vms_tx, vms) = KChannel::new_async(kernel, Self::SPAWN_QUEUE_CAPACITY).await.split();
+        let (vms_tx, vms) = KChannel::new_async(kernel, Self::SPAWN_QUEUE_CAPACITY)
+            .await
+            .split();
         tracing::debug!("who spawns the spawnulator?");
         kernel.spawn(Self::spawnulate(kernel, vms)).await;
         tracing::debug!("spawnulator spawnulated!");
@@ -482,11 +507,11 @@ impl Spawnulator {
             Ok(_) => {
                 tracing::trace!(task.id = id, "enqueued");
                 Ok(())
-            },
+            }
             Err(spitebuf::EnqueueError::Closed(_)) => {
                 tracing::info!(task.id = id, "spawnulator task seems to be dead");
                 Err(forth3::Error::InternalError)
-            },
+            }
             Err(spitebuf::EnqueueError::Full(_)) => {
                 // TODO(eliza): maybe it shouldn't be able to return this error
                 // from `enqueue_async`...?
@@ -494,10 +519,8 @@ impl Spawnulator {
                 tracing::error!(task.id = id, "spawnulator channel should not be full, as `enqueue_async` will wait for capacity!");
                 Err(forth3::Error::InternalError)
             }
-
         }
     }
-
 
     #[tracing::instrument(skip(kernel, vms))]
     async fn spawnulate(kernel: &'static Kernel, vms: KConsumer<Forth>) {
