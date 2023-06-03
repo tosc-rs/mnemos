@@ -245,9 +245,7 @@ impl Kernel {
         // TODO: Send time to userspace?
     }
 
-    // TODO: This prooooobably should instead use a joinhandle, and poll on the initialize future
-    // to completion, to make sure that certain actions actually complete.
-    pub fn initialize<F>(&'static self, fut: F) -> Result<JoinHandle<F::Output>, ()>
+    pub fn initialize<F>(&'static self, fut: F) -> Result<JoinHandle<F::Output>, &'static str>
     where
         F: Future + 'static,
     {
