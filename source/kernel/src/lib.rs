@@ -249,10 +249,7 @@ impl Kernel {
     /// the spawned task's standard input and standard output streams.
     ///
     /// This should only be called once.
-    pub fn initialize_forth_tid0(
-        &'static self,
-        params: forth::Params,
-    ) -> JoinHandle<BidiHandle> {
+    pub fn initialize_forth_tid0(&'static self, params: forth::Params) -> JoinHandle<BidiHandle> {
         use forth::{Forth, Spawnulator};
         self.initialize(async move {
             tracing::debug!("spawning Task 0...");
