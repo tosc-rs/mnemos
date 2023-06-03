@@ -83,7 +83,7 @@ use abi::{
     },
     syscall::{KernelResponse, UserRequest},
 };
-use comms::kchannel::KChannel;
+use comms::{bbq::BidiHandle, kchannel::KChannel};
 use maitake::{
     self,
     scheduler::{LocalStaticScheduler, TaskStub},
@@ -252,7 +252,7 @@ impl Kernel {
     pub fn initialize_forth_tid0(
         &'static self,
         params: forth::Params,
-    ) -> JoinHandle<crate::comms::bbq::BidiHandle> {
+    ) -> JoinHandle<BidiHandle> {
         use forth::{Forth, Spawnulator};
         self.initialize(async move {
             tracing::debug!("spawning Task 0...");

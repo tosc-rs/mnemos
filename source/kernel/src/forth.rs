@@ -457,13 +457,13 @@ impl dictionary::DropDict for DropDict {
 /// implementation of its `spawn` builtin?
 ///
 /// The answer is that this is, unfortunately, not possible. The function
-/// implementing the `spawn` builtin, [`spawn_forth_task()`], *must* be `async`,
+/// implementing the `spawn` builtin, `spawn_forth_task()`, *must* be `async`,
 /// as it needs to perform allocations for the child task's dictionary, stacks,
-/// etc Therefore, calling [`spawn_forth_task()`] returns an `impl Future` which
+/// etc Therefore, calling `spawn_forth_task()` returns an `impl Future` which
 /// is awaited inside the `Dispatcher::dispatch_async()` future, which is itself
 /// awaited inside `Forth::process_line()` in the  parent VM's [`Forth::run()`]
 /// async method. This means the *layout* of the future generated for
-/// [`spawn_forth_task()`] must be known in order to determine the layout of the
+/// `spawn_forth_task()` must be known in order to determine the layout of the
 /// future generated for [`Forth::run()`]. In order to spawn a new child task, we
 /// must call [`Forth::run()`] and then pass the returned `impl Future` to
 /// [`Kernel::spawn()`]. This means that the generated `impl Future` for
