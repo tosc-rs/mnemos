@@ -216,12 +216,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
             disp_hdl.draw_framechunk(fc_0).await.unwrap();
         }
 
-        let tid0 = {
-            let (tid0, tid0_streams) = Forth::new(k, forth::Params::new()).await.expect("spawning forth should succeed");
-            k.spawn(tid0.run()).await;
-            tracing::info!("Task 0 spawned!");
-            tid0_streams
-        };
+        let tid0 = k.spawn_forth_tid0(Default::default()).await;
 
         k.spawn(
             async move {

@@ -1,5 +1,5 @@
 use crate::{
-    comms::bbq,
+    comms::{bbq, kchannel::{KChannel, KProducer, KConsumer}},
     drivers::serial_mux::{PortHandle, SerialMuxHandle},
     Kernel,
 };
@@ -34,7 +34,7 @@ pub struct Params {
 pub struct Forth {
     forth: AsyncForth<MnemosContext, Dispatcher>,
     stdio: bbq::BidiHandle,
-    bufs: Bufs,
+    _bufs: Bufs,
 }
 
 /// Owns the heap allocations for a `Forth` task.
@@ -51,6 +51,7 @@ impl Forth {
     pub async fn new(
         kernel: &'static Kernel,
         params: Params,
+        spawnulator: Spawnulator,
     ) -> Result<(Self, bbq::BidiHandle), &'static str> {
 
         let heap = kernel.heap();
@@ -60,7 +61,7 @@ impl Forth {
 
         let input = WordStrBuf::new(bufs.input.as_mut_ptr(), params.input_buf_size);
         let output = OutputBuf::new(bufs.output.as_mut_ptr(), params.output_buf_size);
-        let host_ctxt = params.alloc_ctxt(kernel).await;
+        let host_ctxt = MnemosContext::new(kernel, params, spawnulator).await;
 
         let forth = unsafe {
             AsyncForth::new(
@@ -82,7 +83,7 @@ impl Forth {
         let forth = Self {
             forth,
             stdio,
-            bufs,
+            _bufs: bufs,
         };
         Ok((forth, streams))
     }
@@ -153,6 +154,8 @@ struct MnemosContext {
     /// Forth task ID.
     // TODO(eliza): should we just use the `maitake` task ID, instead?
     id: usize,
+    /// Handle for spawning child tasks.
+    spawnulator: Spawnulator,
 }
 
 #[derive(Copy, Clone)]
@@ -190,14 +193,15 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
 }
 
 impl Params {
-    /// Allocate a host context.
-    async fn alloc_ctxt(&self, kernel: &'static Kernel) -> MnemosContext {
-        static NEXT_TASK_ID: AtomicUsize = AtomicUsize::new(0);
-        MnemosContext {
-            kernel,
-            boh: BagOfHolding::new(kernel, self.bag_of_holding_capacity).await,
-            id: NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed),
-            params: *self,
+    pub const fn new() -> Self {
+        Self {
+            stack_size: 256,
+            input_buf_size: 256,
+            output_buf_size: 256,
+            dictionary_size: 4096,
+            stdin_capacity: 1024,
+            stdout_capacity: 1024,
+            bag_of_holding_capacity: 16,
         }
     }
 
@@ -231,8 +235,24 @@ impl Params {
     }
 }
 
-impl Bufs {
+impl Default for Params {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
+impl MnemosContext {
+    async fn new(kernel: &'static Kernel, params: Params, spawnulator: Spawnulator) -> Self {
+        static NEXT_TASK_ID: AtomicUsize = AtomicUsize::new(0);
+        let boh = BagOfHolding::new(kernel, params.bag_of_holding_capacity).await;
+        Self {
+            boh,
+            kernel,
+            params,
+            id: NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed),
+            spawnulator,
+        }
+    }
 }
 
 /// Temporary helper extension trait. Should probably be upstreamed
@@ -340,15 +360,15 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     // parent's host context so we can actually do something with it...
     let (stdio, streams) = params.alloc_stdio(heap).await;
     let mut bufs = params.alloc_bufs(heap).await;
-    let new_dict = params.alloc_dict(heap).await.map_err(|err| {
-        tracing::error!(?err, "Failed to allocate dictionary for child VM");
+    let new_dict = params.alloc_dict(heap).await.map_err(|error| {
+        tracing::error!(?error, "Failed to allocate dictionary for child VM");
         forth3::Error::InternalError
     })?;
-    let my_dict = params.alloc_dict(heap).await.map_err(|err| {
-        tracing::error!(?err, "Failed to allocate replacement dictionary for parent VM");
+    let my_dict = params.alloc_dict(heap).await.map_err(|error| {
+        tracing::error!(?error, "Failed to allocate replacement dictionary for parent VM");
         forth3::Error::InternalError
     })?;
-    let host_ctxt = params.alloc_ctxt(kernel).await;
+    let host_ctxt = MnemosContext::new(kernel, params, forth.host_ctxt.spawnulator.clone()).await;
     let child_id = host_ctxt.id;
     let input = WordStrBuf::new(bufs.input.as_mut_ptr(), params.input_buf_size);
     let output = OutputBuf::new(bufs.output.as_mut_ptr(), params.output_buf_size);
@@ -364,8 +384,8 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
             output,
             host_ctxt,
         )
-    }.map_err(|err| {
-        tracing::error!(?err, "Failed to construct Forth VM");
+    }.map_err(|error| {
+        tracing::error!(?error, "Failed to construct Forth VM");
         forth3::Error::InternalError
     })?;
 
@@ -373,17 +393,21 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     child.data_stack.push(xt)?;
     // TODO(eliza): it would be nicer if we could just push a call context for
     // the execution token...
-    child.input.fill("execute");
+    child.input.fill("execute").map_err(|error| {
+        tracing::error!(?error, "Failed to set child input!");
+        forth3::Error::InternalError
+    })?;
 
     let child = Forth {
-        forth: AsyncForth::from_forth(child, Dispatcher), stdio, bufs,
+        forth: AsyncForth::from_forth(child, Dispatcher), stdio, _bufs: bufs,
     };
 
     tracing::info!(parent.id = forth.host_ctxt.id, child.id = child_id, "Forked Forth VM!");
 
-    // TODO(eliza): store the child's joinhandle in the
-    // parent's host context so we can actually do something with it...
-    kernel.spawn(child.run()).await;
+    forth.host_ctxt.spawnulator.spawn(child).await.map_err(|error| {
+        tracing::error!(?error, "Failed to enqueue child task to spawn!");
+        forth3::Error::InternalError
+    })?;
 
     Ok(())
 }
@@ -394,17 +418,57 @@ impl dictionary::DropDict for DropDict {
     }
 }
 
-impl Params {
-    pub const fn new() -> Self {
-        Self {
-            stack_size: 256,
-            input_buf_size: 256,
-            output_buf_size: 256,
-            dictionary_size: 4096,
-            stdin_capacity: 1024,
-            stdout_capacity: 1024,
-            bag_of_holding_capacity: 16,
+/// Handle for spawning new Forth tasks.
+#[derive(Clone)]
+pub struct Spawnulator(KProducer<Forth>);
+
+impl Spawnulator {
+    const SPAWN_QUEUE_CAPACITY: usize = 16; // 100% arbitrary! :D
+
+    /// Start the spawnulator background task, returning a handle that can be
+    /// used to spawn new `Forth` VMs.
+    #[tracing::instrument(level = tracing::Level::DEBUG, skip(kernel))]
+    pub async fn start_spawnulating(kernel: &'static Kernel) -> Self {
+        let (vms_tx, vms) = KChannel::new_async(kernel, Self::SPAWN_QUEUE_CAPACITY).await.split();
+        tracing::debug!("who spawns the spawnulator?");
+        kernel.spawn(Self::spawnulate(kernel, vms)).await;
+        tracing::debug!("spawnulator spawnulated!");
+        Self(vms_tx)
+    }
+
+    pub async fn spawn(&self, vm: Forth) -> Result<(), forth3::Error> {
+        let id = vm.forth.host_ctxt().id;
+        tracing::trace!(task.id = id, "spawn u later...");
+        match self.0.enqueue_async(vm).await {
+            Ok(_) => {
+                tracing::trace!(task.id = id, "enqueued");
+                Ok(())
+            },
+            Err(spitebuf::EnqueueError::Closed(_)) => {
+                tracing::info!(task.id = id, "spawnulator task seems to be dead");
+                Err(forth3::Error::InternalError)
+            },
+            Err(spitebuf::EnqueueError::Full(_)) => {
+                // TODO(eliza): maybe it shouldn't be able to return this error
+                // from `enqueue_async`...?
+                debug_assert!(false, "spawnulator channel should not be full, as `enqueue_async` will wait for capacity!");
+                tracing::error!(task.id = id, "spawnulator channel should not be full, as `enqueue_async` will wait for capacity!");
+                Err(forth3::Error::InternalError)
+            }
+
         }
+    }
+
+
+    #[tracing::instrument(skip(kernel, vms))]
+    async fn spawnulate(kernel: &'static Kernel, vms: KConsumer<Forth>) {
+        tracing::debug!("spawnulator running...");
+        while let Ok(vm) = vms.dequeue_async().await {
+            let id = vm.forth.host_ctxt().id;
+            kernel.spawn(vm.run()).await;
+            tracing::trace!(task.id = id, "spawnulated!");
+        }
+        tracing::info!("spawnulator channel closed!");
     }
 }
 
