@@ -23,7 +23,7 @@ use crate::heap::AHeap;
 /// The Node type is never ACTUALLY created or used directly, but instead
 /// is used as a "superset" of its children to ensure that the alignment
 /// and necessary size are respected at the time of allocation. Allocation
-/// is ALWAYS done as a Node<T>, meaning that conversions from an active
+/// is ALWAYS done as a `Node<T>`, meaning that conversions from an active
 /// type to a Recycle type are always sound.
 #[allow(dead_code)]
 #[repr(C)]
@@ -42,7 +42,7 @@ pub(crate) union Node<T> {
 /// An Active node type
 ///
 /// This type represents a live allocation of a single item, similar to a
-/// Box<T> in liballoc.
+/// `Box<T>` in liballoc.
 ///
 /// It contains a pointer to the allocator, as well as storage for the item.
 ///
@@ -115,7 +115,7 @@ pub(crate) struct Recycle {
 }
 
 impl<T> Active<T> {
-    /// Convert an Active<T> into a Recycle, and release it to be freed
+    /// Convert an `Active<T>` into a `Recycle`, and release it to be freed
     ///
     /// This function does NOT handle dropping of the contained T, which
     /// must be done BEFORE calling this function.
@@ -152,9 +152,9 @@ impl<T> Active<T> {
         NonNull::new_unchecked(ptr)
     }
 
-    /// Set the heap pointer contained within the given Active<T>.
+    /// Set the heap pointer contained within the given `Active<T>`.
     ///
-    /// This should ONLY be used to initialize the Active<T> at time of allocation.
+    /// This should ONLY be used to initialize the `Active<T>` at time of allocation.
     #[inline(always)]
     pub(crate) unsafe fn write_heap(this: NonNull<Active<T>>, heap: *const AHeap) {
         let ptr = this.as_ptr();
@@ -163,8 +163,8 @@ impl<T> Active<T> {
 
     /// Obtain a pointer to the underlying data storage
     ///
-    /// Although Active<T> does not have the same provenance challenges that the
-    /// ActiveArr<T> type has, we use the same `data` interface for reasons of
+    /// Although `Active<T>` does not have the same provenance challenges that the
+    /// `ActiveArr<T>` type has, we use the same `data` interface for reasons of
     /// consistency. This also ensures that reordering or other modifications of
     /// the underlying node type do not require changes elsewhere.
     #[inline(always)]
@@ -178,7 +178,7 @@ impl<T> Active<T> {
 impl<T> ActiveArr<T> {
     /// Obtain a valid layout for an ActiveArr
     ///
-    /// As we can't directly create a `Layout` type for our Node<T>/ActiveArr<T>
+    /// As we can't directly create a `Layout` type for our `Node<T>`/`ActiveArr<T>`
     /// because of the `!Sized` nature of `[T]`, we instead do manual layout
     /// surgery here instead. This function takes the alignment necessary for
     /// a `Node<T>`, but also increases the size to accomodate a `[T]` with
@@ -200,9 +200,9 @@ impl<T> ActiveArr<T> {
         Layout::from_size_align_unchecked(size, layout_node.align())
     }
 
-    /// Set the heap pointer contained within the given ActiveArr<T>.
+    /// Set the heap pointer contained within the given `ActiveArr<T>`.
     ///
-    /// This should ONLY be used to initialize the ActiveArr<T> at time of allocation.
+    /// This should ONLY be used to initialize the `ActiveArr<T>` at time of allocation.
     #[inline(always)]
     pub(crate) unsafe fn write_heap(this: NonNull<ActiveArr<T>>, heap: *const AHeap) {
         let ptr = this.as_ptr();
@@ -229,7 +229,7 @@ impl<T> ActiveArr<T> {
         (nn, size)
     }
 
-    /// Convert an Active<T> into a Recycle, and release it to be freed
+    /// Convert an `Active<T>` into a Recycle, and release it to be freed
     ///
     /// This function does NOT handle dropping of the contained `[T]`, which
     /// must be done BEFORE calling this function.
