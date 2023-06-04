@@ -89,7 +89,7 @@ use maitake::{
     scheduler::{LocalStaticScheduler, TaskStub},
     sync::Mutex,
     task::{JoinHandle, Storage, Task as MaitakeTask},
-    time::{self, Duration, Timer},
+    time::{self, Sleep, Timeout, Duration, Timer},
 };
 use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 use registry::Registry;
@@ -327,7 +327,7 @@ impl Kernel {
 
     /// Returns a [`Sleep`] future that sleeps for the specified [`Duration`].
     #[inline]
-    pub fn sleep(&'static self, duration: Duration) -> time::Sleep<'static> {
+    pub fn sleep(&'static self, duration: Duration) -> Sleep<'static> {
         self.inner.timer.sleep(duration)
     }
 
@@ -338,7 +338,7 @@ impl Kernel {
         &'static self,
         duration: Duration,
         f: F,
-    ) -> time::Timeout<'static, F> {
+    ) -> Timeout<'static, F> {
         self.inner.timer.timeout(duration, f)
     }
 }
