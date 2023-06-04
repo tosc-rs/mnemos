@@ -53,7 +53,10 @@
 //! # "#)
 //! ```
 
-use crate::{leakbox::{LBForthParams, LBForth}, Forth, Error};
+use crate::{
+    leakbox::{LBForth, LBForthParams},
+    Error, Forth,
+};
 
 /// Run the given forth ui test against ALL enabled forth VMs
 ///
@@ -89,25 +92,25 @@ pub fn blocking_runtest_with<T>(forth: &mut Forth<T>, contents: &str) {
 /// for listing of frontmatter kinds). Provides no actual async builtins, and will
 /// panic if the provided dispatcher is called for some reason
 #[cfg(feature = "async")]
-pub fn async_blockon_runtest(contents: &str)
-{
-    use crate::{leakbox::AsyncLBForth, dictionary::{AsyncBuiltinEntry, AsyncBuiltins}, fastr::FaStr};
+pub fn async_blockon_runtest(contents: &str) {
+    use crate::{
+        dictionary::{AsyncBuiltinEntry, AsyncBuiltins},
+        fastr::FaStr,
+        leakbox::AsyncLBForth,
+    };
 
     struct TestAsyncDispatcher;
     impl<'forth> AsyncBuiltins<'forth, ()> for TestAsyncDispatcher {
         type Future = futures::future::Ready<Result<(), Error>>;
         const BUILTINS: &'static [AsyncBuiltinEntry<()>] = &[];
-        fn dispatch_async(
-            &self,
-            _id: &FaStr,
-            _forth: &'forth mut Forth<()>,
-        ) -> Self::Future {
-             unreachable!("no async builtins should be called in this test")
+        fn dispatch_async(&self, _id: &FaStr, _forth: &'forth mut Forth<()>) -> Self::Future {
+            unreachable!("no async builtins should be called in this test")
         }
     }
 
     let tokd = tokenize(contents, true).unwrap();
-    let mut forth = AsyncLBForth::from_params(tokd.settings, (), Forth::FULL_BUILTINS, TestAsyncDispatcher);
+    let mut forth =
+        AsyncLBForth::from_params(tokd.settings, (), Forth::FULL_BUILTINS, TestAsyncDispatcher);
     async_blockon_runtest_with(&mut forth.forth, contents);
 }
 
@@ -121,7 +124,8 @@ where
     use crate::leakbox::AsyncLBForth;
 
     let tokd = tokenize(contents, true).unwrap();
-    let mut forth = AsyncLBForth::from_params(tokd.settings, context, Forth::FULL_BUILTINS, dispatcher);
+    let mut forth =
+        AsyncLBForth::from_params(tokd.settings, context, Forth::FULL_BUILTINS, dispatcher);
     async_blockon_runtest_with(&mut forth.forth, contents);
 }
 
@@ -133,7 +137,11 @@ where
     D: for<'forth> crate::dictionary::AsyncBuiltins<'forth, T>,
 {
     let tokd = tokenize(contents, false).unwrap();
-    for Step { ref input, output: ref outcome } in tokd.steps {
+    for Step {
+        ref input,
+        output: ref outcome,
+    } in tokd.steps
+    {
         #[cfg(not(miri))]
         println!("> {input}");
         forth.input_mut().fill(input).unwrap();
@@ -172,7 +180,11 @@ fn check_output(res: Result<(), Error>, outcome: &Outcome, output: &str) {
 //
 // Panics on any mismatch
 fn blocking_steps_with<T>(steps: &[Step], forth: &mut Forth<T>) {
-    for Step { input, output: outcome } in steps {
+    for Step {
+        input,
+        output: outcome,
+    } in steps
+    {
         #[cfg(not(miri))]
         println!("> {input}");
         forth.input.fill(input).unwrap();
@@ -228,10 +240,10 @@ fn tokenize(contents: &str, allow_frontmatter: bool) -> Result<Tokenized, ()> {
                 match &mut cur_step.output {
                     Outcome::OkAnyOutput => {
                         cur_step.output = Outcome::OkWithOutput(vec![expected_out]);
-                    },
+                    }
                     Outcome::OkWithOutput(o) => {
                         o.push(remain.to_string());
-                    },
+                    }
                     Outcome::FatalError => panic!("Fatal error can't set output"),
                 }
             }
@@ -247,22 +259,28 @@ fn tokenize(contents: &str, allow_frontmatter: bool) -> Result<Tokenized, ()> {
                 let mut is_comment = false;
                 match split.next() {
                     Some("data_stack_elems") => {
-                        output.settings.data_stack_elems = split.next().unwrap().parse::<usize>().unwrap();
+                        output.settings.data_stack_elems =
+                            split.next().unwrap().parse::<usize>().unwrap();
                     }
                     Some("return_stack_elems") => {
-                        output.settings.return_stack_elems = split.next().unwrap().parse::<usize>().unwrap();
+                        output.settings.return_stack_elems =
+                            split.next().unwrap().parse::<usize>().unwrap();
                     }
                     Some("control_stack_elems") => {
-                        output.settings.control_stack_elems = split.next().unwrap().parse::<usize>().unwrap();
+                        output.settings.control_stack_elems =
+                            split.next().unwrap().parse::<usize>().unwrap();
                     }
                     Some("input_buf_elems") => {
-                        output.settings.input_buf_elems = split.next().unwrap().parse::<usize>().unwrap();
+                        output.settings.input_buf_elems =
+                            split.next().unwrap().parse::<usize>().unwrap();
                     }
                     Some("output_buf_elems") => {
-                        output.settings.output_buf_elems = split.next().unwrap().parse::<usize>().unwrap();
+                        output.settings.output_buf_elems =
+                            split.next().unwrap().parse::<usize>().unwrap();
                     }
                     Some("dict_buf_elems") => {
-                        output.settings.dict_buf_elems = split.next().unwrap().parse::<usize>().unwrap();
+                        output.settings.dict_buf_elems =
+                            split.next().unwrap().parse::<usize>().unwrap();
                     }
                     Some(_) => {
                         is_comment = true;

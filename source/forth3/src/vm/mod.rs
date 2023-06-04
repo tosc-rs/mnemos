@@ -8,8 +8,7 @@ use core::{
 
 use crate::{
     dictionary::{
-        DictLocation, BuiltinEntry, BumpError, DictionaryEntry, EntryHeader,
-        EntryKind, OwnedDict,
+        BuiltinEntry, BumpError, DictLocation, DictionaryEntry, EntryHeader, EntryKind, OwnedDict,
     },
     fastr::{FaStr, TmpFaStr},
     input::WordStrBuf,
@@ -92,7 +91,7 @@ impl<T> Forth<T> {
     /// slot, and overflowing onto the injection queue if the local
     /// queue is full.
     #[cfg(feature = "async")]
-     unsafe fn new_async(
+    unsafe fn new_async(
         dstack_buf: (*mut Word, usize),
         rstack_buf: (*mut Word, usize),
         cstack_buf: (*mut CallContext<T>, usize),
@@ -209,7 +208,8 @@ impl<T> Forth<T> {
     }
 
     fn find_in_dict(&self, fastr: &TmpFaStr<'_>) -> Option<DictLocation<T>> {
-        self.dict.entries()
+        self.dict
+            .entries()
             .find(|de| &unsafe { de.entry().as_ref() }.hdr.name == fastr.deref())
     }
 
@@ -261,11 +261,13 @@ impl<T> Forth<T> {
                     ProcessAction::Done => {
                         self.output.push_str("ok.\n")?;
                         break Ok(());
-                    },
-                    ProcessAction::Continue => {},
+                    }
+                    ProcessAction::Continue => {}
                     ProcessAction::Execute =>
-                        // Loop until execution completes.
-                        while self.steppa_pig()? != Step::Done {},
+                    // Loop until execution completes.
+                    {
+                        while self.steppa_pig()? != Step::Done {}
+                    }
                 }
             }
         })();
@@ -357,7 +359,7 @@ impl<T> Forth<T> {
                 })?;
 
                 return Ok(ProcessAction::Execute);
-            },
+            }
             Lookup::Literal { val } => {
                 self.data_stack.push(Word::data(val))?;
             }
@@ -394,7 +396,7 @@ impl<T> Forth<T> {
     }
 
     // Single step execution
-    fn steppa_pig(&mut self,) -> Result<Step, Error> {
+    fn steppa_pig(&mut self) -> Result<Step, Error> {
         let top = match self.call_stack.try_peek() {
             Ok(t) => t,
             Err(StackError::StackEmpty) => return Ok(Step::Done),
@@ -402,20 +404,22 @@ impl<T> Forth<T> {
         };
 
         let kind = unsafe { top.eh.as_ref().kind };
-        let res = unsafe { match kind {
-            EntryKind::StaticBuiltin => (top.eh.cast::<BuiltinEntry<T>>().as_ref().func)(self),
-            EntryKind::RuntimeBuiltin => (top.eh.cast::<BuiltinEntry<T>>().as_ref().func)(self),
-            EntryKind::Dictionary => (top.eh.cast::<DictionaryEntry<T>>().as_ref().func)(self),
+        let res = unsafe {
+            match kind {
+                EntryKind::StaticBuiltin => (top.eh.cast::<BuiltinEntry<T>>().as_ref().func)(self),
+                EntryKind::RuntimeBuiltin => (top.eh.cast::<BuiltinEntry<T>>().as_ref().func)(self),
+                EntryKind::Dictionary => (top.eh.cast::<DictionaryEntry<T>>().as_ref().func)(self),
 
-            #[cfg(feature = "async")]
-            EntryKind::AsyncBuiltin => {
-                unreachable!(
-                    "only an AsyncForth VM should have async builtins, and an \
+                #[cfg(feature = "async")]
+                EntryKind::AsyncBuiltin => {
+                    unreachable!(
+                        "only an AsyncForth VM should have async builtins, and an \
                     AsyncForth VM should never perform a non-async execution \
                     step! this is a bug."
-                )
-            },
-        }};
+                    )
+                }
+            }
+        };
 
         match res {
             Ok(_) => {
@@ -484,7 +488,8 @@ impl<T> Forth<T> {
         let delta = *len - do_start;
         let offset = i32::from(delta + 1).neg();
         let literal_dojmp = self.find_word("(jmp-doloop)").ok_or(Error::WordNotInDict)?;
-        self.dict.alloc
+        self.dict
+            .alloc
             .bump_write(Word::ptr(literal_dojmp.as_ptr()))?;
         self.dict.alloc.bump_write(Word::data(offset))?;
         *len += 2;
@@ -542,7 +547,8 @@ impl<T> Forth<T> {
 
         // Write a conditional jump, followed by space for a literal
         let literal_jmp = self.find_word("(jmp)").ok_or(Error::WordNotInDict)?;
-        self.dict.alloc
+        self.dict
+            .alloc
             .bump_write(Word::ptr(literal_jmp.as_ptr()))?;
         let jmp_offset: &mut i32 = {
             let jmp_offset_word = self.dict.alloc.bump::<Word>()?;
@@ -609,7 +615,8 @@ impl<T> Forth<T> {
                 // 1. The address of the `literal()` dictionary item
                 // 2. The value of the literal, as a data word
                 let literal_dict = self.find_word("(literal)").ok_or(Error::WordNotInDict)?;
-                self.dict.alloc
+                self.dict
+                    .alloc
                     .bump_write(Word::ptr(literal_dict.as_ptr()))?;
                 self.dict.alloc.bump_write(Word::float(val))?;
                 *len += 2;
@@ -620,7 +627,8 @@ impl<T> Forth<T> {
                 // 1. The address of the `literal()` dictionary item
                 // 2. The value of the literal, as a data word
                 let literal_dict = self.find_word("(literal)").ok_or(Error::WordNotInDict)?;
-                self.dict.alloc
+                self.dict
+                    .alloc
                     .bump_write(Word::ptr(literal_dict.as_ptr()))?;
                 self.dict.alloc.bump_write(Word::data(val))?;
                 *len += 2;
@@ -667,14 +675,17 @@ impl<T> Forth<T> {
             u16::try_from(lit_str.as_bytes().len()).replace_err(Error::LiteralStringTooLong)?;
 
         let literal_writestr = self.find_word("(write-str)").ok_or(Error::WordNotInDict)?;
-        self.dict.alloc
+        self.dict
+            .alloc
             .bump_write::<Word>(Word::ptr(literal_writestr.as_ptr()))?;
-        self.dict.alloc
+        self.dict
+            .alloc
             .bump_write::<Word>(Word::data(str_len.into()))?;
         *len += 2;
 
         let start_ptr = self
-            .dict.alloc
+            .dict
+            .alloc
             .bump_u8s(lit_str.as_bytes().len())
             .ok_or(Error::Bump(BumpError::OutOfMemory))?;
 
@@ -712,7 +723,9 @@ impl<T> Forth<T> {
             .ok_or(Error::ColonCompileMissingName)?;
         let value_i32 = value.parse::<i32>().replace_err(Error::BadLiteral)?;
 
-        self.dict.build_entry()?.write_word(Word::data(value_i32))?
+        self.dict
+            .build_entry()?
+            .write_word(Word::data(value_i32))?
             // TODO: Should we look up `(constant)` for consistency?
             // Use `find_word`?
             .finish(name, Self::constant);
@@ -722,7 +735,9 @@ impl<T> Forth<T> {
     // variable NAME
     fn munch_variable(&mut self, _len: &mut u16) -> Result<u16, Error> {
         let name = self.munch_name()?;
-        self.dict.build_entry()?.write_word(Word::data(0))?
+        self.dict
+            .build_entry()?
+            .write_word(Word::data(0))?
             // TODO: Should we look up `(variable)` for consistency?
             // Use `find_word`?
             .finish(name, Self::variable);

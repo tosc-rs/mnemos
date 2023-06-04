@@ -4,10 +4,10 @@ use core::{
     alloc::{Layout, LayoutError},
     marker::PhantomData,
     mem::{self, MaybeUninit},
+    ops::{Deref, DerefMut},
     ptr::{self, addr_of_mut, NonNull},
-    ops::{Deref, DerefMut}
 };
-use portable_atomic::{Ordering::*, AtomicUsize};
+use portable_atomic::{AtomicUsize, Ordering::*};
 
 #[derive(Debug, PartialEq)]
 pub enum BumpError {
@@ -101,7 +101,7 @@ pub struct Dictionary<T: 'static> {
     /// chain of references. When dropping the dictionary, we decrement the
     /// parent's ref count.
     parent: Option<SharedDict<T>>,
-    deallocate: unsafe fn (ptr: NonNull<u8>, layout: Layout),
+    deallocate: unsafe fn(ptr: NonNull<u8>, layout: Layout),
 }
 
 pub trait DropDict {
@@ -243,7 +243,11 @@ pub trait AsyncBuiltins<'forth, T: 'static> {
     /// [`Future`]: core::future::Future
     /// [`match`]: https://doc.rust-lang.org/stable/std/keyword.match.html
     /// [impling]: #implementing-async-builtins
-    fn dispatch_async(&self, id: &'static FaStr, forth: &'forth mut crate::Forth<T>) -> Self::Future;
+    fn dispatch_async(
+        &self,
+        id: &'static FaStr,
+        forth: &'forth mut crate::Forth<T>,
+    ) -> Self::Future;
 }
 
 impl<T: 'static> DictionaryEntry<T> {
@@ -320,14 +324,14 @@ impl<T: 'static> SharedDict<T> {
     }
 }
 
-impl <T: 'static> Deref for SharedDict<T> {
+impl<T: 'static> Deref for SharedDict<T> {
     type Target = Dictionary<T>;
     fn deref(&self) -> &Self::Target {
         unsafe { self.0.as_ref() }
     }
 }
 
-impl<T: 'static> Clone for SharedDict<T>{
+impl<T: 'static> Clone for SharedDict<T> {
     #[inline]
     fn clone(&self) -> Self {
         // Using a relaxed ordering is alright here, as knowledge of the
@@ -361,8 +365,7 @@ impl<T: 'static> Clone for SharedDict<T>{
     }
 }
 
-
-impl<T: 'static> Drop for SharedDict<T>{
+impl<T: 'static> Drop for SharedDict<T> {
     #[inline]
     fn drop(&mut self) {
         // Because `fetch_sub` is already atomic, we do not need to synchronize
@@ -412,7 +415,6 @@ impl<T: 'static> Drop for SharedDict<T>{
 
 impl<T: 'static> OwnedDict<T> {
     pub fn new<D: DropDict>(dict: NonNull<MaybeUninit<Dictionary<T>>>, size: usize) -> Self {
-
         // A helper type to provide proper layout generation for initialization
         #[repr(C)]
         struct DictionaryInner<T: 'static> {
@@ -441,10 +443,9 @@ impl<T: 'static> OwnedDict<T> {
     fn into_shared(self) -> SharedDict<T> {
         // don't let the destructor run, as it will deallocate the dictionary.
         let this = mem::ManuallyDrop::new(self);
-        this.refs.compare_exchange(
-            Dictionary::<T>::MUTABLE,
-            1, AcqRel, Acquire
-        ).expect("dictionary must have been mutable");
+        this.refs
+            .compare_exchange(Dictionary::<T>::MUTABLE, 1, AcqRel, Acquire)
+            .expect("dictionary must have been mutable");
         SharedDict(this.0)
     }
 
@@ -492,7 +493,7 @@ impl<T: 'static> Drop for OwnedDict<T> {
 
 // === EntryBuilder ===
 
-impl<T: > EntryBuilder<'_, T> {
+impl<T> EntryBuilder<'_, T> {
     pub(crate) fn write_word(mut self, word: Word) -> Result<Self, BumpError> {
         self.dict.alloc.bump_write(word)?;
         self.len += 1;
@@ -510,7 +511,7 @@ impl<T: > EntryBuilder<'_, T> {
                     name,
                     kind: self.kind,
                     len: self.len,
-                    _pd: PhantomData
+                    _pd: PhantomData,
                 },
                 // TODO: Should arrays push length and ptr? Or just ptr?
                 //
@@ -687,9 +688,9 @@ pub mod test {
     use std::alloc::Layout;
 
     use crate::{
-        dictionary::{DictionaryBump, DictionaryEntry, BuiltinEntry, DictLocation},
-        leakbox::{LeakBox, alloc_dict, LeakBoxDict},
-        Word, Error, Forth,
+        dictionary::{BuiltinEntry, DictLocation, DictionaryBump, DictionaryEntry},
+        leakbox::{alloc_dict, LeakBox, LeakBoxDict},
+        Error, Forth, Word,
     };
 
     #[cfg(feature = "async")]
@@ -780,7 +781,10 @@ pub mod test {
 
         let strname = buf.alloc.bump_str("stubby").unwrap();
         buf.add_bi_fastr(strname, stubby).unwrap();
-        assert_eq!(unsafe { buf.tail.as_ref().unwrap().as_ref().hdr.name.as_str() }, "stubby");
+        assert_eq!(
+            unsafe { buf.tail.as_ref().unwrap().as_ref().hdr.name.as_str() },
+            "stubby"
+        );
     }
 
     #[test]
@@ -800,15 +804,17 @@ pub mod test {
         let buf_1_ro = buf_1.fork_onto(buf_2);
 
         // Find the builtin in the original slab, it should say "current" here
-        let ro_find = buf_1_ro.entries().find(|e| {
-            unsafe { e.entry().as_ref() }.hdr.name.as_str() == "stubby"
-        }).unwrap();
+        let ro_find = buf_1_ro
+            .entries()
+            .find(|e| unsafe { e.entry().as_ref() }.hdr.name.as_str() == "stubby")
+            .unwrap();
         assert!(matches!(ro_find, DictLocation::Current(_)));
 
         // Now find the builtin in the new mutable slab, it should say "parent" here
-        let rw_find = buf_1.entries().find(|e| {
-            unsafe { e.entry().as_ref() }.hdr.name.as_str() == "stubby"
-        }).unwrap();
+        let rw_find = buf_1
+            .entries()
+            .find(|e| unsafe { e.entry().as_ref() }.hdr.name.as_str() == "stubby")
+            .unwrap();
         assert!(matches!(rw_find, DictLocation::Parent(_)));
     }
 }

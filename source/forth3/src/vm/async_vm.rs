@@ -32,7 +32,7 @@ use super::*;
 /// Synchronous builtins should be used for any builtin word that does not
 /// require performing an asynchronous operation on the host, such as those
 /// which perform mathematical operations.
-/// 
+///
 /// Synchronous builtins can be provided when the VM is constructed as a static
 /// slice of [`BuiltinEntry`]s. They may also be added at runtime using the
 /// [`AsyncForth::add_sync_builtin`] and
@@ -70,8 +70,21 @@ where
         sync_builtins: &'static [BuiltinEntry<T>],
         async_builtins: A,
     ) -> Result<Self, Error> {
-        let vm = Forth::new_async(dstack_buf, rstack_buf, cstack_buf, dict, input, output, host_ctxt, sync_builtins, A::BUILTINS)?;
-        Ok(Self { vm, builtins: async_builtins })
+        let vm = Forth::new_async(
+            dstack_buf,
+            rstack_buf,
+            cstack_buf,
+            dict,
+            input,
+            output,
+            host_ctxt,
+            sync_builtins,
+            A::BUILTINS,
+        )?;
+        Ok(Self {
+            vm,
+            builtins: async_builtins,
+        })
     }
 
     /// Constructs a new VM whose dictionary is a fork of this VM's dictionary.
@@ -103,10 +116,16 @@ where
         output: OutputBuf,
         host_ctxt: T,
     ) -> Result<Self, Error>
-    where A: Clone,
+    where
+        A: Clone,
     {
-        let vm = self.vm.fork(new_dict, my_dict, dstack_buf, rstack_buf, cstack_buf, input, output, host_ctxt)?;
-        Ok(Self { vm, builtins: self.builtins.clone() })
+        let vm = self.vm.fork(
+            new_dict, my_dict, dstack_buf, rstack_buf, cstack_buf, input, output, host_ctxt,
+        )?;
+        Ok(Self {
+            vm,
+            builtins: self.builtins.clone(),
+        })
     }
 
     /// Borrows this VM's [`OutputBuf`].
@@ -168,13 +187,13 @@ where
                     ProcessAction::Done => {
                         self.vm.output.push_str("ok.\n")?;
                         break Ok(());
-                    },
-                    ProcessAction::Continue => {},
-                    ProcessAction::Execute =>
-                        while self.async_pig().await? != Step::Done {},
+                    }
+                    ProcessAction::Continue => {}
+                    ProcessAction::Execute => while self.async_pig().await? != Step::Done {},
                 }
             }
-        }.await;
+        }
+        .await;
         match res {
             Ok(_) => Ok(()),
             Err(e) => {
@@ -188,7 +207,10 @@ where
 
     // Single step execution (async version).
     async fn async_pig(&mut self) -> Result<Step, Error> {
-        let Self { ref mut vm, ref builtins } = self;
+        let Self {
+            ref mut vm,
+            ref builtins,
+        } = self;
 
         let top = match vm.call_stack.try_peek() {
             Ok(t) => t,
@@ -197,14 +219,14 @@ where
         };
 
         let kind = unsafe { top.eh.as_ref().kind };
-        let res = unsafe { match kind {
-            EntryKind::StaticBuiltin => (top.eh.cast::<BuiltinEntry<T>>().as_ref().func)(vm),
-            EntryKind::RuntimeBuiltin => (top.eh.cast::<BuiltinEntry<T>>().as_ref().func)(vm),
-            EntryKind::Dictionary => (top.eh.cast::<DictionaryEntry<T>>().as_ref().func)(vm),
-            EntryKind::AsyncBuiltin => {
-                builtins.dispatch_async(&top.eh.as_ref().name, vm).await
-            },
-        }};
+        let res = unsafe {
+            match kind {
+                EntryKind::StaticBuiltin => (top.eh.cast::<BuiltinEntry<T>>().as_ref().func)(vm),
+                EntryKind::RuntimeBuiltin => (top.eh.cast::<BuiltinEntry<T>>().as_ref().func)(vm),
+                EntryKind::Dictionary => (top.eh.cast::<DictionaryEntry<T>>().as_ref().func)(vm),
+                EntryKind::AsyncBuiltin => builtins.dispatch_async(&top.eh.as_ref().name, vm).await,
+            }
+        };
 
         match res {
             Ok(_) => {

@@ -72,7 +72,9 @@ impl FaStr {
     pub(crate) unsafe fn copy_in_child(&self) -> Self {
         Self {
             ptr: self.ptr,
-            len_hash: LenHash { inner: self.len_hash.inner },
+            len_hash: LenHash {
+                inner: self.len_hash.inner,
+            },
         }
     }
 }

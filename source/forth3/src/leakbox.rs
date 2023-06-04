@@ -6,11 +6,15 @@ use std::{
 };
 
 use crate::{
-    dictionary::{BuiltinEntry, DropDict, OwnedDict, Dictionary}, input::WordStrBuf, output::OutputBuf, word::Word, CallContext, Forth,
+    dictionary::{BuiltinEntry, Dictionary, DropDict, OwnedDict},
+    input::WordStrBuf,
+    output::OutputBuf,
+    word::Word,
+    CallContext, Forth,
 };
 
 #[cfg(feature = "async")]
-use crate::{AsyncForth, dictionary::{AsyncBuiltins}};
+use crate::{dictionary::AsyncBuiltins, AsyncForth};
 
 // Helper type that will un-leak the buffer once it is dropped.
 pub struct LeakBox<T> {
@@ -161,17 +165,19 @@ impl<T: 'static> LBForth<T> {
 
         let input = WordStrBuf::new(_input_buf.ptr(), _input_buf.len());
         let output = OutputBuf::new(_output_buf.ptr(), _output_buf.len());
-        let forth = unsafe { 
-            self.forth.fork(
-                my_new_dict,
-                new_dict,
-                (_payload_dstack.ptr(), _payload_dstack.len()),
-                (_payload_rstack.ptr(), _payload_rstack.len()),
-                (_payload_cstack.ptr(), _payload_cstack.len()),
-                input,
-                output,
-                host_ctxt,
-            ).unwrap()
+        let forth = unsafe {
+            self.forth
+                .fork(
+                    my_new_dict,
+                    new_dict,
+                    (_payload_dstack.ptr(), _payload_dstack.len()),
+                    (_payload_rstack.ptr(), _payload_rstack.len()),
+                    (_payload_cstack.ptr(), _payload_cstack.len()),
+                    input,
+                    output,
+                    host_ctxt,
+                )
+                .unwrap()
         };
         Self {
             forth,
@@ -194,7 +200,7 @@ where
         params: LBForthParams,
         host_ctxt: T,
         sync_builtins: &'static [BuiltinEntry<T>],
-        dispatcher: D
+        dispatcher: D,
     ) -> Self {
         let _payload_dstack: LeakBox<Word> = LeakBox::new(params.data_stack_elems);
         let _payload_rstack: LeakBox<Word> = LeakBox::new(params.return_stack_elems);
@@ -237,7 +243,9 @@ where
     ///
     /// The child VM is created with empty stacks and input and output buffers.
     pub fn fork_with_params(&mut self, params: LBForthParams, host_ctxt: T) -> Self
-    where D: Clone {
+    where
+        D: Clone,
+    {
         let _payload_dstack: LeakBox<Word> = LeakBox::new(params.data_stack_elems);
         let _payload_rstack: LeakBox<Word> = LeakBox::new(params.return_stack_elems);
         let _payload_cstack: LeakBox<CallContext<T>> = LeakBox::new(params.control_stack_elems);
@@ -249,17 +257,19 @@ where
 
         let input = WordStrBuf::new(_input_buf.ptr(), _input_buf.len());
         let output = OutputBuf::new(_output_buf.ptr(), _output_buf.len());
-        let forth = unsafe { 
-            self.forth.fork(
-                my_new_dict,
-                new_dict,
-                (_payload_dstack.ptr(), _payload_dstack.len()),
-                (_payload_rstack.ptr(), _payload_rstack.len()),
-                (_payload_cstack.ptr(), _payload_cstack.len()),
-                input,
-                output,
-                host_ctxt,
-            ).unwrap()
+        let forth = unsafe {
+            self.forth
+                .fork(
+                    my_new_dict,
+                    new_dict,
+                    (_payload_dstack.ptr(), _payload_dstack.len()),
+                    (_payload_rstack.ptr(), _payload_rstack.len()),
+                    (_payload_cstack.ptr(), _payload_cstack.len()),
+                    input,
+                    output,
+                    host_ctxt,
+                )
+                .unwrap()
         };
         Self {
             forth,

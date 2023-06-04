@@ -19,14 +19,14 @@ pub mod testutil;
 
 use core::ptr::NonNull;
 
-use dictionary::{BuiltinEntry, EntryHeader, EntryKind, DictLocation};
+use dictionary::{BuiltinEntry, DictLocation, EntryHeader, EntryKind};
 
 #[cfg(feature = "async")]
 use dictionary::AsyncBuiltinEntry;
 
-pub use crate::vm::Forth;
 #[cfg(feature = "async")]
 pub use crate::vm::AsyncForth;
+pub use crate::vm::Forth;
 use crate::{
     dictionary::{BumpError, DictionaryEntry},
     output::OutputError,
@@ -253,14 +253,14 @@ impl<T, OE> ReplaceErr for Result<T, OE> {
 
 #[cfg(test)]
 pub mod test {
-    use core::{future::Future, cmp::Ordering, task::Poll};
+    use core::{cmp::Ordering, future::Future, task::Poll};
 
     use crate::{
         dictionary::DictionaryEntry,
         leakbox::{LBForth, LBForthParams},
+        testutil::{all_runtest, blocking_runtest_with},
         word::Word,
-        Forth,
-        Error, testutil::{all_runtest, blocking_runtest_with},
+        Error, Forth,
     };
 
     #[derive(Default)]
@@ -302,25 +302,37 @@ pub mod test {
 
         assert_eq!(0, forth.dict.alloc.used());
 
-        blocking_runtest_with(forth, r#"
+        blocking_runtest_with(
+            forth,
+            r#"
             > : yay 2 3 + . ;
             > : boop yay yay ;
-        "#);
+        "#,
+        );
 
-        blocking_runtest_with(forth, r#"
+        blocking_runtest_with(
+            forth,
+            r#"
             x : derp boop yay
-        "#);
+        "#,
+        );
         assert!(forth.return_stack.is_empty());
 
-        blocking_runtest_with(forth, r#"
+        blocking_runtest_with(
+            forth,
+            r#"
             x : doot yay yaay
-        "#);
+        "#,
+        );
         assert!(forth.return_stack.is_empty());
 
-        blocking_runtest_with(forth, r#"
+        blocking_runtest_with(
+            forth,
+            r#"
             > boop yay
             < 5 5 5 ok.
-        "#);
+        "#,
+        );
         assert!(forth.data_stack.is_empty());
         assert!(forth.call_stack.is_empty());
 
@@ -337,14 +349,17 @@ pub mod test {
         }
         forth.add_builtin("squirrel", squirrel).unwrap();
 
-        blocking_runtest_with(forth, r#"
+        blocking_runtest_with(
+            forth,
+            r#"
             > 5 6 squirrel squirrel
             < ok.
             > : sqloop 10 0 do i squirrel loop ;
             < ok.
             > sqloop
             < ok.
-        "#);
+        "#,
+        );
 
         let expected = [6, 5, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
         assert_eq!(&expected, forth.host_ctxt.contents.as_slice());
@@ -357,7 +372,8 @@ pub mod test {
     #[cfg(not(miri))]
     #[test]
     fn ptr_math() {
-        all_runtest(r#"
+        all_runtest(
+            r#"
             ( declare a variable )
             > variable ptrword
             < ok.
@@ -388,12 +404,14 @@ pub mod test {
             ( 0x10, 0x33, 0x56, 0x79 )
             > reader
             < 16 51 86 121 ok.
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn execute() {
-        all_runtest(r#"
+        all_runtest(
+            r#"
             ( define two words )
             > : hello ." hello, world!" ;
             < ok.
@@ -411,7 +429,8 @@ pub mod test {
             < hello, world!ok.
             > execute
             < goodbye, world!ok.
-        "#);
+        "#,
+        );
     }
 
     #[test]
@@ -424,7 +443,9 @@ pub mod test {
 
         // run all the tests on the first forth VM
         println!("\n --- testing first forth VM --- \n");
-        blocking_runtest_with(&mut lbforth1.forth, r#"
+        blocking_runtest_with(
+            &mut lbforth1.forth,
+            r#"
             > 2 3 + .
             < 5 ok.
             > : yay 2 3 + . ;
@@ -515,19 +536,19 @@ pub mod test {
             < ok.
             > z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .
             < 0 0 0 0 ok.
-            "#
+            "#,
         );
         print_dict("forth1", &mut lbforth1.forth);
 
         // create a new forth VM, and deep copy the first VM's dictionary into
         // the second.
-        let mut lbforth2 = lbforth1.fork_with_params(
-            LBForthParams::default(),
-            TestContext::default(),
-        );
+        let mut lbforth2 =
+            lbforth1.fork_with_params(LBForthParams::default(), TestContext::default());
 
         println!("\n --- testing second forth VM --- \n");
-        blocking_runtest_with(&mut lbforth2.forth, r#"
+        blocking_runtest_with(
+            &mut lbforth2.forth,
+            r#"
             ( all the bindings in the old VM's dictionary should be present in the
               new VM, and, it shouldn't segfault... :D )
             > yay yay yay
@@ -596,26 +617,32 @@ pub mod test {
             < ok.
             > foo @ .
             < 123 ok.
-        "#);
+        "#,
+        );
         print_dict("forth2", &mut lbforth2.forth);
 
         // check that forth1's bindings aren't clobbered
         println!("\n --- retesting first VM's bindings --- \n");
-        blocking_runtest_with(&mut lbforth1.forth, r#"
+        blocking_runtest_with(
+            &mut lbforth1.forth,
+            r#"
             ( the existing `y` variable should have its second value from the
               first test. )
             > y @ .
             < 10 ok.
             > a @ .
             < 100 ok.
-        "#);
+        "#,
+        );
         // new words defined in forth2 don't exist in forth1
         blocking_runtest_with(&mut lbforth1.forth, "x star3");
         // and neither do new variables.
         blocking_runtest_with(&mut lbforth1.forth, "x foo @ .");
 
         // have forth1 change some of its bindings
-        blocking_runtest_with(&mut lbforth1.forth, r#"
+        blocking_runtest_with(
+            &mut lbforth1.forth,
+            r#"
             ( change the value of `y` )
             > 666 y !
             < ok.
@@ -637,18 +664,22 @@ pub mod test {
             < ok.
             > q @ .
             < 123 ok.
-        "#);
+        "#,
+        );
 
         print_dict("forth1", &mut lbforth1.forth);
 
         // the new changes should not effect forth2
         println!("\n --- retesting second VM's bindings --- \n");
-        blocking_runtest_with(&mut lbforth2.forth, r#"
+        blocking_runtest_with(
+            &mut lbforth2.forth,
+            r#"
             > y @ .
             < 100 ok.
             > beep
             < hello, world! ok.
-        "#);
+        "#,
+        );
 
         // variables defined in forth1 after forking should not be present.
         blocking_runtest_with(&mut lbforth2.forth, "x q @ .");
@@ -672,22 +703,23 @@ pub mod test {
     impl<'forth> Future for CountingFut<'forth> {
         type Output = Result<(), Error>;
 
-        fn poll(mut self: core::pin::Pin<&mut Self>, cx: &mut core::task::Context<'_>) -> core::task::Poll<Self::Output> {
+        fn poll(
+            mut self: core::pin::Pin<&mut Self>,
+            cx: &mut core::task::Context<'_>,
+        ) -> core::task::Poll<Self::Output> {
             match self.ctr.cmp(&self.target) {
                 Ordering::Less => {
                     self.ctr += 1;
                     cx.waker().wake_by_ref();
                     Poll::Pending
-                },
+                }
                 Ordering::Equal => {
                     let word = Word::data(self.ctr as i32);
                     self.forth.data_stack.push(word)?;
                     self.ctr += 1;
                     Poll::Ready(Ok(()))
-                },
-                Ordering::Greater => {
-                    Poll::Ready(Err(Error::InternalError))
-                },
+                }
+                Ordering::Greater => Poll::Ready(Err(Error::InternalError)),
             }
         }
     }
@@ -695,15 +727,19 @@ pub mod test {
     #[cfg(feature = "async")]
     #[test]
     fn async_forth() {
-        use crate::{dictionary::{AsyncBuiltins, AsyncBuiltinEntry}, fastr::FaStr, async_builtin, testutil::async_blockon_runtest_with_dispatcher};
+        use crate::{
+            async_builtin,
+            dictionary::{AsyncBuiltinEntry, AsyncBuiltins},
+            fastr::FaStr,
+            testutil::async_blockon_runtest_with_dispatcher,
+        };
 
         struct TestAsyncDispatcher;
         impl<'forth> AsyncBuiltins<'forth, TestContext> for TestAsyncDispatcher {
             type Future = CountingFut<'forth>;
 
-            const BUILTINS: &'static [AsyncBuiltinEntry<TestContext>] = &[
-                async_builtin!("counter"),
-            ];
+            const BUILTINS: &'static [AsyncBuiltinEntry<TestContext>] =
+                &[async_builtin!("counter")];
 
             fn dispatch_async(
                 &self,
@@ -714,16 +750,21 @@ pub mod test {
                     "counter" => {
                         // Get value from top of stack
                         let val: usize = forth.data_stack.pop().unwrap().try_into().unwrap();
-                        CountingFut { ctr: 0, target: val, forth }
+                        CountingFut {
+                            ctr: 0,
+                            target: val,
+                            forth,
+                        }
                     }
-                    id => panic!("Unknown async builtin {id}")
+                    id => panic!("Unknown async builtin {id}"),
                 }
             }
         }
 
         async_blockon_runtest_with_dispatcher(
             TestContext::default(),
-            TestAsyncDispatcher, r#"
+            TestAsyncDispatcher,
+            r#"
                 ( stack is empty... )
                 x .
 
@@ -735,13 +776,14 @@ pub mod test {
                 > .
                 < 5 ok.
                 x .
-            "#
+            "#,
         );
     }
 
     #[test]
     fn compile() {
-        all_runtest(r#"
+        all_runtest(
+            r#"
             > 2 3 + .
             < 5 ok.
             > : yay 2 3 + . ;
@@ -764,12 +806,14 @@ pub mod test {
             < 5 5 ok.
             > 1 erf
             < 5 5 5 5 5 5 5 5 ok.
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn nested_if_else() {
-        all_runtest(r#"
+        all_runtest(
+            r#"
             > : one 1 . ;
             < ok.
             > : two 2 . ;
@@ -784,12 +828,14 @@ pub mod test {
             < 1 6 1 ok.
             > 1 1 nif
             < 1 2 2 1 ok.
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn do_loop() {
-        all_runtest(r#"
+        all_runtest(
+            r#"
             > : one 1 . ;
             < ok.
             > : six 6 . ;
@@ -812,34 +858,40 @@ pub mod test {
             < ok.
             > smod
             < ****ok.
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn strings() {
-        all_runtest(r#"
+        all_runtest(
+            r#"
             > : beep ." hello, world!" ;
             < ok.
             > beep
             < hello, world!ok.
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn constants() {
-        all_runtest(r#"
+        all_runtest(
+            r#"
             > constant x 123
             < ok.
             > x .
             < 123 ok.
             > 4 x + .
             < 127 ok.
-        "#);
+        "#,
+        );
     }
 
     #[test]
     fn variables_and_arrays() {
-        all_runtest(r#"
+        all_runtest(
+            r#"
             > variable y
             < ok.
             > y @ .
@@ -866,6 +918,7 @@ pub mod test {
             < ok.
             > z @ . z 1 w+ @ . z 2 w+ @ . z 3 w+ @ .
             < 0 0 0 0 ok.
-        "#);
+        "#,
+        );
     }
 }

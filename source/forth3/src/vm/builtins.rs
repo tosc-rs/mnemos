@@ -1,11 +1,11 @@
-use core::{fmt::Write, mem::size_of, ptr::NonNull, marker::PhantomData};
+use core::{fmt::Write, marker::PhantomData, mem::size_of, ptr::NonNull};
 
 use crate::{
-    dictionary::{BuiltinEntry, DictionaryEntry, EntryHeader, EntryKind, DictLocation},
+    dictionary::{BuiltinEntry, DictLocation, DictionaryEntry, EntryHeader, EntryKind},
     fastr::comptime_fastr,
     vm::TmpFaStr,
     word::Word,
-    Error, Forth, Mode, ReplaceErr, Lookup,
+    Error, Forth, Lookup, Mode, ReplaceErr,
 };
 
 #[cfg(feature = "floats")]
@@ -360,7 +360,7 @@ impl<T: 'static> Forth<T> {
                     name_ptr.write_bytes(0x00, len);
                 }
                 self.dict.alloc.cur = name_ptr;
-            },
+            }
             // The definition is in a parent (frozen) dictionary. We can't
             // mutate that dictionary, so we must create a new entry in the
             // current dict saying that the definition is forgotten.
@@ -688,12 +688,11 @@ impl<T: 'static> Forth<T> {
 
         // NOTE: CURSED BECAUSE OF POINTER MATH
         // context: https://cohost.org/jamesmunns/post/851945-oops-it-segfaults
-        self.data_stack
-            .push(Word::ptr_data(unsafe {
-                let a = a.ptr as isize;
-                let b = b.ptr as isize;
-                a.wrapping_add(b)
-            }))?;
+        self.data_stack.push(Word::ptr_data(unsafe {
+            let a = a.ptr as isize;
+            let b = b.ptr as isize;
+            a.wrapping_add(b)
+        }))?;
         Ok(())
     }
 
@@ -740,12 +739,11 @@ impl<T: 'static> Forth<T> {
         let b = self.data_stack.try_pop()?;
         // NOTE: CURSED BECAUSE OF POINTER MATH
         // context: https://cohost.org/jamesmunns/post/851945-oops-it-segfaults
-        self.data_stack
-            .push(Word::ptr_data(unsafe {
-                let a = a.ptr as isize;
-                let b = b.ptr as isize;
-                b.wrapping_sub(a)
-            }))?;
+        self.data_stack.push(Word::ptr_data(unsafe {
+            let a = a.ptr as isize;
+            let b = b.ptr as isize;
+            b.wrapping_sub(a)
+        }))?;
         Ok(())
     }
 
@@ -862,26 +860,23 @@ impl<T: 'static> Forth<T> {
     /// Looks up a name in the dictionary and places its address on the stack.
     pub fn addr_of(&mut self) -> Result<(), Error> {
         self.input.advance();
-        let name = self
-            .input
-            .cur_word()
-            .ok_or(Error::AddrOfMissingName)?;
+        let name = self.input.cur_word().ok_or(Error::AddrOfMissingName)?;
         match self.lookup(name)? {
             // The definition is in the current dictionary --- just push it.
-            Lookup::Dict(DictLocation::Current(de)) =>
-                self.data_stack.push(Word::ptr(de.as_ptr()))?,
+            Lookup::Dict(DictLocation::Current(de)) => {
+                self.data_stack.push(Word::ptr(de.as_ptr()))?
+            }
 
             // The definition is in the parent (frozen) dictionary.
             // TODO(eliza): what should we do here?
-            Lookup::Dict(DictLocation::Parent(de)) =>
-                self.data_stack.push(Word::ptr(de.as_ptr()))?,
+            Lookup::Dict(DictLocation::Parent(de)) => {
+                self.data_stack.push(Word::ptr(de.as_ptr()))?
+            }
 
-            Lookup::Builtin { bi } =>
-                self.data_stack.push(Word::ptr(bi.as_ptr()))?,
+            Lookup::Builtin { bi } => self.data_stack.push(Word::ptr(bi.as_ptr()))?,
 
             #[cfg(feature = "async")]
-            Lookup::Async { bi } =>
-                self.data_stack.push(Word::ptr(bi.as_ptr()))?,
+            Lookup::Async { bi } => self.data_stack.push(Word::ptr(bi.as_ptr()))?,
             _ => return Err(Error::AddrOfNotAWord),
         }
 
