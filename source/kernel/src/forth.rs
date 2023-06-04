@@ -171,6 +171,8 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
         async_builtin!("sermux::open_port"),
         async_builtin!("sermux::write_outbuf"),
         async_builtin!("spawn"),
+        // sleep for a number of millis
+        async_builtin!("sleep::ms"),
     ];
 
     fn dispatch_async(
@@ -183,6 +185,7 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
                 "sermux::open_port" => sermux_open_port(forth).await,
                 "sermux::write_outbuf" => sermux_write_outbuf(forth).await,
                 "spawn" => spawn_forth_task(forth).await,
+                "sleep::ms" => sleep_ms(forth).await,
                 _ => {
                     tracing::warn!("unimplemented async builtin: {}", id.as_str());
                     Err(forth3::Error::WordNotInDict)
@@ -432,6 +435,22 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
             forth3::Error::InternalError
         })?;
 
+    Ok(())
+}
+
+
+/// Binding for [`Kernel::sleep()`]
+///
+/// Sleep for the provided number of milliseconds.
+///
+/// Call: `MILLIS sleep`.
+/// Return: No change
+async fn sleep_ms(forth: &mut forth3::Forth<MnemosContext>) -> Result<(), forth3::Error> {
+    let millis = forth.data_stack.try_pop()?.as_i32();
+    let duration = core::time::Duration::from_millis(millis as u64);
+    tracing::trace!(?duration, "sleeping...");
+    forth.host_ctxt.kernel.sleep(duration).await;
+    tracing::trace!(?duration, "...slept!");
     Ok(())
 }
 
