@@ -10,7 +10,6 @@ use input_mgr::RingLine;
 use melpomene::{
     cli::{self, MelpomeneOptions},
     sim_drivers::{
-        delay::Delay,
         emb_display::{EmbDisplay, EmbDisplayHandle},
         tcp_serial::TcpSerial,
     },
@@ -120,7 +119,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
     // First let's make a dummy driver just to make sure some stuff happens
     let initialization_future = async move {
         // Delay for one second, just for funsies
-        Delay::new(Duration::from_secs(1)).await;
+        k.sleep(Duration::from_secs(1)).await;
 
         // Set up the bidirectional, async bbqueue channel between the TCP port
         // (acting as a serial port) and the virtual serial port mux.
@@ -164,7 +163,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
         k.spawn(
             async move {
                 loop {
-                    Delay::new(Duration::from_secs(1)).await;
+                    k.sleep(Duration::from_secs(1)).await;
                     p1.send(b"hello\r\n").await;
                 }
             }
@@ -180,7 +179,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
     // Create the interactive console task
     let graphics_console = async move {
         // Delay for 1.5 seconds, just for funsies
-        Delay::new(Duration::from_millis(1_500)).await;
+        k.sleep(Duration::from_millis(1500)).await;
 
         // Take Port 2 from the serial mux. This corresponds to TCP port 10002 when
         // you are running crowtty
@@ -266,7 +265,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
                         if let Some(fc) = fc {
                             break fc;
                         } else {
-                            Delay::new(Duration::from_millis(10)).await;
+                            k.sleep(Duration::from_millis(10)).await;
                         }
                     };
                     ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
