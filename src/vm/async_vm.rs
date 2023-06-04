@@ -53,6 +53,12 @@ where
     T: 'static,
     A: for<'forth> AsyncBuiltins<'forth, T>,
 {
+    /// Construct a new `AsyncForth` from the provided synchronous VM and async
+    /// builtins.
+    pub fn from_forth(vm: Forth<T>, builtins: A) -> Self {
+        Self { vm, builtins }
+    }
+
     pub unsafe fn new(
         dstack_buf: (*mut Word, usize),
         rstack_buf: (*mut Word, usize),
