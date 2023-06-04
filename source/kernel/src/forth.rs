@@ -438,7 +438,6 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     Ok(())
 }
 
-
 /// Binding for [`Kernel::sleep()`]
 ///
 /// Sleep for the provided number of milliseconds.

@@ -106,7 +106,7 @@ pub struct KernelSettings {
     pub max_drivers: usize,
     pub k2u_size: usize,
     pub u2k_size: usize,
-    pub timer_granularity: Duration
+    pub timer_granularity: Duration,
 }
 
 pub struct Message {
@@ -334,7 +334,11 @@ impl Kernel {
     /// Returns a [`Timeout`] future that cancels `F` if the specified
     /// [`Duration`] has elapsed before it completes.
     #[inline]
-    pub fn timeout<F: Future>(&'static self, duration: Duration, f: F) -> time::Timeout<'static, F> {
+    pub fn timeout<F: Future>(
+        &'static self,
+        duration: Duration,
+        f: F,
+    ) -> time::Timeout<'static, F> {
         self.inner.timer.timeout(duration, f)
     }
 }

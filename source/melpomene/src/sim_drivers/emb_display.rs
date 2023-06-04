@@ -170,7 +170,9 @@ impl CommanderTask {
                 let mutex = mutex.clone();
                 async move {
                     loop {
-                        self.kernel.sleep(Duration::from_micros(1_000_000 / 15)).await;
+                        self.kernel
+                            .sleep(Duration::from_micros(1_000_000 / 15))
+                            .await;
                         let mut guard = mutex.lock().await;
                         let mut done = false;
                         if let Some((sdisp, window)) = (&mut *guard).as_mut() {
