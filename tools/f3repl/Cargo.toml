@@ -8,5 +8,5 @@ edition = "2021"
 [dependencies]
 
 [dependencies.forth3]
-path = "../"
+path = "../../source/forth3"
 features = ["use-std"]
