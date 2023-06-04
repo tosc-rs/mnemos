@@ -1365,7 +1365,6 @@ dependencies = [
 [[package]]
 name = "mnemos-alloc"
 version = "0.1.0"
-source = "git+https://github.com/tosc-rs/mnemos-alloc?rev=3b1b16d7c04f312a27befb1f1f7691f5f63cfb47#3b1b16d7c04f312a27befb1f1f7691f5f63cfb47"
 dependencies = [
  "cordyceps",
  "heapless",

@@ -6,6 +6,7 @@ members = [
     "source/mstd",
     "source/spitebuf",
     "source/melpomene",
+    "source/alloc",
 
     # tools
     "tools/crowtty",
@@ -21,6 +22,4 @@ git = "https://github.com/hawkw/mycelium.git"
 rev = "5149ee6146a9e0c1af56da79bb55578abf6dfddc"
 
 [patch.crates-io.mnemos-alloc]
-git = "https://github.com/tosc-rs/mnemos-alloc"
-rev = "3b1b16d7c04f312a27befb1f1f7691f5f63cfb47"
-# path = "/home/james/tosc/mnemos-alloc"
+path = "./source/alloc"

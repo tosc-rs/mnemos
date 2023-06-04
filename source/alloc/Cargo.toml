@@ -24,11 +24,3 @@ features = ["defmt-impl"]
 [dependencies.linked_list_allocator]
 version = "0.10.1"
 default-features = false
-
-[patch.crates-io.maitake]
-git = "https://github.com/hawkw/mycelium.git"
-rev = "5e46e35cae131d5f60f527e6659dc53b18e30ebb"
-
-[patch.crates-io.cordyceps]
-git = "https://github.com/hawkw/mycelium.git"
-rev = "5e46e35cae131d5f60f527e6659dc53b18e30ebb"
