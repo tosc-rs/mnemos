@@ -38,7 +38,9 @@ use profont::PROFONT_12_POINT;
 
 const DISPLAY_WIDTH_PX: u32 = 400;
 const DISPLAY_HEIGHT_PX: u32 = 240;
-const HEAP_SIZE: usize = 192 * 1024;
+/// The Allwinner D1 has 1GB of memory, so we can definitely get away with two
+/// 1MB heaps.
+const HEAP_SIZE: usize = 1024 * 1024;
 
 static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
 
@@ -87,12 +89,25 @@ async fn run_melpomene(opts: cli::MelpomeneOptions) {
 #[tracing::instrument(name = "Kernel", level = "info", skip(opts))]
 fn kernel_entry(opts: MelpomeneOptions) {
     // First, we'll do some stuff that later the linker script will do...
-    let kernel_heap = Box::into_raw(Box::new([0u8; HEAP_SIZE]));
-    let user_heap = Box::into_raw(Box::new([0u8; HEAP_SIZE]));
+    fn alloc_heap() -> (*mut u8, usize) {
+        use std::mem::ManuallyDrop;
+        // use `Vec::with_capacity` to allocate the memory without having to
+        // create a stack array, or initialize the memory.
+        // the vector is intentionally leaked.
+        let mut mem = ManuallyDrop::new(Vec::<u8>::with_capacity(HEAP_SIZE));
+        let slice = mem.spare_capacity_mut();
+        // we use the *actual* size of the allocation, since liballoc may have
+        // given us more than we asked for.
+        let sz = slice.len();
+        (slice.as_mut_ptr().cast(), sz)
+    }
+
+    let (heap_start, heap_size) = alloc_heap();
+    let (user_heap, user_heap_size) = alloc_heap();
 
     let settings = KernelSettings {
-        heap_start: kernel_heap.cast(),
-        heap_size: HEAP_SIZE,
+        heap_start,
+        heap_size,
         max_drivers: 16,
         k2u_size: 4096,
         u2k_size: 4096,
@@ -158,6 +173,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
     .instrument(tracing::info_span!("Initialize"));
 
     k.initialize(initialization_future).unwrap();
+    let tid0_future = k.initialize_forth_tid0(Default::default());
 
     // Create the interactive console task
     let graphics_console = async move {
@@ -216,13 +232,6 @@ fn kernel_entry(opts: MelpomeneOptions) {
             disp_hdl.draw_framechunk(fc_0).await.unwrap();
         }
 
-        let tid0 = {
-            let (tid0, tid0_streams) = Forth::new(k, forth::Params::new()).await.expect("spawning forth should succeed");
-            k.spawn(tid0.run()).await;
-            tracing::info!("Task 0 spawned!");
-            tid0_streams
-        };
-
         k.spawn(
             async move {
                 // TODO(eliza): don't spawn the forth task from within the
@@ -237,6 +246,8 @@ fn kernel_entry(opts: MelpomeneOptions) {
                 //
                 // Leave out 4 for the implicit margin of two characters on each gutter.
                 let mut rline = RingLine::<16, 46>::new();
+
+                let tid0 = tid0_future.await.expect("TID 0 initialization task must succeed");
 
                 loop {
                     // Wait until there is a frame buffer ready. There wouldn't be if we've spammed frames
@@ -321,7 +332,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
             k2u: BBBuffer::take_framed_consumer(rings.k2u.as_ptr()),
         };
         mstd::executor::mailbox::MAILBOX.set_rings(urings);
-        mstd::executor::EXECUTOR.initialize(user_heap.cast(), HEAP_SIZE);
+        mstd::executor::EXECUTOR.initialize(user_heap, user_heap_size);
     }
 
     let _userspace = spawn(|| {

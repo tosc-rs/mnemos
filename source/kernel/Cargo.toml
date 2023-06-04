@@ -66,7 +66,7 @@ version = "0.7.1"
 
 [dependencies.forth3]
 git = "https://github.com/jamesmunns/forth3"
-rev = "518ea1bc14fc94473b85ed8c54a22e4687fc533d"
+rev = "435940ad54d2209f2a7706cd34dcb2c05b663bc6"
 features = ["async"]
 
 [dependencies.portable-atomic]

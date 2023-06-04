@@ -91,7 +91,7 @@ features = ["tracing-01"]
 
 [dependencies.forth3]
 git = "https://github.com/jamesmunns/forth3"
-rev = "8743d9ef9eea0eb0e4420231e4d6d6cdadcfb2fc"
+rev = "5ce6f8fc6115e276506070d7c94c13f407464848"
 features = ["async"]
 
 [dependencies.futures]
