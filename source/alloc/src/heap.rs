@@ -31,6 +31,7 @@ pub struct AHeap {
 // atomic operations to ensure the data is initialized and exclusively
 // accessed.
 unsafe impl Sync for AHeap {}
+unsafe impl Send for AHeap {}
 
 impl AHeap {
     /// The AHeap is initialized, and no `HeapGuard`s are active.
