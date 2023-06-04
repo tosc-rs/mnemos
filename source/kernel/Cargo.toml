@@ -65,8 +65,7 @@ features = ["experimental-derive"]
 version = "0.7.1"
 
 [dependencies.forth3]
-git = "https://github.com/jamesmunns/forth3"
-rev = "435940ad54d2209f2a7706cd34dcb2c05b663bc6"
+path = "../forth3"
 features = ["async"]
 
 [dependencies.portable-atomic]
