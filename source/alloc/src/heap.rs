@@ -307,10 +307,10 @@ impl AHeap {
 ///
 /// # Safety
 ///
-/// - `ptr` *must* have been returned by a call to [`Heap::allocate_raw`] or
+/// - `ptr` *must* have been returned by a call to [`AHeap::allocate_raw`] or
 ///   [`HeapGuard::alloc_raw`]!
 /// - `layout` *must* be the same `Layout` that was provided to the original
-///   call to [`Heap::allocate_raw`] or[`HeapGuard::alloc_raw`]!
+///   call to [`AHeap::allocate_raw`] or[`HeapGuard::alloc_raw`]!
 pub unsafe fn deallocate_raw(ptr: NonNull<()>, layout: Layout) {
     let ptr = ActiveUnsized::from_raw(ptr, layout);
     ActiveUnsized::yeet(ptr, layout);

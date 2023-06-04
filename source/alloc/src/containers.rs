@@ -127,7 +127,7 @@ impl<T> HeapArc<T> {
         }
     }
 
-    /// Create a clone of a given leaked HeapArc<T>. DOES increase the refcount.
+    /// Create a clone of a given leaked `HeapArc<T>`. DOES increase the refcount.
     pub unsafe fn clone_from_leaked(ptr: NonNull<T>) -> Self {
         let new = Self::from_leaked(ptr);
 
@@ -137,7 +137,7 @@ impl<T> HeapArc<T> {
         new
     }
 
-    /// Re-takes ownership of a leaked HeapArc<T>. Does NOT increase the refcount.
+    /// Re-takes ownership of a leaked `HeapArc<T>`. Does NOT increase the refcount.
     pub unsafe fn from_leaked(ptr: NonNull<T>) -> Self {
         let arc_inner_nn: NonNull<ArcInner<T>> = ArcInner::from_leaked_ptr(ptr);
         Self {
