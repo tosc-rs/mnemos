@@ -90,8 +90,7 @@ version = "0.1.0"
 features = ["tracing-01"]
 
 [dependencies.forth3]
-git = "https://github.com/jamesmunns/forth3"
-rev = "5ce6f8fc6115e276506070d7c94c13f407464848"
+path = "../forth3"
 features = ["async"]
 
 [dependencies.futures]

@@ -7,10 +7,12 @@ members = [
     "source/spitebuf",
     "source/melpomene",
     "source/alloc",
+    "source/forth3",
 
     # tools
     "tools/crowtty",
     "tools/dumbloader",
+    "tools/f3repl",
 ]
 
 [patch.crates-io.maitake]
