@@ -89,6 +89,7 @@ use maitake::{
     scheduler::{LocalStaticScheduler, TaskStub},
     sync::Mutex,
     task::{JoinHandle, Storage, Task as MaitakeTask},
+    time::{self, Duration, Timer},
 };
 use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 use registry::Registry;
@@ -105,6 +106,7 @@ pub struct KernelSettings {
     pub max_drivers: usize,
     pub k2u_size: usize,
     pub u2k_size: usize,
+    pub timer_granularity: Duration
 }
 
 pub struct Message {
@@ -129,6 +131,9 @@ pub struct KernelInner {
     /// MnemOS currently only targets single-threaded platforms, so we can use a
     /// `maitake` scheduler capable of running `!Send` futures.
     scheduler: LocalStaticScheduler,
+
+    /// Maitake timer wheel.
+    timer: Timer,
 }
 
 impl Kernel {
@@ -170,11 +175,13 @@ impl Kernel {
             .leak()
             .as_ref();
         let scheduler = LocalStaticScheduler::new_with_static_stub(stub);
+        let timer = Timer::new(settings.timer_granularity);
 
         let inner = KernelInner {
             u2k_ring,
             k2u_ring,
             scheduler,
+            timer,
         };
 
         let new_kernel = guard
@@ -205,7 +212,13 @@ impl Kernel {
         unsafe { self.heap.as_ref() }
     }
 
-    pub fn tick(&'static self) {
+    #[inline]
+    #[must_use]
+    pub fn timer(&'static self) -> &'static Timer {
+        &self.inner.timer
+    }
+
+    pub fn tick(&'static self) -> maitake::scheduler::Tick {
         // Process heap allocations
         self.heap().poll();
 
@@ -240,7 +253,7 @@ impl Kernel {
             }
         }
 
-        inner.scheduler.tick();
+        inner.scheduler.tick()
 
         // TODO: Send time to userspace?
     }
@@ -310,6 +323,19 @@ impl Kernel {
         F: Future + 'static,
     {
         self.inner.scheduler.spawn_allocated::<F, HBStorage>(task)
+    }
+
+    /// Returns a [`Sleep`] future that sleeps for the specified [`Duration`].
+    #[inline]
+    pub fn sleep(&'static self, duration: Duration) -> time::Sleep<'static> {
+        self.inner.timer.sleep(duration)
+    }
+
+    /// Returns a [`Timeout`] future that cancels `F` if the specified
+    /// [`Duration`] has elapsed before it completes.
+    #[inline]
+    pub fn timeout<F: Future>(&'static self, duration: Duration, f: F) -> time::Timeout<'static, F> {
+        self.inner.timer.timeout(duration, f)
     }
 }
 

@@ -17,7 +17,8 @@ members = [
 
 [patch.crates-io.maitake]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "5149ee6146a9e0c1af56da79bb55578abf6dfddc"
+# rev = "5149ee6146a9e0c1af56da79bb55578abf6dfddc"
+branch = "eliza/next-deadline"
 
 [patch.crates-io.cordyceps]
 git = "https://github.com/hawkw/mycelium.git"

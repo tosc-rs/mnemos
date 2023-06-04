@@ -362,6 +362,15 @@ dependencies = [
 [[package]]
 name = "cordyceps"
 version = "0.3.1"
+source = "git+https://github.com/hawkw/mycelium.git?branch=eliza/next-deadline#26be6565329986b572ecabbd888ee8f5f57d6aa0"
+dependencies = [
+ "loom",
+ "tracing 0.1.37",
+]
+
+[[package]]
+name = "cordyceps"
+version = "0.3.1"
 source = "git+https://github.com/hawkw/mycelium.git?rev=5149ee6146a9e0c1af56da79bb55578abf6dfddc#5149ee6146a9e0c1af56da79bb55578abf6dfddc"
 dependencies = [
  "loom",
@@ -1184,9 +1193,9 @@ dependencies = [
 [[package]]
 name = "maitake"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=5149ee6146a9e0c1af56da79bb55578abf6dfddc#5149ee6146a9e0c1af56da79bb55578abf6dfddc"
+source = "git+https://github.com/hawkw/mycelium.git?branch=eliza/next-deadline#26be6565329986b572ecabbd888ee8f5f57d6aa0"
 dependencies = [
- "cordyceps",
+ "cordyceps 0.3.1 (git+https://github.com/hawkw/mycelium.git?branch=eliza/next-deadline)",
  "mycelium-bitfield",
  "mycelium-util",
  "pin-project",
@@ -1363,7 +1372,7 @@ dependencies = [
 name = "mnemos-alloc"
 version = "0.1.0"
 dependencies = [
- "cordyceps",
+ "cordyceps 0.3.1 (git+https://github.com/hawkw/mycelium.git?rev=5149ee6146a9e0c1af56da79bb55578abf6dfddc)",
  "heapless",
  "linked_list_allocator",
  "maitake",
@@ -1373,7 +1382,7 @@ dependencies = [
 name = "mnemos-std"
 version = "0.1.0"
 dependencies = [
- "cordyceps",
+ "cordyceps 0.3.1 (git+https://github.com/hawkw/mycelium.git?rev=5149ee6146a9e0c1af56da79bb55578abf6dfddc)",
  "futures-util",
  "heapless",
  "maitake",
@@ -1400,14 +1409,14 @@ dependencies = [
 [[package]]
 name = "mycelium-bitfield"
 version = "0.1.2"
-source = "git+https://github.com/hawkw/mycelium.git?rev=5149ee6146a9e0c1af56da79bb55578abf6dfddc#5149ee6146a9e0c1af56da79bb55578abf6dfddc"
+source = "git+https://github.com/hawkw/mycelium.git?branch=eliza/next-deadline#26be6565329986b572ecabbd888ee8f5f57d6aa0"
 
 [[package]]
 name = "mycelium-util"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=5149ee6146a9e0c1af56da79bb55578abf6dfddc#5149ee6146a9e0c1af56da79bb55578abf6dfddc"
+source = "git+https://github.com/hawkw/mycelium.git?branch=eliza/next-deadline#26be6565329986b572ecabbd888ee8f5f57d6aa0"
 dependencies = [
- "cordyceps",
+ "cordyceps 0.3.1 (git+https://github.com/hawkw/mycelium.git?branch=eliza/next-deadline)",
  "loom",
  "mycelium-bitfield",
  "tracing 0.2.0",
