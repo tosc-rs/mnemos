@@ -258,6 +258,15 @@ impl Kernel {
         // TODO: Send time to userspace?
     }
 
+    /// Initialize the kernel's `maitake` timer as the global default timer.
+    ///
+    /// This allows the use of `sleep` and `timeout` free functions.
+    /// TODO(eliza): can the kernel just "do this" once it becomes active? Or,
+    /// have a "kernel.init()" or something that does this and other global inits?
+    pub fn set_global_timer(&'static self) -> Result<(), maitake::time::AlreadyInitialized> {
+        maitake::time::set_global_timer(self.timer())
+    }
+
     /// Spawn the initial Forth task (task ID 0), returning a [`BidiHandle`] for
     /// the spawned task's standard input and standard output streams.
     ///
