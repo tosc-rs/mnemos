@@ -1,5 +1,8 @@
 use std::{
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
     thread::{sleep, spawn},
 };
 
@@ -52,33 +55,36 @@ fn main() {
 
 #[tokio::main(flavor = "current_thread")]
 async fn run_melpomene(opts: cli::MelpomeneOptions) {
+    let local = tokio::task::LocalSet::new();
     println!("========================================");
-    let kernel = task::spawn_blocking(move || {
-        kernel_entry(opts);
-    });
-    tracing::info!("Kernel started.");
+    local
+        .run_until(async move {
+            let kernel = task::spawn_local(kernel_entry(opts));
+            tracing::info!("Kernel started.");
 
-    // Wait for the kernel to complete initialization...
-    while KERNEL_LOCK.load(Ordering::Acquire) {
-        task::yield_now().await;
-    }
+            // Wait for the kernel to complete initialization...
+            while KERNEL_LOCK.load(Ordering::Acquire) {
+                task::yield_now().await;
+            }
 
-    tracing::debug!("Kernel initialized.");
+            tracing::debug!("Kernel initialized.");
 
-    // let userspace = spawn(move || {
-    //     userspace_entry();
-    // });
-    // println!("[Melpo]: Userspace started.");
-    // println!("========================================");
+            // let userspace = spawn(move || {
+            //     userspace_entry();
+            // });
+            // println!("[Melpo]: Userspace started.");
+            // println!("========================================");
 
-    // let uj = userspace.join();
-    println!("========================================");
-    time::sleep(Duration::from_millis(50)).await;
-    // println!("[Melpo]: Userspace ended: {:?}", uj);
+            // let uj = userspace.join();
+            println!("========================================");
+            time::sleep(Duration::from_millis(50)).await;
+            // println!("[Melpo]: Userspace ended: {:?}", uj);
 
-    let kj = kernel.await;
-    time::sleep(Duration::from_millis(50)).await;
-    tracing::info!("Kernel ended:    {:?}", kj);
+            let kj = kernel.await;
+            time::sleep(Duration::from_millis(50)).await;
+            tracing::info!("Kernel ended:    {:?}", kj);
+        })
+        .await;
 
     println!("========================================");
 
@@ -86,7 +92,7 @@ async fn run_melpomene(opts: cli::MelpomeneOptions) {
 }
 
 #[tracing::instrument(name = "Kernel", level = "info", skip(opts))]
-fn kernel_entry(opts: MelpomeneOptions) {
+async fn kernel_entry(opts: MelpomeneOptions) {
     // First, we'll do some stuff that later the linker script will do...
     fn alloc_heap() -> (*mut u8, usize) {
         use std::mem::ManuallyDrop;
@@ -116,62 +122,68 @@ fn kernel_entry(opts: MelpomeneOptions) {
 
     let k = unsafe { Kernel::new(settings).unwrap().leak().as_ref() };
 
+    // Simulates the kernel main loop being woken by an IRQ.
+    let irq = Arc::new(tokio::sync::Notify::new());
+
     // First let's make a dummy driver just to make sure some stuff happens
-    let initialization_future = async move {
-        // Delay for one second, just for funsies
-        k.sleep(Duration::from_secs(1)).await;
+    let initialization_future = {
+        let irq = irq.clone();
+        async move {
+            // Delay for one second, just for funsies
+            k.sleep(Duration::from_secs(1)).await;
 
-        // Set up the bidirectional, async bbqueue channel between the TCP port
-        // (acting as a serial port) and the virtual serial port mux.
-        //
-        // Create the buffer, and spawn the worker task, giving it one of the
-        // queue handles
-        TcpSerial::register(k, opts.serial_addr, 4096, 4096)
-            .await
-            .unwrap();
+            // Set up the bidirectional, async bbqueue channel between the TCP port
+            // (acting as a serial port) and the virtual serial port mux.
+            //
+            // Create the buffer, and spawn the worker task, giving it one of the
+            // queue handles
+            TcpSerial::register(k, opts.serial_addr, 4096, 4096, irq.clone())
+                .await
+                .unwrap();
 
-        // Now, right now this is a little awkward, but what I'm doing here is spawning
-        // a new virtual mux, and configuring it with:
-        // * Up to 4 virtual ports max
-        // * Framed messages up to 512 bytes max each
-        SerialMux::register(k, 4, 512).await.unwrap();
+            // Now, right now this is a little awkward, but what I'm doing here is spawning
+            // a new virtual mux, and configuring it with:
+            // * Up to 4 virtual ports max
+            // * Framed messages up to 512 bytes max each
+            SerialMux::register(k, 4, 512).await.unwrap();
 
-        let mut mux_hdl = SerialMuxHandle::from_registry(k).await.unwrap();
-        let p0 = mux_hdl.open_port(0, 1024).await.unwrap();
-        let p1 = mux_hdl.open_port(1, 1024).await.unwrap();
-        drop(mux_hdl);
+            let mut mux_hdl = SerialMuxHandle::from_registry(k).await.unwrap();
+            let p0 = mux_hdl.open_port(0, 1024).await.unwrap();
+            let p1 = mux_hdl.open_port(1, 1024).await.unwrap();
+            drop(mux_hdl);
 
-        // Spawn the graphics driver
-        EmbDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
-            .await
-            .unwrap();
+            // Spawn the graphics driver
+            EmbDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
+                .await
+                .unwrap();
 
-        k.spawn(
-            async move {
-                loop {
-                    let rgr = p0.consumer().read_grant().await;
-                    let len = rgr.len();
-                    p0.send(&rgr).await;
-                    rgr.release(len);
+            k.spawn(
+                async move {
+                    loop {
+                        let rgr = p0.consumer().read_grant().await;
+                        let len = rgr.len();
+                        p0.send(&rgr).await;
+                        rgr.release(len);
+                    }
                 }
-            }
-            .instrument(tracing::info_span!("Loopback")),
-        )
-        .await;
+                .instrument(tracing::info_span!("Loopback")),
+            )
+            .await;
 
-        // Now we just send out data every second
-        k.spawn(
-            async move {
-                loop {
-                    k.sleep(Duration::from_secs(1)).await;
-                    p1.send(b"hello\r\n").await;
+            // Now we just send out data every second
+            k.spawn(
+                async move {
+                    loop {
+                        k.sleep(Duration::from_secs(1)).await;
+                        p1.send(b"hello\r\n").await;
+                    }
                 }
-            }
-            .instrument(tracing::info_span!("Hello Loop")),
-        )
-        .await;
-    }
-    .instrument(tracing::info_span!("Initialize"));
+                .instrument(tracing::info_span!("Hello Loop")),
+            )
+            .await;
+        }
+        .instrument(tracing::info_span!("Initialize"))
+    };
 
     k.initialize(initialization_future).unwrap();
     let tid0_future = k.initialize_forth_tid0(Default::default());
@@ -361,16 +373,32 @@ fn kernel_entry(opts: MelpomeneOptions) {
         // advance the timer
         let ticks = t0.elapsed().as_millis() as u64;
         let turn = k.timer().force_advance_ticks(ticks);
+        tracing::trace!("advanced timer by {ticks:?}");
         t0 = tokio::time::Instant::now();
 
         if turn.expired == 0 && !tick.has_remaining {
             // if no timers have expired on this tick, we should sleep until the
             // next timer expires *or* something is woken by I/O, to simulate a
             // hardware platform waiting for an interrupt.
-            tracing::trace!("waiting for an interrupt...");
-            // TODO(eliza): in order to do this, we probably need to add some
-            // kind of `Notify` channel for the sim drivers to wake the kernel
-            // as an "I/O interrupt". for now, we just busy loop.
+            tracing::debug!("waiting for an interrupt...");
+            if let Some(next_timer) = turn.time_to_next_deadline() {
+                tracing::debug!("next timer expires in {next_timer:?}");
+                // wait for an "interrupt"
+                futures::select! {
+                    _ = irq.notified().fuse() => {
+                        tracing::debug!("...woken by I/O interrupt");
+                    },
+                   _ = tokio::time::sleep(next_timer).fuse() => {
+                        tracing::debug!("woken by timer");
+                   }
+                }
+            } else {
+                irq.notified().await;
+                tracing::debug!("...woken by I/O interrupt");
+            }
         }
+
+        // let other tokio tasks (simulated hardware devices) run.
+        tokio::task::yield_now().await;
     }
 }

@@ -9,10 +9,11 @@ use mnemos_kernel::{
     },
     Kernel,
 };
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 use tokio::{
     io::{self, AsyncWriteExt},
     net::{TcpListener, TcpStream},
+    sync::Notify,
 };
 use tracing::{info_span, trace, warn, Instrument};
 
@@ -26,6 +27,7 @@ impl TcpSerial {
         ip: SocketAddr,
         incoming_size: usize,
         outgoing_size: usize,
+        irq: Arc<Notify>,
     ) -> Result<(), ()> {
         let (a_ring, b_ring) = new_bidi_channel(kernel.heap(), incoming_size, outgoing_size).await;
         let (prod, cons) = KChannel::<Message<SimpleSerial>>::new_async(kernel, 2)
@@ -64,7 +66,8 @@ impl TcpSerial {
                 loop {
                     match listener.accept().await {
                         Ok((stream, addr)) => {
-                            process_stream(&mut handle, stream)
+                            irq.notify_one();
+                            process_stream(&mut handle, stream, irq.clone())
                                 .instrument(info_span!("process_stream", client.addr = %addr))
                                 .await
                         }
@@ -89,7 +92,7 @@ pub(crate) fn default_addr() -> SocketAddr {
     SocketAddr::from(([127, 0, 0, 1], 9999))
 }
 
-async fn process_stream(handle: &mut BidiHandle, mut stream: TcpStream) {
+async fn process_stream(handle: &mut BidiHandle, mut stream: TcpStream, irq: Arc<Notify>) {
     loop {
         // Wait until either the socket has data to read, or the other end of
         // the BBQueue has data to write.
@@ -104,6 +107,9 @@ async fn process_stream(handle: &mut BidiHandle, mut stream: TcpStream) {
             }
             // The socket has more bytes to read.
             _ = stream.readable() => {
+                // Simulate an "interrupt", waking the kernel if it's waiting
+                // an IRQ.
+                irq.notify_one();
                 let mut in_grant = handle.producer().send_grant_max(256).await;
 
                 // Try to read data, this may still fail with `WouldBlock`
