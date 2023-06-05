@@ -89,7 +89,7 @@ use maitake::{
     scheduler::{LocalStaticScheduler, TaskStub},
     sync::Mutex,
     task::{JoinHandle, Storage, Task as MaitakeTask},
-    time::{self, Sleep, Timeout, Duration, Timer},
+    time::{self, Duration, Sleep, Timeout, Timer},
 };
 use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 use registry::Registry;
@@ -334,11 +334,7 @@ impl Kernel {
     /// Returns a [`Timeout`] future that cancels `F` if the specified
     /// [`Duration`] has elapsed before it completes.
     #[inline]
-    pub fn timeout<F: Future>(
-        &'static self,
-        duration: Duration,
-        f: F,
-    ) -> Timeout<'static, F> {
+    pub fn timeout<F: Future>(&'static self, duration: Duration, f: F) -> Timeout<'static, F> {
         self.inner.timer.timeout(duration, f)
     }
 }
