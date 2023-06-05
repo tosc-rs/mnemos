@@ -89,7 +89,7 @@ use maitake::{
     scheduler::{LocalStaticScheduler, TaskStub},
     sync::Mutex,
     task::{JoinHandle, Storage, Task as MaitakeTask},
-    time::{self, Duration, Sleep, Timeout, Timer},
+    time::{Duration, Sleep, Timeout, Timer},
 };
 use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 use registry::Registry;
