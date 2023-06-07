@@ -61,8 +61,10 @@ jobs:
     # if: needs.changed_paths.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
     steps:
-    - name: install libudev
-      run: sudo apt-get update && sudo apt-get install -y libudev-dev
+    - name: install libudev and libsdl2-dev
+      run: |
+        sudo apt-get update \
+        && sudo apt-get install -y libudev-dev libsdl2-dev
     - name: install rust toolchain
       run: rustup show
     - name: install nextest
