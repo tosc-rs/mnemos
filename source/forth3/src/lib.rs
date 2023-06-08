@@ -26,7 +26,7 @@ use dictionary::AsyncBuiltinEntry;
 
 #[cfg(feature = "async")]
 pub use crate::vm::AsyncForth;
-pub use crate::vm::Forth;
+pub use crate::vm::{Forth, ForthResult, InterpretAction};
 use crate::{
     dictionary::{BumpError, DictionaryEntry},
     output::OutputError,
@@ -80,10 +80,6 @@ pub enum Error {
     DivideByZero,
     AddrOfMissingName,
     AddrOfNotAWord,
-
-    // Not *really* an error - but signals that a function should be called
-    // again. At the moment, only used for internal interpreter functions.
-    PendingCallAgain,
 }
 
 impl From<StackError> for Error {
@@ -204,7 +200,7 @@ impl<T: 'static> CallContext<T> {
 ///
 /// It takes the current "full context" (e.g. `Fif`), as well as the CFA pointer
 /// to the dictionary entry.
-type WordFunc<T> = fn(&mut Forth<T>) -> Result<(), Error>;
+type WordFunc<T> = fn(&mut Forth<T>) -> ForthResult;
 
 pub enum Lookup<T: 'static> {
     Dict(DictLocation<T>),
@@ -259,8 +255,9 @@ pub mod test {
         dictionary::DictionaryEntry,
         leakbox::{LBForth, LBForthParams},
         testutil::{all_runtest, blocking_runtest_with},
+        vm,
         word::Word,
-        Error, Forth,
+        Error, Forth, ForthResult,
     };
 
     #[derive(Default)]
@@ -342,10 +339,10 @@ pub mod test {
         // assert_eq!(176, forth.dict_alloc.used());
 
         // Takes one value off the stack, and stores it in the vec
-        fn squirrel(forth: &mut Forth<TestContext>) -> Result<(), crate::Error> {
+        fn squirrel(forth: &mut Forth<TestContext>) -> Result<vm::InterpretAction, crate::Error> {
             let val = forth.data_stack.try_pop()?;
             forth.host_ctxt.contents.push(unsafe { val.data });
-            Ok(())
+            Ok(vm::InterpretAction::Done)
         }
         forth.add_builtin("squirrel", squirrel).unwrap();
 
@@ -701,7 +698,7 @@ pub mod test {
     }
 
     impl<'forth> Future for CountingFut<'forth> {
-        type Output = Result<(), Error>;
+        type Output = ForthResult;
 
         fn poll(
             mut self: core::pin::Pin<&mut Self>,
@@ -717,7 +714,7 @@ pub mod test {
                     let word = Word::data(self.ctr as i32);
                     self.forth.data_stack.push(word)?;
                     self.ctr += 1;
-                    Poll::Ready(Ok(()))
+                    Poll::Ready(Ok(vm::InterpretAction::Done))
                 }
                 Ordering::Greater => Poll::Ready(Err(Error::InternalError)),
             }

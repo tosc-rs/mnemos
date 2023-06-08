@@ -24,7 +24,7 @@ fn main() {
         stdin().read_line(&mut inp).unwrap();
         forth.input.fill(&inp).unwrap();
         match forth.process_line() {
-            Ok(()) => {
+            Ok(_) => {
                 print!("{}", forth.output.as_str());
             }
             Err(e) => {

@@ -55,7 +55,7 @@
 
 use crate::{
     leakbox::{LBForth, LBForthParams},
-    Error, Forth,
+    vm, Error, Forth,
 };
 
 /// Run the given forth ui test against ALL enabled forth VMs
@@ -101,7 +101,7 @@ pub fn async_blockon_runtest(contents: &str) {
 
     struct TestAsyncDispatcher;
     impl<'forth> AsyncBuiltins<'forth, ()> for TestAsyncDispatcher {
-        type Future = futures::future::Ready<Result<(), Error>>;
+        type Future = futures::future::Ready<Result<vm::InterpretAction, Error>>;
         const BUILTINS: &'static [AsyncBuiltinEntry<()>] = &[];
         fn dispatch_async(&self, _id: &FaStr, _forth: &'forth mut Forth<()>) -> Self::Future {
             unreachable!("no async builtins should be called in this test")
@@ -151,12 +151,12 @@ where
     }
 }
 
-fn check_output(res: Result<(), Error>, outcome: &Outcome, output: &str) {
+fn check_output(res: Result<vm::InterpretAction, Error>, outcome: &Outcome, output: &str) {
     #[cfg(not(miri))]
     println!("< {output}");
     match (res, outcome) {
-        (Ok(()), Outcome::OkAnyOutput) => {}
-        (Ok(()), Outcome::OkWithOutput(exp)) => {
+        (Ok(_), Outcome::OkAnyOutput) => {}
+        (Ok(_), Outcome::OkWithOutput(exp)) => {
             let act_lines = output.lines().collect::<Vec<&str>>();
             assert_eq!(act_lines.len(), exp.len());
             act_lines.iter().zip(exp.iter()).for_each(|(a, e)| {

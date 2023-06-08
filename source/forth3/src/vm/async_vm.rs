@@ -180,22 +180,31 @@ where
         &mut self.vm
     }
 
-    pub async fn process_line(&mut self) -> Result<(), Error> {
+    pub async fn process_line(&mut self) -> ForthResult {
         let res = async {
             loop {
                 match self.vm.start_processing_line()? {
                     ProcessAction::Done => {
                         self.vm.output.push_str("ok.\n")?;
-                        break Ok(());
+                        break Ok(InterpretAction::Done);
                     }
                     ProcessAction::Continue => {}
-                    ProcessAction::Execute => while self.async_pig().await? != Step::Done {},
+                    ProcessAction::Execute => {
+                        // Loop until execution completes.
+                        let mut step = InterpretAction::Continue;
+                        while step == InterpretAction::Continue {
+                            step = self.async_pig().await?;
+                        }
+                        if step == InterpretAction::AcceptInput {
+                            return Ok(InterpretAction::AcceptInput);
+                        }
+                    }
                 }
             }
         }
         .await;
         match res {
-            Ok(_) => Ok(()),
+            Ok(res) => Ok(res),
             Err(e) => {
                 self.vm.data_stack.clear();
                 self.vm.return_stack.clear();
@@ -206,7 +215,7 @@ where
     }
 
     // Single step execution (async version).
-    async fn async_pig(&mut self) -> Result<Step, Error> {
+    async fn async_pig(&mut self) -> ForthResult {
         let Self {
             ref mut vm,
             ref builtins,
@@ -214,7 +223,7 @@ where
 
         let top = match vm.call_stack.try_peek() {
             Ok(t) => t,
-            Err(StackError::StackEmpty) => return Ok(Step::Done),
+            Err(StackError::StackEmpty) => return Ok(InterpretAction::Done),
             Err(e) => return Err(Error::Stack(e)),
         };
 
@@ -225,20 +234,19 @@ where
                 EntryKind::RuntimeBuiltin => (top.eh.cast::<BuiltinEntry<T>>().as_ref().func)(vm),
                 EntryKind::Dictionary => (top.eh.cast::<DictionaryEntry<T>>().as_ref().func)(vm),
                 EntryKind::AsyncBuiltin => builtins.dispatch_async(&top.eh.as_ref().name, vm).await,
-            }
+            }?
         };
 
-        match res {
-            Ok(_) => {
-                let _ = vm.call_stack.pop();
-            }
-            Err(Error::PendingCallAgain) => {
-                // ok, just don't pop
-            }
-            Err(e) => return Err(e),
+        if res != InterpretAction::Continue {
+            // current word completed, so remove it from the call stack.
+            let _ = self.vm.call_stack.pop();
         }
 
-        Ok(Step::NotDone)
+        if res == InterpretAction::Done {
+            return Ok(InterpretAction::Continue);
+        }
+
+        Ok(res)
     }
 
     pub fn release(self) -> T {
