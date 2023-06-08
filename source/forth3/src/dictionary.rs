@@ -216,7 +216,7 @@ pub trait AsyncBuiltins<'forth, T: 'static> {
     /// VM. This allows the VM's stacks to be mutated by the async builtin function.
     ///
     /// [`Future`]: core::future::Future
-    type Future: core::future::Future<Output = Result<(), crate::Error>>;
+    type Future: core::future::Future<Output = Result<crate::vm::InterpretAction, crate::Error>>;
 
     /// A static slice of [`AsyncBuiltinEntry`]s describing the builtins
     /// provided by this implementation of `AsyncBuiltin`s.

@@ -58,12 +58,6 @@ enum ProcessAction {
     Done,
 }
 
-#[derive(Copy, Clone, Eq, PartialEq)]
-enum Step {
-    Done,
-    NotDone,
-}
-
 impl<T> Forth<T> {
     pub unsafe fn new(
         dstack_buf: (*mut Word, usize),
@@ -273,7 +267,7 @@ impl<T> Forth<T> {
                     ProcessAction::Continue => {}
                     ProcessAction::Execute => {
                         // Loop until execution completes.
-                        let mut step = self.steppa_pig()?;
+                        let mut step = InterpretAction::Continue;
                         while step == InterpretAction::Continue {
                             step = self.steppa_pig()?;
                         }

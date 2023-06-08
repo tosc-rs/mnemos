@@ -101,7 +101,7 @@ pub fn async_blockon_runtest(contents: &str) {
 
     struct TestAsyncDispatcher;
     impl<'forth> AsyncBuiltins<'forth, ()> for TestAsyncDispatcher {
-        type Future = futures::future::Ready<Result<(), Error>>;
+        type Future = futures::future::Ready<Result<vm::InterpretAction, Error>>;
         const BUILTINS: &'static [AsyncBuiltinEntry<()>] = &[];
         fn dispatch_async(&self, _id: &FaStr, _forth: &'forth mut Forth<()>) -> Self::Future {
             unreachable!("no async builtins should be called in this test")
