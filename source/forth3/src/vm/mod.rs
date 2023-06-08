@@ -44,6 +44,14 @@ pub struct Forth<T: 'static> {
     async_builtins: &'static [AsyncBuiltinEntry<T>],
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+
+pub enum InterpretAction {
+    Done,
+    AcceptInput,
+    Continue,
+}
+
 enum ProcessAction {
     Continue,
     Execute,
@@ -254,25 +262,30 @@ impl<T> Forth<T> {
         }
     }
 
-    pub fn process_line(&mut self) -> Result<(), Error> {
+    pub fn process_line(&mut self) -> Result<InterpretAction, Error> {
         let res = (|| {
             loop {
                 match self.start_processing_line()? {
                     ProcessAction::Done => {
                         self.output.push_str("ok.\n")?;
-                        break Ok(());
+                        return Ok(InterpretAction::Done);
                     }
                     ProcessAction::Continue => {}
-                    ProcessAction::Execute =>
-                    // Loop until execution completes.
-                    {
-                        while self.steppa_pig()? != Step::Done {}
+                    ProcessAction::Execute => {
+                        // Loop until execution completes.
+                        let mut step = self.steppa_pig()?;
+                        while step == InterpretAction::Continue {
+                            step = self.steppa_pig()?;
+                        }
+                        if step == InterpretAction::AcceptInput {
+                            return Ok(InterpretAction::AcceptInput);
+                        }
                     }
                 }
             }
         })();
         match res {
-            Ok(_) => Ok(()),
+            Ok(res) => Ok(res),
             Err(e) => {
                 self.data_stack.clear();
                 self.return_stack.clear();
@@ -396,10 +409,10 @@ impl<T> Forth<T> {
     }
 
     // Single step execution
-    fn steppa_pig(&mut self) -> Result<Step, Error> {
+    fn steppa_pig(&mut self) -> Result<InterpretAction, Error> {
         let top = match self.call_stack.try_peek() {
             Ok(t) => t,
-            Err(StackError::StackEmpty) => return Ok(Step::Done),
+            Err(StackError::StackEmpty) => return Ok(InterpretAction::Done),
             Err(e) => return Err(Error::Stack(e)),
         };
 
@@ -418,24 +431,23 @@ impl<T> Forth<T> {
                     step! this is a bug."
                     )
                 }
-            }
+            }?
         };
 
-        match res {
-            Ok(_) => {
-                let _ = self.call_stack.pop();
-            }
-            Err(Error::PendingCallAgain) => {
-                // ok, just don't pop
-            }
-            Err(e) => return Err(e),
+        if res != InterpretAction::Continue {
+            // current word completed, so remove it from the call stack.
+            let _ = self.call_stack.pop();
         }
 
-        Ok(Step::NotDone)
+        if res == InterpretAction::Done {
+            return Ok(InterpretAction::Continue);
+        }
+
+        Ok(res)
     }
 
     /// Interpret is the run-time target of the `:` (colon) word.
-    pub fn interpret(&mut self) -> Result<(), Error> {
+    pub fn interpret(&mut self) -> Result<InterpretAction, Error> {
         let mut top = self.call_stack.try_peek()?;
 
         if let Some(word) = top.get_word_at_cur_idx() {
@@ -456,9 +468,9 @@ impl<T> Forth<T> {
             // Then add the callee on top of the currently interpreted word
             self.call_stack.push(callee)?;
 
-            Err(Error::PendingCallAgain)
+            Ok(InterpretAction::Continue)
         } else {
-            Ok(())
+            Ok(InterpretAction::Done)
         }
     }
 

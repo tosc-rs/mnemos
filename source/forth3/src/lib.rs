@@ -204,7 +204,7 @@ impl<T: 'static> CallContext<T> {
 ///
 /// It takes the current "full context" (e.g. `Fif`), as well as the CFA pointer
 /// to the dictionary entry.
-type WordFunc<T> = fn(&mut Forth<T>) -> Result<(), Error>;
+type WordFunc<T> = fn(&mut Forth<T>) -> Result<vm::InterpretAction, Error>;
 
 pub enum Lookup<T: 'static> {
     Dict(DictLocation<T>),
@@ -689,7 +689,7 @@ pub mod test {
 
     fn print_dict(name: &str, forth: &mut Forth<TestContext>) {
         forth.input.fill("dict").unwrap();
-        forth.process_line().unwrap();
+        forth.execute().unwrap();
         println!("{name} {}", forth.output.as_str());
         forth.output.clear();
     }

@@ -55,7 +55,7 @@
 
 use crate::{
     leakbox::{LBForth, LBForthParams},
-    Error, Forth,
+    vm, Error, Forth,
 };
 
 /// Run the given forth ui test against ALL enabled forth VMs
@@ -151,12 +151,12 @@ where
     }
 }
 
-fn check_output(res: Result<(), Error>, outcome: &Outcome, output: &str) {
+fn check_output(res: Result<vm::InterpretAction, Error>, outcome: &Outcome, output: &str) {
     #[cfg(not(miri))]
     println!("< {output}");
     match (res, outcome) {
-        (Ok(()), Outcome::OkAnyOutput) => {}
-        (Ok(()), Outcome::OkWithOutput(exp)) => {
+        (Ok(_), Outcome::OkAnyOutput) => {}
+        (Ok(_), Outcome::OkWithOutput(exp)) => {
             let act_lines = output.lines().collect::<Vec<&str>>();
             assert_eq!(act_lines.len(), exp.len());
             act_lines.iter().zip(exp.iter()).for_each(|(a, e)| {
@@ -188,7 +188,7 @@ fn blocking_steps_with<T>(steps: &[Step], forth: &mut Forth<T>) {
         #[cfg(not(miri))]
         println!("> {input}");
         forth.input.fill(input).unwrap();
-        let res = forth.process_line();
+        let res = forth.execute();
         check_output(res, outcome, forth.output.as_str());
         forth.output.clear();
     }
