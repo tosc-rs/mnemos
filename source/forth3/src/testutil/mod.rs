@@ -188,7 +188,7 @@ fn blocking_steps_with<T>(steps: &[Step], forth: &mut Forth<T>) {
         #[cfg(not(miri))]
         println!("> {input}");
         forth.input.fill(input).unwrap();
-        let res = forth.execute();
+        let res = forth.process_line();
         check_output(res, outcome, forth.output.as_str());
         forth.output.clear();
     }

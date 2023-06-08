@@ -686,7 +686,7 @@ pub mod test {
 
     fn print_dict(name: &str, forth: &mut Forth<TestContext>) {
         forth.input.fill("dict").unwrap();
-        forth.execute().unwrap();
+        forth.process_line().unwrap();
         println!("{name} {}", forth.output.as_str());
         forth.output.clear();
     }

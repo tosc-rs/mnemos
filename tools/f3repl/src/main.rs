@@ -23,8 +23,8 @@ fn main() {
         stdout().flush().unwrap();
         stdin().read_line(&mut inp).unwrap();
         forth.input.fill(&inp).unwrap();
-        match forth.execute() {
-            Ok(()) => {
+        match forth.process_line() {
+            Ok(_) => {
                 print!("{}", forth.output.as_str());
             }
             Err(e) => {
