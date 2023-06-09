@@ -6,7 +6,7 @@ use crate::{
     drivers::serial_mux::{PortHandle, SerialMuxHandle},
     Kernel,
 };
-use core::{any::TypeId, future::Future, ptr::NonNull};
+use core::{any::TypeId, future::Future, ptr::NonNull, time::Duration};
 use forth3::{
     async_builtin,
     dictionary::{self, AsyncBuiltinEntry, AsyncBuiltins, Dictionary, OwnedDict},
@@ -171,6 +171,12 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
         async_builtin!("sermux::open_port"),
         async_builtin!("sermux::write_outbuf"),
         async_builtin!("spawn"),
+        // sleep for a number of microseconds
+        async_builtin!("sleep::us"),
+        // sleep for a number of milliseconds
+        async_builtin!("sleep::ms"),
+        // sleep for a number of seconds
+        async_builtin!("sleep::s"),
     ];
 
     fn dispatch_async(
@@ -183,6 +189,9 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
                 "sermux::open_port" => sermux_open_port(forth).await,
                 "sermux::write_outbuf" => sermux_write_outbuf(forth).await,
                 "spawn" => spawn_forth_task(forth).await,
+                "sleep::us" => sleep(forth, Duration::from_micros).await,
+                "sleep::ms" => sleep(forth, Duration::from_millis).await,
+                "sleep::s" => sleep(forth, Duration::from_secs).await,
                 _ => {
                     tracing::warn!("unimplemented async builtin: {}", id.as_str());
                     Err(forth3::Error::WordNotInDict)
@@ -432,6 +441,30 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
             forth3::Error::InternalError
         })?;
 
+    Ok(())
+}
+
+/// Binding for [`Kernel::sleep()`]
+///
+/// Sleep for the provided duration.
+///
+/// Call: `DURATION {sleep::us, sleep::ms, sleep::s}`.
+/// Return: No change
+async fn sleep(
+    forth: &mut forth3::Forth<MnemosContext>,
+    into_duration: impl FnOnce(u64) -> Duration,
+) -> Result<(), forth3::Error> {
+    let duration = {
+        let duration = forth.data_stack.try_pop()?.as_i32();
+        if duration.is_negative() {
+            tracing::warn!(duration, "Cannot sleep for a negative duration!");
+            return Err(forth3::Error::WordToUsizeInvalid(duration));
+        }
+        into_duration(duration as u64)
+    };
+    tracing::trace!(?duration, "sleeping...");
+    forth.host_ctxt.kernel.sleep(duration).await;
+    tracing::trace!(?duration, "...slept!");
     Ok(())
 }
 

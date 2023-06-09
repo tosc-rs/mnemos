@@ -10,7 +10,6 @@ use input_mgr::RingLine;
 use melpomene::{
     cli::{self, MelpomeneOptions},
     sim_drivers::{
-        delay::Delay,
         emb_display::{EmbDisplay, EmbDisplayHandle},
         tcp_serial::TcpSerial,
     },
@@ -111,6 +110,8 @@ fn kernel_entry(opts: MelpomeneOptions) {
         max_drivers: 16,
         k2u_size: 4096,
         u2k_size: 4096,
+        // TODO(eliza): chosen totally arbitrarily
+        timer_granularity: maitake::time::Duration::from_millis(1),
     };
 
     let k = unsafe { Kernel::new(settings).unwrap().leak().as_ref() };
@@ -118,7 +119,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
     // First let's make a dummy driver just to make sure some stuff happens
     let initialization_future = async move {
         // Delay for one second, just for funsies
-        Delay::new(Duration::from_secs(1)).await;
+        k.sleep(Duration::from_secs(1)).await;
 
         // Set up the bidirectional, async bbqueue channel between the TCP port
         // (acting as a serial port) and the virtual serial port mux.
@@ -162,7 +163,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
         k.spawn(
             async move {
                 loop {
-                    Delay::new(Duration::from_secs(1)).await;
+                    k.sleep(Duration::from_secs(1)).await;
                     p1.send(b"hello\r\n").await;
                 }
             }
@@ -178,7 +179,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
     // Create the interactive console task
     let graphics_console = async move {
         // Delay for 1.5 seconds, just for funsies
-        Delay::new(Duration::from_millis(1_500)).await;
+        k.sleep(Duration::from_millis(1500)).await;
 
         // Take Port 2 from the serial mux. This corresponds to TCP port 10002 when
         // you are running crowtty
@@ -264,7 +265,7 @@ fn kernel_entry(opts: MelpomeneOptions) {
                         if let Some(fc) = fc {
                             break fc;
                         } else {
-                            Delay::new(Duration::from_millis(10)).await;
+                            k.sleep(Duration::from_millis(10)).await;
                         }
                     };
                     ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
@@ -347,13 +348,29 @@ fn kernel_entry(opts: MelpomeneOptions) {
         }
     });
 
+    let mut t0 = tokio::time::Instant::now();
     loop {
         while !KERNEL_LOCK.load(Ordering::Acquire) {
             sleep(Duration::from_millis(10));
         }
 
-        k.tick();
+        let tick = k.tick();
 
         KERNEL_LOCK.store(false, Ordering::Release);
+
+        // advance the timer
+        let ticks = t0.elapsed().as_millis() as u64;
+        let turn = k.timer().force_advance_ticks(ticks);
+        t0 = tokio::time::Instant::now();
+
+        if turn.expired == 0 && !tick.has_remaining {
+            // if no timers have expired on this tick, we should sleep until the
+            // next timer expires *or* something is woken by I/O, to simulate a
+            // hardware platform waiting for an interrupt.
+            tracing::trace!("waiting for an interrupt...");
+            // TODO(eliza): in order to do this, we probably need to add some
+            // kind of `Notify` channel for the sim drivers to wake the kernel
+            // as an "I/O interrupt". for now, we just busy loop.
+        }
     }
 }

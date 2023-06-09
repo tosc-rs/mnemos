@@ -17,11 +17,11 @@ members = [
 
 [patch.crates-io.maitake]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "5149ee6146a9e0c1af56da79bb55578abf6dfddc"
+rev = "d2694a86c9c7b6a235cacd1f086823bc03d8e8fb"
 
 [patch.crates-io.cordyceps]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "5149ee6146a9e0c1af56da79bb55578abf6dfddc"
+rev = "d2694a86c9c7b6a235cacd1f086823bc03d8e8fb"
 
 [patch.crates-io.mnemos-alloc]
 path = "./source/alloc"
