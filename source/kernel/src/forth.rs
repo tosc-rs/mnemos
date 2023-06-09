@@ -14,7 +14,7 @@ use forth3::{
     input::WordStrBuf,
     output::OutputBuf,
     word::Word,
-    AsyncForth, CallContext,
+    AsyncForth, CallContext, InterpretAction,
 };
 use mnemos_alloc::{
     containers::{HeapBox, HeapFixedVec},
@@ -101,7 +101,7 @@ impl Forth {
             self.forth.output_mut().clear();
 
             match self.forth.process_line().await {
-                Ok(()) => {
+                Ok(_) => {
                     let out_str = self.forth.output().as_str();
                     let output = out_str.as_bytes();
                     // write the task's output to stdout
@@ -165,7 +165,7 @@ struct Dispatcher;
 struct DropDict;
 
 impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
-    type Future = impl Future<Output = Result<(), forth3::Error>> + 'forth;
+    type Future = impl Future<Output = Result<InterpretAction, forth3::Error>> + 'forth;
 
     const BUILTINS: &'static [AsyncBuiltinEntry<MnemosContext>] = &[
         async_builtin!("sermux::open_port"),
@@ -196,8 +196,7 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
                     tracing::warn!("unimplemented async builtin: {}", id.as_str());
                     Err(forth3::Error::WordNotInDict)
                 }
-            }?;
-            Ok(())
+            }
         }
     }
 }
@@ -306,7 +305,9 @@ impl ConvertWord for Word {
 ///
 /// Errors on any invalid parameters. See [BagOfHolding] for details
 /// on bag of holding tokens
-async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<(), forth3::Error> {
+async fn sermux_open_port(
+    forth: &mut forth3::Forth<MnemosContext>,
+) -> Result<InterpretAction, forth3::Error> {
     let sz = forth.data_stack.try_pop()?.as_usize()?;
     let port = forth.data_stack.try_pop()?.as_u16()?;
 
@@ -333,7 +334,7 @@ async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
         .ok_or(forth3::Error::InternalError)?;
 
     forth.data_stack.push(Word::data(idx))?;
-    Ok(())
+    Ok(InterpretAction::Done)
 }
 
 /// Binding for [PortHandle::send()]
@@ -347,7 +348,7 @@ async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
 /// on bag of holding tokens
 async fn sermux_write_outbuf(
     forth: &mut forth3::Forth<MnemosContext>,
-) -> Result<(), forth3::Error> {
+) -> Result<InterpretAction, forth3::Error> {
     let idx = forth.data_stack.try_pop()?.as_i32();
     let port: &PortHandle = forth
         .host_ctxt
@@ -356,7 +357,7 @@ async fn sermux_write_outbuf(
         .ok_or(forth3::Error::InternalError)?;
 
     port.send(forth.output.as_str().as_bytes()).await;
-    Ok(())
+    Ok(InterpretAction::Done)
 }
 
 /// Binding for [`Kernel::spawn()`]
@@ -366,7 +367,9 @@ async fn sermux_write_outbuf(
 ///
 /// Call: `XT spawn`.
 /// Return: the task ID of the spawned Forth task.
-async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<(), forth3::Error> {
+async fn spawn_forth_task(
+    forth: &mut forth3::Forth<MnemosContext>,
+) -> Result<InterpretAction, forth3::Error> {
     let xt = forth.data_stack.try_pop()?;
     tracing::debug!("Forking Forth VM...");
     let params = forth.host_ctxt.params;
@@ -441,7 +444,7 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
             forth3::Error::InternalError
         })?;
 
-    Ok(())
+    Ok(InterpretAction::Done)
 }
 
 /// Binding for [`Kernel::sleep()`]
