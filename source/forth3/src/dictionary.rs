@@ -690,8 +690,7 @@ pub mod test {
     use crate::{
         dictionary::{BuiltinEntry, DictLocation, DictionaryBump, DictionaryEntry},
         leakbox::{alloc_dict, LeakBox, LeakBoxDict},
-        vm::InterpretAction,
-        Error, Forth, Word,
+        Forth, ForthResult, Word,
     };
 
     #[cfg(feature = "async")]
@@ -773,7 +772,7 @@ pub mod test {
 
     #[test]
     fn allocs_work() {
-        fn stubby(_f: &mut Forth<()>) -> Result<InterpretAction, Error> {
+        fn stubby(_f: &mut Forth<()>) -> ForthResult {
             panic!("Don't ACTUALLY call me!");
         }
 
@@ -790,7 +789,7 @@ pub mod test {
 
     #[test]
     fn fork_onto_works() {
-        fn stubby(_f: &mut Forth<()>) -> Result<InterpretAction, Error> {
+        fn stubby(_f: &mut Forth<()>) -> ForthResult {
             panic!("Don't ACTUALLY call me!");
         }
 

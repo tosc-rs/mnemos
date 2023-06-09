@@ -26,7 +26,7 @@ use dictionary::AsyncBuiltinEntry;
 
 #[cfg(feature = "async")]
 pub use crate::vm::AsyncForth;
-pub use crate::vm::Forth;
+pub use crate::vm::{Forth, ForthResult, InterpretAction};
 use crate::{
     dictionary::{BumpError, DictionaryEntry},
     output::OutputError,
@@ -200,7 +200,7 @@ impl<T: 'static> CallContext<T> {
 ///
 /// It takes the current "full context" (e.g. `Fif`), as well as the CFA pointer
 /// to the dictionary entry.
-type WordFunc<T> = fn(&mut Forth<T>) -> Result<vm::InterpretAction, Error>;
+type WordFunc<T> = fn(&mut Forth<T>) -> ForthResult;
 
 pub enum Lookup<T: 'static> {
     Dict(DictLocation<T>),
@@ -257,7 +257,7 @@ pub mod test {
         testutil::{all_runtest, blocking_runtest_with},
         vm,
         word::Word,
-        Error, Forth,
+        Error, Forth, ForthResult,
     };
 
     #[derive(Default)]
@@ -698,7 +698,7 @@ pub mod test {
     }
 
     impl<'forth> Future for CountingFut<'forth> {
-        type Output = Result<vm::InterpretAction, Error>;
+        type Output = ForthResult;
 
         fn poll(
             mut self: core::pin::Pin<&mut Self>,

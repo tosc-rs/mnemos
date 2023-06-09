@@ -29,6 +29,9 @@ mod async_vm;
 #[cfg(feature = "async")]
 pub use self::async_vm::AsyncForth;
 
+/// Result type returned by a Forth VM execution step.
+pub type ForthResult = Result<InterpretAction, Error>;
+
 /// Forth is the "context" of the VM/interpreter.
 pub struct Forth<T: 'static> {
     mode: Mode,
@@ -256,7 +259,7 @@ impl<T> Forth<T> {
         }
     }
 
-    pub fn process_line(&mut self) -> Result<InterpretAction, Error> {
+    pub fn process_line(&mut self) -> ForthResult {
         let res = (|| {
             loop {
                 match self.start_processing_line()? {
@@ -403,7 +406,7 @@ impl<T> Forth<T> {
     }
 
     // Single step execution
-    fn steppa_pig(&mut self) -> Result<InterpretAction, Error> {
+    fn steppa_pig(&mut self) -> ForthResult {
         let top = match self.call_stack.try_peek() {
             Ok(t) => t,
             Err(StackError::StackEmpty) => return Ok(InterpretAction::Done),
@@ -441,7 +444,7 @@ impl<T> Forth<T> {
     }
 
     /// Interpret is the run-time target of the `:` (colon) word.
-    pub fn interpret(&mut self) -> Result<InterpretAction, Error> {
+    pub fn interpret(&mut self) -> ForthResult {
         let mut top = self.call_stack.try_peek()?;
 
         if let Some(word) = top.get_word_at_cur_idx() {

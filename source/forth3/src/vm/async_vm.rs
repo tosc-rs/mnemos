@@ -180,7 +180,7 @@ where
         &mut self.vm
     }
 
-    pub async fn process_line(&mut self) -> Result<InterpretAction, Error> {
+    pub async fn process_line(&mut self) -> ForthResult {
         let res = async {
             loop {
                 match self.vm.start_processing_line()? {
@@ -215,7 +215,7 @@ where
     }
 
     // Single step execution (async version).
-    async fn async_pig(&mut self) -> Result<InterpretAction, Error> {
+    async fn async_pig(&mut self) -> ForthResult {
         let Self {
             ref mut vm,
             ref builtins,

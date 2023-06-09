@@ -1,8 +1,12 @@
-use crate::{vm::InterpretAction, word::Word, Error, Forth};
+use crate::{
+    vm::{ForthResult, InterpretAction},
+    word::Word,
+    Error, Forth,
+};
 use core::{fmt::Write, ops::Neg};
 
 impl<T: 'static> Forth<T> {
-    pub fn float_div_mod(&mut self) -> Result<InterpretAction, Error> {
+    pub fn float_div_mod(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         if unsafe { a.float == 0.0 } {
@@ -15,7 +19,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn float_div(&mut self) -> Result<InterpretAction, Error> {
+    pub fn float_div(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         let val = unsafe {
@@ -28,7 +32,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn float_modu(&mut self) -> Result<InterpretAction, Error> {
+    pub fn float_modu(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         let val = unsafe {
@@ -41,13 +45,13 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn float_pop_print(&mut self) -> Result<InterpretAction, Error> {
+    pub fn float_pop_print(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         write!(&mut self.output, "{} ", unsafe { a.float })?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn float_add(&mut self) -> Result<InterpretAction, Error> {
+    pub fn float_add(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack
@@ -55,7 +59,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn float_mul(&mut self) -> Result<InterpretAction, Error> {
+    pub fn float_mul(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack
@@ -64,7 +68,7 @@ impl<T: 'static> Forth<T> {
     }
 
     #[cfg(feature = "use-std")]
-    pub fn float_abs(&mut self) -> Result<InterpretAction, Error> {
+    pub fn float_abs(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         self.data_stack
             .push(Word::float(unsafe { a.float.abs() }))?;
@@ -72,7 +76,7 @@ impl<T: 'static> Forth<T> {
     }
 
     #[cfg(not(feature = "use-std"))]
-    pub fn float_abs(&mut self) -> Result<InterpretAction, Error> {
+    pub fn float_abs(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         self.data_stack.push(Word::float(unsafe {
             if a.float.is_sign_negative() {
@@ -84,14 +88,14 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn float_negate(&mut self) -> Result<InterpretAction, Error> {
+    pub fn float_negate(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         self.data_stack
             .push(Word::float(unsafe { a.float.neg() }))?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn float_min(&mut self) -> Result<InterpretAction, Error> {
+    pub fn float_min(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack
@@ -99,7 +103,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn float_max(&mut self) -> Result<InterpretAction, Error> {
+    pub fn float_max(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack
@@ -107,7 +111,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn float_minus(&mut self) -> Result<InterpretAction, Error> {
+    pub fn float_minus(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack

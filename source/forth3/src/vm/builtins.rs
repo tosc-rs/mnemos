@@ -5,7 +5,7 @@ use crate::{
     fastr::comptime_fastr,
     vm::TmpFaStr,
     word::Word,
-    Error, Forth, Lookup, Mode, ReplaceErr,
+    Error, Forth, ForthResult, Lookup, Mode, ReplaceErr,
 };
 
 use super::InterpretAction;
@@ -190,7 +190,7 @@ impl<T: 'static> Forth<T> {
         builtin!("(variable)", Self::variable),
     ];
 
-    pub fn dict_free(&mut self) -> Result<InterpretAction, Error> {
+    pub fn dict_free(&mut self) -> ForthResult {
         let capa = self.dict.alloc.capacity();
         let used = self.dict.alloc.used();
         let free = capa - used;
@@ -202,7 +202,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn list_stack(&mut self) -> Result<InterpretAction, Error> {
+    pub fn list_stack(&mut self) -> ForthResult {
         let depth = self.data_stack.depth();
         write!(&mut self.output, "<{}> ", depth)?;
         for d in (0..depth).rev() {
@@ -213,7 +213,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn list_builtins(&mut self) -> Result<InterpretAction, Error> {
+    pub fn list_builtins(&mut self) -> ForthResult {
         let Self {
             builtins, output, ..
         } = self;
@@ -226,7 +226,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn list_dict(&mut self) -> Result<InterpretAction, Error> {
+    pub fn list_dict(&mut self) -> ForthResult {
         let Self { output, dict, .. } = self;
         output.write_str("dictionary: ")?;
         for item in dict.entries() {
@@ -244,7 +244,7 @@ impl<T: 'static> Forth<T> {
     }
 
     // addr offset w+
-    pub fn word_add(&mut self) -> Result<InterpretAction, Error> {
+    pub fn word_add(&mut self) -> ForthResult {
         let w_offset = self.data_stack.try_pop()?;
         let w_addr = self.data_stack.try_pop()?;
         let new_addr = unsafe {
@@ -255,7 +255,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn byte_var_load(&mut self) -> Result<InterpretAction, Error> {
+    pub fn byte_var_load(&mut self) -> ForthResult {
         let w = self.data_stack.try_pop()?;
         let ptr = unsafe { w.ptr.cast::<u8>() };
         let val = unsafe { Word::data(i32::from(ptr.read())) };
@@ -263,7 +263,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn byte_var_store(&mut self) -> Result<InterpretAction, Error> {
+    pub fn byte_var_store(&mut self) -> ForthResult {
         let w_addr = self.data_stack.try_pop()?;
         let w_val = self.data_stack.try_pop()?;
         unsafe {
@@ -273,7 +273,7 @@ impl<T: 'static> Forth<T> {
     }
 
     // TODO: Check alignment?
-    pub fn var_load(&mut self) -> Result<InterpretAction, Error> {
+    pub fn var_load(&mut self) -> ForthResult {
         let w = self.data_stack.try_pop()?;
         let ptr = unsafe { w.ptr.cast::<Word>() };
         let val = unsafe { ptr.read() };
@@ -282,7 +282,7 @@ impl<T: 'static> Forth<T> {
     }
 
     // TODO: Check alignment?
-    pub fn var_store(&mut self) -> Result<InterpretAction, Error> {
+    pub fn var_store(&mut self) -> ForthResult {
         let w_addr = self.data_stack.try_pop()?;
         let w_val = self.data_stack.try_pop()?;
         unsafe {
@@ -291,17 +291,17 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn zero_const(&mut self) -> Result<InterpretAction, Error> {
+    pub fn zero_const(&mut self) -> ForthResult {
         self.data_stack.push(Word::data(0))?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn one_const(&mut self) -> Result<InterpretAction, Error> {
+    pub fn one_const(&mut self) -> ForthResult {
         self.data_stack.push(Word::data(1))?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn constant(&mut self) -> Result<InterpretAction, Error> {
+    pub fn constant(&mut self) -> ForthResult {
         let me = self.call_stack.try_peek()?;
         let de = me.eh.cast::<DictionaryEntry<T>>();
         let cfa = unsafe { DictionaryEntry::<T>::pfa(de) };
@@ -310,7 +310,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn variable(&mut self) -> Result<InterpretAction, Error> {
+    pub fn variable(&mut self) -> ForthResult {
         let me = self.call_stack.try_peek()?;
         let de = me.eh.cast::<DictionaryEntry<T>>();
         let cfa = unsafe { DictionaryEntry::<T>::pfa(de) };
@@ -319,7 +319,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn forget(&mut self) -> Result<InterpretAction, Error> {
+    pub fn forget(&mut self) -> ForthResult {
         // TODO: If anything we've defined in the dict has escaped into
         // the stack, variables, etc., we're definitely going to be in trouble.
         //
@@ -375,13 +375,13 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn over(&mut self) -> Result<InterpretAction, Error> {
+    pub fn over(&mut self) -> ForthResult {
         let a = self.data_stack.try_peek_back_n(1)?;
         self.data_stack.push(a)?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn over_2(&mut self) -> Result<InterpretAction, Error> {
+    pub fn over_2(&mut self) -> ForthResult {
         let a = self.data_stack.try_peek_back_n(2)?;
         let b = self.data_stack.try_peek_back_n(3)?;
         self.data_stack.push(b)?;
@@ -389,7 +389,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn rot(&mut self) -> Result<InterpretAction, Error> {
+    pub fn rot(&mut self) -> ForthResult {
         let n1 = self.data_stack.try_pop()?;
         let n2 = self.data_stack.try_pop()?;
         let n3 = self.data_stack.try_pop()?;
@@ -399,18 +399,18 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn ds_drop(&mut self) -> Result<InterpretAction, Error> {
+    pub fn ds_drop(&mut self) -> ForthResult {
         let _a = self.data_stack.try_pop()?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn ds_drop_2(&mut self) -> Result<InterpretAction, Error> {
+    pub fn ds_drop_2(&mut self) -> ForthResult {
         let _a = self.data_stack.try_pop()?;
         let _b = self.data_stack.try_pop()?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn swap(&mut self) -> Result<InterpretAction, Error> {
+    pub fn swap(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack.push(a)?;
@@ -418,7 +418,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn swap_2(&mut self) -> Result<InterpretAction, Error> {
+    pub fn swap_2(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         let c = self.data_stack.try_pop()?;
@@ -430,12 +430,12 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn space(&mut self) -> Result<InterpretAction, Error> {
+    pub fn space(&mut self) -> ForthResult {
         self.output.push_bstr(b" ")?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn spaces(&mut self) -> Result<InterpretAction, Error> {
+    pub fn spaces(&mut self) -> ForthResult {
         let num = self.data_stack.try_pop()?;
         let num = unsafe { num.data };
 
@@ -448,18 +448,18 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn cr(&mut self) -> Result<InterpretAction, Error> {
+    pub fn cr(&mut self) -> ForthResult {
         self.output.push_bstr(b"\n")?;
         Ok(InterpretAction::Done)
     }
 
-    fn skip_literal(&mut self) -> Result<InterpretAction, Error> {
+    fn skip_literal(&mut self) -> ForthResult {
         let parent = self.call_stack.try_peek_back_n_mut(1)?;
         parent.offset(1)?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn invert(&mut self) -> Result<InterpretAction, Error> {
+    pub fn invert(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let val = if a == Word::data(0) {
             Word::data(-1)
@@ -470,7 +470,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn and(&mut self) -> Result<InterpretAction, Error> {
+    pub fn and(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         let val = Word::data(unsafe { a.data & b.data });
@@ -478,7 +478,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn equal(&mut self) -> Result<InterpretAction, Error> {
+    pub fn equal(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         let val = if a == b {
@@ -490,7 +490,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn greater(&mut self) -> Result<InterpretAction, Error> {
+    pub fn greater(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         let val = if unsafe { b.data > a.data } { -1 } else { 0 };
@@ -498,7 +498,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn less(&mut self) -> Result<InterpretAction, Error> {
+    pub fn less(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         let val = if unsafe { b.data < a.data } { -1 } else { 0 };
@@ -506,22 +506,22 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn zero_equal(&mut self) -> Result<InterpretAction, Error> {
+    pub fn zero_equal(&mut self) -> ForthResult {
         self.data_stack.push(Word::data(0))?;
         self.equal()
     }
 
-    pub fn zero_greater(&mut self) -> Result<InterpretAction, Error> {
+    pub fn zero_greater(&mut self) -> ForthResult {
         self.data_stack.push(Word::data(0))?;
         self.greater()
     }
 
-    pub fn zero_less(&mut self) -> Result<InterpretAction, Error> {
+    pub fn zero_less(&mut self) -> ForthResult {
         self.data_stack.push(Word::data(0))?;
         self.less()
     }
 
-    pub fn div_mod(&mut self) -> Result<InterpretAction, Error> {
+    pub fn div_mod(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         if unsafe { a.data == 0 } {
@@ -534,7 +534,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn div(&mut self) -> Result<InterpretAction, Error> {
+    pub fn div(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         let val = unsafe {
@@ -547,7 +547,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn modu(&mut self) -> Result<InterpretAction, Error> {
+    pub fn modu(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         let val = unsafe {
@@ -560,25 +560,25 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn loop_i(&mut self) -> Result<InterpretAction, Error> {
+    pub fn loop_i(&mut self) -> ForthResult {
         let a = self.return_stack.try_peek()?;
         self.data_stack.push(a)?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn loop_itick(&mut self) -> Result<InterpretAction, Error> {
+    pub fn loop_itick(&mut self) -> ForthResult {
         let a = self.return_stack.try_peek_back_n(1)?;
         self.data_stack.push(a)?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn loop_j(&mut self) -> Result<InterpretAction, Error> {
+    pub fn loop_j(&mut self) -> ForthResult {
         let a = self.return_stack.try_peek_back_n(2)?;
         self.data_stack.push(a)?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn loop_leave(&mut self) -> Result<InterpretAction, Error> {
+    pub fn loop_leave(&mut self) -> ForthResult {
         let _ = self.return_stack.try_pop()?;
         let a = self.return_stack.try_peek()?;
         self.return_stack
@@ -586,7 +586,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn jump_doloop(&mut self) -> Result<InterpretAction, Error> {
+    pub fn jump_doloop(&mut self) -> ForthResult {
         let a = self.return_stack.try_pop()?;
         let b = self.return_stack.try_peek()?;
         let ctr = unsafe { Word::data(a.data + 1) };
@@ -600,14 +600,14 @@ impl<T: 'static> Forth<T> {
         }
     }
 
-    pub fn emit(&mut self) -> Result<InterpretAction, Error> {
+    pub fn emit(&mut self) -> ForthResult {
         let val = self.data_stack.try_pop()?;
         let val = unsafe { val.data };
         self.output.push_bstr(&[val as u8])?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn jump_if_zero(&mut self) -> Result<InterpretAction, Error> {
+    pub fn jump_if_zero(&mut self) -> ForthResult {
         let do_jmp = unsafe {
             let val = self.data_stack.try_pop()?;
             val.data == 0
@@ -619,20 +619,20 @@ impl<T: 'static> Forth<T> {
         }
     }
 
-    pub fn jump(&mut self) -> Result<InterpretAction, Error> {
+    pub fn jump(&mut self) -> ForthResult {
         let parent = self.call_stack.try_peek_back_n_mut(1)?;
         let offset = parent.get_current_val()?;
         parent.offset(offset)?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn dup(&mut self) -> Result<InterpretAction, Error> {
+    pub fn dup(&mut self) -> ForthResult {
         let val = self.data_stack.try_peek()?;
         self.data_stack.push(val)?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn dup_2(&mut self) -> Result<InterpretAction, Error> {
+    pub fn dup_2(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack.push(b)?;
@@ -642,19 +642,19 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn return_to_data_stack(&mut self) -> Result<InterpretAction, Error> {
+    pub fn return_to_data_stack(&mut self) -> ForthResult {
         let val = self.return_stack.try_pop()?;
         self.data_stack.push(val)?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn data_to_return_stack(&mut self) -> Result<InterpretAction, Error> {
+    pub fn data_to_return_stack(&mut self) -> ForthResult {
         let val = self.data_stack.try_pop()?;
         self.return_stack.push(val)?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn data2_to_return2_stack(&mut self) -> Result<InterpretAction, Error> {
+    pub fn data2_to_return2_stack(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.return_stack.push(b)?;
@@ -662,13 +662,13 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn pop_print(&mut self) -> Result<InterpretAction, Error> {
+    pub fn pop_print(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         write!(&mut self.output, "{} ", unsafe { a.data })?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn unsigned_pop_print(&mut self) -> Result<InterpretAction, Error> {
+    pub fn unsigned_pop_print(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         write!(&mut self.output, "{} ", unsafe { a.data } as u32)?;
         Ok(InterpretAction::Done)
@@ -684,7 +684,7 @@ impl<T: 'static> Forth<T> {
     /// > .
     /// < 3 ok.
     /// # "#)
-    pub fn add(&mut self) -> Result<InterpretAction, Error> {
+    pub fn add(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
 
@@ -698,7 +698,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn mul(&mut self) -> Result<InterpretAction, Error> {
+    pub fn mul(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack
@@ -706,21 +706,21 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn abs(&mut self) -> Result<InterpretAction, Error> {
+    pub fn abs(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         self.data_stack
             .push(Word::data(unsafe { a.data.wrapping_abs() }))?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn negate(&mut self) -> Result<InterpretAction, Error> {
+    pub fn negate(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         self.data_stack
             .push(Word::data(unsafe { a.data.wrapping_neg() }))?;
         Ok(InterpretAction::Done)
     }
 
-    pub fn min(&mut self) -> Result<InterpretAction, Error> {
+    pub fn min(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack
@@ -728,7 +728,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn max(&mut self) -> Result<InterpretAction, Error> {
+    pub fn max(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack
@@ -736,7 +736,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn minus(&mut self) -> Result<InterpretAction, Error> {
+    pub fn minus(&mut self) -> ForthResult {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         // NOTE: CURSED BECAUSE OF POINTER MATH
@@ -749,7 +749,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn star_slash(&mut self) -> Result<InterpretAction, Error> {
+    pub fn star_slash(&mut self) -> ForthResult {
         let n3 = self.data_stack.try_pop()?;
         let n2 = self.data_stack.try_pop()?;
         let n1 = self.data_stack.try_pop()?;
@@ -761,7 +761,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn star_slash_mod(&mut self) -> Result<InterpretAction, Error> {
+    pub fn star_slash_mod(&mut self) -> ForthResult {
         let n3 = self.data_stack.try_pop()?;
         let n2 = self.data_stack.try_pop()?;
         let n1 = self.data_stack.try_pop()?;
@@ -776,7 +776,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn colon(&mut self) -> Result<InterpretAction, Error> {
+    pub fn colon(&mut self) -> ForthResult {
         let old_mode = core::mem::replace(&mut self.mode, Mode::Compile);
         let name = self.munch_name()?;
 
@@ -827,7 +827,7 @@ impl<T: 'static> Forth<T> {
         }
     }
 
-    pub fn write_str_lit(&mut self) -> Result<InterpretAction, Error> {
+    pub fn write_str_lit(&mut self) -> ForthResult {
         let parent = self.call_stack.try_peek_back_n_mut(1)?;
 
         // The length in bytes is stored in the next word.
@@ -851,7 +851,7 @@ impl<T: 'static> Forth<T> {
 
     /// `(literal)` is used mid-interpret to put the NEXT word of the parent's
     /// CFA array into the stack as a value.
-    pub fn literal(&mut self) -> Result<InterpretAction, Error> {
+    pub fn literal(&mut self) -> ForthResult {
         let parent = self.call_stack.try_peek_back_n_mut(1)?;
         let literal = parent.get_current_word()?;
         parent.offset(1)?;
@@ -860,7 +860,7 @@ impl<T: 'static> Forth<T> {
     }
 
     /// Looks up a name in the dictionary and places its address on the stack.
-    pub fn addr_of(&mut self) -> Result<InterpretAction, Error> {
+    pub fn addr_of(&mut self) -> ForthResult {
         self.input.advance();
         let name = self.input.cur_word().ok_or(Error::AddrOfMissingName)?;
         match self.lookup(name)? {
@@ -885,7 +885,7 @@ impl<T: 'static> Forth<T> {
         Ok(InterpretAction::Done)
     }
 
-    pub fn execute(&mut self) -> Result<InterpretAction, Error> {
+    pub fn execute(&mut self) -> ForthResult {
         let w = self.data_stack.try_pop()?;
         // pop the execute word off the stack
         self.call_stack.pop();

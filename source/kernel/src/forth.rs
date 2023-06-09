@@ -14,7 +14,7 @@ use forth3::{
     input::WordStrBuf,
     output::OutputBuf,
     word::Word,
-    AsyncForth, CallContext, InterpretAction,
+    AsyncForth, CallContext, ForthResult, InterpretAction,
 };
 use mnemos_alloc::{
     containers::{HeapBox, HeapFixedVec},
@@ -165,7 +165,7 @@ struct Dispatcher;
 struct DropDict;
 
 impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
-    type Future = impl Future<Output = Result<InterpretAction, forth3::Error>> + 'forth;
+    type Future = impl Future<Output = ForthResult> + 'forth;
 
     const BUILTINS: &'static [AsyncBuiltinEntry<MnemosContext>] = &[
         async_builtin!("sermux::open_port"),
@@ -305,9 +305,7 @@ impl ConvertWord for Word {
 ///
 /// Errors on any invalid parameters. See [BagOfHolding] for details
 /// on bag of holding tokens
-async fn sermux_open_port(
-    forth: &mut forth3::Forth<MnemosContext>,
-) -> Result<InterpretAction, forth3::Error> {
+async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> ForthResult {
     let sz = forth.data_stack.try_pop()?.as_usize()?;
     let port = forth.data_stack.try_pop()?.as_u16()?;
 
@@ -346,9 +344,7 @@ async fn sermux_open_port(
 ///
 /// Errors if the provided handle is incorrect. See [BagOfHolding] for details
 /// on bag of holding tokens
-async fn sermux_write_outbuf(
-    forth: &mut forth3::Forth<MnemosContext>,
-) -> Result<InterpretAction, forth3::Error> {
+async fn sermux_write_outbuf(forth: &mut forth3::Forth<MnemosContext>) -> ForthResult {
     let idx = forth.data_stack.try_pop()?.as_i32();
     let port: &PortHandle = forth
         .host_ctxt
@@ -367,9 +363,7 @@ async fn sermux_write_outbuf(
 ///
 /// Call: `XT spawn`.
 /// Return: the task ID of the spawned Forth task.
-async fn spawn_forth_task(
-    forth: &mut forth3::Forth<MnemosContext>,
-) -> Result<InterpretAction, forth3::Error> {
+async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> ForthResult {
     let xt = forth.data_stack.try_pop()?;
     tracing::debug!("Forking Forth VM...");
     let params = forth.host_ctxt.params;
@@ -456,7 +450,7 @@ async fn spawn_forth_task(
 async fn sleep(
     forth: &mut forth3::Forth<MnemosContext>,
     into_duration: impl FnOnce(u64) -> Duration,
-) -> Result<(), forth3::Error> {
+) -> ForthResult {
     let duration = {
         let duration = forth.data_stack.try_pop()?.as_i32();
         if duration.is_negative() {
@@ -468,7 +462,7 @@ async fn sleep(
     tracing::trace!(?duration, "sleeping...");
     forth.host_ctxt.kernel.sleep(duration).await;
     tracing::trace!(?duration, "...slept!");
-    Ok(())
+    Ok(InterpretAction::Done)
 }
 
 impl dictionary::DropDict for DropDict {
