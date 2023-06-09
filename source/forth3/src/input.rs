@@ -24,7 +24,7 @@ impl WordStrBuf {
     }
 
     #[inline]
-    fn capacity(&self) -> usize {
+    pub fn capacity(&self) -> usize {
         (self.end as usize) - (self.start as usize)
     }
 

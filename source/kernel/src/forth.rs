@@ -36,7 +36,6 @@ pub struct Params {
 
 pub struct Forth {
     forth: AsyncForth<MnemosContext, Dispatcher>,
-    stdio: bbq::BidiHandle,
     _bufs: Bufs,
 }
 
@@ -62,7 +61,7 @@ impl Forth {
 
         let input = WordStrBuf::new(bufs.input.as_mut_ptr(), params.input_buf_size);
         let output = OutputBuf::new(bufs.output.as_mut_ptr(), params.output_buf_size);
-        let host_ctxt = MnemosContext::new(kernel, params, spawnulator).await;
+        let host_ctxt = MnemosContext::new(kernel, params, spawnulator, stdio).await;
 
         let forth = unsafe {
             AsyncForth::new(
@@ -81,11 +80,7 @@ impl Forth {
                 "failed to construct Forth VM"
             })?
         };
-        let forth = Self {
-            forth,
-            stdio,
-            _bufs: bufs,
-        };
+        let forth = Self { forth, _bufs: bufs };
         Ok((forth, streams))
     }
 
@@ -107,7 +102,13 @@ impl Forth {
                     // write the task's output to stdout
                     let len = output.len();
                     tracing::debug!(len, "< {out_str}");
-                    let mut send = self.stdio.producer().send_grant_exact(output.len()).await;
+                    let mut send = self
+                        .forth
+                        .host_ctxt()
+                        .stdio
+                        .producer()
+                        .send_grant_exact(output.len())
+                        .await;
                     send.copy_from_slice(output);
                     send.commit(len);
                 }
@@ -115,7 +116,13 @@ impl Forth {
                     tracing::error!(?error);
                     // TODO(ajm): Provide some kind of fixed length error string?
                     const ERROR: &[u8] = b"ERROR.";
-                    let mut send = self.stdio.producer().send_grant_exact(ERROR.len()).await;
+                    let mut send = self
+                        .forth
+                        .host_ctxt()
+                        .stdio
+                        .producer()
+                        .send_grant_exact(ERROR.len())
+                        .await;
                     send.copy_from_slice(ERROR);
                     send.commit(ERROR.len());
                     // TODO(ajm): I need a "clear" function for the input. This wont properly
@@ -129,7 +136,7 @@ impl Forth {
 
             // read from stdin
             {
-                let read = self.stdio.consumer().read_grant().await;
+                let read = self.host_ctxt().stdio.consumer().read_grant().await;
                 let len = read.len();
                 match core::str::from_utf8(&read) {
                     Ok(input) => {
@@ -157,6 +164,7 @@ struct MnemosContext {
     id: usize,
     /// Handle for spawning child tasks.
     spawnulator: Spawnulator,
+    stdio: bbq::BidiHandle,
 }
 
 #[derive(Copy, Clone)]
@@ -177,6 +185,7 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
         async_builtin!("sleep::ms"),
         // sleep for a number of seconds
         async_builtin!("sleep::s"),
+        async_builtin!("stdio::read"),
     ];
 
     fn dispatch_async(
@@ -192,6 +201,7 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
                 "sleep::us" => sleep(forth, Duration::from_micros).await,
                 "sleep::ms" => sleep(forth, Duration::from_millis).await,
                 "sleep::s" => sleep(forth, Duration::from_secs).await,
+                "stdio::read" => read_stdio(forth).await,
                 _ => {
                     tracing::warn!("unimplemented async builtin: {}", id.as_str());
                     Err(forth3::Error::WordNotInDict)
@@ -259,7 +269,12 @@ impl Default for Params {
 }
 
 impl MnemosContext {
-    async fn new(kernel: &'static Kernel, params: Params, spawnulator: Spawnulator) -> Self {
+    async fn new(
+        kernel: &'static Kernel,
+        params: Params,
+        spawnulator: Spawnulator,
+        stdio: bbq::BidiHandle,
+    ) -> Self {
         static NEXT_TASK_ID: AtomicUsize = AtomicUsize::new(0);
         let boh = BagOfHolding::new(kernel, params.bag_of_holding_capacity).await;
         Self {
@@ -268,6 +283,7 @@ impl MnemosContext {
             params,
             id: NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed),
             spawnulator,
+            stdio,
         }
     }
 }
@@ -388,7 +404,8 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
         );
         forth3::Error::InternalError
     })?;
-    let host_ctxt = MnemosContext::new(kernel, params, forth.host_ctxt.spawnulator.clone()).await;
+    let host_ctxt =
+        MnemosContext::new(kernel, params, forth.host_ctxt.spawnulator.clone(), stdio).await;
     let child_id = host_ctxt.id;
     let input = WordStrBuf::new(bufs.input.as_mut_ptr(), params.input_buf_size);
     let output = OutputBuf::new(bufs.output.as_mut_ptr(), params.output_buf_size);
@@ -421,7 +438,6 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
 
     let child = Forth {
         forth: AsyncForth::from_forth(child, Dispatcher),
-        stdio,
         _bufs: bufs,
     };
 
@@ -465,6 +481,19 @@ async fn sleep(
     tracing::trace!(?duration, "sleeping...");
     forth.host_ctxt.kernel.sleep(duration).await;
     tracing::trace!(?duration, "...slept!");
+    Ok(())
+}
+
+async fn read_stdio(forth: &mut forth3::Forth<MnemosContext>) -> Result<(), forth3::Error> {
+    let rgr = forth.host_ctxt.stdio.consumer().read_grant().await;
+    // TODO(eliza): we could use a substantially nicer error here.
+    let s = core::str::from_utf8(&rgr[..]).map_err(|_| forth3::Error::InternalError)?;
+    let len = core::cmp::min(s.len(), forth.input.capacity());
+    forth
+        .input
+        .fill(&s[..len])
+        .map_err(|_| forth3::Error::InternalError)?;
+    rgr.release(len);
     Ok(())
 }
 
