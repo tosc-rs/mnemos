@@ -51,7 +51,7 @@ optional = true
 
 [dependencies.tokio]
 version = "1.19"
-features = ["rt", "time", "macros"]
+features = ["rt", "time", "macros", "sync"]
 
 [dependencies.clap]
 version = "3.0"
