@@ -446,6 +446,10 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
 /// Return: No change
 async fn sleep_ms(forth: &mut forth3::Forth<MnemosContext>) -> Result<(), forth3::Error> {
     let millis = forth.data_stack.try_pop()?.as_i32();
+    if millis.is_negative() {
+        tracing::warn!("Cannot sleep for a negative number of milliseconds!");
+        return Err(forth3::Error::WordToUsizeInvalid(millis));
+    }
     let duration = core::time::Duration::from_millis(millis as u64);
     tracing::trace!(?duration, "sleeping...");
     forth.host_ctxt.kernel.sleep(duration).await;
