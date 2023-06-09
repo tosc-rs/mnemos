@@ -324,17 +324,30 @@ fn main_inner() -> Result<(), ()> {
 
         k.spawn(async move {
             let mut tq = TimerQueue::from_registry(k).await?;
-            let mut spim = SpiSender::from_registry(k).await?;
 
+            println!("WAIT~");
+            tq.delay_ms(100).await;
+            println!("~GO");
+
+            let mut spim = SpiSender::from_registry(k).await?;
+            println!("GOT SPIM");
             // SPI_BCC (0:23 and 24:27)
             // SPI_MTC and SPI_MBC
             // Start SPI_TCR(31)
 
-            let mut msg_1 = k.heap().allocate_array_with(|| 0, 2).await;
-            msg_1.copy_from_slice(&[0x04, 0x00]);
-            let _ = spim.send_wait(msg_1).await.ok();
+            loop {
+                tq.delay_ms(100).await;
+                let mut msg_1 = k.heap().allocate_array_with(|| 0, 2).await;
+                msg_1.copy_from_slice(&[0x04, 0x00]);
+                if spim.send_wait(msg_1).await.is_ok() {
+                    break;
+                }
+                println!("WHAT");
+            }
 
-            tq.delay_ms(10).await;
+            println!("CLEAR");
+
+            tq.delay_ms(100).await;
 
 
             // Loop, toggling the VCOM
@@ -347,6 +360,8 @@ fn main_inner() -> Result<(), ()> {
             let mut forever = forever.iter().copied().cycle();
 
             loop {
+                tq.delay_ms(100).await;
+                println!("DISPLAY");
                 // Send a pattern
                 let vc = if vcom {
                     0x02
@@ -464,12 +479,15 @@ fn im_an_interrupt() {
                 }
 
                 if r.dma1_queue_irq_pend().bit_is_set() {
+                    // println!("SPI WAKE");
                     let waker = SPI1_TX_WAKER.load(Ordering::Acquire);
                     if !waker.is_null() {
                         unsafe {
                             (&*waker).wake();
                         }
-                    }
+                    } else {                // TODO: LOAD BEARING UB
+                        panic!("HEH");      // TODO: LOAD BEARING UB
+                    }                       // TODO: LOAD BEARING UB
                 }
                 // Will write-back and high bits
                 w
@@ -747,6 +765,7 @@ impl SpiSender {
 
             loop {
                 let msg: Message<SpiSender> = kcons.dequeue_async().await.unwrap();
+                // println!("DEQUEUE");
                 let Message { msg, reply } = msg;
                 let SpiSenderRequest::Send(ref payload) = msg.body;
 
@@ -794,6 +813,7 @@ impl SpiSender {
                     Ok(_) => {},
                     Err(_) => todo!(),
                 }
+                // println!("WOKE");
                 reply.reply_konly(msg.reply_with2(|req| {
                     let SpiSenderRequest::Send(payload) = req;
                     Ok(SpiSenderResponse::Sent(payload))
@@ -871,8 +891,8 @@ use core::panic::PanicInfo;
 
 #[panic_handler]
 fn handler(_info: &PanicInfo) -> ! {
-    // println!("");
-    // println!("PANIC HAS HAPPENED!");
+    println!("");
+    println!("PANIC HAS HAPPENED!");
     // println!("{:?}", info.payload());
     // println!("{:?}", info.location());
     loop {

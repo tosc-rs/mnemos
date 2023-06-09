@@ -26,7 +26,7 @@ version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e14bf7b4f565e5e717d7a7a65b2a05c0b8c96e4db636d6f780f03b15108cdd1b"
 dependencies = [
- "critical-section",
+ "critical-section 0.2.7",
 ]
 
 [[package]]
@@ -145,13 +145,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "critical-section"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6548a0ad5d2549e111e1f6a11a6c2e2d00ce6a3dafe22948d67c2b443f775e52"
+
+[[package]]
 name = "d1-pac"
 version = "0.0.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4e867eeb4de0ab9c53582fc77a0afc1ca88784ac85b7b6e77a468c44c6e3145b"
 dependencies = [
  "bare-metal 1.0.0",
- "riscv 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "riscv 0.8.0",
  "vcell",
 ]
 
@@ -163,7 +169,7 @@ dependencies = [
  "maitake",
  "mnemos",
  "mnemos-alloc",
- "riscv 0.8.0 (git+https://github.com/rust-embedded/riscv)",
+ "riscv 0.10.1",
  "riscv-rt",
  "uuid",
 ]
@@ -609,22 +615,23 @@ dependencies = [
 
 [[package]]
 name = "riscv"
-version = "0.8.0"
-source = "git+https://github.com/rust-embedded/riscv#d50928b696583979ea1be58c459786a2b64c6340"
+version = "0.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa3145d2fae3778b1e31ec2e827b228bdc6abd9b74bb5705ba46dcb82069bc4f"
 dependencies = [
- "bare-metal 1.0.0",
  "bit_field",
+ "critical-section 1.1.1",
  "embedded-hal",
 ]
 
 [[package]]
 name = "riscv-rt"
-version = "0.9.0"
+version = "0.11.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "527ddfacbbfeed89256163c2655b0392c4aa76dd95c0189dc05044bf2c47c3f8"
+checksum = "102c52c89defde24dedf9ac077cc69df77b85aa2400dd2d5aad6eea6a6a5c089"
 dependencies = [
  "r0",
- "riscv 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "riscv 0.10.1",
  "riscv-rt-macros",
  "riscv-target",
 ]

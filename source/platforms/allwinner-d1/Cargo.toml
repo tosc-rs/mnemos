@@ -4,8 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-riscv = { version = "0.8.0", git = "https://github.com/rust-embedded/riscv" }
-riscv-rt = "0.9.0"
+# riscv = { version = "0.8.0", git = "https://github.com/rust-embedded/riscv" }
+riscv = "0.10"
+riscv-rt = "0.11.0"
 d1-pac = "0.0.24"
 
 [dependencies.mnemos]
