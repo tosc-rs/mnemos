@@ -25,12 +25,13 @@ env:
   # rustup (installing toolchains). this should help to reduce flaky CI failures
   # from transient network timeouts or other issues.
   CARGO_NET_RETRY: 10
+  CARGO_TERM_COLOR: always
   RUSTUP_MAX_RETRIES: 10
   # don't emit giant backtraces in the CI logs.
   RUST_BACKTRACE: short
 
 jobs:
-    # run `cargo check` with the host target triple.
+  # run `cargo check` with the host target triple.
   check-host:
     name: cargo check (host)
     # needs: changed_paths
@@ -51,6 +52,49 @@ jobs:
           --quiet \
           --message-format=json |
           cargo-action-fmt
+
+  # run `cargo nextest run` with the host target triple.
+  test-host:
+    name: cargo nextest run (host)
+    needs: check-host # skip on commits that don't compile.
+    # needs: changed_paths
+    # if: needs.changed_paths.outputs.should_skip != 'true'
+    runs-on: ubuntu-latest
+    steps:
+    - name: install libudev and libsdl2-dev
+      run: |
+        sudo apt-get update \
+        && sudo apt-get install -y libudev-dev libsdl2-dev
+    - name: install rust toolchain
+      run: rustup show
+    - name: install nextest
+      uses: taiki-e/install-action@nextest
+    - uses: actions/checkout@v2
+    - name: cargo nextest run
+      run: |
+        cargo nextest run \
+          --workspace \
+          --all-features
+
+  # (just forth3) - run miri tests
+  test-host-miri:
+    runs-on: ubuntu-latest
+    name: cargo miri test (host)
+    needs: check-host
+    # TODO(eliza): only run this if forth3 changed?
+    # needs: changed_paths
+    # if: needs.changed_paths.outputs.should_skip != 'true'
+    steps:
+    - name: install rust toolchain and miri
+      run: |
+        rustup toolchain install nightly --component miri
+        cargo +nightly miri setup
+    - uses: actions/checkout@v3
+    - name: cargo miri test (forth3)
+      run: |
+        cargo +nightly miri test \
+          --package forth3 \
+          --all-features
 
   # check code style with `rustfmt`
   rustfmt:
