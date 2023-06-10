@@ -48,7 +48,6 @@ jobs:
       run: |
         cargo check \
           --workspace \
-          --all-features \
           --quiet \
           --message-format=json |
           cargo-action-fmt
@@ -73,8 +72,7 @@ jobs:
     - name: cargo nextest run
       run: |
         cargo nextest run \
-          --workspace \
-          --all-features
+          --workspace
 
   # (just forth3) - run miri tests
   test-host-miri:
@@ -125,7 +123,6 @@ jobs:
         cargo doc \
           --message-format=json \
           --no-deps \
-          --all-features \
           --document-private-items |
           cargo-action-fmt
       env:
