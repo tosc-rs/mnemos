@@ -86,6 +86,10 @@ version = "1"
 [features]
 default = ["tracing-01"]
 
-# If you pick this feature, you get tracing-01. It's
-# a trap for --all-feature usage. This is a hack.
+# The `_oops_all_tracing_features` feature is a "trap" for when the package is built
+# with `--all-features`, which is usually just for docs and testing.
+#
+# In that case, the other feature settings (`tracing-01` and `tracing-02`) are ignored
+# and JUST `tracing-01` is enabled. This is an unfortunate hack that works too well
+# not to use for now.
 _oops_all_tracing_features = []
