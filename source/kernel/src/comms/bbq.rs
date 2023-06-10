@@ -257,7 +257,7 @@ async fn producer_send_grant_exact(
 
 // async methods
 impl MpscProducer {
-    #[crate::tracing::instrument(
+    #[tracing::instrument(
         name = "MpscProducer::send_grant_max",
         level = "trace",
         skip(self),
@@ -269,7 +269,7 @@ impl MpscProducer {
         producer_send_grant_max(max, producer, &self.storage).await
     }
 
-    #[crate::tracing::instrument(
+    #[tracing::instrument(
         name = "MpscProducer::send_grant_exact",
         level = "trace",
         skip(self),
@@ -283,7 +283,7 @@ impl MpscProducer {
 }
 
 impl SpscProducer {
-    #[crate::tracing::instrument(
+    #[tracing::instrument(
         name = "SpscProducer::send_grant_max",
         level = "trace",
         skip(self),
@@ -293,7 +293,7 @@ impl SpscProducer {
         producer_send_grant_max(max, &self.producer, &self.storage).await
     }
 
-    #[crate::tracing::instrument(
+    #[tracing::instrument(
         name = "SpscProducer::send_grant_exact",
         level = "trace",
         skip(self),
@@ -305,7 +305,7 @@ impl SpscProducer {
 }
 
 impl Consumer {
-    #[crate::tracing::instrument(
+    #[tracing::instrument(
         name = "Consumer::read_grant",
         level = "trace",
         skip(self),
@@ -335,7 +335,7 @@ impl Consumer {
 
 // sync methods
 impl SpscProducer {
-    #[crate::tracing::instrument(
+    #[tracing::instrument(
         name = "SpscProducer::send_grant_exact_sync",
         level = "trace",
         skip(self),
@@ -348,7 +348,7 @@ impl SpscProducer {
         })
     }
 
-    #[crate::tracing::instrument(
+    #[tracing::instrument(
         name = "SpscProducer::send_grant_max_sync",
         level = "trace",
         skip(self),
@@ -366,7 +366,7 @@ impl SpscProducer {
 }
 
 impl Consumer {
-    #[crate::tracing::instrument(
+    #[tracing::instrument(
         name = "Consumer::read_grant_sync",
         level = "trace",
         skip(self),
