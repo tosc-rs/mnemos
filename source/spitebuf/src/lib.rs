@@ -13,13 +13,13 @@
 #![no_std]
 #![allow(clippy::missing_safety_doc)]
 
+use core::marker::PhantomData;
 use core::{
     cell::UnsafeCell,
     mem::MaybeUninit,
     sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 use maitake::sync::{WaitCell, WaitQueue};
-use core::marker::PhantomData;
 
 pub unsafe trait Storage<T> {
     fn buf(&self) -> (*const UnsafeCell<Cell<T>>, usize);
