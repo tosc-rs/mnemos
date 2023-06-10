@@ -93,7 +93,20 @@ use maitake::{
 };
 use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 use registry::Registry;
-use tracing::info;
+
+// Shim to handle tracing v0.1 vs v0.2
+pub(crate) mod tracing {
+    #[cfg(not(any(feature = "tracing-01", feature = "tracing-02")))]
+    compile_error!("Must select one of 'tracing-01' or 'tracing-02' features!");
+
+    #[cfg(feature = "tracing-01")]
+    pub use tracing_01::*;
+
+    #[cfg(feature = "tracing-02")]
+    pub use tracing_02::*;
+}
+
+use crate::tracing::info;
 
 pub struct Rings {
     pub u2k: NonNull<BBBuffer>,

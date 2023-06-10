@@ -11,7 +11,7 @@ use crate::{
 };
 use maitake::sync::Mutex;
 use mnemos_alloc::containers::{HeapArc, HeapArray, HeapFixedVec};
-use tracing::{debug, warn};
+use crate::tracing::{debug, warn};
 use uuid::Uuid;
 
 /// SerialMux is the registered driver type
