@@ -4,7 +4,6 @@ set -euxo pipefail
 
 cargo doc \
     --no-deps \
-    --all-features \
     --document-private-items \
     --workspace \
     --exclude crowtty
