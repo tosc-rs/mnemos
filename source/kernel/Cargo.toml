@@ -31,20 +31,6 @@ features = ["serde"]
 version = "0.2.3"
 default-features = false
 
-[dependencies.tracing-01]
-package = "tracing"
-version = "0.1.35"
-default-features = false
-optional = true
-
-[dependencies.tracing-02]
-package = "tracing"
-git = "https://github.com/tokio-rs/tracing"
-branch = "master"
-features = ["attributes"]
-default-features = false
-optional = true
-
 [dependencies.maitake]
 version = "0.1.0"
 default-features = false
@@ -54,6 +40,10 @@ path = "../spitebuf"
 
 [dependencies.mnemos-alloc]
 version = "0.1.0"
+
+[dependencies.mnemos-tracing]
+path = "../mnemos-tracing"
+default-features = false
 
 [dependencies.heapless]
 version = "0.7.10"
@@ -85,3 +75,5 @@ version = "1"
 
 [features]
 default = ["tracing-01"]
+tracing-01 = ["mnemos-tracing/tracing-01"]
+tracing-02 = ["mnemos-tracing/tracing-02"]

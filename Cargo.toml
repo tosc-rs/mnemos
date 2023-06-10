@@ -8,6 +8,7 @@ members = [
     "source/melpomene",
     "source/alloc",
     "source/forth3",
+    "source/mnemos-tracing",
 
     # tools
     "tools/crowtty",

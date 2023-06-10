@@ -1,4 +1,4 @@
-use crate::tracing::{debug, warn};
+use mnemos_tracing::{debug, warn};
 use crate::{
     comms::{
         bbq,

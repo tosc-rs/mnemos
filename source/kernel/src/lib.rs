@@ -93,20 +93,7 @@ use maitake::{
 };
 use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 use registry::Registry;
-
-// Shim to handle tracing v0.1 vs v0.2
-pub(crate) mod tracing {
-    #[cfg(not(any(feature = "tracing-01", feature = "tracing-02")))]
-    compile_error!("Must select one of 'tracing-01' or 'tracing-02' features!");
-
-    #[cfg(feature = "tracing-01")]
-    pub use tracing_01::*;
-
-    #[cfg(feature = "tracing-02")]
-    pub use tracing_02::*;
-}
-
-use crate::tracing::info;
+use mnemos_tracing::{info, debug};
 
 pub struct Rings {
     pub u2k: NonNull<BBBuffer>,
@@ -287,7 +274,7 @@ impl Kernel {
     pub fn initialize_forth_tid0(&'static self, params: forth::Params) -> JoinHandle<BidiHandle> {
         use forth::{Forth, Spawnulator};
         self.initialize(async move {
-            tracing::debug!("spawning Task 0...");
+            debug!("spawning Task 0...");
             // TODO(eliza): maybe the spawnulator should live in the driver registry
             // or something.
             let spawnulator = Spawnulator::start_spawnulating(self).await;
@@ -295,7 +282,7 @@ impl Kernel {
                 .await
                 .expect("spawning forth TID0 should succeed");
             self.spawn(tid0.run()).await;
-            tracing::info!("Task 0 spawned!");
+            info!("Task 0 spawned!");
             tid0_streams
         })
         .expect("spawning forth TID0 should succeed")

@@ -1,6 +1,6 @@
 use core::any::TypeId;
 
-use crate::tracing::{self, debug, info};
+use mnemos_tracing::{self, debug, info};
 use mnemos_alloc::{containers::HeapFixedVec, heap::HeapGuard};
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -300,12 +300,12 @@ impl Registry {
     /// or interfaced with from Userspace. If a registered service has request
     /// and response types that are serializable, it can instead be registered
     /// with [Registry::register] which allows for userspace access.
-    #[tracing::instrument(
-        name = "Registry::register_konly",
-        level = "debug",
-        skip(self, kch),
-        fields(uuid = ?RD::UUID),
-    )]
+    // #[mnemos_tracing::instrument(
+    //     name = "Registry::register_konly",
+    //     level = "debug",
+    //     skip(self, kch),
+    //     fields(uuid = ?RD::UUID),
+    // )]
     pub fn register_konly<RD: RegisteredDriver>(
         &mut self,
         kch: &KProducer<Message<RD>>,
@@ -334,12 +334,12 @@ impl Registry {
     ///
     /// See [Registry::register_konly] if the request and response types are not
     /// serializable.
-    #[tracing::instrument(
-        name = "Registry::register",
-        level = "debug",
-        skip(self, kch),
-        fields(uuid = ?RD::UUID),
-    )]
+    // #[mnemos_tracing::instrument(
+    //     name = "Registry::register",
+    //     level = "debug",
+    //     skip(self, kch),
+    //     fields(uuid = ?RD::UUID),
+    // )]
     pub fn register<RD>(&mut self, kch: &KProducer<Message<RD>>) -> Result<(), RegistrationError>
     where
         RD: RegisteredDriver,
@@ -373,12 +373,12 @@ impl Registry {
     /// The driver service MUST have already been registered using [Registry::register] or
     /// [Registry::register_konly] prior to making this call, otherwise no handle will
     /// be returned.
-    #[tracing::instrument(
-        name = "Registry::get",
-        level = "debug",
-        skip(self),
-        fields(uuid = ?RD::UUID),
-    )]
+    // #[mnemos_tracing::instrument(
+    //     name = "Registry::get",
+    //     level = "debug",
+    //     skip(self),
+    //     fields(uuid = ?RD::UUID),
+    // )]
     pub fn get<RD: RegisteredDriver>(&mut self) -> Option<KernelHandle<RD>> {
         let item = self.items.iter().find(|i| i.key == RD::UUID)?;
         if item.value.req_resp_tuple_id != RD::type_id().type_of() {
@@ -405,12 +405,12 @@ impl Registry {
     ///
     /// Driver services registered with [Registry::register_konly] cannot be retrieved via
     /// a call to [Registry::get_userspace].
-    #[tracing::instrument(
-        name = "Registry::get_userspace",
-        level = "debug",
-        skip(self),
-        fields(uuid = ?RD::UUID),
-    )]
+    // #[mnemos_tracing::instrument(
+    //     name = "Registry::get_userspace",
+    //     level = "debug",
+    //     skip(self),
+    //     fields(uuid = ?RD::UUID),
+    // )]
     pub fn get_userspace<RD>(&mut self) -> Option<UserspaceHandle>
     where
         RD: RegisteredDriver,

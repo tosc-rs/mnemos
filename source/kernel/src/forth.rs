@@ -1,4 +1,3 @@
-use crate::tracing;
 use crate::{
     comms::{
         bbq,
@@ -22,6 +21,7 @@ use mnemos_alloc::{
     heap::{self, AHeap},
 };
 use portable_atomic::{AtomicUsize, Ordering};
+use mnemos_tracing::{error, debug, trace, info, warn};
 
 #[derive(Copy, Clone, Debug)]
 #[non_exhaustive]
@@ -78,7 +78,7 @@ impl Forth {
                 Dispatcher,
             )
             .map_err(|err| {
-                tracing::error!(?err, "Failed to construct Forth VM");
+                error!(?err, "Failed to construct Forth VM");
                 "failed to construct Forth VM"
             })?
         };
@@ -90,14 +90,14 @@ impl Forth {
         Ok((forth, streams))
     }
 
-    #[tracing::instrument(
-        level = tracing::Level::INFO,
-        "Forth",
-        skip(self),
-        fields(id = self.forth.host_ctxt().id)
-    )]
+    // #[tracing::instrument(
+    //     level = tracing::Level::INFO,
+    //     "Forth",
+    //     skip(self),
+    //     fields(id = self.forth.host_ctxt().id)
+    // )]
     pub async fn run(mut self) {
-        tracing::info!("VM running");
+        info!("VM running");
         loop {
             self.forth.output_mut().clear();
 
@@ -107,13 +107,13 @@ impl Forth {
                     let output = out_str.as_bytes();
                     // write the task's output to stdout
                     let len = output.len();
-                    tracing::debug!(len, "< {out_str}");
+                    debug!(len, "< {out_str}");
                     let mut send = self.stdio.producer().send_grant_exact(output.len()).await;
                     send.copy_from_slice(output);
                     send.commit(len);
                 }
                 Err(error) => {
-                    tracing::error!(?error);
+                    error!(?error);
                     // TODO(ajm): Provide some kind of fixed length error string?
                     const ERROR: &[u8] = b"ERROR.";
                     let mut send = self.stdio.producer().send_grant_exact(ERROR.len()).await;
@@ -134,7 +134,7 @@ impl Forth {
                 let len = read.len();
                 match core::str::from_utf8(&read) {
                     Ok(input) => {
-                        tracing::debug!(len, "> {:?}", input.trim());
+                        debug!(len, "> {:?}", input.trim());
                         self.forth
                             .input_mut()
                             .fill(input)
@@ -194,7 +194,7 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
                 "sleep::ms" => sleep(forth, Duration::from_millis).await,
                 "sleep::s" => sleep(forth, Duration::from_secs).await,
                 _ => {
-                    tracing::warn!("unimplemented async builtin: {}", id.as_str());
+                    warn!("unimplemented async builtin: {}", id.as_str());
                     Err(forth3::Error::WordNotInDict)
                 }
             }?;
@@ -244,7 +244,7 @@ impl Params {
             .allocate_raw(layout)
             .await
             .cast::<core::mem::MaybeUninit<Dictionary<MnemosContext>>>();
-        tracing::trace!(
+        trace!(
             size = self.dictionary_size,
             addr = &format_args!("{dict_buf:p}"),
             "Allocated dictionary"
@@ -369,7 +369,7 @@ async fn sermux_write_outbuf(
 /// Return: the task ID of the spawned Forth task.
 async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<(), forth3::Error> {
     let xt = forth.data_stack.try_pop()?;
-    tracing::debug!("Forking Forth VM...");
+    debug!("Forking Forth VM...");
     let params = forth.host_ctxt.params;
     let kernel = forth.host_ctxt.kernel;
     let heap = kernel.heap();
@@ -379,11 +379,11 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     let (stdio, _streams) = params.alloc_stdio(heap).await;
     let mut bufs = params.alloc_bufs(heap).await;
     let new_dict = params.alloc_dict(heap).await.map_err(|error| {
-        tracing::error!(?error, "Failed to allocate dictionary for child VM");
+        error!(?error, "Failed to allocate dictionary for child VM");
         forth3::Error::InternalError
     })?;
     let my_dict = params.alloc_dict(heap).await.map_err(|error| {
-        tracing::error!(
+        error!(
             ?error,
             "Failed to allocate replacement dictionary for parent VM"
         );
@@ -407,7 +407,7 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
         )
     }
     .map_err(|error| {
-        tracing::error!(?error, "Failed to construct Forth VM");
+        error!(?error, "Failed to construct Forth VM");
         forth3::Error::InternalError
     })?;
 
@@ -416,7 +416,7 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     // TODO(eliza): it would be nicer if we could just push a call context for
     // the execution token...
     child.input.fill("execute").map_err(|error| {
-        tracing::error!(?error, "Failed to set child input!");
+        error!(?error, "Failed to set child input!");
         forth3::Error::InternalError
     })?;
 
@@ -426,7 +426,7 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
         _bufs: bufs,
     };
 
-    tracing::info!(
+    info!(
         parent.id = forth.host_ctxt.id,
         child.id = child_id,
         "Forked Forth VM!"
@@ -438,7 +438,7 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
         .spawn(child)
         .await
         .map_err(|error| {
-            tracing::error!(?error, "Failed to enqueue child task to spawn!");
+            error!(?error, "Failed to enqueue child task to spawn!");
             forth3::Error::InternalError
         })?;
 
@@ -458,14 +458,14 @@ async fn sleep(
     let duration = {
         let duration = forth.data_stack.try_pop()?.as_i32();
         if duration.is_negative() {
-            tracing::warn!(duration, "Cannot sleep for a negative duration!");
+            warn!(duration, "Cannot sleep for a negative duration!");
             return Err(forth3::Error::WordToUsizeInvalid(duration));
         }
         into_duration(duration as u64)
     };
-    tracing::trace!(?duration, "sleeping...");
+    trace!(?duration, "sleeping...");
     forth.host_ctxt.kernel.sleep(duration).await;
-    tracing::trace!(?duration, "...slept!");
+    trace!(?duration, "...slept!");
     Ok(())
 }
 
@@ -523,48 +523,48 @@ impl Spawnulator {
 
     /// Start the spawnulator background task, returning a handle that can be
     /// used to spawn new `Forth` VMs.
-    #[tracing::instrument(level = tracing::Level::DEBUG, skip(kernel))]
+    // #[tracing::instrument(level = tracing::Level::DEBUG, skip(kernel))]
     pub async fn start_spawnulating(kernel: &'static Kernel) -> Self {
         let (vms_tx, vms) = KChannel::new_async(kernel, Self::SPAWN_QUEUE_CAPACITY)
             .await
             .split();
-        tracing::debug!("who spawns the spawnulator?");
+        debug!("who spawns the spawnulator?");
         kernel.spawn(Self::spawnulate(kernel, vms)).await;
-        tracing::debug!("spawnulator spawnulated!");
+        debug!("spawnulator spawnulated!");
         Self(vms_tx)
     }
 
     pub async fn spawn(&self, vm: Forth) -> Result<(), forth3::Error> {
         let id = vm.forth.host_ctxt().id;
-        tracing::trace!(task.id = id, "spawn u later...");
+        trace!(task.id = id, "spawn u later...");
         match self.0.enqueue_async(vm).await {
             Ok(_) => {
-                tracing::trace!(task.id = id, "enqueued");
+                trace!(task.id = id, "enqueued");
                 Ok(())
             }
             Err(spitebuf::EnqueueError::Closed(_)) => {
-                tracing::info!(task.id = id, "spawnulator task seems to be dead");
+                info!(task.id = id, "spawnulator task seems to be dead");
                 Err(forth3::Error::InternalError)
             }
             Err(spitebuf::EnqueueError::Full(_)) => {
                 // TODO(eliza): maybe it shouldn't be able to return this error
                 // from `enqueue_async`...?
                 debug_assert!(false, "spawnulator channel should not be full, as `enqueue_async` will wait for capacity!");
-                tracing::error!(task.id = id, "spawnulator channel should not be full, as `enqueue_async` will wait for capacity!");
+                error!(task.id = id, "spawnulator channel should not be full, as `enqueue_async` will wait for capacity!");
                 Err(forth3::Error::InternalError)
             }
         }
     }
 
-    #[tracing::instrument(skip(kernel, vms))]
+    // #[tracing::instrument(skip(kernel, vms))]
     async fn spawnulate(kernel: &'static Kernel, vms: KConsumer<Forth>) {
-        tracing::debug!("spawnulator running...");
+        debug!("spawnulator running...");
         while let Ok(vm) = vms.dequeue_async().await {
             let id = vm.forth.host_ctxt().id;
             kernel.spawn(vm.run()).await;
-            tracing::trace!(task.id = id, "spawnulated!");
+            trace!(task.id = id, "spawnulated!");
         }
-        tracing::info!("spawnulator channel closed!");
+        info!("spawnulator channel closed!");
     }
 }
 

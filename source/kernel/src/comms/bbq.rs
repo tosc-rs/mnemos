@@ -9,8 +9,7 @@ use core::{
     ops::{Deref, DerefMut},
 };
 
-use crate::fmt;
-use crate::tracing::{self, info, trace};
+use mnemos_tracing::{self, info, trace};
 use abi::bbqueue_ipc::{BBBuffer, Consumer as InnerConsumer, Producer as InnerProducer};
 use abi::bbqueue_ipc::{GrantR as InnerGrantR, GrantW as InnerGrantW};
 use maitake::sync::Mutex;
@@ -257,24 +256,24 @@ async fn producer_send_grant_exact(
 
 // async methods
 impl MpscProducer {
-    #[tracing::instrument(
-        name = "MpscProducer::send_grant_max",
-        level = "trace",
-        skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
-    )]
+    // #[tracing::instrument(
+    //     name = "MpscProducer::send_grant_max",
+    //     level = "trace",
+    //     skip(self),
+    //     fields(queue = ?fmt::ptr(self.storage.deref())),
+    // )]
     pub async fn send_grant_max(&self, max: usize) -> GrantW {
         let producer = self.storage.producer.lock().await;
         let producer = producer.as_ref().unwrap();
         producer_send_grant_max(max, producer, &self.storage).await
     }
 
-    #[tracing::instrument(
-        name = "MpscProducer::send_grant_exact",
-        level = "trace",
-        skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
-    )]
+    // #[tracing::instrument(
+    //     name = "MpscProducer::send_grant_exact",
+    //     level = "trace",
+    //     skip(self),
+    //     fields(queue = ?fmt::ptr(self.storage.deref())),
+    // )]
     pub async fn send_grant_exact(&self, size: usize) -> GrantW {
         let producer = self.storage.producer.lock().await;
         let producer = producer.as_ref().unwrap();
@@ -283,34 +282,34 @@ impl MpscProducer {
 }
 
 impl SpscProducer {
-    #[tracing::instrument(
-        name = "SpscProducer::send_grant_max",
-        level = "trace",
-        skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
-    )]
+    // #[tracing::instrument(
+    //     name = "SpscProducer::send_grant_max",
+    //     level = "trace",
+    //     skip(self),
+    //     fields(queue = ?fmt::ptr(self.storage.deref())),
+    // )]
     pub async fn send_grant_max(&self, max: usize) -> GrantW {
         producer_send_grant_max(max, &self.producer, &self.storage).await
     }
 
-    #[tracing::instrument(
-        name = "SpscProducer::send_grant_exact",
-        level = "trace",
-        skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
-    )]
+    // #[tracing::instrument(
+    //     name = "SpscProducer::send_grant_exact",
+    //     level = "trace",
+    //     skip(self),
+    //     fields(queue = ?fmt::ptr(self.storage.deref())),
+    // )]
     pub async fn send_grant_exact(&self, size: usize) -> GrantW {
         producer_send_grant_exact(size, &self.producer, &self.storage).await
     }
 }
 
 impl Consumer {
-    #[tracing::instrument(
-        name = "Consumer::read_grant",
-        level = "trace",
-        skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
-    )]
+    // #[tracing::instrument(
+    //     name = "Consumer::read_grant",
+    //     level = "trace",
+    //     skip(self),
+    //     fields(queue = ?fmt::ptr(self.storage.deref())),
+    // )]
     pub async fn read_grant(&self) -> GrantR {
         loop {
             match self.consumer.read() {
@@ -335,12 +334,12 @@ impl Consumer {
 
 // sync methods
 impl SpscProducer {
-    #[tracing::instrument(
-        name = "SpscProducer::send_grant_exact_sync",
-        level = "trace",
-        skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
-    )]
+    // #[tracing::instrument(
+    //     name = "SpscProducer::send_grant_exact_sync",
+    //     level = "trace",
+    //     skip(self),
+    //     fields(queue = ?fmt::ptr(self.storage.deref())),
+    // )]
     pub fn send_grant_exact_sync(&self, size: usize) -> Option<GrantW> {
         self.producer.grant_exact(size).ok().map(|wgr| GrantW {
             grant: wgr,
@@ -348,12 +347,12 @@ impl SpscProducer {
         })
     }
 
-    #[tracing::instrument(
-        name = "SpscProducer::send_grant_max_sync",
-        level = "trace",
-        skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
-    )]
+    // #[tracing::instrument(
+    //     name = "SpscProducer::send_grant_max_sync",
+    //     level = "trace",
+    //     skip(self),
+    //     fields(queue = ?fmt::ptr(self.storage.deref())),
+    // )]
     pub fn send_grant_max_sync(&self, max: usize) -> Option<GrantW> {
         self.producer
             .grant_max_remaining(max)
@@ -366,12 +365,12 @@ impl SpscProducer {
 }
 
 impl Consumer {
-    #[tracing::instrument(
-        name = "Consumer::read_grant_sync",
-        level = "trace",
-        skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
-    )]
+    // #[tracing::instrument(
+    //     name = "Consumer::read_grant_sync",
+    //     level = "trace",
+    //     skip(self),
+    //     fields(queue = ?fmt::ptr(self.storage.deref())),
+    // )]
     pub fn read_grant_sync(&self) -> Option<GrantR> {
         self.consumer.read().ok().map(|rgr| GrantR {
             grant: rgr,

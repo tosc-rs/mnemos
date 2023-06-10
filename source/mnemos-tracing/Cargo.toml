@@ -1,0 +1,25 @@
+[package]
+name = "mnemos-tracing"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+
+[dependencies.tracing-01]
+package = "tracing"
+version = "0.1.35"
+default-features = false
+optional = true
+
+[dependencies.tracing-02]
+package = "tracing"
+git = "https://github.com/tokio-rs/tracing"
+branch = "master"
+features = ["attributes"]
+default-features = false
+optional = true
+
+[features]
+default = ["tracing-01"]
