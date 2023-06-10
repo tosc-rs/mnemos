@@ -85,3 +85,7 @@ version = "1"
 
 [features]
 default = ["tracing-01"]
+
+# If you pick this feature, you get tracing-01. It's
+# a trap for --all-feature usage. This is a hack.
+_oops_all_tracing_features = []

@@ -96,13 +96,16 @@ use registry::Registry;
 
 // Shim to handle tracing v0.1 vs v0.2
 pub(crate) mod tracing {
-    #[cfg(not(any(feature = "tracing-01", feature = "tracing-02")))]
+    #[cfg(all(
+        not(feature = "_oops_all_tracing_features"),
+        all(feature = "tracing-01", feature = "tracing-02")
+    ))]
     compile_error!("Must select one of 'tracing-01' or 'tracing-02' features!");
 
-    #[cfg(feature = "tracing-01")]
+    #[cfg(any(feature = "_oops_all_tracing_features", feature = "tracing-01"))]
     pub use tracing_01::*;
 
-    #[cfg(feature = "tracing-02")]
+    #[cfg(all(not(feature = "_oops_all_tracing_features"), feature = "tracing-02"))]
     pub use tracing_02::*;
 }
 
