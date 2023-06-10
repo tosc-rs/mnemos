@@ -17,7 +17,10 @@ license = "MIT OR Apache-2.0"
 name = "kernel"
 
 [dependencies]
-futures = "0.3.21"
+
+[dependencies.futures]
+version = "0.3.21"
+default-features = false
 
 [dependencies.uuid]
 version = "1.1.2"
@@ -28,9 +31,19 @@ features = ["serde"]
 version = "0.2.3"
 default-features = false
 
-[dependencies.tracing]
+[dependencies.tracing-01]
+package = "tracing"
 version = "0.1.35"
 default-features = false
+optional = true
+
+[dependencies.tracing-02]
+package = "tracing"
+git = "https://github.com/tokio-rs/tracing"
+branch = "master"
+features = ["attributes"]
+default-features = false
+optional = true
 
 [dependencies.maitake]
 version = "0.1.0"
@@ -69,3 +82,14 @@ features = ["async"]
 
 [dependencies.portable-atomic]
 version = "1"
+
+[features]
+default = ["tracing-01"]
+
+# The `_oops_all_tracing_features` feature is a "trap" for when the package is built
+# with `--all-features`, which is usually just for docs and testing.
+#
+# In that case, the other feature settings (`tracing-01` and `tracing-02`) are ignored
+# and JUST `tracing-01` is enabled. This is an unfortunate hack that works too well
+# not to use for now.
+_oops_all_tracing_features = []

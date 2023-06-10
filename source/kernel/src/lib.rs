@@ -93,7 +93,43 @@ use maitake::{
 };
 use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 use registry::Registry;
-use tracing::info;
+
+/// Shim to handle tracing v0.1 vs v0.2
+///
+/// ## NOTE for features used
+///
+/// Unfortunately, we can't support the case where tracing 0.1 and 0.2 are both selected
+/// yet. This might be changed in the future. The following truth table shows the outcome
+/// when you select various feature flags.
+///
+/// The `_oops_all_tracing_features` feature is a "trap" for when the package is built
+/// with `--all-features`, which is usually just for docs and testing. In that case, the
+/// feature then ignores the other feature settings, and just picks tracing-01. This is
+/// an unfortunate hack that works too well not to use for now.
+///
+/// | `_oops_all_tracing_features`  | `tracing-01`  | `tracing-02`  | Outcome           |
+/// | :---:                         | :---:         | :---:         | :---:             |
+/// | true                          | don't care    | don't care    | `tracing-01` used |
+/// | false                         | false         | false         | Compile Error     |
+/// | false                         | false         | true          | `tracing-02` used |
+/// | false                         | true          | false         | `tracing-01` used |
+/// | false                         | true          | true          | Compile Error     |
+///
+pub(crate) mod tracing {
+    #[cfg(all(
+        not(feature = "_oops_all_tracing_features"),
+        all(feature = "tracing-01", feature = "tracing-02")
+    ))]
+    compile_error!("Must select one of 'tracing-01' or 'tracing-02' features!");
+
+    #[cfg(any(feature = "_oops_all_tracing_features", feature = "tracing-01"))]
+    pub use tracing_01::*;
+
+    #[cfg(all(not(feature = "_oops_all_tracing_features"), feature = "tracing-02"))]
+    pub use tracing_02::*;
+}
+
+use crate::tracing::info;
 
 pub struct Rings {
     pub u2k: NonNull<BBBuffer>,
