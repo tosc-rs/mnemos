@@ -1,10 +1,10 @@
 use core::any::TypeId;
 
+use crate::tracing::{self, debug, info};
 use mnemos_alloc::{containers::HeapFixedVec, heap::HeapGuard};
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use spitebuf::EnqueueError;
-use crate::tracing::{self, debug, info};
 use uuid::{uuid, Uuid};
 
 use crate::comms::{

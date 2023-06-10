@@ -1,3 +1,4 @@
+use crate::tracing;
 use crate::{
     comms::{
         bbq,
@@ -21,8 +22,6 @@ use mnemos_alloc::{
     heap::{self, AHeap},
 };
 use portable_atomic::{AtomicUsize, Ordering};
-use crate::tracing;
-
 
 #[derive(Copy, Clone, Debug)]
 #[non_exhaustive]
