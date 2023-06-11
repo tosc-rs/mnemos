@@ -1,6 +1,8 @@
 #![no_std]
 
 pub mod uart;
+pub mod timer;
+pub mod plic;
 
 use core::{mem::MaybeUninit, cell::UnsafeCell};
 
