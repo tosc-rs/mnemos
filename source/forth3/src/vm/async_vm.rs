@@ -176,6 +176,7 @@ where
     }
 
     #[cfg(test)]
+    #[allow(dead_code)]
     pub(crate) fn vm_mut(&mut self) -> &mut Forth<T> {
         &mut self.vm
     }

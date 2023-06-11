@@ -182,7 +182,7 @@ fn allocating_futures_are_send() {
     fn assert_send<T: Send>(_t: T) {}
 
     let bufptr = Box::into_raw(Box::new([0u8; SIZE]));
-    let (heap, mut guard) = unsafe { AHeap::bootstrap(bufptr.cast::<u8>(), SIZE).unwrap() };
+    let (heap, _guard) = unsafe { AHeap::bootstrap(bufptr.cast::<u8>(), SIZE).unwrap() };
     let heap = unsafe { heap.as_ref() };
     assert_send(heap.allocate_arc(1));
     assert_send(heap.allocate_array_with(|| 1, 1));

@@ -19,7 +19,6 @@ use melpomene::{
 };
 use mnemos_kernel::{
     drivers::serial_mux::{SerialMux, SerialMuxHandle},
-    forth::{self, Forth},
     Kernel, KernelSettings,
 };
 use tokio::{
