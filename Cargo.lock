@@ -1165,6 +1165,8 @@ version = "0.1.0"
 dependencies = [
  "d1-pac",
  "drivers",
+ "embedded-hal",
+ "mnemos",
  "riscv",
  "riscv-rt",
 ]

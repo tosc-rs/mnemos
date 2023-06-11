@@ -13,3 +13,10 @@ drivers = { path = "../../drivers" }
 riscv = "0.10"
 riscv-rt = "0.11.0"
 d1-pac = "0.0.31"
+embedded-hal = "0.2.7"
+
+# kernel
+[dependencies.mnemos]
+path = "../../../../source/kernel"
+default-features = false
+features = ["tracing-02"]
