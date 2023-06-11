@@ -539,6 +539,11 @@ dependencies = [
 [[package]]
 name = "drivers"
 version = "0.1.0"
+dependencies = [
+ "d1-pac",
+ "riscv",
+ "riscv-rt",
+]
 
 [[package]]
 name = "dumbloader"

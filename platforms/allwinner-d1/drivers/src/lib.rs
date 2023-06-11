@@ -1,5 +1,7 @@
 #![no_std]
 
+pub mod uart;
+
 use core::{mem::MaybeUninit, cell::UnsafeCell};
 
 pub struct Ram<const N: usize> {

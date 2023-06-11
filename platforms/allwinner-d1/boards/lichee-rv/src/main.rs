@@ -1,8 +1,8 @@
 #![no_std]
 #![no_main]
 
-use core::{panic::PanicInfo, time::Duration};
-use drivers::Ram;
+use core::{panic::PanicInfo, time::Duration, fmt::Write};
+use drivers::{Ram, uart::kernel_uart};
 use kernel::{Kernel, KernelSettings};
 use embedded_hal::blocking::delay::DelayMs;
 
@@ -15,19 +15,27 @@ static AHEAP: Ram<HEAP_SIZE> = Ram::new();
 #[allow(non_snake_case)]
 #[riscv_rt::entry]
 fn main() -> ! {
-    let k = initialize_kernel().unwrap();
-
-    // k.initialize(async {}).unwrap();
+    let mut p = unsafe { d1_pac::Peripherals::steal() };
+    let mut uart = unsafe { kernel_uart(&mut p.CCU, &mut p.GPIO, p.UART0) };
+    let mut delay = riscv::delay::McycleDelay::new(1_008_000_000);
 
     loop {
-        let tick = k.tick();
-
-        if !tick.has_remaining {
-            let mut delay = riscv::delay::McycleDelay::new(1_080_000_000);
-            delay.delay_ms(1);
-            let _turn = k.timer().force_advance_ticks(1);
-        }
+        write!(&mut uart, "Hello, world!\r\n").ok();
+        delay.delay_ms(250);
     }
+    // let k = initialize_kernel().unwrap();
+
+    // // k.initialize(async {}).unwrap();
+
+    // loop {
+    //     let tick = k.tick();
+
+    //     if !tick.has_remaining {
+    //         let mut delay = riscv::delay::McycleDelay::new(1_080_000_000);
+    //         delay.delay_ms(1);
+    //         let _turn = k.timer().force_advance_ticks(1);
+    //     }
+    // }
 }
 
 fn initialize_kernel() -> Result<&'static Kernel, ()> {
@@ -44,8 +52,6 @@ fn initialize_kernel() -> Result<&'static Kernel, ()> {
     };
     Ok(k)
 }
-
-
 
 #[panic_handler]
 fn handler(_info: &PanicInfo) -> ! {
