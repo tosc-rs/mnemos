@@ -619,6 +619,7 @@ impl DictionaryBump {
         }
     }
 
+    #[allow(dead_code)]
     pub fn bump_u8(&mut self) -> Option<NonNull<u8>> {
         if self.cur >= self.end {
             None
