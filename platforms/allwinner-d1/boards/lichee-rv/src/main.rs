@@ -19,23 +19,23 @@ fn main() -> ! {
     let mut uart = unsafe { kernel_uart(&mut p.CCU, &mut p.GPIO, p.UART0) };
     let mut delay = riscv::delay::McycleDelay::new(1_008_000_000);
 
+    let k = initialize_kernel().unwrap();
+
+    k.initialize(async move {
+        loop {
+            write!(&mut uart, "Hello, world!\r\n").ok();
+            k.sleep(Duration::from_millis(250)).await;
+        }
+    }).unwrap();
+
     loop {
-        write!(&mut uart, "Hello, world!\r\n").ok();
-        delay.delay_ms(250);
+        let tick = k.tick();
+
+        if !tick.has_remaining {
+            delay.delay_ms(1);
+            let _turn = k.timer().force_advance_ticks(1);
+        }
     }
-    // let k = initialize_kernel().unwrap();
-
-    // // k.initialize(async {}).unwrap();
-
-    // loop {
-    //     let tick = k.tick();
-
-    //     if !tick.has_remaining {
-    //         let mut delay = riscv::delay::McycleDelay::new(1_080_000_000);
-    //         delay.delay_ms(1);
-    //         let _turn = k.timer().force_advance_ticks(1);
-    //     }
-    // }
 }
 
 fn initialize_kernel() -> Result<&'static Kernel, ()> {
