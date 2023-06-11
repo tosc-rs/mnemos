@@ -96,7 +96,7 @@ features = ["async"]
 [dependencies.futures]
 version = "0.3"
 default-features = false
-# features = 
+features = ["std", "async-await"]
 
 [features]
 # enables Tokio Console support
