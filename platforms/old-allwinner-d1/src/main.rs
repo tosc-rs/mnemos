@@ -16,8 +16,7 @@ use d1_playground::dmac::descriptor::{
     AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType,
 };
 use d1_playground::dmac::{Dmac, ChannelMode, Channel};
-use maitake::sync::Mutex;
-use maitake::wait::WaitCell;
+use maitake::sync::{Mutex, WaitCell};
 use mnemos_alloc::containers::{HeapArc, HeapArray};
 
 use d1_playground::plic::{Plic, Priority};
