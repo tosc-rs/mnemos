@@ -4,8 +4,8 @@
 use core::{panic::PanicInfo, time::Duration, fmt::Write, sync::atomic::{AtomicUsize, Ordering}};
 use d1_pac::{Interrupt, TIMER, DMAC};
 use drivers::{Ram, uart::{Uart, kernel_uart}, timer::{Timers, Timer, TimerMode, TimerPrescaler}, plic::{Priority, Plic}, dmac::Dmac};
-use kernel::{Kernel, KernelSettings, registry::simple_serial::SimpleSerial};
-use uart::{TX_DONE, handle_uart, D1Uart};
+use kernel::{Kernel, KernelSettings, drivers::serial_mux::{SerialMux, RegistrationError, SerialMuxHandle}};
+use uart::D1Uart;
 mod uart;
 
 const HEAP_SIZE: usize = 384 * 1024 * 1024;
@@ -70,9 +70,30 @@ fn main() -> ! {
         D1Uart::register(k, 4096, 4096, ch0).await.unwrap();
     }).unwrap();
 
+    // Initialize SerialMux
     k.initialize(async move {
-        let mut client = loop {
-            match SimpleSerial::from_registry(k).await {
+        loop {
+            // Now, right now this is a little awkward, but what I'm doing here is spawning
+            // a new virtual mux, and configuring it with:
+            // * Up to 16 virtual ports max
+            // * Framed messages up to 512 bytes max each
+            match SerialMux::register(k, 16, 512).await {
+                Ok(_) => break,
+                Err(RegistrationError::SerialPortNotFound) => {
+                    // Uart probably isn't registered yet. Try again in a bit
+                    k.sleep(Duration::from_millis(10)).await;
+                },
+                Err(e) => {
+                    panic!("uhhhh {e:?}");
+                }
+            }
+        }
+    }).unwrap();
+
+    // Loopback on virtual port zero
+    k.initialize(async move {
+        let mut hdl = loop {
+            match SerialMuxHandle::from_registry(k).await {
                 Some(c) => break c,
                 None => {
                     k.sleep(Duration::from_millis(100)).await;
@@ -80,19 +101,12 @@ fn main() -> ! {
             }
         };
 
-        let hdl = client.get_port().await.unwrap();
+        let hdl = hdl.open_port(0, 1024).await.unwrap();
 
         loop {
             let rx = hdl.consumer().read_grant().await;
             let all_len = rx.len();
-            let mut all = &rx[..];
-            while !all.is_empty() {
-                let mut wgr = hdl.producer().send_grant_max(all.len()).await;
-                let len = all.len().min(wgr.len());
-                wgr[..len].copy_from_slice(all);
-                wgr.commit(len);
-                all = &all[len..];
-            }
+            hdl.send(&rx).await;
             rx.release(all_len);
         }
     }).unwrap();
@@ -115,7 +129,7 @@ fn main() -> ! {
     unsafe {
         plic.register(Interrupt::TIMER1, timer1_int);
         plic.register(Interrupt::DMAC_NS, handle_dmac);
-        plic.register(Interrupt::UART0, handle_uart);
+        plic.register(Interrupt::UART0, D1Uart::handle_uart0_int);
 
         plic.activate(Interrupt::DMAC_NS, Priority::P1).unwrap();
         plic.activate(Interrupt::UART0, Priority::P1).unwrap();
@@ -213,7 +227,7 @@ fn handle_dmac() {
     let dmac = unsafe { &*DMAC::PTR };
     dmac.dmac_irq_pend0.modify(|r, w| {
         if r.dma0_queue_irq_pend().bit_is_set() {
-            TX_DONE.wake();
+            D1Uart::tx_done_waker().wake();
         }
 
         // Will write-back and high bits

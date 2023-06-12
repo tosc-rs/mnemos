@@ -25,50 +25,53 @@ impl core::fmt::Write for GrantWriter {
 }
 
 
-pub static TX_DONE: WaitCell = WaitCell::new();
-pub static UART_RX: AtomicPtr<SpscProducer> = AtomicPtr::new(null_mut());
-
-pub fn handle_uart() {
-    let uart0 = unsafe { &*UART0::PTR };
-    let prod = UART_RX.load(Ordering::Acquire);
-    if !prod.is_null() {
-        let prod = unsafe { &*prod };
-
-        while let Some(mut wgr) = prod.send_grant_max_sync(64) {
-            let used_res = wgr.iter_mut().enumerate().try_for_each(|(i, b)| {
-                if uart0.usr.read().rfne().bit_is_set() {
-                    *b = uart0.rbr().read().rbr().bits();
-                    Ok(())
-                } else {
-                    Err(i)
-                }
-            });
-
-            match used_res {
-                Ok(()) => {
-                    let len = wgr.len();
-                    wgr.commit(len);
-                },
-                Err(used) => {
-                    wgr.commit(used);
-                    break;
-                },
-            }
-        }
-    }
-
-    // We've processed all possible bytes. Discard any remaining.
-    while uart0.usr.read().rfne().bit_is_set() {
-        let _byte = uart0.rbr().read().rbr().bits();
-    }
-}
-
+static TX_DONE: WaitCell = WaitCell::new();
+static UART_RX: AtomicPtr<SpscProducer> = AtomicPtr::new(null_mut());
 
 pub struct D1Uart {
     _x: (),
 }
 
 impl D1Uart {
+    pub fn tx_done_waker() -> &'static WaitCell {
+        &TX_DONE
+    }
+
+    pub fn handle_uart0_int() {
+        let uart0 = unsafe { &*UART0::PTR };
+        let prod = UART_RX.load(Ordering::Acquire);
+        if !prod.is_null() {
+            let prod = unsafe { &*prod };
+
+            while let Some(mut wgr) = prod.send_grant_max_sync(64) {
+                let used_res = wgr.iter_mut().enumerate().try_for_each(|(i, b)| {
+                    if uart0.usr.read().rfne().bit_is_set() {
+                        *b = uart0.rbr().read().rbr().bits();
+                        Ok(())
+                    } else {
+                        Err(i)
+                    }
+                });
+
+                match used_res {
+                    Ok(()) => {
+                        let len = wgr.len();
+                        wgr.commit(len);
+                    },
+                    Err(used) => {
+                        wgr.commit(used);
+                        break;
+                    },
+                }
+            }
+        }
+
+        // We've processed all possible bytes. Discard any remaining.
+        while uart0.usr.read().rfne().bit_is_set() {
+            let _byte = uart0.rbr().read().rbr().bits();
+        }
+    }
+
     // Send loop that listens to the bbqueue consumer, and sends it as DMA transactions on the UART
     async fn sending(cons: Consumer, mut tx_channel: Channel) {
         loop {
