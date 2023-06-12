@@ -32,11 +32,12 @@ pub unsafe fn kernel_uart(
     // TXMT INT Trigger: FIFO Empty
     // DMA Mode 0 - (???)
     // FIFOs Enabled
-    // uart0.hsk.write(|w| w.hsk().handshake());
-    // uart0.dma_req_en.modify(|_r, w| w.timeout_enable().set_bit());
+    uart0.hsk.write(|w| w.hsk().handshake());
+    uart0.dma_req_en.modify(|_r, w| w.timeout_enable().set_bit());
     // uart0.fcr().write(|w| w.fifoe().set_bit().dmam().mode_1());
     uart0.fcr().write(|w| {
         w.fifoe().set_bit();
+        w.dmam().mode_1();
         w.rt().half_full();
         w
     });

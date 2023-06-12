@@ -1171,6 +1171,7 @@ dependencies = [
  "d1-pac",
  "drivers",
  "embedded-hal",
+ "futures",
  "mnemos",
  "riscv",
  "riscv-rt",

@@ -55,6 +55,10 @@ impl Channel {
         Self { idx }
     }
 
+    pub fn channel_index(&self) -> u8 {
+        self.idx
+    }
+
     pub unsafe fn desc_addr_reg(&self) -> &Reg<DMAC_DESC_ADDR_SPEC> {
         let dmac = &*DMAC::PTR;
         match self.idx {
