@@ -1,4 +1,7 @@
-use core::{sync::atomic::{AtomicPtr, Ordering}, ptr::null_mut};
+use core::{
+    ptr::null_mut,
+    sync::atomic::{AtomicPtr, Ordering},
+};
 
 use d1_pac::{plic, Interrupt, PLIC};
 
@@ -278,7 +281,6 @@ fn im_an_interrupt() {
             (hdlr)();
         } // TODO: panic on else?
     } // TODO: panic on else?
-
 
     // Release claim
     plic.complete(claim);

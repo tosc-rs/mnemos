@@ -1,11 +1,11 @@
 #![no_std]
 
-pub mod uart;
-pub mod timer;
-pub mod plic;
 pub mod dmac;
+pub mod plic;
+pub mod timer;
+pub mod uart;
 
-use core::{mem::MaybeUninit, cell::UnsafeCell};
+use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 pub struct Ram<const N: usize> {
     inner: MaybeUninit<UnsafeCell<[u8; N]>>,

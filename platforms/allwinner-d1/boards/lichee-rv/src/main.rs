@@ -1,10 +1,24 @@
 #![no_std]
 #![no_main]
 
-use core::{panic::PanicInfo, time::Duration, fmt::Write, sync::atomic::{AtomicUsize, Ordering}};
-use d1_pac::{Interrupt, TIMER, DMAC};
-use drivers::{Ram, uart::{Uart, kernel_uart}, timer::{Timers, Timer, TimerMode, TimerPrescaler}, plic::{Priority, Plic}, dmac::Dmac};
-use kernel::{Kernel, KernelSettings, drivers::serial_mux::{SerialMux, RegistrationError, SerialMuxHandle}};
+use core::{
+    fmt::Write,
+    panic::PanicInfo,
+    sync::atomic::Ordering,
+    time::Duration,
+};
+use d1_pac::{Interrupt, DMAC, TIMER};
+use drivers::{
+    dmac::Dmac,
+    plic::{Plic, Priority},
+    timer::{Timer, TimerMode, TimerPrescaler, Timers},
+    uart::{kernel_uart, Uart},
+    Ram,
+};
+use kernel::{
+    drivers::serial_mux::{RegistrationError, SerialMux, SerialMuxHandle},
+    Kernel, KernelSettings,
+};
 use uart::D1Uart;
 mod uart;
 
@@ -29,7 +43,6 @@ fn main() -> ! {
         w
     });
 
-
     // Timer0 is used as a freewheeling rolling timer.
     // Timer1 is used to generate "sleep until" interrupts
     //
@@ -37,7 +50,10 @@ fn main() -> ! {
     //
     // In the future, we probably want to rework this to use the RTC timer for
     // both purposes, as this will likely play better with sleep power usage.
-    let Timers { mut timer0, mut timer1 } = Timers::new(p.TIMER);
+    let Timers {
+        mut timer0,
+        mut timer1,
+    } = Timers::new(p.TIMER);
 
     let k = initialize_kernel().unwrap();
     let dmac = Dmac::new(p.DMAC, &mut p.CCU);
@@ -61,12 +77,14 @@ fn main() -> ! {
             });
             k.sleep(Duration::from_millis(250)).await;
         }
-    }).unwrap();
+    })
+    .unwrap();
 
     // Initialize SimpleSerial driver
     k.initialize(async move {
         D1Uart::register(k, 4096, 4096, ch0).await.unwrap();
-    }).unwrap();
+    })
+    .unwrap();
 
     // Initialize SerialMux
     k.initialize(async move {
@@ -80,13 +98,14 @@ fn main() -> ! {
                 Err(RegistrationError::SerialPortNotFound) => {
                     // Uart probably isn't registered yet. Try again in a bit
                     k.sleep(Duration::from_millis(10)).await;
-                },
+                }
                 Err(e) => {
                     panic!("uhhhh {e:?}");
                 }
             }
         }
-    }).unwrap();
+    })
+    .unwrap();
 
     // Loopback on virtual port zero
     k.initialize(async move {
@@ -95,7 +114,7 @@ fn main() -> ! {
                 Some(c) => break c,
                 None => {
                     k.sleep(Duration::from_millis(100)).await;
-                },
+                }
             }
         };
 
@@ -107,7 +126,8 @@ fn main() -> ! {
             hdl.send(&rx).await;
             rx.release(all_len);
         }
-    }).unwrap();
+    })
+    .unwrap();
 
     k.initialize(async move {
         let mut hdl = loop {
@@ -115,7 +135,7 @@ fn main() -> ! {
                 Some(c) => break c,
                 None => {
                     k.sleep(Duration::from_millis(100)).await;
-                },
+                }
             }
         };
 
@@ -125,7 +145,8 @@ fn main() -> ! {
             hdl.send(b"Hello, world!\r\n").await;
             k.sleep(Duration::from_secs(1)).await;
         }
-    }).unwrap();
+    })
+    .unwrap();
 
     timer0.set_prescaler(TimerPrescaler::P8); // 24M / 8:  3.00M ticks/s
     timer1.set_prescaler(TimerPrescaler::P8);
@@ -138,7 +159,6 @@ fn main() -> ! {
         riscv::interrupt::enable();
         riscv::register::mie::set_mext();
     }
-
 
     let plic = Plic::new(p.PLIC);
 
@@ -171,8 +191,7 @@ fn main() -> ! {
             // be. Don't take lack of timer wheel presence as the ONLY heuristic of whether we
             // should just wait for SOME interrupt to occur. For now, force a max sleep of 100ms
             // which is still probably wrong.
-            let amount = turn.ticks_to_next_deadline()
-                .unwrap_or(100 * 1000 * 3); // 3 ticks per us, 1000 us per ms, 100ms sleep
+            let amount = turn.ticks_to_next_deadline().unwrap_or(100 * 1000 * 3); // 3 ticks per us, 1000 us per ms, 100ms sleep
 
             // Don't sleep for too long until james figures out wrapping timers
             let amount = amount.min(0x4000_0000) as u32;
@@ -219,9 +238,7 @@ fn initialize_kernel() -> Result<&'static Kernel, ()> {
         u2k_size: 4096,
         timer_granularity: Duration::from_nanos(333),
     };
-    let k = unsafe {
-        Kernel::new(k_settings).map_err(drop)?.leak().as_ref()
-    };
+    let k = unsafe { Kernel::new(k_settings).map_err(drop)?.leak().as_ref() };
     Ok(k)
 }
 

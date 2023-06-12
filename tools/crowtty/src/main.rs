@@ -73,14 +73,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let baud: u32 = baud.parse().unwrap();
             Connect::new_from_serial(path, baud)
         }
-        &["serial", path] => {
-            Connect::new_from_serial(path, 115200)
-        }
+        &["serial", path] => Connect::new_from_serial(path, 115200),
         _ => {
             println!("Args should be one of the following:");
             println!("crowtty tcp PORT          - open listener on localhost:PORT");
             println!("                            (usually 9999 for melpo)");
-            println!("crowtty serial PATH       - open listener on serial port PATH w/ baud: 115200");
+            println!(
+                "crowtty serial PATH       - open listener on serial port PATH w/ baud: 115200"
+            );
             println!("                            (usually /dev/ttyUSBx for hw)");
             println!("crowtty serial PATH BAUD  - open listener on serial port PATH w/ BAUD");
             println!("                            (usually /dev/ttyUSBx for hw)");

@@ -84,6 +84,7 @@ use abi::{
     syscall::{KernelResponse, UserRequest},
 };
 use comms::{bbq::BidiHandle, kchannel::KChannel};
+pub use maitake;
 use maitake::{
     scheduler::{LocalStaticScheduler, TaskStub},
     sync::Mutex,
@@ -92,7 +93,6 @@ use maitake::{
 };
 use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 use registry::Registry;
-pub use maitake;
 
 /// Shim to handle tracing v0.1 vs v0.2
 ///

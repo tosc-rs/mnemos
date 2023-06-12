@@ -1,12 +1,6 @@
 use d1_pac::{CCU, GPIO, UART0};
 
-
-pub unsafe fn kernel_uart(
-    ccu: &mut CCU,
-    gpio: &mut GPIO,
-    uart0: UART0,
-) -> Uart {
-
+pub unsafe fn kernel_uart(ccu: &mut CCU, gpio: &mut GPIO, uart0: UART0) -> Uart {
     // Enable UART0 clock.
     ccu.uart_bgr
         .write(|w| w.uart0_gating().pass().uart0_rst().deassert());
@@ -16,7 +10,6 @@ pub unsafe fn kernel_uart(
         .write(|w| w.pb8_select().uart0_tx().pb9_select().uart0_rx());
     gpio.pb_pull0
         .write(|w| w.pc8_pull().pull_up().pc9_pull().pull_up());
-
 
     // Configure UART0 for 115200 8n1.
     // By default APB1 is 24MHz, use divisor 13 for 115200.
@@ -33,7 +26,9 @@ pub unsafe fn kernel_uart(
     // DMA Mode 0 - (???)
     // FIFOs Enabled
     uart0.hsk.write(|w| w.hsk().handshake());
-    uart0.dma_req_en.modify(|_r, w| w.timeout_enable().set_bit());
+    uart0
+        .dma_req_en
+        .modify(|_r, w| w.timeout_enable().set_bit());
     // uart0.fcr().write(|w| w.fifoe().set_bit().dmam().mode_1());
     uart0.fcr().write(|w| {
         w.fifoe().set_bit();
@@ -66,7 +61,6 @@ pub unsafe fn kernel_uart(
     Uart(uart0)
 }
 
-
 pub struct Uart(d1_pac::UART0);
 impl core::fmt::Write for Uart {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
@@ -78,4 +72,3 @@ impl core::fmt::Write for Uart {
         Ok(())
     }
 }
-

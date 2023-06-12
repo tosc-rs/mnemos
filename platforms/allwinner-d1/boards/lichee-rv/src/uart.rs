@@ -1,8 +1,27 @@
-use core::{sync::atomic::{Ordering, AtomicPtr}, ptr::{null_mut, NonNull}};
+use core::{
+    ptr::{null_mut, NonNull},
+    sync::atomic::{AtomicPtr, Ordering},
+};
 
 use d1_pac::UART0;
-use drivers::dmac::{Channel, ChannelMode, descriptor::{DescriptorConfig, BModeSel, DataWidth, AddressMode, BlockSize, DestDrqType, SrcDrqType}};
-use kernel::{Kernel, comms::{bbq::{new_bidi_channel, GrantW, SpscProducer, Consumer, BidiHandle}, kchannel::{KConsumer, KChannel}}, maitake::sync::WaitCell, registry::{simple_serial::{SimpleSerialError, Request, SimpleSerial, Response}, Message}};
+use drivers::dmac::{
+    descriptor::{
+        AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType,
+    },
+    Channel, ChannelMode,
+};
+use kernel::{
+    comms::{
+        bbq::{new_bidi_channel, BidiHandle, Consumer, GrantW, SpscProducer},
+        kchannel::{KChannel, KConsumer},
+    },
+    maitake::sync::WaitCell,
+    registry::{
+        simple_serial::{Request, Response, SimpleSerial, SimpleSerialError},
+        Message,
+    },
+    Kernel,
+};
 
 struct GrantWriter {
     grant: GrantW,
@@ -23,7 +42,6 @@ impl core::fmt::Write for GrantWriter {
         }
     }
 }
-
 
 static TX_DONE: WaitCell = WaitCell::new();
 static UART_RX: AtomicPtr<SpscProducer> = AtomicPtr::new(null_mut());
@@ -57,11 +75,11 @@ impl D1Uart {
                     Ok(()) => {
                         let len = wgr.len();
                         wgr.commit(len);
-                    },
+                    }
                     Err(used) => {
                         wgr.commit(used);
                         break;
-                    },
+                    }
                 }
             }
         }
@@ -120,7 +138,6 @@ impl D1Uart {
             }
         }
 
-
         // And deny all further requests after the first
         loop {
             if let Ok(req) = kcons.dequeue_async().await {
@@ -137,11 +154,13 @@ impl D1Uart {
         k: &'static Kernel,
         cap_in: usize,
         cap_out: usize,
-        tx_channel: Channel
+        tx_channel: Channel,
     ) -> Result<(), ()> {
         assert_eq!(tx_channel.channel_index(), 0);
 
-        let (kprod, kcons) = KChannel::<Message<SimpleSerial>>::new_async(k, 4).await.split();
+        let (kprod, kcons) = KChannel::<Message<SimpleSerial>>::new_async(k, 4)
+            .await
+            .split();
         let (fifo_a, fifo_b) = new_bidi_channel(k.heap(), cap_in, cap_out).await;
 
         let _server_hdl = k.spawn(D1Uart::serial_server(fifo_b, kcons)).await;
@@ -153,9 +172,9 @@ impl D1Uart {
         let leaked_prod = boxed_prod.leak();
         UART_RX.store(leaked_prod.as_ptr(), Ordering::Release);
 
-        k.with_registry(|reg| {
-            reg.register_konly::<SimpleSerial>(&kprod)
-        }).await.map_err(drop)?;
+        k.with_registry(|reg| reg.register_konly::<SimpleSerial>(&kprod))
+            .await
+            .map_err(drop)?;
 
         Ok(())
     }
