@@ -14,8 +14,6 @@ const HEAP_SIZE: usize = 384 * 1024 * 1024;
 #[used]
 static AHEAP: Ram<HEAP_SIZE> = Ram::new();
 
-static WFI_CT: AtomicUsize = AtomicUsize::new(0);
-
 #[allow(non_snake_case)]
 #[riscv_rt::entry]
 fn main() -> ! {
@@ -111,6 +109,24 @@ fn main() -> ! {
         }
     }).unwrap();
 
+    k.initialize(async move {
+        let mut hdl = loop {
+            match SerialMuxHandle::from_registry(k).await {
+                Some(c) => break c,
+                None => {
+                    k.sleep(Duration::from_millis(100)).await;
+                },
+            }
+        };
+
+        let hdl = hdl.open_port(1, 1024).await.unwrap();
+
+        loop {
+            hdl.send(b"Hello, world!\r\n").await;
+            k.sleep(Duration::from_secs(1)).await;
+        }
+    }).unwrap();
+
     timer0.set_prescaler(TimerPrescaler::P8); // 24M / 8:  3.00M ticks/s
     timer1.set_prescaler(TimerPrescaler::P8);
     timer0.set_mode(TimerMode::PERIODIC);
@@ -168,7 +184,6 @@ fn main() -> ! {
             timer1.start_counter(amount);
 
             unsafe {
-                WFI_CT.fetch_add(1, Ordering::Relaxed);
                 riscv::asm::wfi();
             }
             // Disable the timer interrupt in case that wasn't what woke us up
