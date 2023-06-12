@@ -7,7 +7,8 @@ cargo doc \
     --all-features \
     --document-private-items \
     --workspace \
-    --exclude crowtty
+    --exclude crowtty \
+    --exclude lichee-rv
 
 rm -rf ./target/ci-publish || :
 mkdir -p ./target/ci-publish/

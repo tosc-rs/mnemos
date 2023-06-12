@@ -147,6 +147,7 @@ jobs:
           --message-format=json \
           --no-deps \
           --all-features \
+          --exclude lichee-rv \
           --document-private-items |
           cargo-action-fmt
       env:
