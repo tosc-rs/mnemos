@@ -1,12 +1,7 @@
 #![no_std]
 #![no_main]
 
-use core::{
-    fmt::Write,
-    panic::PanicInfo,
-    sync::atomic::Ordering,
-    time::Duration,
-};
+use core::{fmt::Write, panic::PanicInfo, sync::atomic::Ordering, time::Duration};
 use d1_pac::{Interrupt, DMAC, TIMER};
 use drivers::{
     dmac::Dmac,
