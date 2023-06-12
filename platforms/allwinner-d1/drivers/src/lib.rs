@@ -3,6 +3,7 @@
 pub mod uart;
 pub mod timer;
 pub mod plic;
+pub mod dmac;
 
 use core::{mem::MaybeUninit, cell::UnsafeCell};
 

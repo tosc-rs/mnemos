@@ -78,31 +78,3 @@ impl core::fmt::Write for Uart {
     }
 }
 
-// #[allow(dead_code)]
-// fn print_raw(data: &[u8]) {
-//     let uart = unsafe { PRINTER.as_mut().unwrap() };
-//     while uart.0.usr.read().tfnf().bit_is_clear() {}
-//     for byte in data {
-//         uart.0.thr().write(|w| unsafe { w.thr().bits(*byte) });
-//         while uart.0.usr.read().tfnf().bit_is_clear() {}
-//     }
-// }
-// pub fn _print(args: core::fmt::Arguments) -> Option<()> {
-//     use core::fmt::Write;
-//     unsafe {
-//         PRINTER.as_mut()?.write_fmt(args).ok()
-//     }
-// }
-// #[macro_export]
-// macro_rules! print {
-//     ($($arg:tt)*) => {
-//         $crate::_print(core::format_args!($($arg)*));
-//     }
-// }
-// #[macro_export]
-// macro_rules! println {
-//     ($($arg:tt)*) => {
-//         $crate::_print(core::format_args!($($arg)*));
-//         $crate::print!("\r\n");
-//     }
-// }

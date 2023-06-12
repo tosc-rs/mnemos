@@ -85,7 +85,6 @@ use abi::{
 };
 use comms::{bbq::BidiHandle, kchannel::KChannel};
 use maitake::{
-    self,
     scheduler::{LocalStaticScheduler, TaskStub},
     sync::Mutex,
     task::{JoinHandle, Storage, Task as MaitakeTask},
@@ -93,6 +92,7 @@ use maitake::{
 };
 use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 use registry::Registry;
+pub use maitake;
 
 /// Shim to handle tracing v0.1 vs v0.2
 ///
