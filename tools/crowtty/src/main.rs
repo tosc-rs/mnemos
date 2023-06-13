@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serialport::SerialPort;
 use std::collections::HashMap;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -12,40 +13,83 @@ pub struct Chunk {
     buf: Vec<u8>,
 }
 
+enum Connect {
+    Serial(Box<dyn SerialPort>),
+    Tcp(TcpStream),
+}
+
+impl std::io::Write for Connect {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        match self {
+            Connect::Serial(s) => s.write(buf),
+            Connect::Tcp(t) => t.write(buf),
+        }
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        match self {
+            Connect::Serial(s) => s.flush(),
+            Connect::Tcp(t) => t.flush(),
+        }
+    }
+}
+
+impl std::io::Read for Connect {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self {
+            Connect::Serial(s) => s.read(buf),
+            Connect::Tcp(t) => t.read(buf),
+        }
+    }
+}
+
+impl Connect {
+    fn new_from_tcp(port: u16) -> Self {
+        let port = TcpStream::connect(&format!("127.0.0.1:{port}")).unwrap();
+        port.set_read_timeout(Some(Duration::from_millis(10))).ok();
+
+        Connect::Tcp(port)
+    }
+
+    fn new_from_serial(path: &str, baud: u32) -> Self {
+        let port = serialport::new(path, baud)
+            .timeout(Duration::from_millis(10))
+            .open()
+            .unwrap();
+        Connect::Serial(port)
+    }
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // let mut dport = None;
+    let args = std::env::args().skip(1).collect::<Vec<_>>();
+    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
 
-    // for port in serialport::available_ports().unwrap() {
-    //     if let serialport::SerialPortType::UsbPort(serialport::UsbPortInfo {
-    //         serial_number: Some(sn),
-    //         ..
-    //     }) = &port.port_type
-    //     {
-    //         if sn.as_str() == "ajm001" {
-    //             dport = Some(port.clone());
-    //             break;
-    //         }
-    //     }
-    // }
-
-    // let dport = if let Some(port) = dport {
-    //     port
-    // } else {
-    //     eprintln!("Error: No `Pellegrino` connected!");
-    //     return Ok(());
-    // };
-
-    // let mut port = serialport::new(dport.port_name, 115200)
-    //     .timeout(Duration::from_millis(5))
-    //     .open()
-    //     .map_err(|_| "Error: failed to create port")?;
+    let mut port = match args.as_slice() {
+        &["tcp", port] => {
+            let port: u16 = port.parse().unwrap();
+            Connect::new_from_tcp(port)
+        }
+        &["serial", path, baud] => {
+            let baud: u32 = baud.parse().unwrap();
+            Connect::new_from_serial(path, baud)
+        }
+        &["serial", path] => Connect::new_from_serial(path, 115200),
+        _ => {
+            println!("Args should be one of the following:");
+            println!("crowtty tcp PORT          - open listener on localhost:PORT");
+            println!("                            (usually 9999 for melpo)");
+            println!(
+                "crowtty serial PATH       - open listener on serial port PATH w/ baud: 115200"
+            );
+            println!("                            (usually /dev/ttyUSBx for hw)");
+            println!("crowtty serial PATH BAUD  - open listener on serial port PATH w/ BAUD");
+            println!("                            (usually /dev/ttyUSBx for hw)");
+            println!("crowtty help              - this message");
+            return Ok(());
+        }
+    };
 
     let mut carry = Vec::new();
-
-    let mut port = TcpStream::connect("127.0.0.1:9999").unwrap();
-
-    // port.set_timeout(Duration::from_millis(10)).ok();
-    port.set_read_timeout(Some(Duration::from_millis(10))).ok();
 
     let mut manager = TcpManager {
         workers: HashMap::new(),
@@ -154,6 +198,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(used) => used,
             Err(e) => panic!("{:?}", e),
         };
+        println!("Got {used} raw bytes");
         carry.extend_from_slice(&buf[..used]);
 
         while let Some(pos) = carry.iter().position(|b| *b == 0) {

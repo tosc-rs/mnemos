@@ -84,8 +84,8 @@ use abi::{
     syscall::{KernelResponse, UserRequest},
 };
 use comms::{bbq::BidiHandle, kchannel::KChannel};
+pub use maitake;
 use maitake::{
-    self,
     scheduler::{LocalStaticScheduler, TaskStub},
     sync::Mutex,
     task::{JoinHandle, Storage, Task as MaitakeTask},
