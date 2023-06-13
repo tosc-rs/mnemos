@@ -23,6 +23,22 @@ const HEAP_SIZE: usize = 384 * 1024 * 1024;
 #[used]
 static AHEAP: Ram<HEAP_SIZE> = Ram::new();
 
+/// A helper to initialize the kernel
+fn initialize_kernel() -> Result<&'static Kernel, ()> {
+    let k_settings = KernelSettings {
+        heap_start: AHEAP.as_ptr(),
+        heap_size: HEAP_SIZE,
+        max_drivers: 16,
+        k2u_size: 4096,
+        u2k_size: 4096,
+        // Note: The timers used will be configured to 3MHz, leading to (approximately)
+        // 333ns granularity.
+        timer_granularity: Duration::from_nanos(333),
+    };
+    let k = unsafe { Kernel::new(k_settings).map_err(drop)?.leak().as_ref() };
+    Ok(k)
+}
+
 #[allow(non_snake_case)]
 #[riscv_rt::entry]
 fn main() -> ! {
@@ -143,6 +159,9 @@ fn main() -> ! {
     })
     .unwrap();
 
+    // NOTE: if you change the timer frequency, make sure you update
+    // initialize_kernel() below to correct the kernel timer wheel
+    // granularity setting!
     timer0.set_prescaler(TimerPrescaler::P8); // 24M / 8:  3.00M ticks/s
     timer1.set_prescaler(TimerPrescaler::P8);
     timer0.set_mode(TimerMode::PERIODIC);
@@ -212,8 +231,26 @@ fn main() -> ! {
     }
 }
 
-// We don't actually do anything in the TIMER1 interrupt. It is only here to
-// knock us out of WFI. Just disable the IRQ to prevent refires
+/// DMAC ISR handler
+///
+/// At the moment, we only service the Channel 0 interrupt,
+/// which indicates that the serial transmission is complete.
+fn handle_dmac() {
+    let dmac = unsafe { &*DMAC::PTR };
+    dmac.dmac_irq_pend0.modify(|r, w| {
+        if r.dma0_queue_irq_pend().bit_is_set() {
+            D1Uart::tx_done_waker().wake();
+        }
+
+        // Will write-back and high bits
+        w
+    });
+}
+
+/// Timer1 ISR handler
+///
+/// We don't actually do anything in the TIMER1 interrupt. It is only here to
+/// knock us out of WFI. Just disable the IRQ to prevent refires
 fn timer1_int() {
     let timer = unsafe { &*TIMER::PTR };
     timer
@@ -222,19 +259,6 @@ fn timer1_int() {
 
     // Wait for the interrupt to clear to avoid repeat interrupts
     while timer.tmr_irq_sta.read().tmr1_irq_pend().bit_is_set() {}
-}
-
-fn initialize_kernel() -> Result<&'static Kernel, ()> {
-    let k_settings = KernelSettings {
-        heap_start: AHEAP.as_ptr(),
-        heap_size: HEAP_SIZE,
-        max_drivers: 16,
-        k2u_size: 4096,
-        u2k_size: 4096,
-        timer_granularity: Duration::from_nanos(333),
-    };
-    let k = unsafe { Kernel::new(k_settings).map_err(drop)?.leak().as_ref() };
-    Ok(k)
 }
 
 #[panic_handler]
@@ -248,16 +272,4 @@ fn handler(info: &PanicInfo) -> ! {
     loop {
         core::sync::atomic::fence(Ordering::SeqCst);
     }
-}
-
-fn handle_dmac() {
-    let dmac = unsafe { &*DMAC::PTR };
-    dmac.dmac_irq_pend0.modify(|r, w| {
-        if r.dma0_queue_irq_pend().bit_is_set() {
-            D1Uart::tx_done_waker().wake();
-        }
-
-        // Will write-back and high bits
-        w
-    });
 }

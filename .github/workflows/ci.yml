@@ -32,6 +32,12 @@ env:
 
 jobs:
   # run `cargo check` with the host target triple.
+  #
+  # NOTE: the `lichee-rv` crate is excluded as it is a no-std package, and when building
+  # the entire workspace, this setting isn't respected, leading to compile errors about
+  # duplicate panic-handler definitions.
+  #
+  # See the `check-allwinner-d1` job below that builds that project specifically.
   check-host:
     name: cargo check (host)
     # needs: changed_paths
@@ -54,6 +60,7 @@ jobs:
           --message-format=json |
           cargo-action-fmt
 
+  # See `check-host` NOTE above for details
   check-allwinner-d1:
     name: cargo check (allwinner d1)
     # needs: changed_paths
@@ -74,6 +81,8 @@ jobs:
           cargo-action-fmt
 
   # run `cargo nextest run` with the host target triple.
+  #
+  # See `check-host` NOTE above for details regarding the excluded crate(s).
   test-host:
     name: cargo nextest run (host)
     needs: check-host # skip on commits that don't compile.
@@ -130,6 +139,8 @@ jobs:
       run: cargo fmt --check
 
   # check that RustDoc builds
+  #
+  # See `check-host` NOTE above for details regarding the excluded crate(s).
   docs:
     # needs: changed_paths
     # if: needs.changed_paths.outputs.should_skip != 'true'

@@ -67,8 +67,8 @@ impl Plic {
         let claim = self.plic.mclaim.read().mclaim().bits() as u8;
         match Interrupt::try_from(claim) {
             Ok(interrupt) => interrupt,
-            Err(_) => {
-                panic!("error claiming interrupt");
+            Err(e) => {
+                panic!("error claiming interrupt: {e:?}");
             }
         }
     }

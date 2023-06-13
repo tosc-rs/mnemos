@@ -58,35 +58,49 @@ impl D1Uart {
     pub fn handle_uart0_int() {
         let uart0 = unsafe { &*UART0::PTR };
         let prod = UART_RX.load(Ordering::Acquire);
+        let mut handled_all = false;
+
         if !prod.is_null() {
             let prod = unsafe { &*prod };
 
-            while let Some(mut wgr) = prod.send_grant_max_sync(64) {
-                let used_res = wgr.iter_mut().enumerate().try_for_each(|(i, b)| {
-                    if uart0.usr.read().rfne().bit_is_set() {
-                        *b = uart0.rbr().read().rbr().bits();
-                        Ok(())
-                    } else {
-                        Err(i)
-                    }
-                });
-
-                match used_res {
-                    Ok(()) => {
-                        let len = wgr.len();
-                        wgr.commit(len);
-                    }
-                    Err(used) => {
+            // Attempt to get a grant to write into...
+            'read: while let Some(mut wgr) = prod.send_grant_max_sync(64) {
+                // For each byte in the grant...
+                for (used, b) in wgr.iter_mut().enumerate() {
+                    // Check if there is NOT a data byte available...
+                    if !uart0.usr.read().rfne().bit_is_set() {
+                        // If not, commit the grant (with the number of used bytes),
+                        // and mark that we have fully drained the FIFO.
                         wgr.commit(used);
-                        break;
+                        handled_all = true;
+                        break 'read;
                     }
+                    // If there is, read it, and write it to the grant.
+                    //
+                    // Reading this register has the side effect of clearing the byte
+                    // from the hardware fifo.
+                    *b = uart0.rbr().read().rbr().bits();
                 }
+
+                // If we made it here - we've completely filled the grant.
+                // Commit the entire capacity
+                let len = wgr.len();
+                wgr.commit(len);
             }
         }
 
-        // We've processed all possible bytes. Discard any remaining.
-        while uart0.usr.read().rfne().bit_is_set() {
-            let _byte = uart0.rbr().read().rbr().bits();
+        // If we didn't hit the "empty" case while draining, that means one of the following:
+        //
+        // * we have no producer
+        // * We have one, and it is full
+        //
+        // Either way, we need to discard any bytes in the FIFO to ensure that the interrupt
+        // is cleared, which won't happen until we discard at least enough bytes to drop
+        // below the "threshold" level. For now: we just drain everything to make sure.
+        if !handled_all {
+            while uart0.usr.read().rfne().bit_is_set() {
+                let _byte = uart0.rbr().read().rbr().bits();
+            }
         }
     }
 
@@ -170,7 +184,8 @@ impl D1Uart {
 
         let boxed_prod = k.heap().allocate(prod).await;
         let leaked_prod = boxed_prod.leak();
-        UART_RX.store(leaked_prod.as_ptr(), Ordering::Release);
+        let old = UART_RX.swap(leaked_prod.as_ptr(), Ordering::AcqRel);
+        assert_eq!(old, null_mut());
 
         k.with_registry(|reg| reg.register_konly::<SimpleSerial>(&kprod))
             .await
