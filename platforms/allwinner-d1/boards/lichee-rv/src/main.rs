@@ -14,10 +14,10 @@ use kernel::{
     drivers::serial_mux::{RegistrationError, SerialMux, SerialMuxHandle},
     Kernel, KernelSettings,
 };
-use spim::{SPI1_TX_DONE, SpiSender, kernel_spim1};
+use spim::{kernel_spim1, SpiSender, SPI1_TX_DONE};
 use uart::D1Uart;
-mod uart;
 mod spim;
+mod uart;
 
 const HEAP_SIZE: usize = 384 * 1024 * 1024;
 
@@ -56,7 +56,6 @@ fn main() -> ! {
         w.pc_dat().variant(0b0000_0010);
         w
     });
-
 
     // Timer0 is used as a freewheeling rolling timer.
     // Timer1 is used to generate "sleep until" interrupts
@@ -106,7 +105,6 @@ fn main() -> ! {
 
         k.sleep(Duration::from_millis(100)).await;
 
-
         // Loop, toggling the VCOM
         let mut vcom = true;
         let mut ctr = 0u32;
@@ -120,11 +118,7 @@ fn main() -> ! {
             k.sleep(Duration::from_millis(50)).await;
             // println!("DISPLAY");
             // Send a pattern
-            let vc = if vcom {
-                0x02
-            } else {
-                0x00
-            };
+            let vc = if vcom { 0x02 } else { 0x00 };
             linebuf[0] = 0x01 | vc;
 
             for (line, chunk) in linebuf.chunks_exact_mut(52).enumerate() {
