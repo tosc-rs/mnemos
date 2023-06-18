@@ -14,7 +14,7 @@ use kernel::{
     drivers::serial_mux::{RegistrationError, SerialMux, SerialMuxHandle},
     Kernel, KernelSettings,
 };
-use spim::{SPI1_TX_DONE, SpiSender};
+use spim::{SPI1_TX_DONE, SpiSender, kernel_spim1};
 use uart::D1Uart;
 mod uart;
 mod spim;
@@ -46,6 +46,7 @@ fn initialize_kernel() -> Result<&'static Kernel, ()> {
 fn main() -> ! {
     let mut p = unsafe { d1_pac::Peripherals::steal() };
     let _uart = unsafe { kernel_uart(&mut p.CCU, &mut p.GPIO, p.UART0) };
+    let _spim = unsafe { kernel_spim1(p.SPI_DBI, &mut p.CCU, &mut p.GPIO) };
 
     p.GPIO.pc_cfg0.modify(|_r, w| {
         w.pc1_select().output();
@@ -56,56 +57,6 @@ fn main() -> ! {
         w
     });
 
-
-
-    // SPI enable
-    let spi1 = &p.SPI_DBI;
-    p.CCU.spi1_clk.write(|w| {
-        w.clk_gating().on();     // ?
-        w.clk_src_sel().hosc();     // base:  24 MHz
-        w.factor_n().n1();          // /1:    24 MHz
-        w.factor_m().variant(11);   // /12:    2 MHz
-        w
-    });
-    p.CCU.spi_bgr.modify(|_r, w| {
-        w.spi1_gating().pass().spi1_rst().deassert();
-        w
-    });
-
-
-    p.GPIO.pd_cfg1.write(|w| {
-        w.pd10_select().spi1_cs_dbi_csx();
-        w.pd11_select().spi1_clk_dbi_sclk();
-        w.pd12_select().spi1_mosi_dbi_sdo();
-        w
-    });
-    p.GPIO.pd_pull0.write(|w| {
-        w.pd10_pull().pull_disable();
-        w.pd11_pull().pull_disable();
-        w.pd12_pull().pull_disable();
-        w
-    });
-
-    // ///////
-
-    spi1.spi_gcr.write(|w| {
-        w.tp_en().normal();
-        w.mode().master();
-        w.en().enable();
-        w
-    });
-    spi1.spi_tcr.write(|w| {
-        w.ss_owner().spi_controller();
-        // w.cpol().low();
-        // w.cpha().p0();
-        w.fbs().lsb();
-        w.spol().clear_bit();
-        w
-    });
-    spi1.spi_fcr.modify(|_r, w| {
-        w.tf_drq_en().enable();
-        w
-    });
 
     // Timer0 is used as a freewheeling rolling timer.
     // Timer1 is used to generate "sleep until" interrupts

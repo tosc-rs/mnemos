@@ -448,7 +448,14 @@ impl<P> Envelope<P> {
         }
     }
 
-    pub fn reply_with2<F, U>(self, f: F) -> Envelope<U>
+    /// Create a response Envelope from a given request Envelope.
+    ///
+    /// Maintains the same Service ID and Client ID, and increments the
+    /// request ID by one.
+    ///
+    /// This variant also gives you the request body in case you need it for
+    /// the response.
+    pub fn reply_with_body<F, U>(self, f: F) -> Envelope<U>
     where
         F: FnOnce(P) -> U
     {
