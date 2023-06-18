@@ -14,8 +14,10 @@ use kernel::{
     drivers::serial_mux::{RegistrationError, SerialMux, SerialMuxHandle},
     Kernel, KernelSettings,
 };
+use spim::{SPI1_TX_DONE, SpiSender};
 use uart::D1Uart;
 mod uart;
+mod spim;
 
 const HEAP_SIZE: usize = 384 * 1024 * 1024;
 
@@ -54,6 +56,57 @@ fn main() -> ! {
         w
     });
 
+
+
+    // SPI enable
+    let spi1 = &p.SPI_DBI;
+    p.CCU.spi1_clk.write(|w| {
+        w.clk_gating().on();     // ?
+        w.clk_src_sel().hosc();     // base:  24 MHz
+        w.factor_n().n1();          // /1:    24 MHz
+        w.factor_m().variant(11);   // /12:    2 MHz
+        w
+    });
+    p.CCU.spi_bgr.modify(|_r, w| {
+        w.spi1_gating().pass().spi1_rst().deassert();
+        w
+    });
+
+
+    p.GPIO.pd_cfg1.write(|w| {
+        w.pd10_select().spi1_cs_dbi_csx();
+        w.pd11_select().spi1_clk_dbi_sclk();
+        w.pd12_select().spi1_mosi_dbi_sdo();
+        w
+    });
+    p.GPIO.pd_pull0.write(|w| {
+        w.pd10_pull().pull_disable();
+        w.pd11_pull().pull_disable();
+        w.pd12_pull().pull_disable();
+        w
+    });
+
+    // ///////
+
+    spi1.spi_gcr.write(|w| {
+        w.tp_en().normal();
+        w.mode().master();
+        w.en().enable();
+        w
+    });
+    spi1.spi_tcr.write(|w| {
+        w.ss_owner().spi_controller();
+        // w.cpol().low();
+        // w.cpha().p0();
+        w.fbs().lsb();
+        w.spol().clear_bit();
+        w
+    });
+    spi1.spi_fcr.modify(|_r, w| {
+        w.tf_drq_en().enable();
+        w
+    });
+
     // Timer0 is used as a freewheeling rolling timer.
     // Timer1 is used to generate "sleep until" interrupts
     //
@@ -73,6 +126,76 @@ fn main() -> ! {
         w.dma0_queue_irq_en().enabled();
         w
     });
+
+    // Initialize SPI stuff
+    k.initialize(async move {
+        SpiSender::register(k, 4).await.unwrap();
+    })
+    .unwrap();
+
+    k.initialize(async move {
+        k.sleep(Duration::from_millis(100)).await;
+        let mut spim = SpiSender::from_registry(k).await.unwrap();
+        // println!("GOT SPIM");
+        // SPI_BCC (0:23 and 24:27)
+        // SPI_MTC and SPI_MBC
+        // Start SPI_TCR(31)
+
+        loop {
+            k.sleep(Duration::from_millis(100)).await;
+            let mut msg_1 = k.heap().allocate_array_with(|| 0, 2).await;
+            msg_1.copy_from_slice(&[0x04, 0x00]);
+            if spim.send_wait(msg_1).await.is_ok() {
+                break;
+            }
+            // println!("WHAT");
+        }
+
+        // println!("CLEAR");
+
+        k.sleep(Duration::from_millis(100)).await;
+
+
+        // Loop, toggling the VCOM
+        let mut vcom = true;
+        let mut ctr = 0u32;
+        let mut cmp = 0;
+        let mut linebuf = k.heap().allocate_array_with(|| 0, (52 * 240) + 2).await;
+
+        let forever = [0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
+        let mut forever = forever.iter().copied().cycle();
+
+        loop {
+            k.sleep(Duration::from_millis(50)).await;
+            // println!("DISPLAY");
+            // Send a pattern
+            let vc = if vcom {
+                0x02
+            } else {
+                0x00
+            };
+            linebuf[0] = 0x01 | vc;
+
+            for (line, chunk) in linebuf.chunks_exact_mut(52).enumerate() {
+                chunk[1] = (line as u8) + 1;
+
+                let val = forever.next().unwrap();
+
+                for b in &mut chunk[2..] {
+                    *b = val;
+                }
+            }
+
+            linebuf = spim.send_wait(linebuf).await.map_err(drop).unwrap();
+
+            if (ctr % 16) == 0 {
+                vcom = !vcom;
+            }
+            ctr = ctr.wrapping_add(1);
+            cmp = cmp ^ 0b1;
+        }
+    })
+    .unwrap();
 
     // Initialize LED loop
     k.initialize(async move {
@@ -240,6 +363,10 @@ fn handle_dmac() {
     dmac.dmac_irq_pend0.modify(|r, w| {
         if r.dma0_queue_irq_pend().bit_is_set() {
             D1Uart::tx_done_waker().wake();
+        }
+
+        if r.dma1_queue_irq_pend().bit_is_set() {
+            SPI1_TX_DONE.wake();
         }
 
         // Will write-back and high bits

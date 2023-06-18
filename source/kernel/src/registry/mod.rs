@@ -5,7 +5,7 @@ use mnemos_alloc::{containers::HeapFixedVec, heap::HeapGuard};
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use spitebuf::EnqueueError;
-use uuid::{uuid, Uuid};
+pub use uuid::{uuid, Uuid};
 
 use crate::comms::{
     bbq,
@@ -445,6 +445,18 @@ impl<P> Envelope<P> {
             service_id: self.service_id,
             client_id: self.client_id,
             request_id: RequestResponseId::new(self.request_id.id(), MessageKind::Response),
+        }
+    }
+
+    pub fn reply_with2<F, U>(self, f: F) -> Envelope<U>
+    where
+        F: FnOnce(P) -> U
+    {
+        Envelope {
+            service_id: self.service_id,
+            client_id: self.client_id,
+            request_id: RequestResponseId::new(self.request_id.id(), MessageKind::Response),
+            body: f(self.body),
         }
     }
 }
