@@ -457,7 +457,7 @@ impl<P> Envelope<P> {
     /// the response.
     pub fn reply_with_body<F, U>(self, f: F) -> Envelope<U>
     where
-        F: FnOnce(P) -> U
+        F: FnOnce(P) -> U,
     {
         Envelope {
             service_id: self.service_id,
