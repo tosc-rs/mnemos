@@ -115,7 +115,7 @@ impl Forth {
                 Err(error) => {
                     tracing::error!(?error);
                     // TODO(ajm): Provide some kind of fixed length error string?
-                    const ERROR: &[u8] = b"ERROR.";
+                    const ERROR: &[u8] = b"ERROR.\n";
                     let mut send = self.stdio.producer().send_grant_exact(ERROR.len()).await;
                     send.copy_from_slice(ERROR);
                     send.commit(ERROR.len());

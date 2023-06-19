@@ -316,10 +316,13 @@ async fn kernel_entry(opts: MelpomeneOptions) {
                             tracing::trace!(len, "Received output from TID0");
                             for &b in output.iter() {
                                 // TODO(eliza): what if this errors lol
-                                let _ = rline.append_remote_char(b);
+                                if b == b'\n' {
+                                    rline.submit_remote_editing();
+                                } else {
+                                    let _ = rline.append_remote_char(b);
+                                }
                             }
                             output.release(len);
-                            rline.submit_remote_editing();
                         }
                     }
                 }
