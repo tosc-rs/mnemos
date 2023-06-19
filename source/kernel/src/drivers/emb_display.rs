@@ -18,16 +18,10 @@
 //! them back to be rendered into the total frame. Any data in the client's sub-frame
 //! will replace the current contents of the whole frame buffer.
 
-// use std::time::Duration;
-
 use embedded_graphics::{
     pixelcolor::{Gray8, GrayColor},
     prelude::*,
 };
-// use embedded_graphics_simulator::{
-//     BinaryColorTheme, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
-// };
-// use maitake::sync::Mutex;
 use crate::{
     comms::oneshot::Reusable,
     registry::{Envelope, KernelHandle, RegisteredDriver, ReplyTo},
