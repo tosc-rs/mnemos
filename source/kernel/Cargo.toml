@@ -34,6 +34,7 @@ default-features = false
 [dependencies.tracing-01]
 package = "tracing"
 version = "0.1.35"
+features = ["attributes"]
 default-features = false
 optional = true
 

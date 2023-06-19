@@ -5,8 +5,9 @@ use crate::{
         kchannel::{KChannel, KConsumer},
         oneshot::Reusable,
     },
+    drivers::simple_serial::SimpleSerial,
     registry::{
-        simple_serial::SimpleSerial, Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo,
+        Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo,
     },
     Kernel,
 };
