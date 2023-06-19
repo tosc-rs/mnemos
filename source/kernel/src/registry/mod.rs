@@ -628,4 +628,3 @@ where
         .enqueue_sync(msg)
         .map_err(|_| UserHandlerError::QueueFull)
 }
-

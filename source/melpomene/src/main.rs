@@ -12,13 +12,13 @@ use futures::FutureExt;
 use input_mgr::RingLine;
 use melpomene::{
     cli::{self, MelpomeneOptions},
-    sim_drivers::{
-        emb_display::{EmbDisplay, EmbDisplayHandle},
-        tcp_serial::TcpSerial,
-    },
+    sim_drivers::{emb_display::SimDisplay, tcp_serial::TcpSerial},
 };
 use mnemos_kernel::{
-    drivers::serial_mux::{SerialMux, SerialMuxHandle},
+    drivers::{
+        emb_display::EmbDisplayHandle,
+        serial_mux::{SerialMux, SerialMuxHandle},
+    },
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -152,7 +152,7 @@ async fn kernel_entry(opts: MelpomeneOptions) {
             drop(mux_hdl);
 
             // Spawn the graphics driver
-            EmbDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
+            SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
                 .await
                 .unwrap();
 

@@ -3,10 +3,8 @@ use mnemos_kernel::{
         bbq::{new_bidi_channel, BidiHandle},
         kchannel::KChannel,
     },
-    registry::{
-        simple_serial::{Request, Response, SimpleSerial, SimpleSerialError},
-        Message,
-    },
+    drivers::simple_serial::{Request, Response, SimpleSerial, SimpleSerialError},
+    registry::Message,
     Kernel,
 };
 use std::{net::SocketAddr, sync::Arc};

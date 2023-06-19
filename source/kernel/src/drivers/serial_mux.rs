@@ -6,9 +6,7 @@ use crate::{
         oneshot::Reusable,
     },
     drivers::simple_serial::SimpleSerial,
-    registry::{
-        Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo,
-    },
+    registry::{Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo},
     Kernel,
 };
 use maitake::sync::Mutex;
@@ -16,9 +14,7 @@ use mnemos_alloc::containers::{HeapArc, HeapArray, HeapFixedVec};
 use uuid::Uuid;
 
 /// SerialMux is the registered driver type
-pub struct SerialMux {
-    _inner: (),
-}
+pub struct SerialMux;
 
 /// A PortHandle is the interface received after opening a virtual serial port
 pub struct PortHandle {
