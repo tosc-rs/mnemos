@@ -3,7 +3,7 @@ use mnemos_kernel::{
         bbq::{new_bidi_channel, BidiHandle},
         kchannel::KChannel,
     },
-    drivers::simple_serial::{Request, Response, SimpleSerialService, SimpleSerialError},
+    drivers::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     registry::Message,
     Kernel,
 };

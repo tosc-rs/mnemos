@@ -17,7 +17,7 @@ use melpomene::{
 use mnemos_kernel::{
     drivers::{
         emb_display::EmbDisplayClient,
-        serial_mux::{SerialMuxService, SerialMuxClient},
+        serial_mux::{SerialMuxClient, SerialMuxService},
     },
     Kernel, KernelSettings,
 };

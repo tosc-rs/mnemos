@@ -11,7 +11,7 @@ use drivers::{
     Ram,
 };
 use kernel::{
-    drivers::serial_mux::{RegistrationError, SerialMuxService, SerialMuxClient},
+    drivers::serial_mux::{RegistrationError, SerialMuxClient, SerialMuxService},
     Kernel, KernelSettings,
 };
 use uart::D1Uart;

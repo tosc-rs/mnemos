@@ -15,7 +15,7 @@ use kernel::{
         bbq::{new_bidi_channel, BidiHandle, Consumer, GrantW, SpscProducer},
         kchannel::{KChannel, KConsumer},
     },
-    drivers::simple_serial::{Request, Response, SimpleSerialService, SimpleSerialError},
+    drivers::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     maitake::sync::WaitCell,
     registry::Message,
     Kernel,
