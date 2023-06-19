@@ -32,7 +32,7 @@ use maitake::sync::Mutex;
 use mnemos_alloc::containers::HeapArray;
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
-    drivers::emb_display::{EmbDisplay, FrameChunk, FrameError, Request, Response},
+    drivers::emb_display::{EmbDisplayService, FrameChunk, FrameError, Request, Response},
     registry::Message,
     Kernel,
 };
@@ -66,7 +66,7 @@ impl SimDisplay {
         kernel.spawn(commander.run(width, height)).await;
 
         kernel
-            .with_registry(|reg| reg.register_konly::<EmbDisplay>(&cmd_prod))
+            .with_registry(|reg| reg.register_konly::<EmbDisplayService>(&cmd_prod))
             .await
             .map_err(|_| FrameError::DisplayAlreadyExists)?;
 
@@ -83,7 +83,7 @@ impl SimDisplay {
 /// framebuffer.
 struct CommanderTask {
     kernel: &'static Kernel,
-    cmd: KConsumer<Message<EmbDisplay>>,
+    cmd: KConsumer<Message<EmbDisplayService>>,
     display_info: DisplayInfo,
 }
 

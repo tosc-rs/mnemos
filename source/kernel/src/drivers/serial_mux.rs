@@ -5,7 +5,7 @@ use crate::{
         kchannel::{KChannel, KConsumer},
         oneshot::Reusable,
     },
-    drivers::simple_serial::SimpleSerial,
+    drivers::simple_serial::SimpleSerialClient,
     registry::{Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo},
     Kernel,
 };
@@ -13,22 +13,23 @@ use maitake::sync::Mutex;
 use mnemos_alloc::containers::{HeapArc, HeapArray, HeapFixedVec};
 use uuid::Uuid;
 
+////////////////////////////////////////////////////////////////////////////////
+// Service Definition
+////////////////////////////////////////////////////////////////////////////////
+
 /// SerialMux is the registered driver type
-pub struct SerialMux;
+pub struct SerialMuxService;
 
-/// A PortHandle is the interface received after opening a virtual serial port
-pub struct PortHandle {
-    port: u16,
-    cons: bbq::Consumer,
-    outgoing: bbq::MpscProducer,
-    max_frame: usize,
+impl RegisteredDriver for SerialMuxService {
+    type Request = Request;
+    type Response = Response;
+    type Error = SerialMuxError;
+    const UUID: Uuid = crate::registry::known_uuids::kernel::SERIAL_MUX;
 }
 
-/// A SerialMuxHandle is the client interface of the [SerialMux].
-pub struct SerialMuxHandle {
-    prod: KernelHandle<SerialMux>,
-    reply: Reusable<Envelope<Result<Response, SerialMuxError>>>,
-}
+////////////////////////////////////////////////////////////////////////////////
+// Message and Error Types
+////////////////////////////////////////////////////////////////////////////////
 
 pub enum Request {
     RegisterPort { port_id: u16, capacity: usize },
@@ -44,53 +45,90 @@ pub enum SerialMuxError {
     RegistryFull,
 }
 
-struct PortInfo {
+/// A PortHandle is the interface received after opening a virtual serial port
+pub struct PortHandle {
     port: u16,
-    upstream: bbq::SpscProducer,
-}
-
-struct MuxingInfo {
-    kernel: &'static Kernel,
-    ports: HeapFixedVec<PortInfo>,
+    cons: bbq::Consumer,
+    outgoing: bbq::MpscProducer,
     max_frame: usize,
 }
 
-struct CommanderTask {
-    cmd: KConsumer<Message<SerialMux>>,
-    out: bbq::MpscProducer,
-    mux: HeapArc<Mutex<MuxingInfo>>,
+////////////////////////////////////////////////////////////////////////////////
+// Client Definition
+////////////////////////////////////////////////////////////////////////////////
+
+/// A SerialMuxHandle is the client interface of the [SerialMux].
+pub struct SerialMuxClient {
+    prod: KernelHandle<SerialMuxService>,
+    reply: Reusable<Envelope<Result<Response, SerialMuxError>>>,
 }
 
-struct IncomingMuxerTask {
-    buf: HeapArray<u8>,
-    idx: usize,
-    incoming: bbq::Consumer,
-    mux: HeapArc<Mutex<MuxingInfo>>,
+impl SerialMuxClient {
+    pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
+        let prod = kernel
+            .with_registry(|reg| reg.get::<SerialMuxService>())
+            .await?;
+
+        Some(SerialMuxClient {
+            prod,
+            reply: Reusable::new_async(kernel).await,
+        })
+    }
+
+    pub async fn open_port(&mut self, port_id: u16, capacity: usize) -> Option<PortHandle> {
+        self.prod
+            .send(
+                Request::RegisterPort { port_id, capacity },
+                ReplyTo::OneShot(self.reply.sender().await.ok()?),
+            )
+            .await
+            .ok()?;
+
+        let resp = self.reply.receive().await.ok()?;
+        let body = resp.body.ok()?;
+
+        let Response::PortRegistered(port) = body;
+        Some(port)
+    }
 }
 
-// impl SerialMux
+impl PortHandle {
+    pub fn port(&self) -> u16 {
+        self.port
+    }
 
-impl RegisteredDriver for SerialMux {
-    type Request = Request;
-    type Response = Response;
-    type Error = SerialMuxError;
-    const UUID: Uuid = crate::registry::known_uuids::kernel::SERIAL_MUX;
+    pub fn consumer(&self) -> &bbq::Consumer {
+        &self.cons
+    }
+
+    pub async fn send(&self, data: &[u8]) {
+        // This is lazy, and could probably be done with bigger chunks.
+        let msg_chunk = self.max_frame / 2;
+
+        for chunk in data.chunks(msg_chunk) {
+            let enc_chunk = cobs::max_encoding_length(chunk.len() + 2);
+            let mut wgr = self.outgoing.send_grant_exact(enc_chunk + 1).await;
+            let mut encoder = cobs::CobsEncoder::new(&mut wgr);
+            encoder.push(&self.port.to_le_bytes()).unwrap();
+            encoder.push(chunk).unwrap();
+            let used = encoder.finalize().unwrap();
+            wgr[used] = 0;
+            wgr.commit(used + 1);
+        }
+    }
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum RegistrationError {
-    SerialPortNotFound,
-    NoSerialPortAvailable,
-    MuxAlreadyRegistered,
-}
+////////////////////////////////////////////////////////////////////////////////
+// Server Definition
+////////////////////////////////////////////////////////////////////////////////
 
-impl SerialMux {
+impl SerialMuxService {
     pub async fn register(
         kernel: &'static Kernel,
         max_ports: usize,
         max_frame: usize,
     ) -> Result<(), RegistrationError> {
-        let mut serial_handle = SimpleSerial::from_registry(kernel)
+        let mut serial_handle = SimpleSerialClient::from_registry(kernel)
             .await
             .ok_or(RegistrationError::SerialPortNotFound)?;
         let serial_port = serial_handle
@@ -133,7 +171,7 @@ impl SerialMux {
             .await;
 
         kernel
-            .with_registry(|reg| reg.register_konly::<SerialMux>(&cmd_prod))
+            .with_registry(|reg| reg.register_konly::<SerialMuxService>(&cmd_prod))
             .await
             .map_err(|_| RegistrationError::MuxAlreadyRegistered)?;
 
@@ -141,64 +179,36 @@ impl SerialMux {
     }
 }
 
-// impl PortHandle
-
-impl PortHandle {
-    pub fn port(&self) -> u16 {
-        self.port
-    }
-
-    pub fn consumer(&self) -> &bbq::Consumer {
-        &self.cons
-    }
-
-    pub async fn send(&self, data: &[u8]) {
-        // This is lazy, and could probably be done with bigger chunks.
-        let msg_chunk = self.max_frame / 2;
-
-        for chunk in data.chunks(msg_chunk) {
-            let enc_chunk = cobs::max_encoding_length(chunk.len() + 2);
-            let mut wgr = self.outgoing.send_grant_exact(enc_chunk + 1).await;
-            let mut encoder = cobs::CobsEncoder::new(&mut wgr);
-            encoder.push(&self.port.to_le_bytes()).unwrap();
-            encoder.push(chunk).unwrap();
-            let used = encoder.finalize().unwrap();
-            wgr[used] = 0;
-            wgr.commit(used + 1);
-        }
-    }
+#[derive(Debug, Eq, PartialEq)]
+pub enum RegistrationError {
+    SerialPortNotFound,
+    NoSerialPortAvailable,
+    MuxAlreadyRegistered,
 }
 
-// impl SerialMuxHandle
-
-impl SerialMuxHandle {
-    pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
-        let prod = kernel.with_registry(|reg| reg.get::<SerialMux>()).await?;
-
-        Some(SerialMuxHandle {
-            prod,
-            reply: Reusable::new_async(kernel).await,
-        })
-    }
-
-    pub async fn open_port(&mut self, port_id: u16, capacity: usize) -> Option<PortHandle> {
-        self.prod
-            .send(
-                Request::RegisterPort { port_id, capacity },
-                ReplyTo::OneShot(self.reply.sender().await.ok()?),
-            )
-            .await
-            .ok()?;
-
-        let resp = self.reply.receive().await.ok()?;
-        let body = resp.body.ok()?;
-
-        let Response::PortRegistered(port) = body;
-        Some(port)
-    }
+struct PortInfo {
+    port: u16,
+    upstream: bbq::SpscProducer,
 }
 
-// impl MuxingInfo
+struct MuxingInfo {
+    kernel: &'static Kernel,
+    ports: HeapFixedVec<PortInfo>,
+    max_frame: usize,
+}
+
+struct CommanderTask {
+    cmd: KConsumer<Message<SerialMuxService>>,
+    out: bbq::MpscProducer,
+    mux: HeapArc<Mutex<MuxingInfo>>,
+}
+
+struct IncomingMuxerTask {
+    buf: HeapArray<u8>,
+    idx: usize,
+    incoming: bbq::Consumer,
+    mux: HeapArc<Mutex<MuxingInfo>>,
+}
 
 impl MuxingInfo {
     async fn register_port(

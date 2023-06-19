@@ -18,32 +18,36 @@
 //! them back to be rendered into the total frame. Any data in the client's sub-frame
 //! will replace the current contents of the whole frame buffer.
 
-use embedded_graphics::{
-    pixelcolor::{Gray8, GrayColor},
-    prelude::*,
-};
 use crate::{
     comms::oneshot::Reusable,
     registry::{Envelope, KernelHandle, RegisteredDriver, ReplyTo},
     Kernel,
 };
+use embedded_graphics::{
+    pixelcolor::{Gray8, GrayColor},
+    prelude::*,
+};
 use mnemos_alloc::containers::HeapArray;
 use uuid::Uuid;
 
-//////////////////////////////////////////////////////////////////////////////
-// EmbDisplay - This is the "driver type"
-//////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+// Service Definition
+////////////////////////////////////////////////////////////////////////////////
 
 // Registered driver
-pub struct EmbDisplay;
+pub struct EmbDisplayService;
 
 // impl EmbDisplay
-impl RegisteredDriver for EmbDisplay {
+impl RegisteredDriver for EmbDisplayService {
     type Request = Request;
     type Response = Response;
     type Error = FrameError;
     const UUID: Uuid = crate::registry::known_uuids::kernel::EMB_DISPLAY;
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// Message and Error Types
+////////////////////////////////////////////////////////////////////////////////
 
 /// These are all of the possible requests from client to server
 pub enum Request {
@@ -80,23 +84,25 @@ pub enum FrameError {
     NoSuchFrame,
 }
 
-//////////////////////////////////////////////////////////////////////////////
-// EmbDisplayHandle - This is the "client interface"
-//////////////////////////////////////////////////////////////////////////////
+////////////////////////////////////////////////////////////////////////////////
+// Client Definition
+////////////////////////////////////////////////////////////////////////////////
 
 /// Client interface to EmbDisplay
-pub struct EmbDisplayHandle {
-    prod: KernelHandle<EmbDisplay>,
+pub struct EmbDisplayClient {
+    prod: KernelHandle<EmbDisplayService>,
     reply: Reusable<Envelope<Result<Response, FrameError>>>,
 }
 
-impl EmbDisplayHandle {
+impl EmbDisplayClient {
     /// Obtain a new client handle by querying the registry for a registered
     /// [EmbDisplay] server
     pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
-        let prod = kernel.with_registry(|reg| reg.get::<EmbDisplay>()).await?;
+        let prod = kernel
+            .with_registry(|reg| reg.get::<EmbDisplayService>())
+            .await?;
 
-        Some(EmbDisplayHandle {
+        Some(EmbDisplayClient {
             prod,
             reply: Reusable::new_async(kernel).await,
         })
@@ -156,11 +162,7 @@ impl EmbDisplayHandle {
     }
 }
 
-//////////////////////////////////////////////////////////////////////////////
-// FrameChunk - little mini frame buffer pieces
-//////////////////////////////////////////////////////////////////////////////
-
-// FrameChunk is recieved after client has sent a request for one
+/// FrameChunk is recieved after client has sent a request for one
 pub struct FrameChunk {
     pub frame_id: u16,
     pub bytes: HeapArray<u8>,

@@ -4,7 +4,7 @@ use crate::{
         bbq,
         kchannel::{KChannel, KConsumer, KProducer},
     },
-    drivers::serial_mux::{PortHandle, SerialMuxHandle},
+    drivers::serial_mux::{PortHandle, SerialMuxClient},
     Kernel,
 };
 use core::{any::TypeId, future::Future, ptr::NonNull, time::Duration};
@@ -315,7 +315,7 @@ async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     // We could codify that zero is an invalid BOH_TOKEN, and put zero on the
     // stack instead, to allow userspace to handle errors if wanted.
     //
-    let mut mux_hdl = SerialMuxHandle::from_registry(forth.host_ctxt.kernel)
+    let mut mux_hdl = SerialMuxClient::from_registry(forth.host_ctxt.kernel)
         .await
         .ok_or(forth3::Error::InternalError)?;
 

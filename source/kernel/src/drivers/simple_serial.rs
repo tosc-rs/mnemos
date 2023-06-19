@@ -6,9 +6,30 @@ use crate::Kernel;
 
 use crate::registry::{known_uuids, Envelope, KernelHandle, RegisteredDriver, ReplyTo};
 
-pub struct SimpleSerial {
-    kprod: KernelHandle<SimpleSerial>,
-    rosc: Reusable<Envelope<Result<Response, SimpleSerialError>>>,
+////////////////////////////////////////////////////////////////////////////////
+// Service Definition
+////////////////////////////////////////////////////////////////////////////////
+
+pub struct SimpleSerialService;
+
+impl RegisteredDriver for SimpleSerialService {
+    type Request = Request;
+    type Response = Response;
+    type Error = SimpleSerialError;
+
+    const UUID: Uuid = known_uuids::kernel::SIMPLE_SERIAL_PORT;
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Message and Error Types
+////////////////////////////////////////////////////////////////////////////////
+
+pub enum Request {
+    GetPort,
+}
+
+pub enum Response {
+    PortHandle { handle: BidiHandle },
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -16,13 +37,22 @@ pub enum SimpleSerialError {
     AlreadyAssignedPort,
 }
 
-impl SimpleSerial {
+////////////////////////////////////////////////////////////////////////////////
+// Client Definition
+////////////////////////////////////////////////////////////////////////////////
+
+pub struct SimpleSerialClient {
+    kprod: KernelHandle<SimpleSerialService>,
+    rosc: Reusable<Envelope<Result<Response, SimpleSerialError>>>,
+}
+
+impl SimpleSerialClient {
     pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
         let kprod = kernel
-            .with_registry(|reg| reg.get::<SimpleSerial>())
+            .with_registry(|reg| reg.get::<SimpleSerialService>())
             .await?;
 
-        Some(SimpleSerial {
+        Some(SimpleSerialClient {
             kprod,
             rosc: Reusable::new_async(kernel).await,
         })
@@ -41,20 +71,4 @@ impl SimpleSerial {
         let Response::PortHandle { handle } = resp.body.ok()?;
         Some(handle)
     }
-}
-
-impl RegisteredDriver for SimpleSerial {
-    type Request = Request;
-    type Response = Response;
-    type Error = SimpleSerialError;
-
-    const UUID: Uuid = known_uuids::kernel::SIMPLE_SERIAL_PORT;
-}
-
-pub enum Request {
-    GetPort,
-}
-
-pub enum Response {
-    PortHandle { handle: BidiHandle },
 }
