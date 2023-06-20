@@ -187,20 +187,25 @@ fn main() -> ! {
 
     timer0.start_counter(0xFFFF_FFFF);
 
+    let mut last = timer0.current_value();
     loop {
+        // Timer is downcounting
+        let now = timer0.current_value();
+        let elapsed = last.wrapping_sub(now);
+        last = now;
+        let turn = k.timer().force_advance_ticks(elapsed.into());
+
         // Tick the scheduler
-        let start = timer0.current_value();
         let tick = k.tick();
 
-        // Timer is downcounting
-        let elapsed = start.wrapping_sub(timer0.current_value());
+        let now = timer0.current_value();
+        let elapsed = last.wrapping_sub(now);
+        last = now;
         let turn = k.timer().force_advance_ticks(elapsed.into());
 
         // If there is nothing else scheduled, and we didn't just wake something up,
         // sleep for some amount of time
         if !tick.has_remaining && turn.expired != 0 {
-            let wfi_start = timer0.current_value();
-
             // TODO(AJM): Sometimes there is no "next" in the timer wheel, even though there should
             // be. Don't take lack of timer wheel presence as the ONLY heuristic of whether we
             // should just wait for SOME interrupt to occur. For now, force a max sleep of 100ms
@@ -225,8 +230,10 @@ fn main() -> ! {
             timer1.stop();
 
             // Account for time slept
-            let elapsed = wfi_start.wrapping_sub(timer0.current_value());
-            let _turn = k.timer().force_advance_ticks(elapsed.into());
+            let now = timer0.current_value();
+            let elapsed = last.wrapping_sub(now);
+            last = now;
+            let turn = k.timer().force_advance_ticks(elapsed.into());
         }
     }
 }
