@@ -57,7 +57,7 @@ pub struct PortHandle {
 // Client Definition
 ////////////////////////////////////////////////////////////////////////////////
 
-/// A SerialMuxHandle is the client interface of the [SerialMux].
+/// A SerialMuxClient is the client interface of the [SerialMux].
 pub struct SerialMuxClient {
     prod: KernelHandle<SerialMuxService>,
     reply: Reusable<Envelope<Result<Response, SerialMuxError>>>,

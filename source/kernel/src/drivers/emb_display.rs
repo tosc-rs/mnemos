@@ -36,7 +36,11 @@ use uuid::Uuid;
 // Service Definition
 ////////////////////////////////////////////////////////////////////////////////
 
-// Registered driver
+/// Registered driver type for the `EmbDisplay` service.
+///
+/// This module provides an implementation of the client for this service, but
+/// not the server. A server implementing this service must be provided by the
+/// hardware platform implementation.
 pub struct EmbDisplayService;
 
 // impl EmbDisplay
@@ -185,9 +189,8 @@ impl DrawTarget for FrameChunk {
         I: IntoIterator<Item = Pixel<Self::Color>>,
     {
         for Pixel(coord, color) in pixels.into_iter() {
-            let (x, y): (u32, u32) = match coord.try_into() {
-                Ok(c) => c,
-                Err(_) => continue,
+            let Ok((x, y)): Result<(u32, u32) , _> =  coord.try_into() else {
+                continue;
             };
             if x >= self.width {
                 continue;
