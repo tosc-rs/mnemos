@@ -1,7 +1,6 @@
 //! Simulated display driver
 //!
-//! This is an early attempt at a "frame buffer" style display driver. It uses the
-//! embedded-graphics simulator crate to act as a display in simulated environments.
+//! This is an early attempt at a "frame buffer" style display driver.
 //!
 //! This implementation is sort of a work in progress, it isn't really a *great*
 //! long-term solution, but rather "okay for now".
@@ -17,6 +16,9 @@
 //! Clients of the driver can draw into the sub-frames that they receive, then send
 //! them back to be rendered into the total frame. Any data in the client's sub-frame
 //! will replace the current contents of the whole frame buffer.
+//!
+//! The current server assumes 8 bits per pixel, which is implementation defined for
+//! color/greyscale format (sorry).
 
 use crate::{
     comms::oneshot::Reusable,
