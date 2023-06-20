@@ -17,7 +17,7 @@ use melpomene::{
 use mnemos_kernel::{
     drivers::{
         emb_display::EmbDisplayClient,
-        serial_mux::{SerialMuxClient, SerialMuxService},
+        serial_mux::{SerialMuxClient, SerialMuxServer},
     },
     Kernel, KernelSettings,
 };
@@ -144,7 +144,7 @@ async fn kernel_entry(opts: MelpomeneOptions) {
             // a new virtual mux, and configuring it with:
             // * Up to 4 virtual ports max
             // * Framed messages up to 512 bytes max each
-            SerialMuxService::register(k, 4, 512).await.unwrap();
+            SerialMuxServer::register(k, 4, 512).await.unwrap();
 
             let mut mux_hdl = SerialMuxClient::from_registry(k).await.unwrap();
             let p0 = mux_hdl.open_port(0, 1024).await.unwrap();

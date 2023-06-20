@@ -122,7 +122,9 @@ impl PortHandle {
 // Server Definition
 ////////////////////////////////////////////////////////////////////////////////
 
-impl SerialMuxService {
+pub struct SerialMuxServer;
+
+impl SerialMuxServer {
     pub async fn register(
         kernel: &'static Kernel,
         max_ports: usize,
