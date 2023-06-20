@@ -59,14 +59,11 @@ impl SimpleSerialClient {
     }
 
     pub async fn get_port(&mut self) -> Option<BidiHandle> {
-        self.kprod
-            .send(
-                Request::GetPort,
-                ReplyTo::OneShot(self.rosc.sender().await.ok()?),
-            )
+        let resp = self
+            .kprod
+            .request_oneshot(Request::GetPort, &self.rosc)
             .await
             .ok()?;
-        let resp = self.rosc.receive().await.ok()?;
 
         let Response::PortHandle { handle } = resp.body.ok()?;
         Some(handle)

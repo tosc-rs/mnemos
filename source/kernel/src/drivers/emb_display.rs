@@ -140,20 +140,19 @@ impl EmbDisplayClient {
         width: u32,
         height: u32,
     ) -> Option<FrameChunk> {
-        self.prod
-            .send(
+        let resp = self
+            .prod
+            .request_oneshot(
                 Request::NewFrameChunk {
                     start_x,
                     start_y,
                     width,
                     height,
                 },
-                ReplyTo::OneShot(self.reply.sender().await.ok()?),
+                &self.reply,
             )
             .await
             .ok()?;
-
-        let resp = self.reply.receive().await.ok()?;
         let body = resp.body.ok()?;
 
         if let Response::FrameChunkAllocated(frame) = body {
