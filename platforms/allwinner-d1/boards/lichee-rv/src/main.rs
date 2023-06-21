@@ -11,7 +11,7 @@ use drivers::{
     Ram,
 };
 use kernel::{
-    drivers::serial_mux::{RegistrationError, SerialMux, SerialMuxHandle},
+    drivers::serial_mux::{RegistrationError, SerialMuxClient, SerialMuxServer},
     Kernel, KernelSettings,
 };
 use uart::D1Uart;
@@ -104,7 +104,7 @@ fn main() -> ! {
             // a new virtual mux, and configuring it with:
             // * Up to 16 virtual ports max
             // * Framed messages up to 512 bytes max each
-            match SerialMux::register(k, 16, 512).await {
+            match SerialMuxServer::register(k, 16, 512).await {
                 Ok(_) => break,
                 Err(RegistrationError::SerialPortNotFound) => {
                     // Uart probably isn't registered yet. Try again in a bit
@@ -121,7 +121,7 @@ fn main() -> ! {
     // Loopback on virtual port zero
     k.initialize(async move {
         let mut hdl = loop {
-            match SerialMuxHandle::from_registry(k).await {
+            match SerialMuxClient::from_registry(k).await {
                 Some(c) => break c,
                 None => {
                     k.sleep(Duration::from_millis(100)).await;
@@ -142,7 +142,7 @@ fn main() -> ! {
 
     k.initialize(async move {
         let mut hdl = loop {
-            match SerialMuxHandle::from_registry(k).await {
+            match SerialMuxClient::from_registry(k).await {
                 Some(c) => break c,
                 None => {
                     k.sleep(Duration::from_millis(100)).await;

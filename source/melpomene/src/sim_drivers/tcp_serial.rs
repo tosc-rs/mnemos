@@ -3,10 +3,8 @@ use mnemos_kernel::{
         bbq::{new_bidi_channel, BidiHandle},
         kchannel::KChannel,
     },
-    registry::{
-        simple_serial::{Request, Response, SimpleSerial, SimpleSerialError},
-        Message,
-    },
+    drivers::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
+    registry::Message,
     Kernel,
 };
 use std::{net::SocketAddr, sync::Arc};
@@ -30,7 +28,7 @@ impl TcpSerial {
         irq: Arc<Notify>,
     ) -> Result<(), ()> {
         let (a_ring, b_ring) = new_bidi_channel(kernel.heap(), incoming_size, outgoing_size).await;
-        let (prod, cons) = KChannel::<Message<SimpleSerial>>::new_async(kernel, 2)
+        let (prod, cons) = KChannel::<Message<SimpleSerialService>>::new_async(kernel, 2)
             .await
             .split();
 
@@ -82,7 +80,7 @@ impl TcpSerial {
         );
 
         kernel
-            .with_registry(|reg| reg.register_konly::<SimpleSerial>(&prod))
+            .with_registry(|reg| reg.register_konly::<SimpleSerialService>(&prod))
             .await
             .map_err(drop)
     }

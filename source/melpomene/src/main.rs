@@ -12,13 +12,13 @@ use futures::FutureExt;
 use input_mgr::RingLine;
 use melpomene::{
     cli::{self, MelpomeneOptions},
-    sim_drivers::{
-        emb_display::{EmbDisplay, EmbDisplayHandle},
-        tcp_serial::TcpSerial,
-    },
+    sim_drivers::{emb_display::SimDisplay, tcp_serial::TcpSerial},
 };
 use mnemos_kernel::{
-    drivers::serial_mux::{SerialMux, SerialMuxHandle},
+    drivers::{
+        emb_display::EmbDisplayClient,
+        serial_mux::{SerialMuxClient, SerialMuxServer},
+    },
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -144,15 +144,15 @@ async fn kernel_entry(opts: MelpomeneOptions) {
             // a new virtual mux, and configuring it with:
             // * Up to 4 virtual ports max
             // * Framed messages up to 512 bytes max each
-            SerialMux::register(k, 4, 512).await.unwrap();
+            SerialMuxServer::register(k, 4, 512).await.unwrap();
 
-            let mut mux_hdl = SerialMuxHandle::from_registry(k).await.unwrap();
+            let mut mux_hdl = SerialMuxClient::from_registry(k).await.unwrap();
             let p0 = mux_hdl.open_port(0, 1024).await.unwrap();
             let p1 = mux_hdl.open_port(1, 1024).await.unwrap();
             drop(mux_hdl);
 
             // Spawn the graphics driver
-            EmbDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
+            SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
                 .await
                 .unwrap();
 
@@ -194,11 +194,11 @@ async fn kernel_entry(opts: MelpomeneOptions) {
 
         // Take Port 2 from the serial mux. This corresponds to TCP port 10002 when
         // you are running crowtty
-        let mut mux_hdl = SerialMuxHandle::from_registry(k).await.unwrap();
+        let mut mux_hdl = SerialMuxClient::from_registry(k).await.unwrap();
         let p2 = mux_hdl.open_port(2, 1024).await.unwrap();
         drop(mux_hdl);
 
-        let mut disp_hdl = EmbDisplayHandle::from_registry(k).await.unwrap();
+        let mut disp_hdl = EmbDisplayClient::from_registry(k).await.unwrap();
         let char_y = PROFONT_12_POINT.character_size.height;
         let char_x = PROFONT_12_POINT.character_size.width + PROFONT_12_POINT.character_spacing;
 
