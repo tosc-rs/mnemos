@@ -311,7 +311,6 @@ async fn kernel_entry(opts: MelpomeneOptions) {
 
     k.initialize(graphics_console).unwrap();
 
-    let mut last_also_done = false;
     loop {
         // Tick the scheduler
         let t0 = tokio::time::Instant::now();
@@ -320,32 +319,27 @@ async fn kernel_entry(opts: MelpomeneOptions) {
         // advance the timer (don't take more than 500k years)
         let ticks = t0.elapsed().as_micros() as u64;
         let turn = k.timer().force_advance_ticks(ticks);
-        tracing::warn!("advanced timer by {ticks:?}");
+        tracing::trace!("advanced timer by {ticks:?}");
 
         // If there is nothing else scheduled, and we didn't just wake something up,
         // sleep for some amount of time
         if turn.expired == 0 && !tick.has_remaining {
-            if !last_also_done {
-                last_also_done = true;
-                continue;
-            }
-            last_also_done = false;
             let wfi_start = tokio::time::Instant::now();
             // if no timers have expired on this tick, we should sleep until the
             // next timer expires *or* something is woken by I/O, to simulate a
             // hardware platform waiting for an interrupt.
-            tracing::warn!("waiting for an interrupt...");
+            tracing::debug!("waiting for an interrupt...");
 
             // Cap out at 100ms, just in case sim services aren't using the IRQ
             let amount = turn.ticks_to_next_deadline().unwrap_or(100 * 1000); // 1 ticks per us, 1000 us per ms, 100ms sleep
-            tracing::warn!("next timer expires in {amount:?}us");
+            tracing::debug!("next timer expires in {amount:?}us");
             // wait for an "interrupt"
             futures::select! {
                 _ = irq.notified().fuse() => {
-                    tracing::warn!("...woken by I/O interrupt");
+                    tracing::debug!("...woken by I/O interrupt");
                },
                _ = tokio::time::sleep(Duration::from_micros(amount.into())).fuse() => {
-                    tracing::warn!("woken by timer");
+                    tracing::debug!("woken by timer");
                }
             }
 

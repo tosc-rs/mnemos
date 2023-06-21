@@ -18,7 +18,7 @@
 //! them back to be rendered into the total frame. Any data in the client's sub-frame
 //! will replace the current contents of the whole frame buffer.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use embedded_graphics::{
     image::{Image, ImageRaw},
@@ -121,14 +121,9 @@ impl CommanderTask {
                 let mutex = mutex.clone();
                 async move {
                     loop {
-                        let start = Instant::now();
-                        let interval = Duration::from_micros(1_000_000 / 15);
-                        tracing::warn!("Sleeping for {:?}", interval);
-                        self.kernel.sleep(interval).await;
-                        tracing::warn!("Slept for {:?}", start.elapsed());
-                        if start.elapsed() >= Duration::from_millis(200) {
-                            panic!("TOO LONG");
-                        }
+                        self.kernel
+                            .sleep(Duration::from_micros(1_000_000 / 15))
+                            .await;
                         let mut guard = mutex.lock().await;
                         let mut done = false;
                         if let Some((sdisp, window)) = (&mut *guard).as_mut() {
