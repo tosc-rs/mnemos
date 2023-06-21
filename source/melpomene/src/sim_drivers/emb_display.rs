@@ -37,6 +37,8 @@ use mnemos_kernel::{
     Kernel,
 };
 
+/// Implements the [`EmbDisplayService`] driver using the `embedded-graphics`
+/// simulator.
 pub struct SimDisplay;
 
 impl SimDisplay {

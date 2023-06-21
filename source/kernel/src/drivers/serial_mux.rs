@@ -1,3 +1,11 @@
+//! # Serial Multiplexor
+//!
+//! Allows the creation of virtual "ports" over a single serial link
+//!
+//! This module includes the service definition, client definition, as well
+//! as a server definition that relies on the [SimpleSerial][crate::drivers::simple_serial]
+//! service to provide the service implementation.
+
 use crate::tracing::{debug, warn};
 use crate::{
     comms::{
@@ -6,7 +14,7 @@ use crate::{
         oneshot::Reusable,
     },
     drivers::simple_serial::SimpleSerialClient,
-    registry::{Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo},
+    registry::{Envelope, KernelHandle, Message, RegisteredDriver},
     Kernel,
 };
 use maitake::sync::Mutex;
@@ -57,7 +65,7 @@ pub struct PortHandle {
 // Client Definition
 ////////////////////////////////////////////////////////////////////////////////
 
-/// A SerialMuxHandle is the client interface of the [SerialMux].
+/// A SerialMuxClient is the client interface of the [SerialMux].
 pub struct SerialMuxClient {
     prod: KernelHandle<SerialMuxService>,
     reply: Reusable<Envelope<Result<Response, SerialMuxError>>>,

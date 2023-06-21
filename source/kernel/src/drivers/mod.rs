@@ -5,13 +5,16 @@
 //!
 //! In most cases, these service declarations contain:
 //!
-//! * The [RegisteredDriver][crate::registry::RegisteredDriver] trait implementation
-//! * A definition of a client that can be used to interface with the service
-//! * The Request/Response message types used by a given service
-//!
-//! In some cases, a service server is also provided, typically when the service
-//! has no external dependencies, other than other services declared here in the
-//! kernel. For an example of this, see the [serial_mux] module.
+//! * A **Service**
+//!     * This is the [RegisteredDriver][crate::registry::RegisteredDriver] trait implementation
+//!     * Generally should be an empty/ZST struct
+//!     * Also includes the Request/Response message types used by a given service
+//! * A **Client**
+//!     * The definition of a client that can be used to interface with the service
+//! * *Optionally*, a **Server**
+//!     * typically only when the service has no external dependencies, other than
+//!       other services declared here in the kernel. For an example of this, see
+//!       the [serial_mux] module.
 
 pub mod emb_display;
 pub mod serial_mux;

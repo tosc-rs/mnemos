@@ -1,3 +1,10 @@
+//! # Simple Serial
+//!
+//! This is a basic service that defines some kind of serial port.
+//!
+//! This module only contains the service definition and client definition,
+//! the server must be implemented for the given target platform.
+
 use uuid::Uuid;
 
 use crate::comms::bbq::BidiHandle;
@@ -59,11 +66,14 @@ impl SimpleSerialClient {
     }
 
     pub async fn get_port(&mut self) -> Option<BidiHandle> {
-        let resp = self
-            .kprod
-            .request_oneshot(Request::GetPort, &self.rosc)
+        self.kprod
+            .send(
+                Request::GetPort,
+                ReplyTo::OneShot(self.rosc.sender().await.ok()?),
+            )
             .await
             .ok()?;
+        let resp = self.rosc.receive().await.ok()?;
 
         let Response::PortHandle { handle } = resp.body.ok()?;
         Some(handle)

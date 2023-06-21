@@ -21,7 +21,7 @@
 //! color/greyscale format (sorry).
 
 use crate::{
-    comms::oneshot::Reusable,
+    comms::oneshot::{Reusable, ReusableError},
     registry::{Envelope, KernelHandle, RegisteredDriver, ReplyTo},
     Kernel,
 };
@@ -37,6 +37,10 @@ use uuid::Uuid;
 ////////////////////////////////////////////////////////////////////////////////
 
 // Registered driver
+///
+/// This module provides an implementation of the client for this service, but
+/// not the server. A server implementing this service must be provided by the
+/// hardware platform implementation.
 pub struct EmbDisplayService;
 
 // impl EmbDisplay
@@ -84,6 +88,10 @@ pub enum FrameError {
     NoFrameAvailable,
     /// Attempted to draw or drop an invalid FrameChunk
     NoSuchFrame,
+    /// We are still waiting for a response from the last request
+    Busy,
+    /// Internal Error
+    InternalError,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -111,24 +119,32 @@ impl EmbDisplayClient {
     }
 
     /// Drop the provided framechunk without drawing
-    pub async fn drop_framechunk(&mut self, chunk: FrameChunk) -> Result<(), ()> {
+    pub async fn drop_framechunk(&mut self, chunk: FrameChunk) -> Result<(), FrameError> {
         self.prod
             .send(
                 Request::Drop(chunk),
-                ReplyTo::OneShot(self.reply.sender().await.map_err(drop)?),
+                ReplyTo::OneShot(self.reply.sender().await.map_err(|e| match e {
+                    ReusableError::SenderAlreadyActive => FrameError::Busy,
+                    _ => FrameError::InternalError,
+                })?),
             )
-            .await?;
+            .await
+            .map_err(|_| FrameError::InternalError)?;
         Ok(())
     }
 
     /// Draw the requested framechunk
-    pub async fn draw_framechunk(&mut self, chunk: FrameChunk) -> Result<(), ()> {
+    pub async fn draw_framechunk(&mut self, chunk: FrameChunk) -> Result<(), FrameError> {
         self.prod
             .send(
                 Request::Draw(chunk),
-                ReplyTo::OneShot(self.reply.sender().await.map_err(drop)?),
+                ReplyTo::OneShot(self.reply.sender().await.map_err(|e| match e {
+                    ReusableError::SenderAlreadyActive => FrameError::Busy,
+                    _ => FrameError::InternalError,
+                })?),
             )
-            .await?;
+            .await
+            .map_err(|_| FrameError::InternalError)?;
         Ok(())
     }
 
@@ -184,9 +200,8 @@ impl DrawTarget for FrameChunk {
         I: IntoIterator<Item = Pixel<Self::Color>>,
     {
         for Pixel(coord, color) in pixels.into_iter() {
-            let (x, y): (u32, u32) = match coord.try_into() {
-                Ok(c) => c,
-                Err(_) => continue,
+            let Ok((x, y)): Result<(u32, u32) , _> =  coord.try_into() else {
+                continue;
             };
             if x >= self.width {
                 continue;
