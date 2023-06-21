@@ -36,7 +36,7 @@ use uuid::Uuid;
 // Service Definition
 ////////////////////////////////////////////////////////////////////////////////
 
-// Registered driver
+/// Registered driver type for the `EmbDisplay` service.
 ///
 /// This module provides an implementation of the client for this service, but
 /// not the server. A server implementing this service must be provided by the
