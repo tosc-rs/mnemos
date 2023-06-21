@@ -58,23 +58,3 @@ confirm() {
         esac
     done
 }
-
-# Returns the path to a Mycelium crate.
-#
-# Args:
-#     $1: crate name
-#
-# Returns:
-#     0 if the crate exists, 0 if it does not exist.
-crate_path() {
-    local crate="$1"
-    local mycoprefix='mycelium-';
-    if [[ -d $crate ]]; then
-        echo "$crate"
-    elif [[ -d "${crate#"$mycoprefix"}" ]]; then
-        echo "${crate#"$mycoprefix"}"
-    else
-        err "unknown crate $crate"
-        return 1;
-    fi
-}
