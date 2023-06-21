@@ -1,3 +1,10 @@
+//! # Simple Serial
+//!
+//! This is a basic service that defines some kind of serial port.
+//!
+//! This module only contains the service definition and client definition,
+//! the server must be implemented for the given target platform.
+
 use uuid::Uuid;
 
 use crate::comms::bbq::BidiHandle;

@@ -21,7 +21,7 @@
 //! color/greyscale format (sorry).
 
 use crate::{
-    comms::oneshot::Reusable,
+    comms::oneshot::{Reusable, ReusableError},
     registry::{Envelope, KernelHandle, RegisteredDriver, ReplyTo},
     Kernel,
 };
@@ -88,6 +88,10 @@ pub enum FrameError {
     NoFrameAvailable,
     /// Attempted to draw or drop an invalid FrameChunk
     NoSuchFrame,
+    /// We are still waiting for a response from the last request
+    Busy,
+    /// Internal Error
+    InternalError,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -115,24 +119,32 @@ impl EmbDisplayClient {
     }
 
     /// Drop the provided framechunk without drawing
-    pub async fn drop_framechunk(&mut self, chunk: FrameChunk) -> Result<(), ()> {
+    pub async fn drop_framechunk(&mut self, chunk: FrameChunk) -> Result<(), FrameError> {
         self.prod
             .send(
                 Request::Drop(chunk),
-                ReplyTo::OneShot(self.reply.sender().await.map_err(drop)?),
+                ReplyTo::OneShot(self.reply.sender().await.map_err(|e| match e {
+                    ReusableError::SenderAlreadyActive => FrameError::Busy,
+                    _ => FrameError::InternalError,
+                })?),
             )
-            .await?;
+            .await
+            .map_err(|_| FrameError::InternalError)?;
         Ok(())
     }
 
     /// Draw the requested framechunk
-    pub async fn draw_framechunk(&mut self, chunk: FrameChunk) -> Result<(), ()> {
+    pub async fn draw_framechunk(&mut self, chunk: FrameChunk) -> Result<(), FrameError> {
         self.prod
             .send(
                 Request::Draw(chunk),
-                ReplyTo::OneShot(self.reply.sender().await.map_err(drop)?),
+                ReplyTo::OneShot(self.reply.sender().await.map_err(|e| match e {
+                    ReusableError::SenderAlreadyActive => FrameError::Busy,
+                    _ => FrameError::InternalError,
+                })?),
             )
-            .await?;
+            .await
+            .map_err(|_| FrameError::InternalError)?;
         Ok(())
     }
 

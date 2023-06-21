@@ -1,3 +1,11 @@
+//! # Serial Multiplexor
+//!
+//! Allows the creation of virtual "ports" over a single serial link
+//!
+//! This module includes the service definition, client definition, as well
+//! as a server definition that relies on the [SimpleSerial][crate::drivers::simple_serial]
+//! service to provide the service implementation.
+
 use crate::tracing::{debug, warn};
 use crate::{
     comms::{
