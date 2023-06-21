@@ -49,8 +49,16 @@ fn main() -> ! {
         w.pc1_select().output();
         w
     });
+    p.GPIO.pe_cfg2.modify(|_r, w| {
+        w.pe16_select().output();
+        w
+    });
     p.GPIO.pc_dat.modify(|_r, w| {
         w.pc_dat().variant(0b0000_0010);
+        w
+    });
+    p.GPIO.pe_dat.modify(|_r, w| {
+        w.pe_dat().variant(1 << 16);
         w
     });
 
@@ -81,12 +89,20 @@ fn main() -> ! {
                 w.pc_dat().variant(0b0000_0010);
                 w
             });
-            k.sleep(Duration::from_millis(250)).await;
+            p.GPIO.pe_dat.modify(|_r, w| {
+                w.pe_dat().variant(1 << 16);
+                w
+            });
+            k.sleep(Duration::from_millis(100)).await;
             p.GPIO.pc_dat.modify(|_r, w| {
                 w.pc_dat().variant(0b0000_0000);
                 w
             });
-            k.sleep(Duration::from_millis(250)).await;
+            p.GPIO.pe_dat.modify(|_r, w| {
+                w.pe_dat().variant(0);
+                w
+            });
+            k.sleep(Duration::from_millis(100)).await;
         }
     })
     .unwrap();
@@ -198,7 +214,7 @@ fn main() -> ! {
 
         // If there is nothing else scheduled, and we didn't just wake something up,
         // sleep for some amount of time
-        if !tick.has_remaining && turn.expired != 0 {
+        if turn.expired == 0 && !tick.has_remaining {
             let wfi_start = timer0.current_value();
 
             // TODO(AJM): Sometimes there is no "next" in the timer wheel, even though there should
