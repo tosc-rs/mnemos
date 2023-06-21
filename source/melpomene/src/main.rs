@@ -311,6 +311,7 @@ async fn kernel_entry(opts: MelpomeneOptions) {
 
     k.initialize(graphics_console).unwrap();
 
+    let mut last_also_done = false;
     loop {
         // Tick the scheduler
         let t0 = tokio::time::Instant::now();
@@ -324,6 +325,11 @@ async fn kernel_entry(opts: MelpomeneOptions) {
         // If there is nothing else scheduled, and we didn't just wake something up,
         // sleep for some amount of time
         if turn.expired == 0 && !tick.has_remaining {
+            if !last_also_done {
+                last_also_done = true;
+                continue;
+            }
+            last_also_done = false;
             let wfi_start = tokio::time::Instant::now();
             // if no timers have expired on this tick, we should sleep until the
             // next timer expires *or* something is woken by I/O, to simulate a

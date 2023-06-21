@@ -126,6 +126,9 @@ impl CommanderTask {
                         tracing::warn!("Sleeping for {:?}", interval);
                         self.kernel.sleep(interval).await;
                         tracing::warn!("Slept for {:?}", start.elapsed());
+                        if start.elapsed() >= Duration::from_millis(200) {
+                            panic!("TOO LONG");
+                        }
                         let mut guard = mutex.lock().await;
                         let mut done = false;
                         if let Some((sdisp, window)) = (&mut *guard).as_mut() {
