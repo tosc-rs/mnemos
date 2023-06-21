@@ -49,8 +49,16 @@ fn main() -> ! {
         w.pc1_select().output();
         w
     });
+    p.GPIO.pd_cfg2.modify(|_r, w| {
+        w.pd18_select().output();
+        w
+    });
     p.GPIO.pc_dat.modify(|_r, w| {
         w.pc_dat().variant(0b0000_0010);
+        w
+    });
+    p.GPIO.pd_dat.modify(|_r, w| {
+        w.pd_dat().variant(1 << 18);
         w
     });
 
@@ -81,9 +89,17 @@ fn main() -> ! {
                 w.pc_dat().variant(0b0000_0010);
                 w
             });
+            p.GPIO.pd_dat.modify(|_r, w| {
+                w.pd_dat().variant(1 << 18);
+                w
+            });
             k.sleep(Duration::from_millis(250)).await;
             p.GPIO.pc_dat.modify(|_r, w| {
                 w.pc_dat().variant(0b0000_0000);
+                w
+            });
+            p.GPIO.pd_dat.modify(|_r, w| {
+                w.pd_dat().variant(0);
                 w
             });
             k.sleep(Duration::from_millis(250)).await;
