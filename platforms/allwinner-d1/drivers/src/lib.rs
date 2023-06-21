@@ -4,6 +4,7 @@ pub mod dmac;
 pub mod plic;
 pub mod timer;
 pub mod uart;
+pub mod i2c;
 
 use core::{cell::UnsafeCell, mem::MaybeUninit};
 
