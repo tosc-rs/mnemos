@@ -23,6 +23,9 @@ _fmt := if env_var_or_default("GITHUB_ACTIONS", "") != "true" { "" } else {
     ```
 }
 
+_d1_start_addr := "0x40000000"
+_d1_bin_path := "target/riscv64imac-unknown-none-elf/mnemos.bin"
+
 # arguments to pass to all RustDoc invocations
 _rustdoc := _cargo + " doc --no-deps --all-features"
 
@@ -33,14 +36,24 @@ default:
     @echo ""
     @just --list
 
+# build a Mnemos binary for the Allwinner D1
 build-d1: (_get-cargo-binutils)
-    {{ _cargo }} objcopy 
+    (cd platforms/allwinner-d1/boards/lichee-rv; \
+        {{ _cargo }} objcopy --release -- \
+            -O binary \
+            ../../../../{{ _d1_bin_path }} \
+    )
 
+# flash an Allwinner D1 using xfel
+flash-d1: (build-d1)
+    xfel ddr d1
+    xfel write {{ _d1_start_addr }} {{ _d1_bin_path }}
+    xfel exec {{ _d1_start_addr }}
 
 _get-cargo-binutils:
     #!/usr/bin/env bash
     set -euo pipefail
-    source "./bin/_util.sh"
+    source "./tools/_util.sh"
 
     if {{ _cargo }} --list | grep -q 'objcopy'; then
         status "Found" "cargo objcopy"
@@ -56,7 +69,7 @@ _get-cargo-binutils:
 _get-nextest:
     #!/usr/bin/env bash
     set -euo pipefail
-    source "./bin/_util.sh"
+    source "./tools/_util.sh"
 
     if [ -n "{{ no-nextest }}" ]; then
         status "Configured" "not to use cargo nextest"
