@@ -14,7 +14,7 @@ use crate::{
         oneshot::Reusable,
     },
     drivers::simple_serial::SimpleSerialClient,
-    registry::{Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo},
+    registry::{Envelope, KernelHandle, Message, RegisteredDriver},
     Kernel,
 };
 use maitake::sync::Mutex;
@@ -84,15 +84,11 @@ impl SerialMuxClient {
     }
 
     pub async fn open_port(&mut self, port_id: u16, capacity: usize) -> Option<PortHandle> {
-        self.prod
-            .send(
-                Request::RegisterPort { port_id, capacity },
-                ReplyTo::OneShot(self.reply.sender().await.ok()?),
-            )
+        let resp = self
+            .prod
+            .request_oneshot(Request::RegisterPort { port_id, capacity }, &self.reply)
             .await
             .ok()?;
-
-        let resp = self.reply.receive().await.ok()?;
         let body = resp.body.ok()?;
 
         let Response::PortRegistered(port) = body;

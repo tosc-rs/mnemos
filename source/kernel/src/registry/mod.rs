@@ -1,6 +1,9 @@
 use core::any::TypeId;
 
-use crate::tracing::{self, debug, info};
+use crate::{
+    comms::oneshot::Reusable,
+    tracing::{self, debug, info},
+};
 use mnemos_alloc::{containers::HeapFixedVec, heap::HeapGuard};
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -207,6 +210,16 @@ pub enum UserHandlerError {
 pub enum RegistrationError {
     UuidAlreadyRegistered,
     RegistryFull,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum OneshotRequestError {
+    /// An error occurred while acquiring a sender.
+    Sender(ReusableError),
+    /// Sending the request failed.
+    Send,
+    /// An error occurred while receiving the response.
+    Receive(ReusableError),
 }
 
 impl From<ReusableError> for ReplyError {
@@ -570,6 +583,20 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
             "Sent Request"
         );
         Ok(())
+    }
+
+    /// Send a [`ReplyTo::OneShot`] request using the provided [`Reusable`]
+    /// oneshot channel, and await the response from that channel.
+    pub async fn request_oneshot(
+        &mut self,
+        msg: RD::Request,
+        reply: &Reusable<Envelope<Result<RD::Response, RD::Error>>>,
+    ) -> Result<Envelope<Result<RD::Response, RD::Error>>, OneshotRequestError> {
+        let tx = reply.sender().await.map_err(OneshotRequestError::Sender)?;
+        self.send(msg, ReplyTo::OneShot(tx))
+            .await
+            .map_err(|_| OneshotRequestError::Send)?;
+        reply.receive().await.map_err(OneshotRequestError::Receive)
     }
 }
 
