@@ -69,12 +69,14 @@
 #![no_std]
 #![allow(clippy::missing_safety_doc)]
 #![feature(impl_trait_in_assoc_type)]
+#![feature(async_fn_in_trait)]
 
 pub mod comms;
 pub mod drivers;
 pub(crate) mod fmt;
 pub mod forth;
 pub mod registry;
+pub mod time;
 
 use abi::{
     bbqueue_ipc::{

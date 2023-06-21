@@ -84,6 +84,9 @@ features = ["async"]
 [dependencies.portable-atomic]
 version = "1"
 
+[dependencies.embedded-hal-async]
+version = "0.2.0-alpha.1"
+
 [features]
 default = ["tracing-01"]
 
