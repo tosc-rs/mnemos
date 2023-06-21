@@ -1,12 +1,5 @@
-use std::{
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
-    thread::{sleep, spawn},
-};
+use std::sync::Arc;
 
-use abi::bbqueue_ipc::BBBuffer;
 use clap::Parser;
 use futures::FutureExt;
 use input_mgr::RingLine;
@@ -43,8 +36,6 @@ const DISPLAY_HEIGHT_PX: u32 = 240;
 /// 1MB heaps.
 const HEAP_SIZE: usize = 1024 * 1024;
 
-static KERNEL_LOCK: AtomicBool = AtomicBool::new(true);
-
 fn main() {
     let args = cli::Args::parse();
     args.tracing.setup_tracing();
@@ -61,20 +52,6 @@ async fn run_melpomene(opts: cli::MelpomeneOptions) {
             let kernel = task::spawn_local(kernel_entry(opts));
             tracing::info!("Kernel started.");
 
-            // Wait for the kernel to complete initialization...
-            while KERNEL_LOCK.load(Ordering::Acquire) {
-                task::yield_now().await;
-            }
-
-            tracing::debug!("Kernel initialized.");
-
-            // let userspace = spawn(move || {
-            //     userspace_entry();
-            // });
-            // println!("[Melpo]: Userspace started.");
-            // println!("========================================");
-
-            // let uj = userspace.join();
             println!("========================================");
             time::sleep(Duration::from_millis(50)).await;
             // println!("[Melpo]: Userspace ended: {:?}", uj);
@@ -107,7 +84,6 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     }
 
     let (heap_start, heap_size) = alloc_heap();
-    let (user_heap, user_heap_size) = alloc_heap();
 
     let settings = KernelSettings {
         heap_start,
@@ -116,7 +92,7 @@ async fn kernel_entry(opts: MelpomeneOptions) {
         k2u_size: 4096,
         u2k_size: 4096,
         // TODO(eliza): chosen totally arbitrarily
-        timer_granularity: maitake::time::Duration::from_millis(1),
+        timer_granularity: maitake::time::Duration::from_micros(1),
     };
 
     let k = unsafe { Kernel::new(settings).unwrap().leak().as_ref() };
@@ -335,72 +311,44 @@ async fn kernel_entry(opts: MelpomeneOptions) {
 
     k.initialize(graphics_console).unwrap();
 
-    //////////////////////////////////////////////////////////////////////////////
-    // TODO: Userspace doesn't really do anything yet! Simulate initialization of
-    // the userspace structures, and just periodically wake the kernel for now.
-    //////////////////////////////////////////////////////////////////////////////
-
-    let rings = k.rings();
-    unsafe {
-        let urings = mstd::executor::mailbox::Rings {
-            u2k: BBBuffer::take_framed_producer(rings.u2k.as_ptr()),
-            k2u: BBBuffer::take_framed_consumer(rings.k2u.as_ptr()),
-        };
-        mstd::executor::mailbox::MAILBOX.set_rings(urings);
-        mstd::executor::EXECUTOR.initialize(user_heap, user_heap_size);
-    }
-
-    let _userspace = spawn(|| {
-        let _span = tracing::info_span!("userspace").entered();
-        loop {
-            while KERNEL_LOCK.load(Ordering::Acquire) {
-                sleep(Duration::from_millis(10));
-            }
-
-            mstd::executor::EXECUTOR.run();
-            KERNEL_LOCK.store(true, Ordering::Release);
-        }
-    });
-
-    let mut t0 = tokio::time::Instant::now();
     loop {
-        while !KERNEL_LOCK.load(Ordering::Acquire) {
-            sleep(Duration::from_millis(10));
-        }
-
+        // Tick the scheduler
+        let t0 = tokio::time::Instant::now();
         let tick = k.tick();
 
-        KERNEL_LOCK.store(false, Ordering::Release);
-
-        // advance the timer
-        let ticks = t0.elapsed().as_millis() as u64;
+        // advance the timer (don't take more than 500k years)
+        let ticks = t0.elapsed().as_micros() as u64;
         let turn = k.timer().force_advance_ticks(ticks);
         tracing::trace!("advanced timer by {ticks:?}");
-        t0 = tokio::time::Instant::now();
 
+        // If there is nothing else scheduled, and we didn't just wake something up,
+        // sleep for some amount of time
         if turn.expired == 0 && !tick.has_remaining {
+            let wfi_start = tokio::time::Instant::now();
             // if no timers have expired on this tick, we should sleep until the
             // next timer expires *or* something is woken by I/O, to simulate a
             // hardware platform waiting for an interrupt.
             tracing::debug!("waiting for an interrupt...");
-            if let Some(next_timer) = turn.time_to_next_deadline() {
-                tracing::debug!("next timer expires in {next_timer:?}");
-                // wait for an "interrupt"
-                futures::select! {
-                    _ = irq.notified().fuse() => {
-                        tracing::debug!("...woken by I/O interrupt");
-                    },
-                   _ = tokio::time::sleep(next_timer).fuse() => {
-                        tracing::debug!("woken by timer");
-                   }
-                }
-            } else {
-                irq.notified().await;
-                tracing::debug!("...woken by I/O interrupt");
-            }
-        }
 
-        // let other tokio tasks (simulated hardware devices) run.
-        tokio::task::yield_now().await;
+            // Cap out at 100ms, just in case sim services aren't using the IRQ
+            let amount = turn.ticks_to_next_deadline().unwrap_or(100 * 1000); // 1 ticks per us, 1000 us per ms, 100ms sleep
+            tracing::debug!("next timer expires in {amount:?}us");
+            // wait for an "interrupt"
+            futures::select! {
+                _ = irq.notified().fuse() => {
+                    tracing::debug!("...woken by I/O interrupt");
+               },
+               _ = tokio::time::sleep(Duration::from_micros(amount.into())).fuse() => {
+                    tracing::debug!("woken by timer");
+               }
+            }
+
+            // Account for time slept
+            let elapsed = wfi_start.elapsed().as_micros() as u64;
+            let _turn = k.timer().force_advance_ticks(elapsed.into());
+        } else {
+            // let other tokio tasks (simulated hardware devices) run.
+            tokio::task::yield_now().await;
+        }
     }
 }

@@ -198,7 +198,7 @@ fn main() -> ! {
 
         // If there is nothing else scheduled, and we didn't just wake something up,
         // sleep for some amount of time
-        if !tick.has_remaining && turn.expired != 0 {
+        if turn.expired == 0 && !tick.has_remaining {
             let wfi_start = timer0.current_value();
 
             // TODO(AJM): Sometimes there is no "next" in the timer wheel, even though there should
