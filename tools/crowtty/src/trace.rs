@@ -1,6 +1,6 @@
 use postcard::accumulator::{CobsAccumulator, FeedResult};
 use std::{time::Instant, sync::mpsc, fmt::Write, collections::HashMap, num::NonZeroU64};
-use tracing_serde_structured::{SerializeRecordFields, SerializeSpanFields};
+use tracing_serde_structured::{SerializeRecordFields, SerializeSpanFields, SerializeValue, CowString};
 use mnemos_trace_proto::TraceEvent;
 
 pub(crate) fn decode(rx: mpsc::Receiver<Vec<u8>>) {
@@ -41,6 +41,7 @@ struct TraceState {
 struct Span {
     repr: String,
     start: Instant,
+    // TODO(eliza): reference count spans
     refs: usize,
 }
 
@@ -95,7 +96,7 @@ impl TraceState {
                 });
             }
             TraceEvent::Enter(id) => { self.stack.push(id.id); },
-            TraceEvent::Exit(id) => { self.stack.pop(); },
+            TraceEvent::Exit(_id) => { self.stack.pop(); },
             // TODO(eliza)
             TraceEvent::CloneSpan(_) => {},
             // TODO(eliza)
@@ -104,15 +105,33 @@ impl TraceState {
     }
 }
 
-fn write_fields<'a>(to: &mut String, fields: impl IntoIterator<Item = (&'a tracing_serde_structured::CowString<'a>, &'a tracing_serde_structured::SerializeValue<'a>)>) {
+fn write_fields<'a>(to: &mut String, fields: impl IntoIterator<Item = (&'a CowString<'a>, &'a SerializeValue<'a>)>) {
 
     let mut fields = fields.into_iter();
-    if let Some((key, value)) = fields.next() {
-        let key = key.as_str();
-        write!(to, "{key}={value:?}").unwrap();
-        for (key, value) in fields {
-            let key: &str = key.as_str();
-            write!(to, ", {key}={value:?}").unwrap();
+    if let Some((key, val)) = fields.next() {
+        write_kv(key, val, to);
+        for (key, val) in fields {
+            to.push_str(", ");
+            write_kv(key, val, to);
         }
+    }
+}
+
+fn write_kv(key: &CowString<'_>, val: &SerializeValue<'_>, to: &mut String) {
+    use tracing_serde_structured::DebugRecord;
+
+    let key = key.as_str();
+    to.push_str(key);
+    to.push('=');
+
+    match val {
+        SerializeValue::Debug(DebugRecord::De(d)) => to.push_str(d.as_str()),
+        SerializeValue::Debug(DebugRecord::Ser(d)) => write!(to, "{d}").unwrap(),
+        SerializeValue::Str(s) => write!(to, "{s:?}").unwrap(),
+        SerializeValue::F64(x) => write!(to, "{x}").unwrap(),
+        SerializeValue::I64(x) => write!(to, "{x}").unwrap(),
+        SerializeValue::U64(x) => write!(to, "{x}").unwrap(),
+        SerializeValue::Bool(x)  => write!(to, "{x}").unwrap(),
+        _ => to.push_str("???"),
     }
 }
