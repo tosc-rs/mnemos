@@ -14,3 +14,11 @@ version = "0.2"
 [dependencies.serde]
 version = "1.0"
 features = ["derive"]
+
+[dependencies.postcard]
+version = "1"
+
+[dependencies.tracing-serde-structured]
+git = "https://github.com/hawkw/tracing-serde-structured"
+branch = "eliza/tracing-02"
+default-features = true

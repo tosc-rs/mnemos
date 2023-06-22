@@ -75,6 +75,8 @@ pub mod drivers;
 pub(crate) mod fmt;
 pub mod forth;
 pub mod registry;
+#[cfg(feature = "tracing-02")]
+pub mod trace;
 
 use abi::{
     bbqueue_ipc::{

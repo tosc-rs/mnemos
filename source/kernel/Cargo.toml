@@ -41,12 +41,29 @@ optional = true
 [dependencies.tracing-02]
 package = "tracing"
 git = "https://github.com/tokio-rs/tracing"
-branch = "master"
+# branch = "master"
 features = ["attributes"]
 default-features = false
 optional = true
 
+[dependencies.tracing-core-02]
+package = "tracing-core"
+git = "https://github.com/tokio-rs/tracing"
+# branch = "master"
+default-features = false
+optional = true
+
+[dependencies.tracing-serde-structured]
+git = "https://github.com/hawkw/tracing-serde-structured"
+branch = "eliza/tracing-02"
+default-features = false
+optional = true
+
 [dependencies.maitake]
+version = "0.1.0"
+default-features = false
+
+[dependencies.mycelium-util]
 version = "0.1.0"
 default-features = false
 
@@ -86,6 +103,7 @@ version = "1"
 
 [features]
 default = ["tracing-01"]
+tracing-02 = ["dep:tracing-02", "tracing-core-02", "tracing-serde-structured"]
 
 # The `_oops_all_tracing_features` feature is a "trap" for when the package is built
 # with `--all-features`, which is usually just for docs and testing.

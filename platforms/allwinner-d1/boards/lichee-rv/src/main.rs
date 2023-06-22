@@ -11,6 +11,7 @@ use drivers::{
     Ram,
 };
 use kernel::{
+    trace,
     drivers::serial_mux::{RegistrationError, SerialMuxClient, SerialMuxServer},
     Kernel, KernelSettings,
 };
@@ -24,6 +25,8 @@ const HEAP_SIZE: usize = 384 * 1024 * 1024;
 #[link_section = ".aheap.AHEAP"]
 #[used]
 static AHEAP: Ram<HEAP_SIZE> = Ram::new();
+
+static COLLECTOR: trace::SerialCollector = trace::SerialCollector::new(trace::level_filters::LevelFilter::DEBUG);
 
 /// A helper to initialize the kernel
 fn initialize_kernel() -> Result<&'static Kernel, ()> {
@@ -180,7 +183,7 @@ fn main() -> ! {
     .unwrap();
 
     // Initialize SerialMux
-    k.initialize(async move {
+    let mux_done = k.initialize(async move {
         loop {
             // Now, right now this is a little awkward, but what I'm doing here is spawning
             // a new virtual mux, and configuring it with:
@@ -199,6 +202,13 @@ fn main() -> ! {
         }
     })
     .unwrap();
+
+    // initialize tracing
+    k.initialize(async move {
+        mux_done.await.unwrap();
+        COLLECTOR.start(k).await;
+        trace::info!("started tracing");
+    }).unwrap();
 
     // Loopback on virtual port zero
     k.initialize(async move {
