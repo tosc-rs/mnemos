@@ -146,7 +146,7 @@ impl TraceState {
                     &mut self.textbuf,
                     "{} {level} {} ",
                     self.tag,
-                    "SPAN".if_supports_color(Stream::Stdout, |x| x.green())
+                    "SPAN".if_supports_color(Stream::Stdout, |x| x.bright_magenta())
                 )
                 .unwrap();
                 write_span_cx(&self.stack, &self.spans, &mut self.textbuf);
@@ -198,7 +198,7 @@ impl TraceState {
                         start,
                         refs: _,
                     } = self.spans.remove(&id.id).unwrap();
-                    let end = "END".if_supports_color(Stream::Stdout, |x| x.red());
+                    let end = "END".if_supports_color(Stream::Stdout, |x| x.bright_red());
                     let target = target.if_supports_color(Stream::Stdout, |x| x.italic());
                     write!(
                         &mut self.textbuf,
