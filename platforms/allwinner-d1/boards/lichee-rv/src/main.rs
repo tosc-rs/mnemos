@@ -90,10 +90,6 @@ fn main() -> ! {
     k.initialize(async move {
         k.sleep(Duration::from_millis(100)).await;
         let mut spim = SpiSenderClient::from_registry(k).await.unwrap();
-        // println!("GOT SPIM");
-        // SPI_BCC (0:23 and 24:27)
-        // SPI_MTC and SPI_MBC
-        // Start SPI_TCR(31)
 
         loop {
             k.sleep(Duration::from_millis(100)).await;
@@ -102,10 +98,7 @@ fn main() -> ! {
             if spim.send_wait(msg_1).await.is_ok() {
                 break;
             }
-            // println!("WHAT");
         }
-
-        // println!("CLEAR");
 
         k.sleep(Duration::from_millis(100)).await;
 
