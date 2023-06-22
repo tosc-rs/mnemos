@@ -14,7 +14,7 @@ use kernel::{
     drivers::serial_mux::{RegistrationError, SerialMuxClient, SerialMuxServer},
     Kernel, KernelSettings,
 };
-use spim::{kernel_spim1, SpiSender, SPI1_TX_DONE};
+use spim::{kernel_spim1, SpiSenderClient, SpiSenderServer, SPI1_TX_DONE};
 use uart::D1Uart;
 mod spim;
 mod uart;
@@ -73,19 +73,23 @@ fn main() -> ! {
     let dmac = Dmac::new(p.DMAC, &mut p.CCU);
     let [ch0, ..] = dmac.channels;
     dmac.dmac.dmac_irq_en0.modify(|_r, w| {
+        // used for UART0 DMA sending
         w.dma0_queue_irq_en().enabled();
+        // used for SPI1 DMA sending
+        w.dma1_queue_irq_en().enabled();
         w
     });
 
     // Initialize SPI stuff
     k.initialize(async move {
-        SpiSender::register(k, 4).await.unwrap();
+        // Register a new SpiSenderServer
+        SpiSenderServer::register(k, 4).await.unwrap();
     })
     .unwrap();
 
     k.initialize(async move {
         k.sleep(Duration::from_millis(100)).await;
-        let mut spim = SpiSender::from_registry(k).await.unwrap();
+        let mut spim = SpiSenderClient::from_registry(k).await.unwrap();
         // println!("GOT SPIM");
         // SPI_BCC (0:23 and 24:27)
         // SPI_MTC and SPI_MBC
@@ -108,16 +112,32 @@ fn main() -> ! {
         // Loop, toggling the VCOM
         let mut vcom = true;
         let mut ctr = 0u32;
-        let mut cmp = 0;
         let mut linebuf = k.heap().allocate_array_with(|| 0, (52 * 240) + 2).await;
 
         let forever = [0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
         let mut forever = forever.iter().copied().cycle();
 
         loop {
-            k.sleep(Duration::from_millis(50)).await;
-            // println!("DISPLAY");
+            // It takes ~50ms to send a full frame, and 20fps is every
+            // 66.6ms. TODO: once we have "intervals", use that here.
+            k.sleep(Duration::from_millis(17)).await;
+
             // Send a pattern
+            //
+            // A note on this format:
+            //
+            // * Every FRAME gets a 1 byte command.
+            //     * It is zero, unless we are toggling VCOM.
+            //     * VCOM must be toggled once per second...ish.
+            // * Foreach LINE (240x) - 52 bytes total:
+            //     * 1 byte for line number
+            //     * (400bits / 8 = 50bytes) of data (one bit per pixel)
+            //     * 1 "dummy" byte
+            // * At the END, we need a total of two dummy bytes, so one from the last line, + 1 more
+            //
+            // This is where the 52x240 + 1 + 1 buffer size comes from.
+            //
+            // Reference: https://www.sharpsde.com/fileadmin/products/Displays/2016_SDE_App_Note_for_Memory_LCD_programming_V1.3.pdf
             let vc = if vcom { 0x02 } else { 0x00 };
             linebuf[0] = 0x01 | vc;
 
@@ -131,13 +151,14 @@ fn main() -> ! {
                 }
             }
 
+            // This awaits until the send is complete. At 2MHz and ((52x240 + 2) * 8) = 99856 bits
+            // to send, that is 49.9ms until this will be complete.
             linebuf = spim.send_wait(linebuf).await.map_err(drop).unwrap();
 
             if (ctr % 16) == 0 {
                 vcom = !vcom;
             }
             ctr = ctr.wrapping_add(1);
-            cmp = cmp ^ 0b1;
         }
     })
     .unwrap();

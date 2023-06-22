@@ -26,10 +26,14 @@ pub struct Spim1 {
 pub unsafe fn kernel_spim1(spi1: SPI_DBI, ccu: &mut CCU, gpio: &mut GPIO) -> Spim1 {
     // Set clock rate (fixed to 2MHz), and enable the SPI peripheral
     ccu.spi1_clk.write(|w| {
-        w.clk_gating().on(); // ?
-        w.clk_src_sel().hosc(); // base:  24 MHz
-        w.factor_n().n1(); // /1:    24 MHz
-        w.factor_m().variant(11); // /12:    2 MHz
+        // Enable clock
+        w.clk_gating().on();
+        // base:  24 MHz
+        w.clk_src_sel().hosc();
+        // /1:    24 MHz
+        w.factor_n().n1();
+        // /12:    2 MHz
+        w.factor_m().variant(11);
         w
     });
     ccu.spi_bgr.modify(|_r, w| {
@@ -39,12 +43,14 @@ pub unsafe fn kernel_spim1(spi1: SPI_DBI, ccu: &mut CCU, gpio: &mut GPIO) -> Spi
 
     // Map the pins
     gpio.pd_cfg1.write(|w| {
+        // Select SPI pin mode
         w.pd10_select().spi1_cs_dbi_csx();
         w.pd11_select().spi1_clk_dbi_sclk();
         w.pd12_select().spi1_mosi_dbi_sdo();
         w
     });
     gpio.pd_pull0.write(|w| {
+        // Disable pull up/downs
         w.pd10_pull().pull_disable();
         w.pd11_pull().pull_disable();
         w.pd12_pull().pull_disable();
@@ -52,22 +58,26 @@ pub unsafe fn kernel_spim1(spi1: SPI_DBI, ccu: &mut CCU, gpio: &mut GPIO) -> Spi
     });
 
     // Hard coded configuration for specifically supporting the SHARP memory display
-
-    spi1.spi_gcr.write(|w| {
-        w.tp_en().normal();
-        w.mode().master();
-        w.en().enable();
-        w
-    });
     spi1.spi_tcr.write(|w| {
+        // Allow the hardware to control the chip select
         w.ss_owner().spi_controller();
-        // w.cpol().low();
-        // w.cpha().p0();
+        // LSB first bit-order
         w.fbs().lsb();
+        // Chip select active HIGH (the sharp display is weird and is active high)
         w.spol().clear_bit();
         w
     });
+    spi1.spi_gcr.write(|w| {
+        // Transmit pause Enable - ignore RXFIFO being full
+        w.tp_en().normal();
+        // Master/Controller mode
+        w.mode().master();
+        // Enable
+        w.en().enable();
+        w
+    });
     spi1.spi_fcr.modify(|_r, w| {
+        // TX FIFO DMA Request Enable
         w.tf_drq_en().enable();
         w
     });
@@ -75,11 +85,18 @@ pub unsafe fn kernel_spim1(spi1: SPI_DBI, ccu: &mut CCU, gpio: &mut GPIO) -> Spi
     Spim1 { _x: () }
 }
 
-pub struct SpiSender {
-    _x: (),
+impl RegisteredDriver for SpiSender {
+    type Request = SpiSenderRequest;
+    type Response = SpiSenderResponse;
+    type Error = SpiSenderError;
+
+    const UUID: Uuid = uuid!("b5fd3487-08c4-4c0c-ae97-65dd1b151138");
 }
 
-impl SpiSender {
+pub struct SpiSender;
+pub struct SpiSenderServer;
+
+impl SpiSenderServer {
     pub async fn register(kernel: &'static Kernel, queued: usize) -> Result<(), ()> {
         let (kprod, kcons) = KChannel::new_async(kernel, queued).await.split();
 
@@ -99,10 +116,12 @@ impl SpiSender {
                     let SpiSenderRequest::Send(ref payload) = msg.body;
 
                     spi.spi_bcc.modify(|_r, w| {
+                        // "Single Mode Transmit Counter" - the number of bytes to send
                         w.stc().variant(payload.len() as u32);
                         w
                     });
                     spi.spi_mbc.modify(|_r, w| {
+                        // Master Burst Counter
                         w.mbc().variant(payload.len() as u32);
                         w
                     });
@@ -110,7 +129,7 @@ impl SpiSender {
                         w.mwtc().variant(payload.len() as u32);
                         w
                     });
-
+                    // Start transfer
                     spi.spi_tcr.modify(|_r, w| {
                         w.xch().initiate_exchange();
                         w
@@ -133,16 +152,19 @@ impl SpiSender {
                         src_drq_type: SrcDrqType::Dram,
                     };
                     let descriptor = d_cfg.try_into().map_err(drop)?;
+                    let mut chan;
                     unsafe {
-                        let mut chan = Channel::summon_channel(1);
-                        chan.set_channel_modes(ChannelMode::Wait, ChannelMode::Handshake);
+                        chan = Channel::summon_channel(1);
+                        chan.set_channel_modes(ChannelMode::Wait, ChannelMode::Wait);
                         chan.start_descriptor(NonNull::from(&descriptor));
                     }
-                    match SPI1_TX_DONE.wait().await {
-                        Ok(_) => {}
-                        Err(_) => todo!(),
+                    SPI1_TX_DONE
+                        .wait()
+                        .await
+                        .expect("SPI1_TX_DONE WaitCell should never be closed");
+                    unsafe {
+                        chan.stop_dma();
                     }
-                    // println!("WOKE");
                     reply
                         .reply_konly(msg.reply_with_body(|req| {
                             let SpiSenderRequest::Send(payload) = req;
@@ -162,15 +184,6 @@ impl SpiSender {
             .await?;
 
         Ok(())
-    }
-
-    pub async fn from_registry(kernel: &'static Kernel) -> Result<SpiSenderClient, ()> {
-        let hdl = kernel.with_registry(|reg| reg.get()).await.ok_or(())?;
-
-        Ok(SpiSenderClient {
-            hdl,
-            osc: Reusable::new_async(kernel).await,
-        })
     }
 }
 
@@ -192,6 +205,15 @@ pub struct SpiSenderClient {
 }
 
 impl SpiSenderClient {
+    pub async fn from_registry(kernel: &'static Kernel) -> Result<SpiSenderClient, ()> {
+        let hdl = kernel.with_registry(|reg| reg.get()).await.ok_or(())?;
+
+        Ok(SpiSenderClient {
+            hdl,
+            osc: Reusable::new_async(kernel).await,
+        })
+    }
+
     pub async fn send_wait(
         &mut self,
         data: HeapArray<u8>,
@@ -202,7 +224,7 @@ impl SpiSenderClient {
                 ReplyTo::OneShot(self.osc.sender().await.unwrap()),
             )
             .await
-            .ok();
+            .map_err(|_| SpiSenderError::Oops)?;
         self.osc
             .receive()
             .await
@@ -213,12 +235,4 @@ impl SpiSenderClient {
                 payload
             })
     }
-}
-
-impl RegisteredDriver for SpiSender {
-    type Request = SpiSenderRequest;
-    type Response = SpiSenderResponse;
-    type Error = SpiSenderError;
-
-    const UUID: Uuid = uuid!("b5fd3487-08c4-4c0c-ae97-65dd1b151138");
 }
