@@ -153,4 +153,31 @@ impl Collect for SerialCollector {
         };
         Current::new(id, meta)
     }
+
+    fn clone_span(&self, span: &span::Id) -> span::Id {
+        if let Some(mut wgr) = self.tx.get().send_grant_max_sync(16) {
+            let len = match postcard::to_slice_cobs(
+                &TraceEvent::CloneSpan(span.as_serde()),
+                &mut wgr[..],
+            ) {
+                Ok(encoded) => encoded.len(),
+                Err(_) => 0, // we will release any bytes written to be clobbered.
+            };
+            wgr.commit(len);
+        }
+        span.clone()
+    }
+
+    fn try_close(&self, span: span::Id) -> bool {
+        if let Some(mut wgr) = self.tx.get().send_grant_max_sync(16) {
+            let len =
+                match postcard::to_slice_cobs(&TraceEvent::DropSpan(span.as_serde()), &mut wgr[..])
+                {
+                    Ok(encoded) => encoded.len(),
+                    Err(_) => 0, // we will release any bytes written to be clobbered.
+                };
+            wgr.commit(len);
+        }
+        false
+    }
 }

@@ -18,7 +18,6 @@ pub(crate) fn decode(rx: mpsc::Receiver<Vec<u8>>, tag: LogTag) {
     let mut cobs_buf: CobsAccumulator<1024> = CobsAccumulator::new();
     let mut state: TraceState = TraceState {
         tag,
-        trace_start: tag.start,
         spans: HashMap::new(),
         stack: Vec::new(),
         textbuf: String::new(),
@@ -45,7 +44,6 @@ pub(crate) fn decode(rx: mpsc::Receiver<Vec<u8>>, tag: LogTag) {
 
 struct TraceState {
     tag: LogTag,
-    trace_start: Instant,
     spans: HashMap<NonZeroU64, Span>,
     stack: Vec<NonZeroU64>,
     textbuf: String,
@@ -53,6 +51,8 @@ struct TraceState {
 
 struct Span {
     repr: String,
+    level: DisplayLevel,
+    target: String,
     start: Instant,
     // TODO(eliza): reference count spans
     refs: usize,
@@ -73,7 +73,6 @@ impl TraceState {
     }
 
     fn event(&mut self, ev: TraceEvent<'_>) {
-        let now = Instant::now();
         match ev {
             TraceEvent::Event(ev) => {
                 let target = ev.metadata.target.as_str();
@@ -89,6 +88,7 @@ impl TraceState {
                 self.textbuf.clear();
             }
             TraceEvent::NewSpan { id, attributes } => {
+                let start = Instant::now();
                 let mut repr = String::new();
                 let name = attributes.metadata.name.as_str();
                 write!(
@@ -110,19 +110,31 @@ impl TraceState {
 
                 let level = DisplayLevel(attributes.metadata.level);
                 let target = attributes.metadata.target.as_str();
-                let target = target.if_supports_color(Stream::Stdout, |target| target.italic());
-
-                write!(&mut self.textbuf, "{} {level} ", self.tag).unwrap();
+                write!(
+                    &mut self.textbuf,
+                    "{} {level} {} ",
+                    self.tag,
+                    "SPAN".if_supports_color(Stream::Stdout, |x| x.green())
+                )
+                .unwrap();
                 self.write_span_cx();
-                write!(&mut self.textbuf, "-> {target}::{repr}").unwrap();
+                write!(
+                    &mut self.textbuf,
+                    "{}::{repr} ({:04})",
+                    target.if_supports_color(Stream::Stdout, |target| target.italic()),
+                    id.id,
+                )
+                .unwrap();
                 println!("{}", self.textbuf);
                 self.textbuf.clear();
 
                 self.spans.insert(
                     id.id,
                     Span {
+                        target: target.to_string(),
+                        level,
                         repr,
-                        start: now,
+                        start,
                         refs: 1,
                     },
                 );
@@ -133,10 +145,41 @@ impl TraceState {
             TraceEvent::Exit(_id) => {
                 self.stack.pop();
             }
-            // TODO(eliza)
-            TraceEvent::CloneSpan(_) => {}
-            // TODO(eliza)
-            TraceEvent::DropSpan(_) => {}
+            TraceEvent::CloneSpan(id) => {
+                if let Some(span) = self.spans.get_mut(&id.id) {
+                    span.refs += 1;
+                }
+            }
+            TraceEvent::DropSpan(id) => {
+                let end = if let Some(span) = self.spans.get_mut(&id.id) {
+                    span.refs -= 1;
+                    span.refs == 0
+                } else {
+                    return;
+                };
+
+                if end {
+                    let Span {
+                        repr,
+                        target,
+                        level,
+                        start,
+                        refs: _,
+                    } = self.spans.remove(&id.id).unwrap();
+                    let end = "END".if_supports_color(Stream::Stdout, |x| x.red());
+                    let target = target.if_supports_color(Stream::Stdout, |x| x.italic());
+                    write!(
+                        &mut self.textbuf,
+                        "{} {level}  {end} {target}::{repr} ({:04}): {:?}",
+                        self.tag,
+                        id.id,
+                        start.elapsed()
+                    )
+                    .unwrap();
+                    println!("{}", self.textbuf);
+                    self.textbuf.clear();
+                }
+            }
         }
     }
 }
@@ -212,7 +255,7 @@ impl fmt::Display for DisplayLevel {
             SerializeLevel::Error => write!(
                 f,
                 "{}",
-                "ERR!".if_supports_color(Stream::Stdout, |l| l.red())
+                "ERR".if_supports_color(Stream::Stdout, |l| l.red())
             ),
         }
     }
