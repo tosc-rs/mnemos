@@ -1,6 +1,9 @@
 use core::any::TypeId;
 
-use crate::tracing::{self, debug, info};
+use crate::{
+    comms::oneshot::Reusable,
+    tracing::{self, debug, info},
+};
 use mnemos_alloc::{containers::HeapFixedVec, heap::HeapGuard};
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -207,6 +210,16 @@ pub enum UserHandlerError {
 pub enum RegistrationError {
     UuidAlreadyRegistered,
     RegistryFull,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum OneshotRequestError {
+    /// An error occurred while acquiring a sender.
+    Sender(ReusableError),
+    /// Sending the request failed.
+    Send,
+    /// An error occurred while receiving the response.
+    Receive(ReusableError),
 }
 
 impl From<ReusableError> for ReplyError {
@@ -590,6 +603,20 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
         );
         Ok(())
     }
+
+    /// Send a [`ReplyTo::OneShot`] request using the provided [`Reusable`]
+    /// oneshot channel, and await the response from that channel.
+    pub async fn request_oneshot(
+        &mut self,
+        msg: RD::Request,
+        reply: &Reusable<Envelope<Result<RD::Response, RD::Error>>>,
+    ) -> Result<Envelope<Result<RD::Response, RD::Error>>, OneshotRequestError> {
+        let tx = reply.sender().await.map_err(OneshotRequestError::Sender)?;
+        self.send(msg, ReplyTo::OneShot(tx))
+            .await
+            .map_err(|_| OneshotRequestError::Send)?;
+        reply.receive().await.map_err(OneshotRequestError::Receive)
+    }
 }
 
 // -- other --
@@ -646,75 +673,4 @@ where
     req_prod
         .enqueue_sync(msg)
         .map_err(|_| UserHandlerError::QueueFull)
-}
-
-/// TODO: I don't really know what to do with this. This is essentially
-/// declaring the client interface of a "Simple Serial" driver, without
-/// providing a definition of the actual driver service. In the simulator,
-/// this interface is used for the TcpSerial driver. This sort of "forward
-/// declaration" is needed when a driver in the kernel (like the SerialMux)
-/// depends on some external definition.
-///
-/// For non-kernel-depended services, it should be enough to depend on the
-/// actual driver you are consuming
-pub mod simple_serial {
-    use super::*;
-    use crate::comms::bbq::BidiHandle;
-    use crate::comms::oneshot::Reusable;
-    use crate::Kernel;
-
-    use super::RegisteredDriver;
-
-    pub struct SimpleSerial {
-        kprod: KernelHandle<SimpleSerial>,
-        rosc: Reusable<Envelope<Result<Response, SimpleSerialError>>>,
-    }
-
-    #[derive(Debug, Eq, PartialEq)]
-    pub enum SimpleSerialError {
-        AlreadyAssignedPort,
-    }
-
-    impl SimpleSerial {
-        pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
-            let kprod = kernel
-                .with_registry(|reg| reg.get::<SimpleSerial>())
-                .await?;
-
-            Some(SimpleSerial {
-                kprod,
-                rosc: Reusable::new_async(kernel).await,
-            })
-        }
-
-        pub async fn get_port(&mut self) -> Option<BidiHandle> {
-            self.kprod
-                .send(
-                    Request::GetPort,
-                    ReplyTo::OneShot(self.rosc.sender().await.ok()?),
-                )
-                .await
-                .ok()?;
-            let resp = self.rosc.receive().await.ok()?;
-
-            let Response::PortHandle { handle } = resp.body.ok()?;
-            Some(handle)
-        }
-    }
-
-    impl RegisteredDriver for SimpleSerial {
-        type Request = Request;
-        type Response = Response;
-        type Error = SimpleSerialError;
-
-        const UUID: Uuid = known_uuids::kernel::SIMPLE_SERIAL_PORT;
-    }
-
-    pub enum Request {
-        GetPort,
-    }
-
-    pub enum Response {
-        PortHandle { handle: BidiHandle },
-    }
 }

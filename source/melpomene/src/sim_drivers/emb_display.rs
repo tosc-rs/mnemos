@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use embedded_graphics::{
     image::{Image, ImageRaw},
-    pixelcolor::{Gray8, GrayColor},
+    pixelcolor::Gray8,
     prelude::*,
 };
 use embedded_graphics_simulator::{
@@ -31,31 +31,17 @@ use embedded_graphics_simulator::{
 use maitake::sync::Mutex;
 use mnemos_alloc::containers::HeapArray;
 use mnemos_kernel::{
-    comms::{
-        kchannel::{KChannel, KConsumer},
-        oneshot::Reusable,
-    },
-    registry::{Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo},
+    comms::kchannel::{KChannel, KConsumer},
+    drivers::emb_display::{EmbDisplayService, FrameChunk, FrameError, Request, Response},
+    registry::Message,
     Kernel,
 };
-use uuid::Uuid;
 
-//////////////////////////////////////////////////////////////////////////////
-// EmbDisplay - This is the "driver type"
-//////////////////////////////////////////////////////////////////////////////
+/// Implements the [`EmbDisplayService`] driver using the `embedded-graphics`
+/// simulator.
+pub struct SimDisplay;
 
-// Registered driver
-pub struct EmbDisplay;
-
-// impl EmbDisplay
-impl RegisteredDriver for EmbDisplay {
-    type Request = Request;
-    type Response = Response;
-    type Error = FrameError;
-    const UUID: Uuid = mnemos_kernel::registry::known_uuids::kernel::EMB_DISPLAY;
-}
-
-impl EmbDisplay {
+impl SimDisplay {
     /// Register the driver instance
     ///
     /// Registration will also start the simulated display, meaning that the display
@@ -82,47 +68,12 @@ impl EmbDisplay {
         kernel.spawn(commander.run(width, height)).await;
 
         kernel
-            .with_registry(|reg| reg.register_konly::<EmbDisplay>(&cmd_prod))
+            .with_registry(|reg| reg.register_konly::<EmbDisplayService>(&cmd_prod))
             .await
             .map_err(|_| FrameError::DisplayAlreadyExists)?;
 
         Ok(())
     }
-}
-
-/// These are all of the possible requests from client to server
-pub enum Request {
-    /// Request a new frame chunk, with the given location and size
-    NewFrameChunk {
-        start_x: i32,
-        start_y: i32,
-        width: u32,
-        height: u32,
-    },
-    /// Draw the provided framechunk
-    Draw(FrameChunk),
-    /// Drop the provided framechunk, without drawing it
-    Drop(FrameChunk),
-}
-
-pub enum Response {
-    /// Successful frame allocation
-    FrameChunkAllocated(FrameChunk),
-    /// Successful draw
-    FrameDrawn,
-    /// Successful drop
-    FrameDropped,
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub enum FrameError {
-    /// Failed to register a display, the kernel reported that there is already
-    /// an existing EmbDisplay
-    DisplayAlreadyExists,
-    /// No frames available from the driver
-    NoFrameAvailable,
-    /// Attempted to draw or drop an invalid FrameChunk
-    NoSuchFrame,
 }
 
 //////////////////////////////////////////////////////////////////////////////
@@ -134,7 +85,7 @@ pub enum FrameError {
 /// framebuffer.
 struct CommanderTask {
     kernel: &'static Kernel,
-    cmd: KConsumer<Message<EmbDisplay>>,
+    cmd: KConsumer<Message<EmbDisplayService>>,
     display_info: DisplayInfo,
 }
 
@@ -222,7 +173,7 @@ impl CommanderTask {
                 Request::Draw(fc) => match self.display_info.remove_frame(fc.frame_id) {
                     Ok(_) => {
                         let (x, y) = (fc.start_x, fc.start_y);
-                        let raw_img = fc.frame_display().unwrap();
+                        let raw_img = frame_display(fc).unwrap();
                         let image = Image::new(&raw_img, Point::new(x, y));
 
                         let mut guard = mutex.lock().await;
@@ -254,108 +205,16 @@ impl CommanderTask {
     }
 }
 
-//////////////////////////////////////////////////////////////////////////////
-// EmbDisplayHandle - This is the "client interface"
-//////////////////////////////////////////////////////////////////////////////
-
-/// Client interface to EmbDisplay
-pub struct EmbDisplayHandle {
-    prod: KernelHandle<EmbDisplay>,
-    reply: Reusable<Envelope<Result<Response, FrameError>>>,
-}
-
-impl EmbDisplayHandle {
-    /// Obtain a new client handle by querying the registry for a registered
-    /// [EmbDisplay] server
-    pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
-        let prod = kernel.with_registry(|reg| reg.get::<EmbDisplay>()).await?;
-
-        Some(EmbDisplayHandle {
-            prod,
-            reply: Reusable::new_async(kernel).await,
-        })
-    }
-
-    /// Drop the provided framechunk without drawing
-    pub async fn drop_framechunk(&mut self, chunk: FrameChunk) -> Result<(), ()> {
-        self.prod
-            .send(
-                Request::Drop(chunk),
-                ReplyTo::OneShot(self.reply.sender().await.map_err(drop)?),
-            )
-            .await?;
-        Ok(())
-    }
-
-    /// Draw the requested framechunk
-    pub async fn draw_framechunk(&mut self, chunk: FrameChunk) -> Result<(), ()> {
-        self.prod
-            .send(
-                Request::Draw(chunk),
-                ReplyTo::OneShot(self.reply.sender().await.map_err(drop)?),
-            )
-            .await?;
-        Ok(())
-    }
-
-    /// Allocate a framechunk
-    pub async fn get_framechunk(
-        &mut self,
-        start_x: i32,
-        start_y: i32,
-        width: u32,
-        height: u32,
-    ) -> Option<FrameChunk> {
-        self.prod
-            .send(
-                Request::NewFrameChunk {
-                    start_x,
-                    start_y,
-                    width,
-                    height,
-                },
-                ReplyTo::OneShot(self.reply.sender().await.ok()?),
-            )
-            .await
-            .ok()?;
-
-        let resp = self.reply.receive().await.ok()?;
-        let body = resp.body.ok()?;
-
-        if let Response::FrameChunkAllocated(frame) = body {
-            Some(frame)
-        } else {
-            None
-        }
-    }
-}
-
-//////////////////////////////////////////////////////////////////////////////
-// FrameChunk - little mini frame buffer pieces
-//////////////////////////////////////////////////////////////////////////////
-
-// FrameChunk is recieved after client has sent a request for one
-pub struct FrameChunk {
-    frame_id: u16,
-    bytes: HeapArray<u8>,
-    start_x: i32,
-    start_y: i32,
-    width: u32,
-    height: u32,
-}
-
-impl FrameChunk {
-    /// Create and return a Simulator display object from raw pixel data.
-    ///
-    /// Pixel data is turned into a raw image, and then drawn onto a SimulatorDisplay object
-    /// This is necessary as a e-g Window only accepts SimulatorDisplay object
-    /// On a physical display, the raw pixel data can be sent over to the display directly
-    /// Using the display's device interface
-    fn frame_display(&mut self) -> Result<ImageRaw<Gray8>, ()> {
-        let raw_image: ImageRaw<Gray8>;
-        raw_image = ImageRaw::<Gray8>::new(self.bytes.as_ref(), self.width);
-        Ok(raw_image)
-    }
+/// Create and return a Simulator display object from raw pixel data.
+///
+/// Pixel data is turned into a raw image, and then drawn onto a SimulatorDisplay object
+/// This is necessary as a e-g Window only accepts SimulatorDisplay object
+/// On a physical display, the raw pixel data can be sent over to the display directly
+/// Using the display's device interface
+fn frame_display(fc: &mut FrameChunk) -> Result<ImageRaw<Gray8>, ()> {
+    let raw_image: ImageRaw<Gray8>;
+    raw_image = ImageRaw::<Gray8>::new(fc.bytes.as_ref(), fc.width);
+    Ok(raw_image)
 }
 
 struct FrameInfo {
@@ -425,42 +284,5 @@ impl DisplayInfo {
         } else {
             Err(FrameError::NoSuchFrame)
         }
-    }
-}
-
-/// FrameChunk implements embedded-graphics's `DrawTarget` trait so that clients
-/// can directly use embedded-graphics primitives for drawing into the framebuffer.
-impl DrawTarget for FrameChunk {
-    type Color = Gray8;
-    type Error = core::convert::Infallible;
-
-    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
-    where
-        I: IntoIterator<Item = Pixel<Self::Color>>,
-    {
-        for Pixel(coord, color) in pixels.into_iter() {
-            let (x, y): (u32, u32) = match coord.try_into() {
-                Ok(c) => c,
-                Err(_) => continue,
-            };
-            if x >= self.width {
-                continue;
-            }
-            if y >= self.height {
-                continue;
-            }
-
-            let index: u32 = x + y * self.width;
-            // TODO: Implement bound checks and return BufferFull if needed
-            self.bytes[index as usize] = color.luma();
-        }
-
-        Ok(())
-    }
-}
-
-impl OriginDimensions for FrameChunk {
-    fn size(&self) -> Size {
-        Size::new(self.width, self.height)
     }
 }

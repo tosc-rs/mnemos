@@ -15,11 +15,9 @@ use kernel::{
         bbq::{new_bidi_channel, BidiHandle, Consumer, GrantW, SpscProducer},
         kchannel::{KChannel, KConsumer},
     },
+    drivers::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     maitake::sync::WaitCell,
-    registry::{
-        simple_serial::{Request, Response, SimpleSerial, SimpleSerialError},
-        Message,
-    },
+    registry::Message,
     Kernel,
 };
 
@@ -142,7 +140,7 @@ impl D1Uart {
         }
     }
 
-    async fn serial_server(handle: BidiHandle, kcons: KConsumer<Message<SimpleSerial>>) {
+    async fn serial_server(handle: BidiHandle, kcons: KConsumer<Message<SimpleSerialService>>) {
         loop {
             if let Ok(req) = kcons.dequeue_async().await {
                 let Request::GetPort = req.msg.body;
@@ -172,7 +170,7 @@ impl D1Uart {
     ) -> Result<(), ()> {
         assert_eq!(tx_channel.channel_index(), 0);
 
-        let (kprod, kcons) = KChannel::<Message<SimpleSerial>>::new_async(k, 4)
+        let (kprod, kcons) = KChannel::<Message<SimpleSerialService>>::new_async(k, 4)
             .await
             .split();
         let (fifo_a, fifo_b) = new_bidi_channel(k.heap(), cap_in, cap_out).await;
@@ -187,7 +185,7 @@ impl D1Uart {
         let old = UART_RX.swap(leaked_prod.as_ptr(), Ordering::AcqRel);
         assert_eq!(old, null_mut());
 
-        k.with_registry(|reg| reg.register_konly::<SimpleSerial>(&kprod))
+        k.with_registry(|reg| reg.register_konly::<SimpleSerialService>(&kprod))
             .await
             .map_err(drop)?;
 
