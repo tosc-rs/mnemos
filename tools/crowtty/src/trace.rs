@@ -61,7 +61,7 @@ impl TraceState {
             TraceEvent::Event(ev) => {
                 let target = ev.metadata.target.as_str();
                 let level = ev.metadata.level;
-                write!(&mut self.textbuf, "[+{elapsed:?} {level:?}]").unwrap();
+                write!(&mut self.textbuf, "[+{elapsed:?} {level:?}] ").unwrap();
                 self.write_span_cx();
                 write!(&mut self.textbuf, " {target}: ").unwrap();
                 let SerializeRecordFields::De(ref fields) = ev.fields else {
