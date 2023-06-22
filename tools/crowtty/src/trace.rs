@@ -1,4 +1,4 @@
-use mnemos_trace_proto::TraceEvent;
+use mnemos_trace_proto::{MetaId, TraceEvent};
 use postcard::accumulator::{CobsAccumulator, FeedResult};
 use std::{
     collections::HashMap,
@@ -8,17 +8,20 @@ use std::{
     time::Instant,
 };
 use tracing_serde_structured::{
-    CowString, SerializeLevel, SerializeRecordFields, SerializeSpanFields, SerializeValue,
+    CowString, SerializeLevel, SerializeMetadata, SerializeRecordFields, SerializeSpanFields,
+    SerializeValue,
 };
 
 use crate::LogTag;
 use owo_colors::{OwoColorize, Stream};
 
-pub(crate) fn decode(rx: mpsc::Receiver<Vec<u8>>, tag: LogTag) {
+pub(crate) fn decode(rx: mpsc::Receiver<Vec<u8>>, tag: LogTag, verbose: bool) {
     let mut cobs_buf: CobsAccumulator<1024> = CobsAccumulator::new();
     let mut state: TraceState = TraceState {
         tag,
+        verbose,
         spans: HashMap::new(),
+        metas: HashMap::new(),
         stack: Vec::new(),
         textbuf: String::new(),
     };
@@ -44,7 +47,9 @@ pub(crate) fn decode(rx: mpsc::Receiver<Vec<u8>>, tag: LogTag) {
 
 struct TraceState {
     tag: LogTag,
+    verbose: bool,
     spans: HashMap<NonZeroU64, Span>,
+    metas: HashMap<MetaId, SerializeMetadata<'static>>,
     stack: Vec<NonZeroU64>,
     textbuf: String,
 }
@@ -59,45 +64,72 @@ struct Span {
 }
 
 impl TraceState {
-    fn write_span_cx(&mut self) {
-        let spans = self.stack.iter().filter_map(|id| self.spans.get(id));
-        let mut any = false;
-        for span in spans {
-            self.textbuf.push_str(span.repr.as_str());
-            self.textbuf.push(':');
-            any = true;
-        }
-        if any {
-            self.textbuf.push(' ');
-        }
-    }
-
     fn event(&mut self, ev: TraceEvent<'_>) {
         match ev {
-            TraceEvent::Event(ev) => {
-                let target = ev.metadata.target.as_str();
+            TraceEvent::RegisterMeta { id, meta } => {
+                if self.verbose {
+                    write!(
+                        &mut self.textbuf,
+                        "{} {} {} {}{}{id:?}: {} {} [{}:{}]",
+                        self.tag,
+                        "META".if_supports_color(Stream::Stdout, |x| x.bright_blue()),
+                        DisplayLevel(meta.level),
+                        if meta.is_event { "EVNT " } else { "" }.if_supports_color(Stream::Stdout, |x| x.bright_yellow()),
+                        if meta.is_span { "SPAN " } else { "" }.if_supports_color(Stream::Stdout, |x| x.bright_magenta()),
+                        meta.target.as_str().if_supports_color(Stream::Stdout, |x| x.italic()),
+                        meta.name.as_str().if_supports_color(Stream::Stdout, |x| x.bold()),
+                        meta.file.as_ref().map(CowString::as_str).unwrap_or("<unknown>"),
+                        meta.line.unwrap_or(0),
+                    )
+                    .unwrap();
+                    println!("{}", self.textbuf);
+                    self.textbuf.clear();
+                }
+                self.metas.insert(id, meta.to_owned());
+            }
+            TraceEvent::Event {
+                meta,
+                parent: _,
+                fields,
+            } => {
+                let Some(meta) =  self.metas.get(&meta) else {
+                    println!("{} {} UNKNOWN: {meta:?}", self.tag, "META".if_supports_color(Stream::Stdout, |x| x.bright_blue()));
+                    return;
+                };
+                let target = meta.target.as_str();
                 let target = target.if_supports_color(Stream::Stdout, |target| target.italic());
-                let level = DisplayLevel(ev.metadata.level);
+                let level = DisplayLevel(meta.level);
                 write!(&mut self.textbuf, "{} {level} {target}: ", self.tag).unwrap();
-                self.write_span_cx();
-                let SerializeRecordFields::De(ref fields) = ev.fields else {
+                write_span_cx(&self.stack, &self.spans, &mut self.textbuf);
+                let SerializeRecordFields::De(ref fields) = fields else {
                     unreachable!("we are deserializing!");
                 };
                 write_fields(&mut self.textbuf, fields);
                 println!("{}", self.textbuf);
                 self.textbuf.clear();
             }
-            TraceEvent::NewSpan { id, attributes } => {
+            TraceEvent::NewSpan {
+                id,
+                meta,
+                fields,
+                parent: _,
+                is_root: _,
+            } => {
                 let start = Instant::now();
                 let mut repr = String::new();
-                let name = attributes.metadata.name.as_str();
+                let Some(meta) = self.metas.get(&meta) else {
+                    println!("{} {} UNKNOWN: {meta:?}", self.tag, "META".if_supports_color(Stream::Stdout, |x| x.bright_blue()));
+                    return;
+                };
+
+                let name = meta.name.as_str();
                 write!(
                     repr,
                     "{}",
                     format_args!("{name}{{").if_supports_color(Stream::Stdout, |x| x.bold())
                 )
                 .unwrap();
-                let SerializeSpanFields::De(ref fields) = attributes.fields else {
+                let SerializeSpanFields::De(ref fields) = fields else {
                     unreachable!("we are deserializing!");
                 };
                 write_fields(&mut repr, fields);
@@ -108,8 +140,8 @@ impl TraceState {
                 )
                 .unwrap();
 
-                let level = DisplayLevel(attributes.metadata.level);
-                let target = attributes.metadata.target.as_str();
+                let level = DisplayLevel(meta.level);
+                let target = meta.target.as_str();
                 write!(
                     &mut self.textbuf,
                     "{} {level} {} ",
@@ -117,7 +149,7 @@ impl TraceState {
                     "SPAN".if_supports_color(Stream::Stdout, |x| x.green())
                 )
                 .unwrap();
-                self.write_span_cx();
+                write_span_cx(&self.stack, &self.spans, &mut self.textbuf);
                 write!(
                     &mut self.textbuf,
                     "{}::{repr} ({:04})",
@@ -181,6 +213,19 @@ impl TraceState {
                 }
             }
         }
+    }
+}
+
+fn write_span_cx(stack: &[NonZeroU64], spans: &HashMap<NonZeroU64, Span>, textbuf: &mut String) {
+    let spans = stack.iter().filter_map(|id| spans.get(id));
+    let mut any = false;
+    for span in spans {
+        textbuf.push_str(span.repr.as_str());
+        textbuf.push(':');
+        any = true;
+    }
+    if any {
+        textbuf.push(' ');
     }
 }
 

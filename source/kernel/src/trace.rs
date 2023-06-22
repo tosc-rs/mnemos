@@ -1,12 +1,12 @@
 use crate::{comms::bbq, drivers::serial_mux};
 use level_filters::LevelFilter;
 use mnemos_trace_proto::TraceEvent;
-use mycelium_util::sync::{spin::Mutex, InitOnce};
+use mycelium_util::sync::InitOnce;
 use portable_atomic::{AtomicPtr, AtomicU64, Ordering};
 
 pub use tracing_02::*;
 use tracing_core_02::span::Current;
-use tracing_serde_structured::AsSerde;
+use tracing_serde_structured::{AsSerde, SerializeRecordFields, SerializeSpanFields};
 
 pub struct SerialCollector {
     tx: InitOnce<bbq::SpscProducer>,
@@ -70,6 +70,32 @@ impl Collect for SerialCollector {
         metadata.level() <= &self.max_level
     }
 
+    fn register_callsite(&self, metadata: &'static Metadata<'static>) -> tracing_core_02::Interest {
+        if !self.enabled(metadata) {
+            return tracing_core_02::collect::Interest::never();
+        }
+
+        let id = metadata.callsite();
+
+        // TODO(eliza): if we can't write a metadata, that's bad news...
+        if let Some(mut wgr) = self.tx.get().send_grant_max_sync(1024) {
+            let ev = TraceEvent::RegisterMeta {
+                id: mnemos_trace_proto::MetaId::from(id),
+                meta: metadata.as_serde(),
+            };
+            let len = match postcard::to_slice_cobs(&ev, &mut wgr[..]) {
+                Ok(encoded) => encoded.len(),
+                Err(_) => 0, // we will release any bytes written to be clobbered.
+            };
+            wgr.commit(len);
+            if len > 0 {
+                return tracing_core_02::collect::Interest::always();
+            }
+        }
+
+        tracing_core_02::collect::Interest::never()
+    }
+
     fn max_level_hint(&self) -> Option<LevelFilter> {
         Some(self.max_level)
     }
@@ -82,7 +108,10 @@ impl Collect for SerialCollector {
         if let Some(mut wgr) = self.tx.get().send_grant_max_sync(1024) {
             let ev = TraceEvent::NewSpan {
                 id: id.as_serde(),
-                attributes: span.as_serde(),
+                meta: span.metadata().callsite().into(),
+                parent: span.parent().map(AsSerde::as_serde),
+                is_root: span.is_root(),
+                fields: SerializeSpanFields::Ser(span.values()),
             };
             let len = match postcard::to_slice_cobs(&ev, &mut wgr[..]) {
                 Ok(encoded) => encoded.len(),
@@ -125,11 +154,15 @@ impl Collect for SerialCollector {
 
     fn event(&self, event: &Event<'_>) {
         if let Some(mut wgr) = self.tx.get().send_grant_max_sync(1024) {
-            let len =
-                match postcard::to_slice_cobs(&TraceEvent::Event(event.as_serde()), &mut wgr[..]) {
-                    Ok(encoded) => encoded.len(),
-                    Err(_) => 0, // we will release any bytes written to be clobbered.
-                };
+            let ev = TraceEvent::Event {
+                meta: event.metadata().callsite().into(),
+                fields: SerializeRecordFields::Ser(event),
+                parent: event.parent().map(AsSerde::as_serde),
+            };
+            let len = match postcard::to_slice_cobs(&ev, &mut wgr[..]) {
+                Ok(encoded) => encoded.len(),
+                Err(_) => 0, // we will release any bytes written to be clobbered.
+            };
             wgr.commit(len);
         } else {
             // drop the new event

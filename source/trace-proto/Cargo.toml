@@ -15,3 +15,7 @@ features = ["derive"]
 git = "https://github.com/hawkw/tracing-serde-structured"
 branch = "eliza/tracing-02"
 default-features = false
+
+[dependencies.tracing-core]
+git = "https://github.com/tokio-rs/tracing"
+default-features = false
