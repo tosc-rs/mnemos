@@ -91,6 +91,7 @@ use maitake::{
     task::{JoinHandle, Storage, Task as MaitakeTask},
     time::{Duration, Sleep, Timeout, Timer},
 };
+pub use mnemos_alloc;
 use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 use registry::Registry;
 

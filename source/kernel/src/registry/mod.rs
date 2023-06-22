@@ -8,7 +8,7 @@ use mnemos_alloc::{containers::HeapFixedVec, heap::HeapGuard};
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use spitebuf::EnqueueError;
-use uuid::{uuid, Uuid};
+pub use uuid::{uuid, Uuid};
 
 use crate::comms::{
     bbq,
@@ -458,6 +458,25 @@ impl<P> Envelope<P> {
             service_id: self.service_id,
             client_id: self.client_id,
             request_id: RequestResponseId::new(self.request_id.id(), MessageKind::Response),
+        }
+    }
+
+    /// Create a response Envelope from a given request Envelope.
+    ///
+    /// Maintains the same Service ID and Client ID, and increments the
+    /// request ID by one.
+    ///
+    /// This variant also gives you the request body in case you need it for
+    /// the response.
+    pub fn reply_with_body<F, U>(self, f: F) -> Envelope<U>
+    where
+        F: FnOnce(P) -> U,
+    {
+        Envelope {
+            service_id: self.service_id,
+            client_id: self.client_id,
+            request_id: RequestResponseId::new(self.request_id.id(), MessageKind::Response),
+            body: f(self.body),
         }
     }
 }
