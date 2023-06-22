@@ -1,8 +1,8 @@
 use crate::{comms::bbq, drivers::serial_mux};
 use level_filters::LevelFilter;
+use mnemos_trace_proto::TraceEvent;
 use mycelium_util::sync::{spin::Mutex, InitOnce};
 use portable_atomic::{AtomicPtr, AtomicU64, Ordering};
-use mnemos_trace_proto::TraceEvent;
 
 pub use tracing_02::*;
 use tracing_core_02::span::Current;
@@ -80,7 +80,10 @@ impl Collect for SerialCollector {
             span::Id::from_u64(id)
         };
         if let Some(mut wgr) = self.tx.get().send_grant_max_sync(1024) {
-            let ev = TraceEvent::NewSpan { id: id.as_serde(), attributes: span.as_serde()  };
+            let ev = TraceEvent::NewSpan {
+                id: id.as_serde(),
+                attributes: span.as_serde(),
+            };
             let len = match postcard::to_slice_cobs(&ev, &mut wgr[..]) {
                 Ok(encoded) => encoded.len(),
                 Err(_) => 0, // we will release any bytes written to be clobbered.
@@ -88,7 +91,6 @@ impl Collect for SerialCollector {
             wgr.commit(len);
         }
         id
-
     }
 
     fn record(&self, span: &span::Id, values: &span::Record<'_>) {
@@ -97,20 +99,22 @@ impl Collect for SerialCollector {
 
     fn enter(&self, span: &span::Id) {
         if let Some(mut wgr) = self.tx.get().send_grant_max_sync(16) {
-            let len = match postcard::to_slice_cobs(&TraceEvent::Enter(span.as_serde()), &mut wgr[..]) {
-                Ok(encoded) => encoded.len(),
-                Err(_) => 0, // we will release any bytes written to be clobbered.
-            };
+            let len =
+                match postcard::to_slice_cobs(&TraceEvent::Enter(span.as_serde()), &mut wgr[..]) {
+                    Ok(encoded) => encoded.len(),
+                    Err(_) => 0, // we will release any bytes written to be clobbered.
+                };
             wgr.commit(len);
         }
     }
 
     fn exit(&self, span: &span::Id) {
         if let Some(mut wgr) = self.tx.get().send_grant_max_sync(16) {
-            let len = match postcard::to_slice_cobs(&TraceEvent::Exit(span.as_serde()), &mut wgr[..]) {
-                Ok(encoded) => encoded.len(),
-                Err(_) => 0, // we will release any bytes written to be clobbered.
-            };
+            let len =
+                match postcard::to_slice_cobs(&TraceEvent::Exit(span.as_serde()), &mut wgr[..]) {
+                    Ok(encoded) => encoded.len(),
+                    Err(_) => 0, // we will release any bytes written to be clobbered.
+                };
             wgr.commit(len);
         }
     }
@@ -121,10 +125,11 @@ impl Collect for SerialCollector {
 
     fn event(&self, event: &Event<'_>) {
         if let Some(mut wgr) = self.tx.get().send_grant_max_sync(1024) {
-            let len = match postcard::to_slice_cobs(&TraceEvent::Event(event.as_serde()), &mut wgr[..]) {
-                Ok(encoded) => encoded.len(),
-                Err(_) => 0, // we will release any bytes written to be clobbered.
-            };
+            let len =
+                match postcard::to_slice_cobs(&TraceEvent::Event(event.as_serde()), &mut wgr[..]) {
+                    Ok(encoded) => encoded.len(),
+                    Err(_) => 0, // we will release any bytes written to be clobbered.
+                };
             wgr.commit(len);
         } else {
             // drop the new event

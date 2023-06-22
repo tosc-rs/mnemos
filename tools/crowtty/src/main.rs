@@ -1,13 +1,13 @@
 use serde::{Deserialize, Serialize};
 use serialport::SerialPort;
 use std::collections::HashMap;
+use std::fmt;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{sleep, spawn, JoinHandle};
-use std::time::{Instant, Duration};
-use std::path::PathBuf;
-use std::fmt;
+use std::time::{Duration, Instant};
 
 #[derive(Serialize, Deserialize)]
 pub struct Chunk {
@@ -56,8 +56,8 @@ enum Command {
 
         /// baud rate (usually 115200 for hw)
         #[arg(default_value_t = 115200)]
-        baud: u32
-    }
+        baud: u32,
+    },
 }
 
 impl std::io::Write for Connect {
@@ -145,7 +145,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                println!("{tag} Listening to port {} ({})", 10_000 + work.port, work.port);
+                println!(
+                    "{tag} Listening to port {} ({})",
+                    10_000 + work.port,
+                    work.port
+                );
 
                 skt.set_read_timeout(Some(Duration::from_millis(10))).ok();
                 // skt.set_nonblocking(true).ok();
@@ -230,7 +234,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut enc_msg = cobs::encode_vec(&nmsg);
                 enc_msg.push(0);
                 if verbose {
-                    println!("{} Sending {} bytes to port {port_idx}", tag.port(*port_idx), enc_msg.len());
+                    println!(
+                        "{} Sending {} bytes to port {port_idx}",
+                        tag.port(*port_idx),
+                        enc_msg.len()
+                    );
                 }
                 port.write_all(&enc_msg)?;
             }
@@ -258,7 +266,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 if let Some(hdl) = manager.workers.get_mut(&port) {
                     if verbose {
-                        println!("{} Got {} bytes from port {port}", tag.port(port), remain.len());
+                        println!(
+                            "{} Got {} bytes from port {port}",
+                            tag.port(port),
+                            remain.len()
+                        );
                     }
                     hdl.out.send(remain.to_vec()).ok();
                 }
@@ -314,8 +326,17 @@ impl fmt::Display for LogTag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         use owo_colors::OwoColorize;
         let elapsed = self.start.elapsed();
-        let port = self.port.as_ref().map(|p| p as &dyn fmt::Display).unwrap_or(&" " as &dyn fmt::Display);
-        format_args!("[{port} +{:04}.{:09}s]", elapsed.as_secs(), elapsed.subsec_nanos())
-            .if_supports_color(owo_colors::Stream::Stdout, |text| text.dimmed()).fmt(f)
+        let port = self
+            .port
+            .as_ref()
+            .map(|p| p as &dyn fmt::Display)
+            .unwrap_or(&" " as &dyn fmt::Display);
+        format_args!(
+            "[{port} +{:04}.{:09}s]",
+            elapsed.as_secs(),
+            elapsed.subsec_nanos()
+        )
+        .if_supports_color(owo_colors::Stream::Stdout, |text| text.dimmed())
+        .fmt(f)
     }
 }

@@ -1,10 +1,18 @@
-use postcard::accumulator::{CobsAccumulator, FeedResult};
-use std::{time::Instant, sync::mpsc, fmt::{self, Write}, collections::HashMap, num::NonZeroU64};
-use tracing_serde_structured::{SerializeRecordFields, SerializeSpanFields, SerializeValue, CowString, SerializeLevel};
 use mnemos_trace_proto::TraceEvent;
+use postcard::accumulator::{CobsAccumulator, FeedResult};
+use std::{
+    collections::HashMap,
+    fmt::{self, Write},
+    num::NonZeroU64,
+    sync::mpsc,
+    time::Instant,
+};
+use tracing_serde_structured::{
+    CowString, SerializeLevel, SerializeRecordFields, SerializeSpanFields, SerializeValue,
+};
 
-use owo_colors::{OwoColorize, Stream};
 use crate::LogTag;
+use owo_colors::{OwoColorize, Stream};
 
 pub(crate) fn decode(rx: mpsc::Receiver<Vec<u8>>, tag: LogTag) {
     let mut cobs_buf: CobsAccumulator<1024> = CobsAccumulator::new();
@@ -80,16 +88,26 @@ impl TraceState {
                 println!("{}", self.textbuf);
                 self.textbuf.clear();
             }
-            TraceEvent::NewSpan { id, attributes} => {
+            TraceEvent::NewSpan { id, attributes } => {
                 let mut repr = String::new();
                 let name = attributes.metadata.name.as_str();
-                write!(repr, "{}", format_args!("{name}{{").if_supports_color(Stream::Stdout, |x| x.bold())).unwrap();
+                write!(
+                    repr,
+                    "{}",
+                    format_args!("{name}{{").if_supports_color(Stream::Stdout, |x| x.bold())
+                )
+                .unwrap();
                 let SerializeSpanFields::De(ref fields) = attributes.fields else {
                     unreachable!("we are deserializing!");
                 };
                 write_fields(&mut repr, fields);
-                write!(repr, "{}", "}".if_supports_color(Stream::Stderr, |x| x.bold())).unwrap();
-                
+                write!(
+                    repr,
+                    "{}",
+                    "}".if_supports_color(Stream::Stderr, |x| x.bold())
+                )
+                .unwrap();
+
                 let level = DisplayLevel(attributes.metadata.level);
                 let target = attributes.metadata.target.as_str();
                 let target = target.if_supports_color(Stream::Stdout, |target| target.italic());
@@ -100,29 +118,43 @@ impl TraceState {
                 println!("{}", self.textbuf);
                 self.textbuf.clear();
 
-                self.spans.insert(id.id, Span {
-                    repr,
-                    start: now,
-                    refs: 1,
-                });
+                self.spans.insert(
+                    id.id,
+                    Span {
+                        repr,
+                        start: now,
+                        refs: 1,
+                    },
+                );
             }
-            TraceEvent::Enter(id) => { self.stack.push(id.id); },
-            TraceEvent::Exit(_id) => { self.stack.pop(); },
+            TraceEvent::Enter(id) => {
+                self.stack.push(id.id);
+            }
+            TraceEvent::Exit(_id) => {
+                self.stack.pop();
+            }
             // TODO(eliza)
-            TraceEvent::CloneSpan(_) => {},
+            TraceEvent::CloneSpan(_) => {}
             // TODO(eliza)
-            TraceEvent::DropSpan(_) => {},
+            TraceEvent::DropSpan(_) => {}
         }
     }
 }
 
-fn write_fields<'a>(to: &mut String, fields: impl IntoIterator<Item = (&'a CowString<'a>, &'a SerializeValue<'a>)>) {
-
+fn write_fields<'a>(
+    to: &mut String,
+    fields: impl IntoIterator<Item = (&'a CowString<'a>, &'a SerializeValue<'a>)>,
+) {
     let mut fields = fields.into_iter();
     if let Some((key, val)) = fields.next() {
         write_kv(key, val, to);
         for (key, val) in fields {
-            write!(to, "{}", ", ".if_supports_color(Stream::Stdout, |delim| delim.dimmed())).unwrap();
+            write!(
+                to,
+                "{}",
+                ", ".if_supports_color(Stream::Stdout, |delim| delim.dimmed())
+            )
+            .unwrap();
             write_kv(key, val, to);
         }
     }
@@ -133,7 +165,12 @@ fn write_kv(key: &CowString<'_>, val: &SerializeValue<'_>, to: &mut String) {
 
     let key = key.as_str();
     let key = key.if_supports_color(Stream::Stdout, |k| k.bold());
-    write!(to, "{key}{}", "=".if_supports_color(Stream::Stdout, |delim| delim.dimmed())).unwrap();
+    write!(
+        to,
+        "{key}{}",
+        "=".if_supports_color(Stream::Stdout, |delim| delim.dimmed())
+    )
+    .unwrap();
 
     match val {
         SerializeValue::Debug(DebugRecord::De(d)) => to.push_str(d.as_str()),
@@ -142,7 +179,7 @@ fn write_kv(key: &CowString<'_>, val: &SerializeValue<'_>, to: &mut String) {
         SerializeValue::F64(x) => write!(to, "{x}").unwrap(),
         SerializeValue::I64(x) => write!(to, "{x}").unwrap(),
         SerializeValue::U64(x) => write!(to, "{x}").unwrap(),
-        SerializeValue::Bool(x)  => write!(to, "{x}").unwrap(),
+        SerializeValue::Bool(x) => write!(to, "{x}").unwrap(),
         _ => to.push_str("???"),
     }
 }
@@ -152,11 +189,31 @@ struct DisplayLevel(SerializeLevel);
 impl fmt::Display for DisplayLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
-            SerializeLevel::Trace => write!(f, "{}", "TRCE".if_supports_color(Stream::Stdout, |l| l.purple())),
-            SerializeLevel::Debug => write!(f, "{}", "DBUG".if_supports_color(Stream::Stdout, |l| l.blue())),
-            SerializeLevel::Info => write!(f, "{}", "INFO".if_supports_color(Stream::Stdout, |l| l.green())),
-            SerializeLevel::Warn => write!(f, "{}", "WARN".if_supports_color(Stream::Stdout, |l| l.yellow())),
-            SerializeLevel::Error => write!(f, "{}", "ERR!".if_supports_color(Stream::Stdout, |l| l.red())),
+            SerializeLevel::Trace => write!(
+                f,
+                "{}",
+                "TRCE".if_supports_color(Stream::Stdout, |l| l.purple())
+            ),
+            SerializeLevel::Debug => write!(
+                f,
+                "{}",
+                "DBUG".if_supports_color(Stream::Stdout, |l| l.blue())
+            ),
+            SerializeLevel::Info => write!(
+                f,
+                "{}",
+                "INFO".if_supports_color(Stream::Stdout, |l| l.green())
+            ),
+            SerializeLevel::Warn => write!(
+                f,
+                "{}",
+                "WARN".if_supports_color(Stream::Stdout, |l| l.yellow())
+            ),
+            SerializeLevel::Error => write!(
+                f,
+                "{}",
+                "ERR!".if_supports_color(Stream::Stdout, |l| l.red())
+            ),
         }
     }
 }

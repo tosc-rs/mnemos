@@ -1,6 +1,6 @@
 #![cfg_attr(not(feature = "std"), no_std)]
 
-use tracing_serde_structured::{SerializeEvent, SerializeId, SerializeAttributes};
+use tracing_serde_structured::{SerializeAttributes, SerializeEvent, SerializeId};
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub enum TraceEvent<'a> {
