@@ -2,11 +2,13 @@ use postcard::accumulator::{CobsAccumulator, FeedResult};
 use std::{time::Instant, sync::mpsc, fmt::Write, collections::HashMap, num::NonZeroU64};
 use tracing_serde_structured::{SerializeRecordFields, SerializeSpanFields, SerializeValue, CowString};
 use mnemos_trace_proto::TraceEvent;
+use crate::LogTag;
 
-pub(crate) fn decode(rx: mpsc::Receiver<Vec<u8>>, start: Instant) {
+pub(crate) fn decode(rx: mpsc::Receiver<Vec<u8>>, tag: LogTag) {
     let mut cobs_buf: CobsAccumulator<1024> = CobsAccumulator::new();
     let mut state: TraceState = TraceState {
-        trace_start: start,
+        tag,
+        trace_start: tag.start,
         spans: HashMap::new(),
         stack: Vec::new(),
         textbuf: String::new(),
@@ -32,6 +34,7 @@ pub(crate) fn decode(rx: mpsc::Receiver<Vec<u8>>, start: Instant) {
 }
 
 struct TraceState {
+    tag: LogTag,
     trace_start: Instant,
     spans: HashMap<NonZeroU64, Span>,
     stack: Vec<NonZeroU64>,
@@ -61,7 +64,7 @@ impl TraceState {
             TraceEvent::Event(ev) => {
                 let target = ev.metadata.target.as_str();
                 let level = ev.metadata.level;
-                write!(&mut self.textbuf, "[3 +{elapsed:4.8?}] {level:<5?} ").unwrap();
+                write!(&mut self.textbuf, "{} {level:<5?} ", self.tag).unwrap();
                 self.write_span_cx();
                 write!(&mut self.textbuf, "{target}: ").unwrap();
                 let SerializeRecordFields::De(ref fields) = ev.fields else {
@@ -83,7 +86,7 @@ impl TraceState {
 
                 let level = attributes.metadata.level;
                 let target = attributes.metadata.target.as_str();
-                write!(&mut self.textbuf, "[3 +{elapsed:4.8?}] {level:<5?} ").unwrap();
+                write!(&mut self.textbuf, "{} {level:<5?} ", self.tag).unwrap();
                 self.write_span_cx();
                 write!(&mut self.textbuf, "-> {target}::{repr}").unwrap();
                 println!("{}", self.textbuf);

@@ -22,6 +22,10 @@ features = ["derive"]
 [dependencies.postcard]
 version = "1"
 
+[dependencies.owo-colors]
+version = "3.5"
+features = ["supports-colors"]
+
 [dependencies.tracing-serde-structured]
 git = "https://github.com/hawkw/tracing-serde-structured"
 branch = "eliza/tracing-02"

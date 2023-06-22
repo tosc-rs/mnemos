@@ -5,13 +5,20 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{sleep, spawn, JoinHandle};
-use std::time::Duration;
+use std::time::{Instant, Duration};
 use std::path::PathBuf;
+use std::fmt;
 
 #[derive(Serialize, Deserialize)]
 pub struct Chunk {
     port: u16,
     buf: Vec<u8>,
+}
+
+#[derive(Copy, Clone)]
+pub(crate) struct LogTag {
+    start: Instant,
+    port: Option<u16>,
 }
 
 enum Connect {
@@ -96,7 +103,7 @@ impl Connect {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let start = std::time::Instant::now();
+    let tag = LogTag::new();
     let args = Args::parse();
     let verbose = args.verbose;
     let mut port: Connect = match args.command {
@@ -127,6 +134,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             socket,
             port: i,
         };
+        let tag = tag.port(i);
         let thread_hdl = spawn(move || {
             for skt in work.socket.incoming() {
                 let mut skt = match skt {
@@ -137,7 +145,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                println!("[{} +{:4.8?}] Listening to port {} ({})", work.port, start.elapsed(), 10_000 + work.port, work.port);
+                println!("{tag} Listening to port {} ({})", 10_000 + work.port, work.port);
 
                 skt.set_read_timeout(Some(Duration::from_millis(10))).ok();
                 // skt.set_nonblocking(true).ok();
@@ -153,7 +161,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // }
 
                     if let Ok(Some(_)) = skt.take_error() {
-                        println!("[{} +{:4.8?}] Took that error!", work.port, start.elapsed());
+                        println!("{tag} Took that error!");
                         break 'inner;
                     }
 
@@ -161,7 +169,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match skt.write_all(&msg) {
                             Ok(_) => {}
                             Err(e) => {
-                                println!("[{} +{:4.8?}] wtf? {:?}", work.port, start.elapsed(), e,);
+                                println!("{tag} wtf? {e:?}");
                                 break 'inner;
                             }
                         }
@@ -176,7 +184,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         Ok(n) => {
                             if verbose {
-                                println!("[{} +{:4.8?}] yey!", work.port, start.elapsed());
+                                println!("{tag} yey!");
                             }
                             work.inp.send(buf[..n].to_vec()).ok();
                         }
@@ -200,7 +208,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let thread_hdl = spawn(move || {
             // don't drop this
             let _inp_send = inp_send;
-            trace::decode(out_recv, start)
+            trace::decode(out_recv, tag.port(3))
         });
         WorkerHandle {
             out: out_send,
@@ -222,7 +230,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut enc_msg = cobs::encode_vec(&nmsg);
                 enc_msg.push(0);
                 if verbose {
-                    println!("[{port_idx} +{:4.8?}] Sending {} bytes to port {port_idx}", start.elapsed(), enc_msg.len());
+                    println!("{} Sending {} bytes to port {port_idx}", tag.port(*port_idx), enc_msg.len());
                 }
                 port.write_all(&enc_msg)?;
             }
@@ -236,7 +244,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => panic!("{:?}", e),
         };
         if verbose {
-            println!("[  +{:4.8?}] Got {used} raw bytes", start.elapsed());
+            println!("{tag} Got {used} raw bytes");
         }
         carry.extend_from_slice(&buf[..used]);
 
@@ -250,12 +258,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 if let Some(hdl) = manager.workers.get_mut(&port) {
                     if verbose {
-                        println!("[{port} +{:4.8?}] Got {} bytes from port {port}", start.elapsed(), remain.len());
+                        println!("{} Got {} bytes from port {port}", tag.port(port), remain.len());
                     }
                     hdl.out.send(remain.to_vec()).ok();
                 }
             } else {
-                println!("[  +{:4.8?}] Bad decode!", start.elapsed());
+                println!("{} Bad decode!", tag);
             }
             // if let Ok(msg) = Message::decode_in_place(&mut carry) {
 
@@ -284,4 +292,30 @@ struct TcpWorker {
     inp: Sender<Vec<u8>>,
     port: u16,
     socket: TcpListener,
+}
+
+impl LogTag {
+    pub fn new() -> Self {
+        Self {
+            start: Instant::now(),
+            port: None,
+        }
+    }
+
+    pub fn port(self, port: impl Into<Option<u16>>) -> Self {
+        Self {
+            port: port.into(),
+            ..self
+        }
+    }
+}
+
+impl fmt::Display for LogTag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use owo_colors::OwoColorize;
+        let elapsed = self.start.elapsed();
+        let port = self.port.as_ref().map(|p| p as &dyn fmt::Display).unwrap_or(&" " as &dyn fmt::Display);
+        format_args!("[{port} +{:04}.{:09}s]", elapsed.as_secs(), elapsed.subsec_nanos())
+            .if_supports_color(owo_colors::Stream::Stdout, |text| text.dimmed()).fmt(f)
+    }
 }
