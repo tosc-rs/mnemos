@@ -6,6 +6,7 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{sleep, spawn, JoinHandle};
 use std::time::Duration;
+use std::path::PathBuf;
 
 #[derive(Serialize, Deserialize)]
 pub struct Chunk {
@@ -19,6 +20,38 @@ enum Connect {
 }
 
 mod trace;
+
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[command(subcommand)]
+    command: Command,
+
+    /// whether to include verbose logging of bytes in/out.
+    #[arg(short, long, global = true)]
+    verbose: bool,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// open listener on localhost:PORT
+    Tcp {
+        /// TCP port to connect to (usually 9999 for melpomene)
+        #[arg(default_value_t = 9999)]
+        port: u16,
+    },
+    /// open listener on PATH
+    Serial {
+        /// path to the serial port device (usually /dev/ttyUSBx for hw)
+        path: PathBuf,
+
+        /// baud rate (usually 115200 for hw)
+        #[arg(default_value_t = 115200)]
+        baud: u32
+    }
+}
 
 impl std::io::Write for Connect {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
@@ -63,32 +96,12 @@ impl Connect {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
-
-    let mut port = match args.as_slice() {
-        &["tcp", port] => {
-            let port: u16 = port.parse().unwrap();
-            Connect::new_from_tcp(port)
-        }
-        &["serial", path, baud] => {
-            let baud: u32 = baud.parse().unwrap();
-            Connect::new_from_serial(path, baud)
-        }
-        &["serial", path] => Connect::new_from_serial(path, 115200),
-        _ => {
-            println!("Args should be one of the following:");
-            println!("crowtty tcp PORT          - open listener on localhost:PORT");
-            println!("                            (usually 9999 for melpo)");
-            println!(
-                "crowtty serial PATH       - open listener on serial port PATH w/ baud: 115200"
-            );
-            println!("                            (usually /dev/ttyUSBx for hw)");
-            println!("crowtty serial PATH BAUD  - open listener on serial port PATH w/ BAUD");
-            println!("                            (usually /dev/ttyUSBx for hw)");
-            println!("crowtty help              - this message");
-            return Ok(());
-        }
+    let start = std::time::Instant::now();
+    let args = Args::parse();
+    let verbose = args.verbose;
+    let mut port: Connect = match args.command {
+        Command::Tcp { port } => Connect::new_from_tcp(port),
+        Command::Serial { path, baud } => Connect::new_from_serial(path.to_str().unwrap(), baud),
     };
 
     let mut carry = Vec::new();
@@ -124,7 +137,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                println!("Listening to port {} ({})", 10_000 + work.port, work.port);
+                println!("[{} +{:4.8?}] Listening to port {} ({})", work.port, start.elapsed(), 10_000 + work.port, work.port);
 
                 skt.set_read_timeout(Some(Duration::from_millis(10))).ok();
                 // skt.set_nonblocking(true).ok();
@@ -140,7 +153,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // }
 
                     if let Ok(Some(_)) = skt.take_error() {
-                        println!("Took that error!");
+                        println!("[{} +{:4.8?}] Took that error!", work.port, start.elapsed());
                         break 'inner;
                     }
 
@@ -148,7 +161,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match skt.write_all(&msg) {
                             Ok(_) => {}
                             Err(e) => {
-                                println!("wtf? {:?}", e);
+                                println!("[{} +{:4.8?}] wtf? {:?}", work.port, start.elapsed(), e,);
                                 break 'inner;
                             }
                         }
@@ -162,7 +175,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             break 'inner;
                         }
                         Ok(n) => {
-                            println!("yey!");
+                            if verbose {
+                                println!("[{} +{:4.8?}] yey!", work.port, start.elapsed());
+                            }
                             work.inp.send(buf[..n].to_vec()).ok();
                         }
                     }
@@ -185,7 +200,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let thread_hdl = spawn(move || {
             // don't drop this
             let _inp_send = inp_send;
-            trace::decode(out_recv)
+            trace::decode(out_recv, start)
         });
         WorkerHandle {
             out: out_send,
@@ -206,7 +221,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 nmsg.extend_from_slice(&msg);
                 let mut enc_msg = cobs::encode_vec(&nmsg);
                 enc_msg.push(0);
-                println!("Sending {} bytes to port {}", enc_msg.len(), port_idx);
+                if verbose {
+                    println!("[{port_idx} +{:4.8?}] Sending {} bytes to port {port_idx}", start.elapsed(), enc_msg.len());
+                }
                 port.write_all(&enc_msg)?;
             }
         }
@@ -218,7 +235,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(used) => used,
             Err(e) => panic!("{:?}", e),
         };
-        println!("Got {used} raw bytes");
+        if verbose {
+            println!("[  +{:4.8?}] Got {used} raw bytes", start.elapsed());
+        }
         carry.extend_from_slice(&buf[..used]);
 
         while let Some(pos) = carry.iter().position(|b| *b == 0) {
@@ -230,11 +249,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let port = u16::from_le_bytes(bytes);
 
                 if let Some(hdl) = manager.workers.get_mut(&port) {
-                    println!("Got {} bytes from port {}", remain.len(), port);
+                    if verbose {
+                        println!("[{port} +{:4.8?}] Got {} bytes from port {port}", start.elapsed(), remain.len());
+                    }
                     hdl.out.send(remain.to_vec()).ok();
                 }
             } else {
-                println!("Bad decode!");
+                println!("[  +{:4.8?}] Bad decode!", start.elapsed());
             }
             // if let Ok(msg) = Message::decode_in_place(&mut carry) {
 

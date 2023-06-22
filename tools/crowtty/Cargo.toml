@@ -11,6 +11,10 @@ serialport = "4.0.1"
 [dependencies.cobs]
 version = "0.2"
 
+[dependencies.clap]
+version = "4.0"
+features = ["derive"]
+
 [dependencies.serde]
 version = "1.0"
 features = ["derive"]

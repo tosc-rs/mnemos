@@ -3,10 +3,10 @@ use std::{time::Instant, sync::mpsc, fmt::Write, collections::HashMap, num::NonZ
 use tracing_serde_structured::{SerializeRecordFields, SerializeSpanFields, SerializeValue, CowString};
 use mnemos_trace_proto::TraceEvent;
 
-pub(crate) fn decode(rx: mpsc::Receiver<Vec<u8>>) {
+pub(crate) fn decode(rx: mpsc::Receiver<Vec<u8>>, start: Instant) {
     let mut cobs_buf: CobsAccumulator<1024> = CobsAccumulator::new();
-    let mut state = TraceState {
-        trace_start: Instant::now(),
+    let mut state: TraceState = TraceState {
+        trace_start: start,
         spans: HashMap::new(),
         stack: Vec::new(),
         textbuf: String::new(),
@@ -61,9 +61,9 @@ impl TraceState {
             TraceEvent::Event(ev) => {
                 let target = ev.metadata.target.as_str();
                 let level = ev.metadata.level;
-                write!(&mut self.textbuf, "[+{elapsed:?} {level:?}] ").unwrap();
+                write!(&mut self.textbuf, "[3 +{elapsed:4.8?}] {level:<5?} ").unwrap();
                 self.write_span_cx();
-                write!(&mut self.textbuf, " {target}: ").unwrap();
+                write!(&mut self.textbuf, "{target}: ").unwrap();
                 let SerializeRecordFields::De(ref fields) = ev.fields else {
                     unreachable!("we are deserializing!");
                 };
@@ -83,9 +83,9 @@ impl TraceState {
 
                 let level = attributes.metadata.level;
                 let target = attributes.metadata.target.as_str();
-                write!(&mut self.textbuf, "[+{elapsed:?} {level:?}] ").unwrap();
+                write!(&mut self.textbuf, "[3 +{elapsed:4.8?}] {level:<5?} ").unwrap();
                 self.write_span_cx();
-                write!(&mut self.textbuf, " -> {target}::{repr}").unwrap();
+                write!(&mut self.textbuf, "-> {target}::{repr}").unwrap();
                 println!("{}", self.textbuf);
                 self.textbuf.clear();
 
