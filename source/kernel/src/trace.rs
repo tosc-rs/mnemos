@@ -1,10 +1,12 @@
-use crate::{drivers::serial_mux, comms::bbq};
-use portable_atomic::{AtomicU64, AtomicPtr, Ordering};
-pub use tracing_02::*;
+use crate::{comms::bbq, drivers::serial_mux};
 use level_filters::LevelFilter;
+use mycelium_util::sync::{spin::Mutex, InitOnce};
+use portable_atomic::{AtomicPtr, AtomicU64, Ordering};
+use mnemos_trace_proto::TraceEvent;
+
+pub use tracing_02::*;
 use tracing_core_02::span::Current;
 use tracing_serde_structured::AsSerde;
-use mycelium_util::sync::{spin::Mutex, InitOnce};
 
 pub struct SerialCollector {
     tx: InitOnce<bbq::SpscProducer>,
@@ -37,13 +39,19 @@ impl SerialCollector {
     }
 
     pub async fn start(&'static self, k: &'static crate::Kernel) {
-        let mut mux = serial_mux::SerialMuxClient::from_registry(k).await.expect("cannot initialize serial tracing, no serial mux exists!");
-        let port = mux.open_port(3, 1024).await.expect("cannot initialize serial tracing, cannot open port 3!");
+        let mut mux = serial_mux::SerialMuxClient::from_registry(k)
+            .await
+            .expect("cannot initialize serial tracing, no serial mux exists!");
+        let port = mux
+            .open_port(3, 1024)
+            .await
+            .expect("cannot initialize serial tracing, cannot open port 3!");
         let (tx, rx) = bbq::new_spsc_channel(k.heap(), Self::CAPACITY).await;
         self.tx.init(tx);
         k.spawn(Self::worker(rx, port)).await;
         let dispatch = tracing_02::Dispatch::from_static(self);
-        tracing_02::dispatch::set_global_default(dispatch).expect("cannot set global default tracing dispatcher");
+        tracing_02::dispatch::set_global_default(dispatch)
+            .expect("cannot set global default tracing dispatcher");
     }
 
     async fn worker(rx: bbq::Consumer, port: serial_mux::PortHandle) {
@@ -67,8 +75,20 @@ impl Collect for SerialCollector {
     }
 
     fn new_span(&self, span: &span::Attributes<'_>) -> span::Id {
-        let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        span::Id::from_u64(id)
+        let id = {
+            let id = self.next_id.fetch_add(1, Ordering::Relaxed);
+            span::Id::from_u64(id)
+        };
+        if let Some(mut wgr) = self.tx.get().send_grant_max_sync(1024) {
+            let ev = TraceEvent::NewSpan { id: id.as_serde(), attributes: span.as_serde()  };
+            let len = match postcard::to_slice_cobs(&ev, &mut wgr[..]) {
+                Ok(encoded) => encoded.len(),
+                Err(_) => 0, // we will release any bytes written to be clobbered.
+            };
+            wgr.commit(len);
+        }
+        id
+
     }
 
     fn record(&self, span: &span::Id, values: &span::Record<'_>) {
@@ -76,11 +96,23 @@ impl Collect for SerialCollector {
     }
 
     fn enter(&self, span: &span::Id) {
-        // todo!("eliza");
+        if let Some(mut wgr) = self.tx.get().send_grant_max_sync(16) {
+            let len = match postcard::to_slice_cobs(&TraceEvent::Enter(span.as_serde()), &mut wgr[..]) {
+                Ok(encoded) => encoded.len(),
+                Err(_) => 0, // we will release any bytes written to be clobbered.
+            };
+            wgr.commit(len);
+        }
     }
 
     fn exit(&self, span: &span::Id) {
-        // todo!("eliza")
+        if let Some(mut wgr) = self.tx.get().send_grant_max_sync(16) {
+            let len = match postcard::to_slice_cobs(&TraceEvent::Exit(span.as_serde()), &mut wgr[..]) {
+                Ok(encoded) => encoded.len(),
+                Err(_) => 0, // we will release any bytes written to be clobbered.
+            };
+            wgr.commit(len);
+        }
     }
 
     fn record_follows_from(&self, span: &span::Id, follows: &span::Id) {
@@ -89,12 +121,11 @@ impl Collect for SerialCollector {
 
     fn event(&self, event: &Event<'_>) {
         if let Some(mut wgr) = self.tx.get().send_grant_max_sync(1024) {
-            let len = match postcard::to_slice_cobs(&event.as_serde(), &mut wgr[..]) {
+            let len = match postcard::to_slice_cobs(&TraceEvent::Event(event.as_serde()), &mut wgr[..]) {
                 Ok(encoded) => encoded.len(),
                 Err(_) => 0, // we will release any bytes written to be clobbered.
             };
             wgr.commit(len);
-
         } else {
             // drop the new event
             // XXX(eliza): it would be nicer to get ring-buffer behavior

@@ -59,6 +59,10 @@ branch = "eliza/tracing-02"
 default-features = false
 optional = true
 
+[dependencies.mnemos-trace-proto]
+path = "../trace-proto"
+optional = true
+
 [dependencies.maitake]
 version = "0.1.0"
 default-features = false
@@ -103,7 +107,7 @@ version = "1"
 
 [features]
 default = ["tracing-01"]
-tracing-02 = ["dep:tracing-02", "tracing-core-02", "tracing-serde-structured"]
+tracing-02 = ["dep:tracing-02", "tracing-core-02", "tracing-serde-structured", "mnemos-trace-proto"]
 
 # The `_oops_all_tracing_features` feature is a "trap" for when the package is built
 # with `--all-features`, which is usually just for docs and testing.

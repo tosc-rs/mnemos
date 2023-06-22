@@ -11,9 +11,8 @@ use drivers::{
     Ram,
 };
 use kernel::{
-    trace,
     drivers::serial_mux::{RegistrationError, SerialMuxClient, SerialMuxServer},
-    Kernel, KernelSettings,
+    trace, Kernel, KernelSettings,
 };
 use spim::{kernel_spim1, SpiSenderClient, SpiSenderServer, SPI1_TX_DONE};
 use uart::D1Uart;
@@ -26,7 +25,8 @@ const HEAP_SIZE: usize = 384 * 1024 * 1024;
 #[used]
 static AHEAP: Ram<HEAP_SIZE> = Ram::new();
 
-static COLLECTOR: trace::SerialCollector = trace::SerialCollector::new(trace::level_filters::LevelFilter::DEBUG);
+static COLLECTOR: trace::SerialCollector =
+    trace::SerialCollector::new(trace::level_filters::LevelFilter::DEBUG);
 
 /// A helper to initialize the kernel
 fn initialize_kernel() -> Result<&'static Kernel, ()> {
@@ -183,32 +183,34 @@ fn main() -> ! {
     .unwrap();
 
     // Initialize SerialMux
-    let mux_done = k.initialize(async move {
-        loop {
-            // Now, right now this is a little awkward, but what I'm doing here is spawning
-            // a new virtual mux, and configuring it with:
-            // * Up to 16 virtual ports max
-            // * Framed messages up to 512 bytes max each
-            match SerialMuxServer::register(k, 16, 512).await {
-                Ok(_) => break,
-                Err(RegistrationError::SerialPortNotFound) => {
-                    // Uart probably isn't registered yet. Try again in a bit
-                    k.sleep(Duration::from_millis(10)).await;
-                }
-                Err(e) => {
-                    panic!("uhhhh {e:?}");
+    let mux_done = k
+        .initialize(async move {
+            loop {
+                // Now, right now this is a little awkward, but what I'm doing here is spawning
+                // a new virtual mux, and configuring it with:
+                // * Up to 16 virtual ports max
+                // * Framed messages up to 512 bytes max each
+                match SerialMuxServer::register(k, 16, 512).await {
+                    Ok(_) => break,
+                    Err(RegistrationError::SerialPortNotFound) => {
+                        // Uart probably isn't registered yet. Try again in a bit
+                        k.sleep(Duration::from_millis(10)).await;
+                    }
+                    Err(e) => {
+                        panic!("uhhhh {e:?}");
+                    }
                 }
             }
-        }
-    })
-    .unwrap();
+        })
+        .unwrap();
 
     // initialize tracing
     k.initialize(async move {
         mux_done.await.unwrap();
         COLLECTOR.start(k).await;
         trace::info!("started tracing");
-    }).unwrap();
+    })
+    .unwrap();
 
     // Loopback on virtual port zero
     k.initialize(async move {

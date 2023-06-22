@@ -22,3 +22,7 @@ version = "1"
 git = "https://github.com/hawkw/tracing-serde-structured"
 branch = "eliza/tracing-02"
 default-features = true
+
+[dependencies.mnemos-trace-proto]
+path = "../../source/trace-proto"
+features = ["std"]

@@ -9,6 +9,7 @@ members = [
     "source/melpomene",
     "source/alloc",
     "source/forth3",
+    "source/trace-proto",
 
     # tools
     "tools/crowtty",

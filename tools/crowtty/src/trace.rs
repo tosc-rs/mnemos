@@ -1,0 +1,118 @@
+use postcard::accumulator::{CobsAccumulator, FeedResult};
+use std::{time::Instant, sync::mpsc, fmt::Write, collections::HashMap, num::NonZeroU64};
+use tracing_serde_structured::{SerializeRecordFields, SerializeSpanFields};
+use mnemos_trace_proto::TraceEvent;
+
+pub(crate) fn decode(rx: mpsc::Receiver<Vec<u8>>) {
+    let mut cobs_buf: CobsAccumulator<1024> = CobsAccumulator::new();
+    let mut state = TraceState {
+        trace_start: Instant::now(),
+        spans: HashMap::new(),
+        stack: Vec::new(),
+        textbuf: String::new(),
+    };
+
+    while let Ok(chunk) = rx.recv() {
+        let mut window = &chunk[..];
+
+        'cobs: while !window.is_empty() {
+            window = match cobs_buf.feed_ref::<TraceEvent<'_>>(window) {
+                FeedResult::Consumed => break 'cobs,
+                FeedResult::OverFull(new_wind) => new_wind,
+                FeedResult::DeserError(new_wind) => new_wind,
+                FeedResult::Success { data, remaining } => {
+                    state.event(data);
+
+                    remaining
+                }
+            };
+        }
+    }
+    println!("trace channel over");
+}
+
+struct TraceState {
+    trace_start: Instant,
+    spans: HashMap<NonZeroU64, Span>,
+    stack: Vec<NonZeroU64>,
+    textbuf: String,
+}
+
+struct Span {
+    repr: String,
+    start: Instant,
+    refs: usize,
+}
+
+impl TraceState {
+    fn write_span_cx(&mut self) {
+        let spans = self.stack.iter().filter_map(|id| self.spans.get(id));
+        for span in spans {
+            self.textbuf.push_str(span.repr.as_str());
+            self.textbuf.push(':');
+        }
+    }
+
+    fn event(&mut self, ev: TraceEvent<'_>) {
+        let now = Instant::now();
+        let elapsed = now - self.trace_start;
+        match ev {
+            TraceEvent::Event(ev) => {
+                let target = ev.metadata.target.as_str();
+                let level = ev.metadata.level;
+                write!(&mut self.textbuf, "[+{elapsed:?} {level:?}]").unwrap();
+                self.write_span_cx();
+                write!(&mut self.textbuf, " {target}: ").unwrap();
+                let SerializeRecordFields::De(ref fields) = ev.fields else {
+                    unreachable!("we are deserializing!");
+                };
+                write_fields(&mut self.textbuf, fields);
+                println!("{}", self.textbuf);
+                self.textbuf.clear();
+            }
+            TraceEvent::NewSpan { id, attributes} => {
+                let mut repr = String::new();
+                repr.push_str(attributes.metadata.name.as_str());
+                repr.push('{');
+                let SerializeSpanFields::De(ref fields) = attributes.fields else {
+                    unreachable!("we are deserializing!");
+                };
+                write_fields(&mut repr, fields);
+                repr.push('}');
+
+                let level = attributes.metadata.level;
+                let target = attributes.metadata.target.as_str();
+                write!(&mut self.textbuf, "[+{elapsed:?} {level:?}] ").unwrap();
+                self.write_span_cx();
+                write!(&mut self.textbuf, " -> {target}::{repr}").unwrap();
+                println!("{}", self.textbuf);
+                self.textbuf.clear();
+
+                self.spans.insert(id.id, Span {
+                    repr,
+                    start: now,
+                    refs: 1,
+                });
+            }
+            TraceEvent::Enter(id) => { self.stack.push(id.id); },
+            TraceEvent::Exit(id) => { self.stack.pop(); },
+            // TODO(eliza)
+            TraceEvent::CloneSpan(_) => {},
+            // TODO(eliza)
+            TraceEvent::DropSpan(_) => {},
+        }
+    }
+}
+
+fn write_fields<'a>(to: &mut String, fields: impl IntoIterator<Item = (&'a tracing_serde_structured::CowString<'a>, &'a tracing_serde_structured::SerializeValue<'a>)>) {
+
+    let mut fields = fields.into_iter();
+    if let Some((key, value)) = fields.next() {
+        let key = key.as_str();
+        write!(to, "{key}={value:?}").unwrap();
+        for (key, value) in fields {
+            let key: &str = key.as_str();
+            write!(to, ", {key}={value:?}").unwrap();
+        }
+    }
+}

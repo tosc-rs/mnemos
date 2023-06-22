@@ -459,6 +459,7 @@ name = "crowtty"
 version = "0.1.0"
 dependencies = [
  "cobs",
+ "mnemos-trace-proto",
  "postcard 1.0.4",
  "serde",
  "serialport",
@@ -1399,6 +1400,7 @@ dependencies = [
  "maitake",
  "mnemos-abi",
  "mnemos-alloc",
+ "mnemos-trace-proto",
  "mycelium-util",
  "portable-atomic",
  "postcard 1.0.4",
@@ -1441,6 +1443,14 @@ dependencies = [
  "mnemos-abi",
  "mnemos-alloc",
  "postcard 1.0.4",
+]
+
+[[package]]
+name = "mnemos-trace-proto"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tracing-serde-structured",
 ]
 
 [[package]]
@@ -2727,7 +2737,7 @@ dependencies = [
 [[package]]
 name = "tracing-serde-structured"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/tracing-serde-structured?branch=eliza/tracing-02#d07ba882696ec2b8d390df279fee8046b282f60c"
+source = "git+https://github.com/hawkw/tracing-serde-structured?branch=eliza/tracing-02#2533f8a82155588473f8701366f36c60f1efe984"
 dependencies = [
  "hash32 0.2.1",
  "heapless",

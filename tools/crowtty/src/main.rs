@@ -18,6 +18,8 @@ enum Connect {
     Tcp(TcpStream),
 }
 
+mod trace;
+
 impl std::io::Write for Connect {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
@@ -180,49 +182,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let trace_handle = {
         let (inp_send, inp_recv) = channel();
         let (out_send, out_recv) = channel::<Vec<u8>>();
-        let trace_start = std::time::Instant::now();
         let thread_hdl = spawn(move || {
-            use std::fmt::Write;
-            use postcard::accumulator::{CobsAccumulator, FeedResult};
-            use tracing_serde_structured::{SerializeEvent, SerializeRecordFields};
-
-            // don't drop it so the channel doesn't close
+            // don't drop this
             let _inp_send = inp_send;
-
-            let mut cobs_buf: CobsAccumulator<1024> = CobsAccumulator::new();
-            let mut textbuf = String::new();
-
-            while let Ok(chunk) = out_recv.recv() {
-                let mut window = &chunk[..];
-
-                'cobs: while !window.is_empty() {
-                    window = match cobs_buf.feed_ref::<SerializeEvent<'_>>(window) {
-                        FeedResult::Consumed => break 'cobs,
-                        FeedResult::OverFull(new_wind) => new_wind,
-                        FeedResult::DeserError(new_wind) => new_wind,
-                        FeedResult::Success { data, remaining } => {
-                            let now = trace_start.elapsed();
-
-                            let target = data.metadata.target.as_str();
-                            let level = data.metadata.level;
-                            write!(&mut textbuf, "[3: {now:?}]: {level:?} {target}").unwrap();
-                            let SerializeRecordFields::De(fields) = data.fields else {
-                                unreachable!("we are deserializing!");
-                            };
-                            for (key, value) in fields {
-                                let key = key.as_str();
-                                write!(&mut textbuf, " {key}={value:?}").unwrap();
-
-                            }
-                            println!("{textbuf}");
-                            textbuf.clear();
-
-                            remaining
-                        }
-                    };
-                }
-            }
-            println!("trace channel over");
+            trace::decode(out_recv)
         });
         WorkerHandle {
             out: out_send,
