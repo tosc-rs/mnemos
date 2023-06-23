@@ -1,3 +1,4 @@
+use owo_colors::{OwoColorize, Stream};
 use serde::{Deserialize, Serialize};
 use serialport::SerialPort;
 use std::collections::HashMap;
@@ -136,6 +137,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         };
         let tag = tag.port(i);
         let thread_hdl = spawn(move || {
+            let mux = " MUX".if_supports_color(Stream::Stdout, |s| s.cyan());
+            let dmux = "DMUX".if_supports_color(Stream::Stdout, |s| s.bright_purple());
+            let err = "ERR!".if_supports_color(Stream::Stdout, |err| err.red());
             for skt in work.socket.incoming() {
                 let mut skt = match skt {
                     Ok(skt) => skt,
@@ -146,7 +150,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 };
 
                 println!(
-                    "{tag} Listening to port {} ({})",
+                    "{tag} CONN host connected to port {} (:{})",
                     10_000 + work.port,
                     work.port
                 );
@@ -164,8 +168,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     //     println!("Port {} says ding", work.port);
                     // }
 
-                    if let Ok(Some(_)) = skt.take_error() {
-                        println!("{tag} Took that error!");
+                    if let Ok(Some(e)) = skt.take_error() {
+                        println!("{tag} {mux} {err} {e}");
                         break 'inner;
                     }
 
@@ -173,7 +177,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match skt.write_all(&msg) {
                             Ok(_) => {}
                             Err(e) => {
-                                println!("{tag} wtf? {e:?}");
+                                println!("{tag} {dmux} {err} write error: {e}");
                                 break 'inner;
                             }
                         }
@@ -188,7 +192,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         Ok(n) => {
                             if verbose {
-                                println!("{tag} yey!");
+                                println!("{tag} {mux} {n}B <- :{}", work.port);
                             }
                             work.inp.send(buf[..n].to_vec()).ok();
                         }
@@ -212,7 +216,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let thread_hdl = spawn(move || {
             // don't drop this
             let _inp_send = inp_send;
-            trace::decode(out_recv, tag.port(3))
+            trace::decode(out_recv, tag.port(3), verbose)
         });
         WorkerHandle {
             out: out_send,
@@ -223,6 +227,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     manager.workers.insert(3, trace_handle);
 
+    let mux = " MUX".if_supports_color(Stream::Stdout, |s| s.cyan());
+    let dmux = "DMUX".if_supports_color(Stream::Stdout, |s| s.bright_purple());
+    let err = "ERR!".if_supports_color(Stream::Stdout, |err| err.red());
     loop {
         let mut buf = [0u8; 256];
 
@@ -235,7 +242,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 enc_msg.push(0);
                 if verbose {
                     println!(
-                        "{} Sending {} bytes to port {port_idx}",
+                        "{} {mux} {}B <- :{port_idx}",
                         tag.port(*port_idx),
                         enc_msg.len()
                     );
@@ -252,7 +259,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Err(e) => panic!("{:?}", e),
         };
         if verbose {
-            println!("{tag} Got {used} raw bytes");
+            println!("{tag} {mux} -> {used}B");
         }
         carry.extend_from_slice(&buf[..used]);
 
@@ -266,16 +273,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 if let Some(hdl) = manager.workers.get_mut(&port) {
                     if verbose {
-                        println!(
-                            "{} Got {} bytes from port {port}",
-                            tag.port(port),
-                            remain.len()
-                        );
+                        println!("{} {dmux} {}B -> :{port}", tag.port(port), remain.len());
                     }
                     hdl.out.send(remain.to_vec()).ok();
                 }
             } else {
-                println!("{} Bad decode!", tag);
+                println!("{} {dmux} {err} Bad decode!", tag);
             }
             // if let Ok(msg) = Message::decode_in_place(&mut carry) {
 
@@ -324,7 +327,6 @@ impl LogTag {
 
 impl fmt::Display for LogTag {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use owo_colors::OwoColorize;
         let elapsed = self.start.elapsed();
         let port = self
             .port

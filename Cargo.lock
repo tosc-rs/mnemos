@@ -1567,6 +1567,7 @@ name = "mnemos-trace-proto"
 version = "0.1.0"
 dependencies = [
  "serde",
+ "tracing-core 0.2.0",
  "tracing-serde-structured",
 ]
 
