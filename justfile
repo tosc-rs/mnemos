@@ -25,6 +25,7 @@ _fmt := if env_var_or_default("GITHUB_ACTIONS", "") != "true" { "" } else {
 
 _d1_start_addr := "0x40000000"
 _d1_bin_path := "target/riscv64imac-unknown-none-elf/mnemos.bin"
+_d1_dir := "platforms/allwinner-d1/boards"
 
 # arguments to pass to all RustDoc invocations
 _rustdoc := _cargo + " doc --no-deps --all-features"
@@ -36,10 +37,30 @@ default:
     @echo ""
     @just --list
 
+# check all packages, across workspaces
+check:
+    {{ _cargo }} check \
+        --workspace \
+        --lib --bins --examples --tests --benches \
+        {{ _fmt }}
+    (cd {{ _d1_dir }}; {{ _cargo }} check --workspace {{ _fmt }})
+
+# test all packages, across workspaces
+test: (_get-nextest)
+    {{ _cargo }} nextest run --workspace
+    # uncomment this if we actually add tests to the D1 platform
+    # (cd {{ _d1_dir }}; {{ _cargo }} nextest run --workspace)
+
+# run rustfmt for all packages, across workspaces
+fmt:
+    {{ _cargo }} fmt --all
+    (cd {{ _d1_dir }}; {{ _cargo }} fmt --all)
+
+
 # build a Mnemos binary for the Allwinner D1
 build-d1: (_get-cargo-binutils)
     #!/usr/bin/env bash
-    cd platforms/allwinner-d1/boards/lichee-rv
+    cd {{ _d1_dir}}/lichee-rv
     {{ _cargo }} build --release
     {{ _cargo }} objcopy --release -- \
         -O binary \
