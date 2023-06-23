@@ -17,8 +17,7 @@ members = [
     "tools/f3repl",
 
     # platforms
-    # "platforms/allwinner-d1/drivers",
-    # "platforms/allwinner-d1/boards/lichee-rv",
+    "platforms/allwinner-d1/drivers",
 ]
 
 [patch.crates-io.maitake]
