@@ -78,7 +78,7 @@ impl Collect for SerialCollector {
         let id = metadata.callsite();
 
         // TODO(eliza): if we can't write a metadata, that's bad news...
-        if let Some(mut wgr) = self.tx.get().send_grant_max_sync(1024) {
+        if let Some(mut wgr) = self.tx.get().send_grant_exact_sync(1024) {
             let ev = TraceEvent::RegisterMeta {
                 id: mnemos_trace_proto::MetaId::from(id),
                 meta: metadata.as_serde(),
@@ -105,7 +105,7 @@ impl Collect for SerialCollector {
             let id = self.next_id.fetch_add(1, Ordering::Relaxed);
             span::Id::from_u64(id)
         };
-        if let Some(mut wgr) = self.tx.get().send_grant_max_sync(1024) {
+        if let Some(mut wgr) = self.tx.get().send_grant_exact_sync(1024) {
             let ev = TraceEvent::NewSpan {
                 id: id.as_serde(),
                 meta: span.metadata().callsite().into(),
@@ -127,7 +127,7 @@ impl Collect for SerialCollector {
     }
 
     fn enter(&self, span: &span::Id) {
-        if let Some(mut wgr) = self.tx.get().send_grant_max_sync(16) {
+        if let Some(mut wgr) = self.tx.get().send_grant_exact_sync(16) {
             let len =
                 match postcard::to_slice_cobs(&TraceEvent::Enter(span.as_serde()), &mut wgr[..]) {
                     Ok(encoded) => encoded.len(),
@@ -138,7 +138,7 @@ impl Collect for SerialCollector {
     }
 
     fn exit(&self, span: &span::Id) {
-        if let Some(mut wgr) = self.tx.get().send_grant_max_sync(16) {
+        if let Some(mut wgr) = self.tx.get().send_grant_exact_sync(16) {
             let len =
                 match postcard::to_slice_cobs(&TraceEvent::Exit(span.as_serde()), &mut wgr[..]) {
                     Ok(encoded) => encoded.len(),
@@ -153,7 +153,7 @@ impl Collect for SerialCollector {
     }
 
     fn event(&self, event: &Event<'_>) {
-        if let Some(mut wgr) = self.tx.get().send_grant_max_sync(1024) {
+        if let Some(mut wgr) = self.tx.get().send_grant_exact_sync(1024) {
             let ev = TraceEvent::Event {
                 meta: event.metadata().callsite().into(),
                 fields: SerializeRecordFields::Ser(event),
@@ -188,7 +188,7 @@ impl Collect for SerialCollector {
     }
 
     fn clone_span(&self, span: &span::Id) -> span::Id {
-        if let Some(mut wgr) = self.tx.get().send_grant_max_sync(16) {
+        if let Some(mut wgr) = self.tx.get().send_grant_exact_sync(16) {
             let len = match postcard::to_slice_cobs(
                 &TraceEvent::CloneSpan(span.as_serde()),
                 &mut wgr[..],
@@ -202,7 +202,7 @@ impl Collect for SerialCollector {
     }
 
     fn try_close(&self, span: span::Id) -> bool {
-        if let Some(mut wgr) = self.tx.get().send_grant_max_sync(16) {
+        if let Some(mut wgr) = self.tx.get().send_grant_exact_sync(16) {
             let len =
                 match postcard::to_slice_cobs(&TraceEvent::DropSpan(span.as_serde()), &mut wgr[..])
                 {
