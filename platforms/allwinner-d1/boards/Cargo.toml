@@ -1,23 +1,7 @@
 [workspace]
 resolver = "2"
 members = [
-    # mnemOS source
-    "source/kernel",
-    "source/abi",
-    "source/mstd",
-    "source/spitebuf",
-    "source/melpomene",
-    "source/alloc",
-    "source/forth3",
-    "source/trace-proto",
-
-    # tools
-    "tools/crowtty",
-    "tools/dumbloader",
-    "tools/f3repl",
-
-    # platforms
-    "platforms/allwinner-d1/drivers",
+    "./lichee-rv",
 ]
 
 [patch.crates-io.maitake]
@@ -33,4 +17,4 @@ git = "https://github.com/hawkw/mycelium.git"
 rev = "cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
 
 [patch.crates-io.mnemos-alloc]
-path = "./source/alloc"
+path = "../../../source/alloc"

@@ -55,7 +55,6 @@ jobs:
         cargo check \
           --workspace \
           --all-features \
-          --exclude lichee-rv \
           --quiet \
           --message-format=json |
           cargo-action-fmt
@@ -73,8 +72,9 @@ jobs:
     - uses: actions/checkout@v2
     - name: run cargo check
       run: |
+        cd platforms/allwinner-d1/boards
         cargo check \
-          --package lichee-rv \
+          --workspace
           --target riscv64imac-unknown-none-elf \
           --quiet \
           --message-format=json |
@@ -103,7 +103,6 @@ jobs:
       run: |
         cargo nextest run \
           --workspace \
-          --exclude lichee-rv \
           --all-features
 
   # (just forth3) - run miri tests
@@ -159,7 +158,6 @@ jobs:
           --no-deps \
           --all-features \
           --workspace \
-          --exclude lichee-rv \
           --document-private-items |
           cargo-action-fmt
       env:
