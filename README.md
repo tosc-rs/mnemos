@@ -29,6 +29,10 @@ The project layout contains the following folders:
 [`source/`]: ./source/
 [`tools/`]: ./tools/
 
+## Get Involved
+
+Join us on Matrix: [#mnemos-dev:beeper.com](https://matrix.to/#/#mnemos-dev:beeper.com)
+
 ## License
 
 [MIT] + [Apache 2.0].
