@@ -35,7 +35,7 @@ impl SerialCollector {
     const CAPACITY: usize = 1024 * 4;
 
     pub const fn new() -> Self {
-        Self::with_max_level(LevelFilter::INFO)
+        Self::with_max_level(LevelFilter::OFF)
     }
 
     pub const fn with_max_level(max_level: LevelFilter) -> Self {
@@ -93,43 +93,67 @@ impl SerialCollector {
 
     async fn worker(&'static self, rx: bbq::Consumer, port: serial_mux::PortHandle) {
         use futures::FutureExt;
+        use maitake::time;
         use postcard::accumulator::{CobsAccumulator, FeedResult};
+        let mut heartbeat = [0u8; 3];
+        let heartbeat = postcard::to_slice_cobs(&TraceEvent::Heartbeat, &mut heartbeat[..])
+            .expect("failed to encode heartbeat msg");
+
         // we probably won't use 256 whole bytes of cobs yet since all the host
         // -> target messages are quite small
-        let mut cobs_buf: CobsAccumulator<256> = CobsAccumulator::new();
+        let mut cobs_buf: CobsAccumulator<16> = CobsAccumulator::new();
+
+        let mut read_level = |rgr: bbq::GrantR| {
+            let mut window = &rgr[..];
+            let len = rgr.len();
+            'cobs: while !window.is_empty() {
+                window = match cobs_buf.feed_ref::<HostRequest>(window) {
+                    FeedResult::Consumed => break 'cobs,
+                    FeedResult::OverFull(new_wind) => new_wind,
+                    FeedResult::DeserError(new_wind) => new_wind,
+                    FeedResult::Success { data, remaining } => {
+                        match data {
+                            HostRequest::SetMaxLevel(lvl) => {
+                                let lvl = lvl.map(|lvl| lvl as u8).unwrap_or(5);
+                                info!("setting max level to {lvl}");
+                                // self.max_level.store(lvl, Ordering::Relaxed);
+                                // tracing_core_02::callsite::rebuild_interest_cache();
+                            }
+                        }
+
+                        remaining
+                    }
+                };
+            }
+            rgr.release(len);
+        };
+
+        // loop {
+        'idle: loop {
+            port.send(heartbeat).await;
+            if let Ok(rgr) =
+                time::timeout(time::Duration::from_secs(2), port.consumer().read_grant()).await
+            {
+                read_level(rgr);
+                break 'idle;
+            }
+        }
 
         loop {
             futures::select_biased! {
-                rgr = port.consumer().read_grant().fuse() => {
-                    let mut window = &rgr[..];
-
-                    'cobs: while !window.is_empty() {
-                        window = match cobs_buf.feed_ref::<HostRequest>(window) {
-                            FeedResult::Consumed => break 'cobs,
-                            FeedResult::OverFull(new_wind) => new_wind,
-                            FeedResult::DeserError(new_wind) => new_wind,
-                            FeedResult::Success { data, remaining } => {
-                                match data {
-                                    HostRequest::SetMaxLevel(lvl) => {
-                                        let lvl = lvl.map(|lvl| lvl as u8).unwrap_or(5);
-                                        info!("setting max level to {lvl}");
-                                        // self.max_level.store(lvl, Ordering::Relaxed);
-                                        // tracing_core_02::callsite::rebuild_interest_cache();
-                                    }
-                                }
-
-                                remaining
-                            }
-                        };
-                    }
-                },
                 rgr = rx.read_grant().fuse() => {
                     let len = rgr.len();
                     port.send(&rgr[..]).await;
                     rgr.release(len)
                 },
+                rgr = port.consumer().read_grant().fuse() => {
+                    read_level(rgr);
+                },
+                // TODO(eliza): make the host also send a heartbeat, and
+                // if we don't get it, break back to the idle loop...
             }
         }
+        // }
     }
 }
 

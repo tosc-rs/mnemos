@@ -123,6 +123,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         workers: HashMap::new(),
     };
 
+    let mut heartbeat = [1u8; 16];
+    let heartbeat = postcard::to_slice_cobs(
+        &mnemos_trace_proto::TraceEvent::Heartbeat,
+        &mut heartbeat[..],
+    )
+    .expect("failed to encode heartbeat msg");
+    println!("{:?}", heartbeat);
+
     // NOTE: You can connect to these ports using the following ncat/netcat/nc commands:
     // ```
     // # connect to port N - stdio
@@ -219,8 +227,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (inp_send, inp_recv) = channel();
         let (out_send, out_recv) = channel::<Vec<u8>>();
         let max_level = args.trace_level;
-        let thread_hdl =
-            spawn(move || trace::decode(max_level, inp_send, out_recv, tag.port(3), verbose));
+        let thread_hdl = spawn(move || {
+            trace::TraceWorker::new(max_level, inp_send, out_recv, tag.port(3), verbose).run()
+        });
         WorkerHandle {
             out: out_send,
             inp: inp_recv,
