@@ -1,8 +1,8 @@
 use crate::{comms::bbq, drivers::serial_mux};
 use level_filters::LevelFilter;
-use mnemos_trace_proto::TraceEvent;
+use mnemos_trace_proto::{HostRequest, TraceEvent};
 use mycelium_util::sync::InitOnce;
-use portable_atomic::{AtomicPtr, AtomicU64, AtomicUsize, Ordering};
+use portable_atomic::{AtomicPtr, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
 pub use tracing_02::*;
 use tracing_core_02::span::Current;
@@ -25,7 +25,7 @@ pub struct SerialCollector {
     // TODO(eliza): Currently, this is recorded but not actually consumed...
     dropped_events: AtomicUsize,
 
-    max_level: LevelFilter,
+    max_level: AtomicU8,
 }
 
 // === impl SerialCollector ===
@@ -34,14 +34,18 @@ impl SerialCollector {
     pub const PORT: u16 = 3;
     const CAPACITY: usize = 1024 * 4;
 
-    pub const fn new(max_level: LevelFilter) -> Self {
+    pub const fn new() -> Self {
+        Self::with_max_level(LevelFilter::INFO)
+    }
+
+    pub const fn with_max_level(max_level: LevelFilter) -> Self {
         Self {
             tx: InitOnce::uninitialized(),
             current_span: AtomicU64::new(0),
             current_meta: AtomicPtr::new(core::ptr::null_mut()),
             next_id: AtomicU64::new(1),
             dropped_events: AtomicUsize::new(0),
-            max_level,
+            max_level: AtomicU8::new(level_to_u8(max_level)),
         }
     }
 
@@ -55,7 +59,7 @@ impl SerialCollector {
             .expect("cannot initialize serial tracing, cannot open port 3!");
         let (tx, rx) = bbq::new_spsc_channel(k.heap(), Self::CAPACITY).await;
         self.tx.init(tx);
-        k.spawn(Self::worker(rx, port)).await;
+        k.spawn(Self::worker(self, rx, port)).await;
         let dispatch = tracing_02::Dispatch::from_static(self);
         tracing_02::dispatch::set_global_default(dispatch)
             .expect("cannot set global default tracing dispatcher");
@@ -87,12 +91,44 @@ impl SerialCollector {
         len > 0
     }
 
-    async fn worker(rx: bbq::Consumer, port: serial_mux::PortHandle) {
+    async fn worker(&'static self, rx: bbq::Consumer, port: serial_mux::PortHandle) {
+        use futures::FutureExt;
+        use postcard::accumulator::{CobsAccumulator, FeedResult};
+        // we probably won't use 256 whole bytes of cobs yet since all the host
+        // -> target messages are quite small
+        let mut cobs_buf: CobsAccumulator<256> = CobsAccumulator::new();
+
         loop {
-            let rgr = rx.read_grant().await;
-            let len = rgr.len();
-            port.send(&rgr[..]).await;
-            rgr.release(len);
+            futures::select_biased! {
+                rgr = port.consumer().read_grant().fuse() => {
+                    let mut window = &rgr[..];
+
+                    'cobs: while !window.is_empty() {
+                        window = match cobs_buf.feed_ref::<HostRequest>(window) {
+                            FeedResult::Consumed => break 'cobs,
+                            FeedResult::OverFull(new_wind) => new_wind,
+                            FeedResult::DeserError(new_wind) => new_wind,
+                            FeedResult::Success { data, remaining } => {
+                                match data {
+                                    HostRequest::SetMaxLevel(lvl) => {
+                                        let lvl = lvl.map(|lvl| lvl as u8).unwrap_or(5);
+                                        info!("setting max level to {lvl}");
+                                        // self.max_level.store(lvl, Ordering::Relaxed);
+                                        // tracing_core_02::callsite::rebuild_interest_cache();
+                                    }
+                                }
+
+                                remaining
+                            }
+                        };
+                    }
+                },
+                rgr = rx.read_grant().fuse() => {
+                    let len = rgr.len();
+                    port.send(&rgr[..]).await;
+                    rgr.release(len)
+                },
+            }
         }
     }
 }
@@ -100,7 +136,7 @@ impl SerialCollector {
 impl Collect for SerialCollector {
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
         // TODO(eliza): more sophisticated filtering
-        metadata.level() <= &self.max_level
+        metadata.level() <= &u8_to_level(self.max_level.load(Ordering::Relaxed))
     }
 
     fn register_callsite(&self, metadata: &'static Metadata<'static>) -> tracing_core_02::Interest {
@@ -126,7 +162,7 @@ impl Collect for SerialCollector {
     }
 
     fn max_level_hint(&self) -> Option<LevelFilter> {
-        Some(self.max_level)
+        Some(u8_to_level(self.max_level.load(Ordering::Relaxed)))
     }
 
     fn new_span(&self, span: &span::Attributes<'_>) -> span::Id {
@@ -193,5 +229,27 @@ impl Collect for SerialCollector {
     fn try_close(&self, span: span::Id) -> bool {
         self.send_event(16, || TraceEvent::DropSpan(span.as_serde()));
         false
+    }
+}
+
+const fn level_to_u8(level: LevelFilter) -> u8 {
+    match level {
+        LevelFilter::TRACE => 0,
+        LevelFilter::DEBUG => 1,
+        LevelFilter::INFO => 2,
+        LevelFilter::WARN => 3,
+        LevelFilter::ERROR => 4,
+        LevelFilter::OFF => 5,
+    }
+}
+
+const fn u8_to_level(level: u8) -> LevelFilter {
+    match level {
+        0 => LevelFilter::TRACE,
+        1 => LevelFilter::DEBUG,
+        2 => LevelFilter::INFO,
+        3 => LevelFilter::WARN,
+        4 => LevelFilter::ERROR,
+        _ => LevelFilter::OFF,
     }
 }

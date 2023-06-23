@@ -1,4 +1,4 @@
-use mnemos_trace_proto::{MetaId, TraceEvent};
+use mnemos_trace_proto::{MetaId, TraceEvent, HostRequest};
 use postcard::accumulator::{CobsAccumulator, FeedResult};
 use std::{
     collections::HashMap,
@@ -11,11 +11,26 @@ use tracing_serde_structured::{
     CowString, SerializeLevel, SerializeMetadata, SerializeRecordFields, SerializeSpanFields,
     SerializeValue,
 };
+use tracing_02::level_filters::LevelFilter;
 
 use crate::LogTag;
 use owo_colors::{OwoColorize, Stream};
 
-pub(crate) fn decode(rx: mpsc::Receiver<Vec<u8>>, tag: LogTag, verbose: bool) {
+pub(crate) fn decode(max_level: LevelFilter, tx: mpsc::Sender<Vec<u8>>, rx: mpsc::Receiver<Vec<u8>>, tag: LogTag, verbose: bool) {
+    let level = {
+        let level = match max_level {
+            LevelFilter::OFF => None,
+            LevelFilter::ERROR => Some(SerializeLevel::Error),
+            LevelFilter::WARN => Some(SerializeLevel::Warn),
+            LevelFilter::INFO => Some(SerializeLevel::Info),
+            LevelFilter::DEBUG => Some(SerializeLevel::Debug),
+            LevelFilter::TRACE => Some(SerializeLevel::Trace),
+        };
+        postcard::to_allocvec_cobs(&HostRequest::SetMaxLevel(level))
+            .expect("failed to serialize max level request")
+    };
+    tx.send(level).expect("failed to send host request");
+
     let mut cobs_buf: CobsAccumulator<1024> = CobsAccumulator::new();
     let mut state: TraceState = TraceState {
         tag,

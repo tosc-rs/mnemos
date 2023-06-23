@@ -21,6 +21,7 @@ name = "kernel"
 [dependencies.futures]
 version = "0.3.21"
 default-features = false
+features = ["async-await"]
 
 [dependencies.uuid]
 version = "1.1.2"
