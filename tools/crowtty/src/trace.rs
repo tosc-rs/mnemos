@@ -74,11 +74,20 @@ impl TraceState {
                         self.tag,
                         "META".if_supports_color(Stream::Stdout, |x| x.bright_blue()),
                         DisplayLevel(meta.level),
-                        if meta.is_event { "EVNT " } else { "" }.if_supports_color(Stream::Stdout, |x| x.bright_yellow()),
-                        if meta.is_span { "SPAN " } else { "" }.if_supports_color(Stream::Stdout, |x| x.bright_magenta()),
-                        meta.target.as_str().if_supports_color(Stream::Stdout, |x| x.italic()),
-                        meta.name.as_str().if_supports_color(Stream::Stdout, |x| x.bold()),
-                        meta.file.as_ref().map(CowString::as_str).unwrap_or("<unknown>"),
+                        if meta.is_event { "EVNT " } else { "" }
+                            .if_supports_color(Stream::Stdout, |x| x.bright_yellow()),
+                        if meta.is_span { "SPAN " } else { "" }
+                            .if_supports_color(Stream::Stdout, |x| x.bright_magenta()),
+                        meta.target
+                            .as_str()
+                            .if_supports_color(Stream::Stdout, |x| x.italic()),
+                        meta.name
+                            .as_str()
+                            .if_supports_color(Stream::Stdout, |x| x.bold()),
+                        meta.file
+                            .as_ref()
+                            .map(CowString::as_str)
+                            .unwrap_or("<unknown>"),
                         meta.line.unwrap_or(0),
                     )
                     .unwrap();
