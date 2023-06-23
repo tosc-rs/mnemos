@@ -1,11 +1,13 @@
 use serde::{Deserialize, Serialize};
 use serialport::SerialPort;
 use std::collections::HashMap;
+use std::fmt;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{sleep, spawn, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Serialize, Deserialize)]
 pub struct Chunk {
@@ -13,9 +15,49 @@ pub struct Chunk {
     buf: Vec<u8>,
 }
 
+#[derive(Copy, Clone)]
+pub(crate) struct LogTag {
+    start: Instant,
+    port: Option<u16>,
+}
+
 enum Connect {
     Serial(Box<dyn SerialPort>),
     Tcp(TcpStream),
+}
+
+mod trace;
+
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[command(subcommand)]
+    command: Command,
+
+    /// whether to include verbose logging of bytes in/out.
+    #[arg(short, long, global = true)]
+    verbose: bool,
+}
+
+#[derive(Subcommand)]
+enum Command {
+    /// open listener on localhost:PORT
+    Tcp {
+        /// TCP port to connect to (usually 9999 for melpomene)
+        #[arg(default_value_t = 9999)]
+        port: u16,
+    },
+    /// open listener on PATH
+    Serial {
+        /// path to the serial port device (usually /dev/ttyUSBx for hw)
+        path: PathBuf,
+
+        /// baud rate (usually 115200 for hw)
+        #[arg(default_value_t = 115200)]
+        baud: u32,
+    },
 }
 
 impl std::io::Write for Connect {
@@ -61,32 +103,12 @@ impl Connect {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = std::env::args().skip(1).collect::<Vec<_>>();
-    let args = args.iter().map(String::as_str).collect::<Vec<_>>();
-
-    let mut port = match args.as_slice() {
-        &["tcp", port] => {
-            let port: u16 = port.parse().unwrap();
-            Connect::new_from_tcp(port)
-        }
-        &["serial", path, baud] => {
-            let baud: u32 = baud.parse().unwrap();
-            Connect::new_from_serial(path, baud)
-        }
-        &["serial", path] => Connect::new_from_serial(path, 115200),
-        _ => {
-            println!("Args should be one of the following:");
-            println!("crowtty tcp PORT          - open listener on localhost:PORT");
-            println!("                            (usually 9999 for melpo)");
-            println!(
-                "crowtty serial PATH       - open listener on serial port PATH w/ baud: 115200"
-            );
-            println!("                            (usually /dev/ttyUSBx for hw)");
-            println!("crowtty serial PATH BAUD  - open listener on serial port PATH w/ BAUD");
-            println!("                            (usually /dev/ttyUSBx for hw)");
-            println!("crowtty help              - this message");
-            return Ok(());
-        }
+    let tag = LogTag::new();
+    let args = Args::parse();
+    let verbose = args.verbose;
+    let mut port: Connect = match args.command {
+        Command::Tcp { port } => Connect::new_from_tcp(port),
+        Command::Serial { path, baud } => Connect::new_from_serial(path.to_str().unwrap(), baud),
     };
 
     let mut carry = Vec::new();
@@ -100,7 +122,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // # connect to port N - stdio
     // stty -icanon -echo && ncat 127.0.0.1 $PORT
     // ```
-    for i in [0, 1, 2, 3].into_iter() {
+    for i in [0, 1, 2].into_iter() {
         let (inp_send, inp_recv) = channel();
         let (out_send, out_recv) = channel();
 
@@ -112,6 +134,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             socket,
             port: i,
         };
+        let tag = tag.port(i);
         let thread_hdl = spawn(move || {
             for skt in work.socket.incoming() {
                 let mut skt = match skt {
@@ -122,7 +145,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 };
 
-                println!("Listening to port {} ({})", 10_000 + work.port, work.port);
+                println!(
+                    "{tag} Listening to port {} ({})",
+                    10_000 + work.port,
+                    work.port
+                );
 
                 skt.set_read_timeout(Some(Duration::from_millis(10))).ok();
                 // skt.set_nonblocking(true).ok();
@@ -138,7 +165,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     // }
 
                     if let Ok(Some(_)) = skt.take_error() {
-                        println!("Took that error!");
+                        println!("{tag} Took that error!");
                         break 'inner;
                     }
 
@@ -146,7 +173,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         match skt.write_all(&msg) {
                             Ok(_) => {}
                             Err(e) => {
-                                println!("wtf? {:?}", e);
+                                println!("{tag} wtf? {e:?}");
                                 break 'inner;
                             }
                         }
@@ -160,7 +187,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             break 'inner;
                         }
                         Ok(n) => {
-                            println!("yey!");
+                            if verbose {
+                                println!("{tag} yey!");
+                            }
                             work.inp.send(buf[..n].to_vec()).ok();
                         }
                     }
@@ -176,6 +205,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         manager.workers.insert(i, handle);
     }
 
+    // spawn tracing on port 3
+    let trace_handle = {
+        let (inp_send, inp_recv) = channel();
+        let (out_send, out_recv) = channel::<Vec<u8>>();
+        let thread_hdl = spawn(move || {
+            // don't drop this
+            let _inp_send = inp_send;
+            trace::decode(out_recv, tag.port(3))
+        });
+        WorkerHandle {
+            out: out_send,
+            inp: inp_recv,
+            _thread_hdl: thread_hdl,
+        }
+    };
+
+    manager.workers.insert(3, trace_handle);
+
     loop {
         let mut buf = [0u8; 256];
 
@@ -186,7 +233,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 nmsg.extend_from_slice(&msg);
                 let mut enc_msg = cobs::encode_vec(&nmsg);
                 enc_msg.push(0);
-                println!("Sending {} bytes to port {}", enc_msg.len(), port_idx);
+                if verbose {
+                    println!(
+                        "{} Sending {} bytes to port {port_idx}",
+                        tag.port(*port_idx),
+                        enc_msg.len()
+                    );
+                }
                 port.write_all(&enc_msg)?;
             }
         }
@@ -198,7 +251,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(used) => used,
             Err(e) => panic!("{:?}", e),
         };
-        println!("Got {used} raw bytes");
+        if verbose {
+            println!("{tag} Got {used} raw bytes");
+        }
         carry.extend_from_slice(&buf[..used]);
 
         while let Some(pos) = carry.iter().position(|b| *b == 0) {
@@ -210,11 +265,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let port = u16::from_le_bytes(bytes);
 
                 if let Some(hdl) = manager.workers.get_mut(&port) {
-                    println!("Got {} bytes from port {}", remain.len(), port);
+                    if verbose {
+                        println!(
+                            "{} Got {} bytes from port {port}",
+                            tag.port(port),
+                            remain.len()
+                        );
+                    }
                     hdl.out.send(remain.to_vec()).ok();
                 }
             } else {
-                println!("Bad decode!");
+                println!("{} Bad decode!", tag);
             }
             // if let Ok(msg) = Message::decode_in_place(&mut carry) {
 
@@ -243,4 +304,39 @@ struct TcpWorker {
     inp: Sender<Vec<u8>>,
     port: u16,
     socket: TcpListener,
+}
+
+impl LogTag {
+    pub fn new() -> Self {
+        Self {
+            start: Instant::now(),
+            port: None,
+        }
+    }
+
+    pub fn port(self, port: impl Into<Option<u16>>) -> Self {
+        Self {
+            port: port.into(),
+            ..self
+        }
+    }
+}
+
+impl fmt::Display for LogTag {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use owo_colors::OwoColorize;
+        let elapsed = self.start.elapsed();
+        let port = self
+            .port
+            .as_ref()
+            .map(|p| p as &dyn fmt::Display)
+            .unwrap_or(&" " as &dyn fmt::Display);
+        format_args!(
+            "[{port} +{:04}.{:09}s]",
+            elapsed.as_secs(),
+            elapsed.subsec_nanos()
+        )
+        .if_supports_color(owo_colors::Stream::Stdout, |text| text.dimmed())
+        .fmt(f)
+    }
 }

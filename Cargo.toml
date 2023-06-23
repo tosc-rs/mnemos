@@ -9,6 +9,7 @@ members = [
     "source/melpomene",
     "source/alloc",
     "source/forth3",
+    "source/trace-proto",
 
     # tools
     "tools/crowtty",
@@ -23,6 +24,11 @@ members = [
 [patch.crates-io.maitake]
 git = "https://github.com/hawkw/mycelium.git"
 rev = "cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
+
+[patch.crates-io.mycelium-util]
+git = "https://github.com/hawkw/mycelium.git"
+rev = "cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
+
 
 [patch.crates-io.cordyceps]
 git = "https://github.com/hawkw/mycelium.git"
