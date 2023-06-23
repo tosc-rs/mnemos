@@ -365,6 +365,38 @@ impl SpscProducer {
     }
 }
 
+impl MpscProducer {
+    #[tracing::instrument(
+        name = "MpscProducer::send_grant_exact_sync",
+        level = "trace",
+        skip(self),
+        fields(queue = ?fmt::ptr(self.storage.deref())),
+    )]
+    pub fn send_grant_exact_sync(&self, size: usize) -> Option<GrantW> {
+        let producer = self.storage.producer.try_lock()?;
+        let wgr = producer.as_ref()?.grant_exact(size).ok()?;
+        Some(GrantW {
+            grant: wgr,
+            storage: self.storage.clone(),
+        })
+    }
+
+    #[tracing::instrument(
+        name = "MpscProducer::send_grant_max_sync",
+        level = "trace",
+        skip(self),
+        fields(queue = ?fmt::ptr(self.storage.deref())),
+    )]
+    pub fn send_grant_max_sync(&self, max: usize) -> Option<GrantW> {
+        let producer = self.storage.producer.try_lock()?;
+        let wgr = producer.as_ref()?.grant_max_remaining(max).ok()?;
+        Some(GrantW {
+            grant: wgr,
+            storage: self.storage.clone(),
+        })
+    }
+}
+
 impl Consumer {
     #[tracing::instrument(
         name = "Consumer::read_grant_sync",

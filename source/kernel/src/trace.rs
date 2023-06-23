@@ -79,7 +79,7 @@ impl SerialCollector {
             Err(_) => {
                 self.dropped_events.fetch_add(1, Ordering::Relaxed);
                 0
-            },
+            }
         };
         wgr.commit(len);
 
@@ -111,11 +111,10 @@ impl Collect for SerialCollector {
         let id = metadata.callsite();
 
         // TODO(eliza): if we can't write a metadata, that's bad news...
-        let sent = self.send_event(1024, ||
-            TraceEvent::RegisterMeta {
-                id: mnemos_trace_proto::MetaId::from(id),
-                meta: metadata.as_serde(),
-            });
+        let sent = self.send_event(1024, || TraceEvent::RegisterMeta {
+            id: mnemos_trace_proto::MetaId::from(id),
+            meta: metadata.as_serde(),
+        });
 
         if sent {
             tracing_core_02::Interest::always()
