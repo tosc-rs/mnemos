@@ -38,11 +38,12 @@ default:
 
 # build a Mnemos binary for the Allwinner D1
 build-d1: (_get-cargo-binutils)
-    (cd platforms/allwinner-d1/boards/lichee-rv; \
-        {{ _cargo }} objcopy --release -- \
-            -O binary \
-            ../../../../{{ _d1_bin_path }} \
-    )
+    #!/usr/bin/env bash
+    cd platforms/allwinner-d1/boards/lichee-rv
+    {{ _cargo }} build --release
+    {{ _cargo }} objcopy --release -- \
+        -O binary \
+        ../../../../{{ _d1_bin_path }}
 
 # flash an Allwinner D1 using xfel
 flash-d1: (build-d1)
