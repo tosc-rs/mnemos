@@ -80,7 +80,7 @@ impl SimDisplay {
 // CommanderTask - This is the "driver server"
 //////////////////////////////////////////////////////////////////////////////
 
-/// This task is spawned by the call to [EmbDisplay::register]. It is a single
+/// This task is spawned by the call to [`SimDisplay::register`]. It is a single
 /// async function that will process requests, and periodically redraw the
 /// framebuffer.
 struct CommanderTask {
