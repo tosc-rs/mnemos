@@ -3,7 +3,7 @@
 //! Allows the creation of virtual "ports" over a single serial link
 //!
 //! This module includes the service definition, client definition, as well
-//! as a server definition that relies on the [SimpleSerial][crate::drivers::simple_serial]
+//! as a server definition that relies on the [`SimpleSerial`][crate::drivers::simple_serial]
 //! service to provide the service implementation.
 
 use crate::tracing::{debug, warn};
@@ -53,7 +53,8 @@ pub enum SerialMuxError {
     RegistryFull,
 }
 
-/// A PortHandle is the interface received after opening a virtual serial port
+/// A `PortHandle` is the interface received after opening a virtual serial port
+/// using a [`SerialMuxClient`].
 pub struct PortHandle {
     port: u16,
     cons: bbq::Consumer,
@@ -65,7 +66,10 @@ pub struct PortHandle {
 // Client Definition
 ////////////////////////////////////////////////////////////////////////////////
 
-/// A SerialMuxClient is the client interface of the [SerialMux].
+/// A `SerialMuxClient` is the client interface of the [`SerialMuxService`].
+///
+/// This client allows opening virtual serial ports, returning a [`PortHandle`]
+/// representing the opened port.
 pub struct SerialMuxClient {
     prod: KernelHandle<SerialMuxService>,
     reply: Reusable<Envelope<Result<Response, SerialMuxError>>>,
@@ -126,6 +130,7 @@ impl PortHandle {
 // Server Definition
 ////////////////////////////////////////////////////////////////////////////////
 
+/// Server implementation for the [`SerialMuxService`].
 pub struct SerialMuxServer;
 
 impl SerialMuxServer {

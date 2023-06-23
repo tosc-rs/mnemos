@@ -300,12 +300,12 @@ impl ConvertWord for Word {
     }
 }
 
-/// Binding for [SerialMuxHandle::open_port()]
+/// Binding for [`SerialMuxClient::open_port()`]
 ///
 /// Call: `PORT SZ sermux::open_port`
 /// Return: BOH_TOKEN on stack
 ///
-/// Errors on any invalid parameters. See [BagOfHolding] for details
+/// Errors on any invalid parameters. See [`BagOfHolding`] for details
 /// on bag of holding tokens
 async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<(), forth3::Error> {
     let sz = forth.data_stack.try_pop()?.as_usize()?;
@@ -337,14 +337,14 @@ async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     Ok(())
 }
 
-/// Binding for [PortHandle::send()]
+/// Binding for [`PortHandle::send()`]
 ///
-/// Writes the current contents of the output buffer to the [PortHandle].
+/// Writes the current contents of the output buffer to the [`PortHandle`].
 ///
 /// Call: `BOH_TOKEN sermux::write_outbuf`
 /// Return: No change
 ///
-/// Errors if the provided handle is incorrect. See [BagOfHolding] for details
+/// Errors if the provided handle is incorrect. See [`BagOfHolding`] for details
 /// on bag of holding tokens
 async fn sermux_write_outbuf(
     forth: &mut forth3::Forth<MnemosContext>,

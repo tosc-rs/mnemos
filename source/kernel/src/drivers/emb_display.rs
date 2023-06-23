@@ -1,4 +1,4 @@
-//! Simulated display driver
+//! [`embedded-graphics`] display driver
 //!
 //! This is an early attempt at a "frame buffer" style display driver.
 //!
@@ -98,7 +98,7 @@ pub enum FrameError {
 // Client Definition
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Client interface to EmbDisplay
+/// Client interface to [`EmbDisplayService`].
 pub struct EmbDisplayClient {
     prod: KernelHandle<EmbDisplayService>,
     reply: Reusable<Envelope<Result<Response, FrameError>>>,
@@ -106,7 +106,7 @@ pub struct EmbDisplayClient {
 
 impl EmbDisplayClient {
     /// Obtain a new client handle by querying the registry for a registered
-    /// [EmbDisplay] server
+    /// [`EmbDisplayService`].
     pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
         let prod = kernel
             .with_registry(|reg| reg.get::<EmbDisplayService>())
