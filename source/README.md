@@ -15,19 +15,25 @@ Focus on userspace will resume after more progress has been made on the kernel.
 
 ## Folder Layout
 
-* `abi/` - This library contains elements that are stable and shared across the kernel/userspace boundary
-* `kernel/` - This is the kernel library for MnemOS
-* `melpomene/` - Melpomene is the simulator for MnemOS development
-* `mstd/` - This is the userspace "standard library", which wraps mnemos-specific capabilities
-* `notes/` - Miscellaneous development notes
-* `spitebuf` - This is an async, mpsc library which powers the Kernel's `KChannel` data type
+* [`abi/`] - This library contains elements that are stable and shared across the kernel/userspace boundary
+* [`alloc/`] - The MnemOS memory allocator.
+* [`forth3/`] - This library implements a [Forth] virtual machine for the MnemOS userspace.
+* [`kernel/`] - This is the kernel library for MnemOS
+* [`melpomene/`] - Melpomene is the simulator for MnemOS development
+* [`mstd/`] - This is the userspace "standard library", which wraps mnemos-specific capabilities
+* [`notes/`] - Miscellaneous development notes
+* [`spitebuf/`] - This is an async, mpsc library which powers the Kernel's `KChannel` data type
 
 [`abi/`]: ./abi/
+[`alloc/`]: ./alloc
+[`forth3/`]: ./forth3
 [`kernel/`]: ./kernel/
 [`melpomene/`]: ./melpomene/
 [`mstd/`]: ./mstd/
 [`notes/`]: ./notes/
-[`spitebuf`]: ./spitebuf
+[`spitebuf/`]: ./spitebuf
+
+[Forth]: https://forth-standard.org/
 
 ## License
 

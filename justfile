@@ -53,7 +53,7 @@ flash-d1: (build-d1)
 _get-cargo-binutils:
     #!/usr/bin/env bash
     set -euo pipefail
-    source "./tools/_util.sh"
+    source "./scripts/_util.sh"
 
     if {{ _cargo }} --list | grep -q 'objcopy'; then
         status "Found" "cargo objcopy"
@@ -69,7 +69,7 @@ _get-cargo-binutils:
 _get-nextest:
     #!/usr/bin/env bash
     set -euo pipefail
-    source "./tools/_util.sh"
+    source "./scripts/_util.sh"
 
     if [ -n "{{ no-nextest }}" ]; then
         status "Configured" "not to use cargo nextest"
