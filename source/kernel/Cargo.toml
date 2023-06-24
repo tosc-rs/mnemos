@@ -20,6 +20,7 @@ name = "kernel"
 
 [dependencies.futures]
 version = "0.3.21"
+features = ["async-await"]
 default-features = false
 
 [dependencies.uuid]
@@ -104,6 +105,17 @@ features = ["async"]
 
 [dependencies.portable-atomic]
 version = "1"
+
+[dependencies.input-mgr]
+git = "https://github.com/tosc-rs/teletype/"
+rev = "de95e610cc79db6d59ad6b40eb2d82adebb4e033"
+
+[dependencies.ring-drawer]
+git = "https://github.com/tosc-rs/teletype/"
+rev = "de95e610cc79db6d59ad6b40eb2d82adebb4e033"
+
+[dependencies.profont]
+version = "0.6.1"
 
 [features]
 default = ["tracing-01"]

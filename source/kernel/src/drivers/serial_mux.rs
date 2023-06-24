@@ -6,6 +6,8 @@
 //! as a server definition that relies on the [`SimpleSerial`][crate::drivers::simple_serial]
 //! service to provide the service implementation.
 
+use core::time::Duration;
+
 use crate::tracing::{debug, warn};
 use crate::{
     comms::{
@@ -76,7 +78,28 @@ pub struct SerialMuxClient {
 }
 
 impl SerialMuxClient {
-    pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
+    // Obtain a SerialMuxClient
+    //
+    // If the [SerialMuxServer] hasn't been registered yet, we will retry until it has been
+    pub async fn from_registry(kernel: &'static Kernel) -> Self {
+        loop {
+            match SerialMuxClient::from_registry_no_retry(kernel).await {
+                Some(port) => return port,
+                None => {
+                    // SerialMux probably isn't registered yet. Try again in a bit
+                    kernel.sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+    }
+
+    // Obtain a SerialMuxClient
+    //
+    // Does NOT attempt to get a [SerialMuxServer] handle more than once.
+    //
+    // Prefer [SerialMuxClient::from_registry] unless you will not be spawning one
+    // around the same time as obtaining a client.
+    pub async fn from_registry_no_retry(kernel: &'static Kernel) -> Option<Self> {
         let prod = kernel
             .with_registry(|reg| reg.get::<SerialMuxService>())
             .await?;
@@ -101,6 +124,18 @@ impl SerialMuxClient {
 }
 
 impl PortHandle {
+    /// Helper method if you only need to open one port.
+    ///
+    /// Same as calling [SerialMuxClient::from_registry()] then immediately calling
+    /// [SerialMuxClient::open_port()].
+    ///
+    /// If you need to open multiple ports at once, probably get a [SerialMuxClient] instead
+    /// to reuse it for both ports
+    pub async fn open(kernel: &'static Kernel, port_id: u16, capacity: usize) -> Option<Self> {
+        let mut client = SerialMuxClient::from_registry(kernel).await;
+        client.open_port(port_id, capacity).await
+    }
+
     pub fn port(&self) -> u16 {
         self.port
     }
@@ -134,7 +169,36 @@ impl PortHandle {
 pub struct SerialMuxServer;
 
 impl SerialMuxServer {
+    // Register the SerialMuxServer.
+    //
+    // Will retry to obtain a [SimpleSerialClient] until success.
     pub async fn register(
+        kernel: &'static Kernel,
+        max_ports: usize,
+        max_frame: usize,
+    ) -> Result<(), RegistrationError> {
+        loop {
+            match SerialMuxServer::register_no_retry(kernel, max_ports, max_frame).await {
+                Ok(_) => break,
+                Err(RegistrationError::SerialPortNotFound) => {
+                    // Uart probably isn't registered yet. Try again in a bit
+                    kernel.sleep(Duration::from_millis(10)).await;
+                }
+                Err(e) => {
+                    panic!("uhhhh {e:?}");
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // Register the SerialMuxServer.
+    //
+    // Does NOT attempt to obtain a [SimpleSerialClient] more than once.
+    //
+    // Prefer [SerialMuxServer::register] unless you will not be spawning one around
+    // the same time as registering this server.
+    pub async fn register_no_retry(
         kernel: &'static Kernel,
         max_ports: usize,
         max_frame: usize,
