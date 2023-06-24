@@ -55,20 +55,26 @@ impl SerialCollector {
     }
 
     pub async fn start(&'static self, k: &'static crate::Kernel) {
-        let mut mux = serial_mux::SerialMuxClient::from_registry(k)
-            .await
-            .expect("cannot initialize serial tracing, no serial mux exists!");
-        let port = mux
-            .open_port(3, 1024)
-            .await
-            .expect("cannot initialize serial tracing, cannot open port 3!");
+        // acquire sermux port 3
+        let port = {
+            let mut mux = serial_mux::SerialMuxClient::from_registry(k)
+                .await
+                .expect("cannot initialize serial tracing, no serial mux exists!");
+            mux.open_port(3, 1024)
+                .await
+                .expect("cannot initialize serial tracing, cannot open port 3!")
+        };
+
         let (tx, rx) = bbq::new_spsc_channel(k.heap(), Self::CAPACITY).await;
         self.tx.init(tx);
-        //
+
+        // set the default tracing collector
         let dispatch = tracing_02::Dispatch::from_static(self);
-        k.spawn(Self::worker(self, rx, port, k)).await;
         tracing_02::dispatch::set_global_default(dispatch)
             .expect("cannot set global default tracing dispatcher");
+
+        // spawn a worker to read from the channel and write to the serial port.
+        k.spawn(Self::worker(self, rx, port, k)).await;
     }
 
     /// Serialize a `TraceEvent`, returning `true` if the event was correctly serialized.
