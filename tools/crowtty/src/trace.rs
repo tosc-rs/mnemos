@@ -26,6 +26,8 @@ pub(crate) struct TraceWorker {
     metas: HashMap<MetaId, SerializeMetadata<'static>>,
     stack: Vec<NonZeroU64>,
     textbuf: String,
+    has_set_max_level: bool,
+    ser_max_level: Option<SerializeLevel>,
 }
 
 impl TraceWorker {
@@ -36,6 +38,14 @@ impl TraceWorker {
         tag: LogTag,
         verbose: bool,
     ) -> Self {
+        let ser_max_level = match max_level {
+            LevelFilter::OFF => None,
+            LevelFilter::ERROR => Some(SerializeLevel::Error),
+            LevelFilter::WARN => Some(SerializeLevel::Warn),
+            LevelFilter::INFO => Some(SerializeLevel::Info),
+            LevelFilter::DEBUG => Some(SerializeLevel::Debug),
+            LevelFilter::TRACE => Some(SerializeLevel::Trace),
+        };
         Self {
             tx,
             rx,
@@ -46,6 +56,8 @@ impl TraceWorker {
             metas: HashMap::new(),
             stack: Vec::new(),
             textbuf: String::new(),
+            ser_max_level,
+            has_set_max_level: false,
         }
     }
 }
@@ -95,20 +107,44 @@ impl TraceWorker {
 
     fn event(&mut self, ev: TraceEvent<'_>) {
         match ev {
-            TraceEvent::Heartbeat => {
-                let level = {
-                    let level = match self.max_level {
-                        LevelFilter::OFF => None,
-                        LevelFilter::ERROR => Some(SerializeLevel::Error),
-                        LevelFilter::WARN => Some(SerializeLevel::Warn),
-                        LevelFilter::INFO => Some(SerializeLevel::Info),
-                        LevelFilter::DEBUG => Some(SerializeLevel::Debug),
-                        LevelFilter::TRACE => Some(SerializeLevel::Trace),
-                    };
-                    postcard::to_allocvec_cobs(&HostRequest::SetMaxLevel(level))
-                        .expect("failed to serialize max level request")
-                };
-                self.tx.send(level).expect("failed to send host request");
+            TraceEvent::Heartbeat(level) => {
+                if self.verbose {
+                    println!(
+                        "{} {} Found a heartbeat (level: {:?}; desired: {:?})",
+                        self.tag,
+                        "BEAT".if_supports_color(Stream::Stdout, |x| x.bright_red()),
+                        level.map(DisplayLevel),
+                        self.ser_max_level.map(DisplayLevel),
+                    );
+                }
+
+                if level == self.ser_max_level {
+                    if !self.has_set_max_level || self.verbose {
+                        println!(
+                            "{} {} Max level set to {:?}",
+                            self.tag,
+                            "BEAT".if_supports_color(Stream::Stdout, |x| x.bright_red()),
+                            level.map(DisplayLevel)
+                        );
+                    }
+
+                    self.has_set_max_level = true;
+                    return;
+                } else {
+                    self.has_set_max_level = false;
+                }
+
+                let req = postcard::to_allocvec_cobs(&HostRequest::SetMaxLevel(self.ser_max_level))
+                    .expect("failed to serialize max level request");
+                self.tx.send(req).expect("failed to send host request");
+                if self.verbose {
+                    println!(
+                        "{} {} Sent request for {:?}",
+                        self.tag,
+                        "BEAT".if_supports_color(Stream::Stdout, |x| x.bright_red()),
+                        self.ser_max_level.map(DisplayLevel),
+                    );
+                }
             }
             TraceEvent::RegisterMeta { id, meta } => {
                 if self.verbose {
@@ -356,5 +392,11 @@ impl fmt::Display for DisplayLevel {
                 "ERR".if_supports_color(Stream::Stdout, |l| l.red())
             ),
         }
+    }
+}
+
+impl fmt::Debug for DisplayLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }

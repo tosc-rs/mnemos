@@ -7,8 +7,9 @@ use tracing_serde_structured::{
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub enum TraceEvent<'a> {
-    /// Sent by the target periodically when not actively tracing, to indicate liveness.
-    Heartbeat,
+    /// Sent by the target periodically when not actively tracing, to indicate
+    /// liveness, or to ack a [`HostRequest::SetMaxLevel`].
+    Heartbeat(Option<SerializeLevel>),
     RegisterMeta {
         id: MetaId,
 

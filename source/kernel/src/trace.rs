@@ -101,9 +101,6 @@ impl SerialCollector {
         use futures::FutureExt;
         use maitake::time;
         use postcard::accumulator::{CobsAccumulator, FeedResult};
-        let mut heartbeat = [0u8; 3];
-        let heartbeat = postcard::to_slice_cobs(&TraceEvent::Heartbeat, &mut heartbeat[..])
-            .expect("failed to encode heartbeat msg");
 
         // we probably won't use 256 whole bytes of cobs yet since all the host
         // -> target messages are quite small
@@ -119,10 +116,11 @@ impl SerialCollector {
                     FeedResult::Success { data, remaining } => {
                         match data {
                             HostRequest::SetMaxLevel(lvl) => {
-                                let lvl = lvl.map(|lvl| lvl as u8).unwrap_or(5);
-                                self.max_level.store(lvl, Ordering::Relaxed);
-                                info!("setting max level to {lvl}");
-                                tracing_core_02::callsite::rebuild_interest_cache();
+                                let level = lvl.map(|lvl| lvl as u8).unwrap_or(5);
+                                let prev = self.max_level.swap(level, Ordering::AcqRel);
+                                if prev != level {
+                                    tracing_core_02::callsite::rebuild_interest_cache();
+                                }
                             }
                         }
 
@@ -135,6 +133,15 @@ impl SerialCollector {
 
         loop {
             'idle: loop {
+                let mut heartbeat = [0u8; 8];
+                let heartbeat = {
+                    let level = u8_to_level(self.max_level.load(Ordering::Acquire))
+                        .into_level()
+                        .as_ref()
+                        .map(AsSerde::as_serde);
+                    postcard::to_slice_cobs(&TraceEvent::Heartbeat(level), &mut heartbeat[..])
+                        .expect("failed to encode heartbeat msg")
+                };
                 port.send(heartbeat).await;
                 if let Ok(rgr) = k
                     .timer()
@@ -142,6 +149,18 @@ impl SerialCollector {
                     .await
                 {
                     read_level(rgr);
+
+                    // ack the new max level
+                    let mut ack = [0u8; 8];
+                    let ack = {
+                        let level = u8_to_level(self.max_level.load(Ordering::Acquire))
+                            .into_level()
+                            .as_ref()
+                            .map(AsSerde::as_serde);
+                        postcard::to_slice_cobs(&TraceEvent::Heartbeat(level), &mut ack[..])
+                            .expect("failed to encode heartbeat msg")
+                    };
+                    port.send(ack).await;
                     break 'idle;
                 }
             }
