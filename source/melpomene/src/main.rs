@@ -2,16 +2,13 @@ use std::sync::Arc;
 
 use clap::Parser;
 use futures::FutureExt;
-use input_mgr::RingLine;
 use melpomene::{
     cli::{self, MelpomeneOptions},
     sim_drivers::{emb_display::SimDisplay, tcp_serial::TcpSerial},
 };
 use mnemos_kernel::{
-    drivers::{
-        emb_display::EmbDisplayClient,
-        serial_mux::{SerialMuxClient, SerialMuxServer},
-    },
+    drivers::serial_mux::{SerialMuxClient, SerialMuxServer},
+    forth::shells::graphical_shell_mono,
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -20,16 +17,6 @@ use tokio::{
 }; // fuse()
 
 use tracing::Instrument;
-
-use embedded_graphics::{
-    mono_font::MonoTextStyle,
-    pixelcolor::Gray8,
-    prelude::{Drawable, GrayColor, Point, Primitive},
-    primitives::{Line, PrimitiveStyle},
-    text::Text,
-};
-use profont::PROFONT_12_POINT;
-
 const DISPLAY_WIDTH_PX: u32 = 400;
 const DISPLAY_HEIGHT_PX: u32 = 240;
 /// The Allwinner D1 has 1GB of memory, so we can definitely get away with two
@@ -100,216 +87,87 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     // Simulates the kernel main loop being woken by an IRQ.
     let irq = Arc::new(tokio::sync::Notify::new());
 
-    // First let's make a dummy driver just to make sure some stuff happens
-    let initialization_future = {
+    // Initialize the UART
+    k.initialize({
         let irq = irq.clone();
         async move {
-            // Delay for one second, just for funsies
-            k.sleep(Duration::from_secs(1)).await;
-
             // Set up the bidirectional, async bbqueue channel between the TCP port
             // (acting as a serial port) and the virtual serial port mux.
             //
             // Create the buffer, and spawn the worker task, giving it one of the
             // queue handles
-            TcpSerial::register(k, opts.serial_addr, 4096, 4096, irq.clone())
+            TcpSerial::register(k, opts.serial_addr, 4096, 4096, irq)
                 .await
                 .unwrap();
+        }
+    })
+    .unwrap();
 
-            // Now, right now this is a little awkward, but what I'm doing here is spawning
-            // a new virtual mux, and configuring it with:
-            // * Up to 4 virtual ports max
-            // * Framed messages up to 512 bytes max each
-            SerialMuxServer::register(k, 4, 512).await.unwrap();
+    // Initialize the SerialMuxServer
+    k.initialize(async {
+        // * Up to 16 virtual ports max
+        // * Framed messages up to 512 bytes max each
+        SerialMuxServer::register(k, 16, 512).await.unwrap();
+    })
+    .unwrap();
 
-            let mut mux_hdl = SerialMuxClient::from_registry(k).await.unwrap();
+    // Spawn the graphics driver
+    k.initialize(async {
+        SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
+            .await
+            .unwrap();
+    })
+    .unwrap();
+
+    // Spawn a loopback port
+    k.initialize(
+        async {
+            let mut mux_hdl = SerialMuxClient::from_registry(k).await;
             let p0 = mux_hdl.open_port(0, 1024).await.unwrap();
+            drop(mux_hdl);
+
+            loop {
+                let rgr = p0.consumer().read_grant().await;
+                let len = rgr.len();
+                p0.send(&rgr).await;
+                rgr.release(len);
+            }
+        }
+        .instrument(tracing::info_span!("Loopback")),
+    )
+    .unwrap();
+
+    // Spawn a hello port
+    k.initialize(
+        async {
+            let mut mux_hdl = SerialMuxClient::from_registry(k).await;
             let p1 = mux_hdl.open_port(1, 1024).await.unwrap();
             drop(mux_hdl);
 
-            // Spawn the graphics driver
-            SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
-                .await
-                .unwrap();
-
-            k.spawn(
-                async move {
-                    loop {
-                        let rgr = p0.consumer().read_grant().await;
-                        let len = rgr.len();
-                        p0.send(&rgr).await;
-                        rgr.release(len);
-                    }
-                }
-                .instrument(tracing::info_span!("Loopback")),
-            )
-            .await;
-
-            // Now we just send out data every second
-            k.spawn(
-                async move {
-                    loop {
-                        k.sleep(Duration::from_secs(1)).await;
-                        p1.send(b"hello\r\n").await;
-                    }
-                }
-                .instrument(tracing::info_span!("Hello Loop")),
-            )
-            .await;
-        }
-        .instrument(tracing::info_span!("Initialize"))
-    };
-
-    k.initialize(initialization_future).unwrap();
-    let tid0_future = k.initialize_forth_tid0(Default::default());
-
-    // Create the interactive console task
-    let graphics_console = async move {
-        // Delay for 1.5 seconds, just for funsies
-        k.sleep(Duration::from_millis(1500)).await;
-
-        // Take Port 2 from the serial mux. This corresponds to TCP port 10002 when
-        // you are running crowtty
-        let mut mux_hdl = SerialMuxClient::from_registry(k).await.unwrap();
-        let p2 = mux_hdl.open_port(2, 1024).await.unwrap();
-        drop(mux_hdl);
-
-        let mut disp_hdl = EmbDisplayClient::from_registry(k).await.unwrap();
-        let char_y = PROFONT_12_POINT.character_size.height;
-        let char_x = PROFONT_12_POINT.character_size.width + PROFONT_12_POINT.character_spacing;
-
-        // Draw titlebar
-        {
-            let mut fc_0 = disp_hdl
-                .get_framechunk(0, 0, DISPLAY_WIDTH_PX, char_y)
-                .await
-                .unwrap();
-            let text_style = MonoTextStyle::new(&PROFONT_12_POINT, Gray8::WHITE);
-            let text1 = Text::new(
-                "mnemOS",
-                Point::new(0, PROFONT_12_POINT.baseline as i32),
-                text_style,
-            );
-            text1.draw(&mut fc_0).unwrap();
-
-            let title = "forth shell";
-            let text2 = Text::new(
-                title,
-                Point::new(
-                    (DISPLAY_WIDTH_PX as i32) - ((title.len() as u32) * char_x) as i32,
-                    PROFONT_12_POINT.baseline as i32,
-                ),
-                text_style,
-            );
-            text2.draw(&mut fc_0).unwrap();
-
-            let line_style = PrimitiveStyle::with_stroke(Gray8::WHITE, 1);
-            Line::new(
-                Point {
-                    x: 0,
-                    y: PROFONT_12_POINT.underline.offset as i32,
-                },
-                Point {
-                    x: DISPLAY_WIDTH_PX as i32,
-                    y: PROFONT_12_POINT.underline.offset as i32,
-                },
-            )
-            .into_styled(line_style)
-            .draw(&mut fc_0)
-            .unwrap();
-            disp_hdl.draw_framechunk(fc_0).await.unwrap();
-        }
-
-        k.spawn(
-            async move {
-                // TODO(eliza): don't spawn the forth task from within the
-                // graphics driver lol...
-
-                let style = ring_drawer::BwStyle {
-                    background: Gray8::BLACK,
-                    font: MonoTextStyle::new(&PROFONT_12_POINT, Gray8::WHITE),
-                };
-
-                // At 12-pt font, there is enough room for 16 lines, with 50 chars/line.
-                //
-                // Leave out 4 for the implicit margin of two characters on each gutter.
-                let mut rline = RingLine::<16, 46>::new();
-
-                let tid0 = tid0_future.await.expect("TID 0 initialization task must succeed");
-
-                loop {
-                    // Wait until there is a frame buffer ready. There wouldn't be if we've spammed frames
-                    // before they've been consumed.
-                    let mut fc_0 = loop {
-                        let fc = disp_hdl
-                            .get_framechunk(
-                                0,
-                                char_y as i32,
-                                DISPLAY_WIDTH_PX,
-                                DISPLAY_HEIGHT_PX - char_y,
-                            )
-                            .await;
-                        if let Some(fc) = fc {
-                            break fc;
-                        } else {
-                            k.sleep(Duration::from_millis(10)).await;
-                        }
-                    };
-                    ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
-                    disp_hdl.draw_framechunk(fc_0).await.unwrap();
-
-                    futures::select! {
-                        rgr = p2.consumer().read_grant().fuse() => {
-                            let mut used = 0;
-                            'input: for &b in rgr.iter() {
-                                used += 1;
-                                match rline.append_local_char(b) {
-                                    Ok(_) => {}
-                                    // backspace
-                                    Err(_) if b == 0x7F => {
-                                        rline.pop_local_char();
-                                    }
-                                    Err(_) if b == b'\n' => {
-                                        let needed = rline.local_editing_len();
-                                        if needed != 0 {
-                                            let mut tid0_wgr = tid0.producer().send_grant_exact(needed).await;
-                                            rline.copy_local_editing_to(&mut tid0_wgr).unwrap();
-                                            tid0_wgr.commit(needed);
-                                            rline.submit_local_editing();
-                                            break 'input;
-                                        }
-                                    }
-                                    Err(error) => {
-                                        tracing::warn!(?error, "Error appending char: {:02X}", b);
-                                    }
-                                }
-                            }
-
-                            rgr.release(used);
-                        },
-                        output = tid0.consumer().read_grant().fuse() => {
-                            let len = output.len();
-                            tracing::trace!(len, "Received output from TID0");
-                            for &b in output.iter() {
-                                // TODO(eliza): what if this errors lol
-                                if b == b'\n' {
-                                    rline.submit_remote_editing();
-                                } else {
-                                    let _ = rline.append_remote_char(b);
-                                }
-                            }
-                            output.release(len);
-                        }
-                    }
-                }
+            loop {
+                k.sleep(Duration::from_secs(1)).await;
+                p1.send(b"hello\r\n").await;
             }
-            .instrument(tracing::info_span!("Update clock")),
-        )
-        .await;
-    }
-    .instrument(tracing::info_span!("Initialize graphics driver"));
+        }
+        .instrument(tracing::info_span!("Hello Loop")),
+    )
+    .unwrap();
 
-    k.initialize(graphics_console).unwrap();
+    // Spawn a graphical shell
+    k.initialize(
+        async move {
+            graphical_shell_mono(
+                k,   // disp_width_px
+                400, // disp_height_px
+                240, // port
+                2,   // capacity
+                1024,
+            )
+            .await;
+        }
+        .instrument(tracing::info_span!("Graphics Console")),
+    )
+    .unwrap();
 
     loop {
         // Tick the scheduler

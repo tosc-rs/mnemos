@@ -23,6 +23,8 @@ use mnemos_alloc::{
 };
 use portable_atomic::{AtomicUsize, Ordering};
 
+pub mod shells;
+
 #[derive(Copy, Clone, Debug)]
 #[non_exhaustive]
 pub struct Params {
@@ -315,9 +317,7 @@ async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     // We could codify that zero is an invalid BOH_TOKEN, and put zero on the
     // stack instead, to allow userspace to handle errors if wanted.
     //
-    let mut mux_hdl = SerialMuxClient::from_registry(forth.host_ctxt.kernel)
-        .await
-        .ok_or(forth3::Error::InternalError)?;
+    let mut mux_hdl = SerialMuxClient::from_registry(forth.host_ctxt.kernel).await;
 
     let port = mux_hdl
         .open_port(port, sz)

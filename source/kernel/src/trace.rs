@@ -56,14 +56,9 @@ impl SerialCollector {
 
     pub async fn start(&'static self, k: &'static crate::Kernel) {
         // acquire sermux port 3
-        let port = {
-            let mut mux = serial_mux::SerialMuxClient::from_registry(k)
-                .await
-                .expect("cannot initialize serial tracing, no serial mux exists!");
-            mux.open_port(3, 1024)
-                .await
-                .expect("cannot initialize serial tracing, cannot open port 3!")
-        };
+        let port = serial_mux::PortHandle::open(k, 3, 1024)
+            .await
+            .expect("cannot initialize serial tracing, cannot open port 3!");
 
         let (tx, rx) = bbq::new_spsc_channel(k.heap(), Self::CAPACITY).await;
         self.tx.init(tx);

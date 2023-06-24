@@ -332,6 +332,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "input-mgr"
+version = "0.1.0"
+source = "git+https://github.com/tosc-rs/teletype/?rev=de95e610cc79db6d59ad6b40eb2d82adebb4e033#de95e610cc79db6d59ad6b40eb2d82adebb4e033"
+
+[[package]]
 name = "lazy_static"
 version = "1.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -433,6 +438,7 @@ dependencies = [
  "forth3",
  "futures",
  "heapless",
+ "input-mgr",
  "maitake",
  "mnemos-abi",
  "mnemos-alloc",
@@ -440,6 +446,8 @@ dependencies = [
  "mycelium-util",
  "portable-atomic",
  "postcard",
+ "profont",
+ "ring-drawer",
  "serde",
  "spitebuf",
  "tracing 0.2.0",
@@ -634,6 +642,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "profont"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd908932b251e9f146130df7566e8f7c5b0c6ddb29f6d67571f3579f59043c36"
+dependencies = [
+ "embedded-graphics",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -679,6 +696,16 @@ name = "regex-syntax"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "436b050e76ed2903236f032a59761c1eb99e1b0aead2c257922771dab1fc8c78"
+
+[[package]]
+name = "ring-drawer"
+version = "0.1.0"
+source = "git+https://github.com/tosc-rs/teletype/?rev=de95e610cc79db6d59ad6b40eb2d82adebb4e033#de95e610cc79db6d59ad6b40eb2d82adebb4e033"
+dependencies = [
+ "embedded-graphics",
+ "input-mgr",
+ "profont",
+]
 
 [[package]]
 name = "riscv"

@@ -20,6 +20,8 @@
 //! The current server assumes 8 bits per pixel, which is implementation defined for
 //! color/greyscale format (sorry).
 
+use core::time::Duration;
+
 use crate::{
     comms::oneshot::{Reusable, ReusableError},
     registry::{Envelope, KernelHandle, RegisteredDriver, ReplyTo},
@@ -107,7 +109,24 @@ pub struct EmbDisplayClient {
 impl EmbDisplayClient {
     /// Obtain a new client handle by querying the registry for a registered
     /// [`EmbDisplayService`].
-    pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
+    ///
+    /// Will retry until success
+    pub async fn from_registry(kernel: &'static Kernel) -> Self {
+        loop {
+            match Self::from_registry_no_retry(kernel).await {
+                Some(me) => return me,
+                None => {
+                    kernel.sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+    }
+
+    /// Obtain a new client handle by querying the registry for a registered
+    /// [`EmbDisplayService`].
+    ///
+    /// Will not retry if not immediately successful
+    pub async fn from_registry_no_retry(kernel: &'static Kernel) -> Option<Self> {
         let prod = kernel
             .with_registry(|reg| reg.get::<EmbDisplayService>())
             .await?;
