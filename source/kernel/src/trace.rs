@@ -59,7 +59,7 @@ impl SerialCollector {
             .expect("cannot initialize serial tracing, cannot open port 3!");
         let (tx, rx) = bbq::new_spsc_channel(k.heap(), Self::CAPACITY).await;
         self.tx.init(tx);
-        k.spawn(Self::worker(self, rx, port)).await;
+        k.spawn(Self::worker(self, rx, port, k)).await;
         let dispatch = tracing_02::Dispatch::from_static(self);
         tracing_02::dispatch::set_global_default(dispatch)
             .expect("cannot set global default tracing dispatcher");
@@ -91,7 +91,12 @@ impl SerialCollector {
         len > 0
     }
 
-    async fn worker(&'static self, rx: bbq::Consumer, port: serial_mux::PortHandle) {
+    async fn worker(
+        &'static self,
+        rx: bbq::Consumer,
+        port: serial_mux::PortHandle,
+        k: &'static crate::Kernel,
+    ) {
         use futures::FutureExt;
         use maitake::time;
         use postcard::accumulator::{CobsAccumulator, FeedResult};
@@ -115,8 +120,8 @@ impl SerialCollector {
                         match data {
                             HostRequest::SetMaxLevel(lvl) => {
                                 let lvl = lvl.map(|lvl| lvl as u8).unwrap_or(5);
+                                self.max_level.store(lvl, Ordering::Relaxed);
                                 info!("setting max level to {lvl}");
-                                // self.max_level.store(lvl, Ordering::Relaxed);
                                 // tracing_core_02::callsite::rebuild_interest_cache();
                             }
                         }
@@ -128,32 +133,34 @@ impl SerialCollector {
             rgr.release(len);
         };
 
-        // loop {
-        'idle: loop {
-            port.send(heartbeat).await;
-            if let Ok(rgr) =
-                time::timeout(time::Duration::from_secs(2), port.consumer().read_grant()).await
-            {
-                read_level(rgr);
-                break 'idle;
-            }
-        }
-
         loop {
-            futures::select_biased! {
-                rgr = rx.read_grant().fuse() => {
-                    let len = rgr.len();
-                    port.send(&rgr[..]).await;
-                    rgr.release(len)
-                },
-                rgr = port.consumer().read_grant().fuse() => {
+            'idle: loop {
+                port.send(heartbeat).await;
+                if let Ok(rgr) = k
+                    .timer()
+                    .timeout(time::Duration::from_secs(2), port.consumer().read_grant())
+                    .await
+                {
                     read_level(rgr);
-                },
-                // TODO(eliza): make the host also send a heartbeat, and
-                // if we don't get it, break back to the idle loop...
+                    break 'idle;
+                }
+            }
+
+            loop {
+                futures::select_biased! {
+                    rgr = rx.read_grant().fuse() => {
+                        let len = rgr.len();
+                        port.send(&rgr[..]).await;
+                        rgr.release(len)
+                    },
+                    rgr = port.consumer().read_grant().fuse() => {
+                        read_level(rgr);
+                    },
+                    // TODO(eliza): make the host also send a heartbeat, and
+                    // if we don't get it, break back to the idle loop...
+                }
             }
         }
-        // }
     }
 }
 

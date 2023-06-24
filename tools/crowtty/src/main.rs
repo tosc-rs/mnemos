@@ -123,14 +123,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         workers: HashMap::new(),
     };
 
-    let mut heartbeat = [1u8; 16];
-    let heartbeat = postcard::to_slice_cobs(
-        &mnemos_trace_proto::TraceEvent::Heartbeat,
-        &mut heartbeat[..],
-    )
-    .expect("failed to encode heartbeat msg");
-    println!("{:?}", heartbeat);
-
     // NOTE: You can connect to these ports using the following ncat/netcat/nc commands:
     // ```
     // # connect to port N - stdio

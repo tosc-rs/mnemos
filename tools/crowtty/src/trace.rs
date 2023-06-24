@@ -64,7 +64,6 @@ impl TraceWorker {
         let mut cobs_buf: CobsAccumulator<1024> = CobsAccumulator::new();
 
         while let Ok(chunk) = self.rx.recv() {
-            println!("{:?}", chunk);
             let mut window = &chunk[..];
 
             'cobs: while !window.is_empty() {
