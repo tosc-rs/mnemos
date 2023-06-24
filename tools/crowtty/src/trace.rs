@@ -17,7 +17,6 @@ use crate::LogTag;
 use owo_colors::{OwoColorize, Stream};
 
 pub(crate) struct TraceWorker {
-    max_level: LevelFilter,
     tx: mpsc::Sender<Vec<u8>>,
     rx: mpsc::Receiver<Vec<u8>>,
     tag: LogTag,
@@ -51,7 +50,6 @@ impl TraceWorker {
             rx,
             tag,
             verbose,
-            max_level,
             spans: HashMap::new(),
             metas: HashMap::new(),
             stack: Vec::new(),
