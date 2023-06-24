@@ -1,4 +1,4 @@
-use mnemos_trace_proto::{MetaId, TraceEvent};
+use mnemos_trace_proto::{HostRequest, MetaId, TraceEvent};
 use postcard::accumulator::{CobsAccumulator, FeedResult};
 use std::{
     collections::HashMap,
@@ -7,6 +7,7 @@ use std::{
     sync::mpsc,
     time::Instant,
 };
+use tracing_02::level_filters::LevelFilter;
 use tracing_serde_structured::{
     CowString, SerializeLevel, SerializeMetadata, SerializeRecordFields, SerializeSpanFields,
     SerializeValue,
@@ -15,43 +16,48 @@ use tracing_serde_structured::{
 use crate::LogTag;
 use owo_colors::{OwoColorize, Stream};
 
-pub(crate) fn decode(rx: mpsc::Receiver<Vec<u8>>, tag: LogTag, verbose: bool) {
-    let mut cobs_buf: CobsAccumulator<1024> = CobsAccumulator::new();
-    let mut state: TraceState = TraceState {
-        tag,
-        verbose,
-        spans: HashMap::new(),
-        metas: HashMap::new(),
-        stack: Vec::new(),
-        textbuf: String::new(),
-    };
-
-    while let Ok(chunk) = rx.recv() {
-        let mut window = &chunk[..];
-
-        'cobs: while !window.is_empty() {
-            window = match cobs_buf.feed_ref::<TraceEvent<'_>>(window) {
-                FeedResult::Consumed => break 'cobs,
-                FeedResult::OverFull(new_wind) => new_wind,
-                FeedResult::DeserError(new_wind) => new_wind,
-                FeedResult::Success { data, remaining } => {
-                    state.event(data);
-
-                    remaining
-                }
-            };
-        }
-    }
-    println!("trace channel over");
-}
-
-struct TraceState {
+pub(crate) struct TraceWorker {
+    tx: mpsc::Sender<Vec<u8>>,
+    rx: mpsc::Receiver<Vec<u8>>,
     tag: LogTag,
     verbose: bool,
     spans: HashMap<NonZeroU64, Span>,
     metas: HashMap<MetaId, SerializeMetadata<'static>>,
     stack: Vec<NonZeroU64>,
     textbuf: String,
+    has_set_max_level: bool,
+    ser_max_level: Option<SerializeLevel>,
+}
+
+impl TraceWorker {
+    pub fn new(
+        max_level: LevelFilter,
+        tx: mpsc::Sender<Vec<u8>>,
+        rx: mpsc::Receiver<Vec<u8>>,
+        tag: LogTag,
+        verbose: bool,
+    ) -> Self {
+        let ser_max_level = match max_level {
+            LevelFilter::OFF => None,
+            LevelFilter::ERROR => Some(SerializeLevel::Error),
+            LevelFilter::WARN => Some(SerializeLevel::Warn),
+            LevelFilter::INFO => Some(SerializeLevel::Info),
+            LevelFilter::DEBUG => Some(SerializeLevel::Debug),
+            LevelFilter::TRACE => Some(SerializeLevel::Trace),
+        };
+        Self {
+            tx,
+            rx,
+            tag,
+            verbose,
+            spans: HashMap::new(),
+            metas: HashMap::new(),
+            stack: Vec::new(),
+            textbuf: String::new(),
+            ser_max_level,
+            has_set_max_level: false,
+        }
+    }
 }
 
 struct Span {
@@ -63,9 +69,70 @@ struct Span {
     refs: usize,
 }
 
-impl TraceState {
+impl TraceWorker {
+    pub(crate) fn run(mut self) {
+        let mut cobs_buf: CobsAccumulator<1024> = CobsAccumulator::new();
+
+        while let Ok(chunk) = self.rx.recv() {
+            let mut window = &chunk[..];
+
+            'cobs: while !window.is_empty() {
+                window = match cobs_buf.feed_ref::<TraceEvent<'_>>(window) {
+                    FeedResult::Consumed => break 'cobs,
+                    FeedResult::OverFull(new_wind) => new_wind,
+                    FeedResult::DeserError(new_wind) => new_wind,
+                    FeedResult::Success { data, remaining } => {
+                        self.event(data);
+
+                        remaining
+                    }
+                };
+            }
+        }
+        println!("trace channel over");
+    }
+
     fn event(&mut self, ev: TraceEvent<'_>) {
         match ev {
+            TraceEvent::Heartbeat(level) => {
+                if self.verbose {
+                    println!(
+                        "{} {} Found a heartbeat (level: {:?}; desired: {:?})",
+                        self.tag,
+                        "BEAT".if_supports_color(Stream::Stdout, |x| x.bright_red()),
+                        level.map(DisplayLevel),
+                        self.ser_max_level.map(DisplayLevel),
+                    );
+                }
+
+                if level == self.ser_max_level {
+                    if !self.has_set_max_level || self.verbose {
+                        println!(
+                            "{} {} Max level set to {:?}",
+                            self.tag,
+                            "BEAT".if_supports_color(Stream::Stdout, |x| x.bright_red()),
+                            level.map(DisplayLevel)
+                        );
+                    }
+
+                    self.has_set_max_level = true;
+                    return;
+                } else {
+                    self.has_set_max_level = false;
+                }
+
+                let req = postcard::to_allocvec_cobs(&HostRequest::SetMaxLevel(self.ser_max_level))
+                    .expect("failed to serialize max level request");
+                self.tx.send(req).expect("failed to send host request");
+                if self.verbose {
+                    println!(
+                        "{} {} Sent request for {:?}",
+                        self.tag,
+                        "BEAT".if_supports_color(Stream::Stdout, |x| x.bright_red()),
+                        self.ser_max_level.map(DisplayLevel),
+                    );
+                }
+            }
             TraceEvent::RegisterMeta { id, meta } => {
                 if self.verbose {
                     write!(
@@ -312,5 +379,11 @@ impl fmt::Display for DisplayLevel {
                 "ERR".if_supports_color(Stream::Stdout, |l| l.red())
             ),
         }
+    }
+}
+
+impl fmt::Debug for DisplayLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(self, f)
     }
 }

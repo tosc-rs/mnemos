@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{sleep, spawn, JoinHandle};
 use std::time::{Duration, Instant};
+use tracing_02::level_filters::LevelFilter;
 
 #[derive(Serialize, Deserialize)]
 pub struct Chunk {
@@ -41,6 +42,10 @@ struct Args {
     /// whether to include verbose logging of bytes in/out.
     #[arg(short, long, global = true)]
     verbose: bool,
+
+    /// maximum `tracing` level to request from the target.
+    #[arg(short, long, global = true, default_value_t = LevelFilter::INFO)]
+    trace_level: LevelFilter,
 }
 
 #[derive(Subcommand)]
@@ -216,10 +221,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let trace_handle = {
         let (inp_send, inp_recv) = channel();
         let (out_send, out_recv) = channel::<Vec<u8>>();
+        let max_level = args.trace_level;
         let thread_hdl = spawn(move || {
-            // don't drop this
-            let _inp_send = inp_send;
-            trace::decode(out_recv, tag.port(3), verbose)
+            trace::TraceWorker::new(max_level, inp_send, out_recv, tag.port(3), verbose).run()
         });
         WorkerHandle {
             out: out_send,

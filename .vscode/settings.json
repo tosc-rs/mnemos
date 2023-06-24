@@ -1,7 +1,0 @@
-{
-    "rust-analyzer.linkedProjects": [
-        "./platforms/allwinner-d1/drivers/Cargo.toml",
-        "./platforms/allwinner-d1/drivers/Cargo.toml",
-        "./platforms/allwinner-d1/drivers/Cargo.toml"
-    ]
-}

@@ -562,6 +562,7 @@ dependencies = [
  "postcard 1.0.4",
  "serde",
  "serialport",
+ "tracing 0.2.0",
  "tracing-serde-structured",
 ]
 

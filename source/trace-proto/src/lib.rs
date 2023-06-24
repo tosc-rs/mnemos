@@ -2,11 +2,14 @@
 
 use core::{fmt, num::NonZeroU64};
 use tracing_serde_structured::{
-    SerializeId, SerializeMetadata, SerializeRecordFields, SerializeSpanFields,
+    SerializeId, SerializeLevel, SerializeMetadata, SerializeRecordFields, SerializeSpanFields,
 };
 
 #[derive(serde::Serialize, serde::Deserialize)]
 pub enum TraceEvent<'a> {
+    /// Sent by the target periodically when not actively tracing, to indicate
+    /// liveness, or to ack a [`HostRequest::SetMaxLevel`].
+    Heartbeat(Option<SerializeLevel>),
     RegisterMeta {
         id: MetaId,
 
@@ -34,6 +37,16 @@ pub enum TraceEvent<'a> {
     Exit(SerializeId),
     CloneSpan(SerializeId),
     DropSpan(SerializeId),
+}
+
+/// Requests sent from a host to a trace target.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub enum HostRequest {
+    /// Sets the maximum tracing level. Traces above this verbosity level will
+    /// be discarded.
+    ///
+    /// This may cause the trace target to send new metadata to the host.
+    SetMaxLevel(Option<SerializeLevel>), // TODO(eliza): add a keepalive?
 }
 
 #[derive(Copy, Clone, Hash, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
