@@ -78,9 +78,9 @@ pub struct SerialMuxClient {
 }
 
 impl SerialMuxClient {
-    // Obtain a SerialMuxClient
-    //
-    // If the [SerialMuxServer] hasn't been registered yet, we will retry until it has been
+    /// Obtain a `SerialMuxClient`
+    ///
+    /// If the [`SerialMuxServer`] hasn't been registered yet, we will retry until it has been
     pub async fn from_registry(kernel: &'static Kernel) -> Self {
         loop {
             match SerialMuxClient::from_registry_no_retry(kernel).await {
@@ -93,12 +93,12 @@ impl SerialMuxClient {
         }
     }
 
-    // Obtain a SerialMuxClient
-    //
-    // Does NOT attempt to get a [SerialMuxServer] handle more than once.
-    //
-    // Prefer [SerialMuxClient::from_registry] unless you will not be spawning one
-    // around the same time as obtaining a client.
+    /// Obtain a `SerialMuxClient`
+    ///
+    /// Does NOT attempt to get a [`SerialMuxServer`] handle more than once.
+    ///
+    /// Prefer [`SerialMuxClient::from_registry`] unless you will not be spawning one
+    /// around the same time as obtaining a client.
     pub async fn from_registry_no_retry(kernel: &'static Kernel) -> Option<Self> {
         let prod = kernel
             .with_registry(|reg| reg.get::<SerialMuxService>())
@@ -169,9 +169,9 @@ impl PortHandle {
 pub struct SerialMuxServer;
 
 impl SerialMuxServer {
-    // Register the SerialMuxServer.
-    //
-    // Will retry to obtain a [SimpleSerialClient] until success.
+    /// Register the `SerialMuxServer`.
+    ///
+    /// Will retry to obtain a [`SimpleSerialClient`] until success.
     pub async fn register(
         kernel: &'static Kernel,
         max_ports: usize,
@@ -192,12 +192,12 @@ impl SerialMuxServer {
         Ok(())
     }
 
-    // Register the SerialMuxServer.
-    //
-    // Does NOT attempt to obtain a [SimpleSerialClient] more than once.
-    //
-    // Prefer [SerialMuxServer::register] unless you will not be spawning one around
-    // the same time as registering this server.
+    /// Register the SerialMuxServer.
+    ///
+    /// Does NOT attempt to obtain a [`SimpleSerialClient`] more than once.
+    ///
+    /// Prefer [`SerialMuxServer::register`] unless you will not be spawning one around
+    /// the same time as registering this server.
     pub async fn register_no_retry(
         kernel: &'static Kernel,
         max_ports: usize,
