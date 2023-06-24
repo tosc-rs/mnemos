@@ -129,7 +129,9 @@ impl SerialCollector {
                     FeedResult::Success { data, remaining } => {
                         match data {
                             HostRequest::SetMaxLevel(lvl) => {
-                                let level = lvl.map(|lvl| lvl as u8).unwrap_or(5);
+                                let level = lvl
+                                    .map(|lvl| lvl as u8)
+                                    .unwrap_or(level_to_u8(LevelFilter::OFF));
                                 let prev = self.max_level.swap(level, Ordering::AcqRel);
                                 if prev != level {
                                     tracing_core_02::callsite::rebuild_interest_cache();
