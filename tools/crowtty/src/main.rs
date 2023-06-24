@@ -20,6 +20,7 @@ pub struct Chunk {
 pub(crate) struct LogTag {
     start: Instant,
     port: Option<u16>,
+    tcp: bool,
 }
 
 enum Connect {
@@ -104,12 +105,14 @@ impl Connect {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let tag = LogTag::new();
     let args = Args::parse();
     let verbose = args.verbose;
-    let mut port: Connect = match args.command {
-        Command::Tcp { port } => Connect::new_from_tcp(port),
-        Command::Serial { path, baud } => Connect::new_from_serial(path.to_str().unwrap(), baud),
+    let (mut port, tag) = match args.command {
+        Command::Tcp { port } => (Connect::new_from_tcp(port), LogTag::new(true)),
+        Command::Serial { path, baud } => (
+            Connect::new_from_serial(path.to_str().unwrap(), baud),
+            LogTag::new(false),
+        ),
     };
 
     let mut carry = Vec::new();
@@ -310,10 +313,11 @@ struct TcpWorker {
 }
 
 impl LogTag {
-    pub fn new() -> Self {
+    pub fn new(tcp: bool) -> Self {
         Self {
             start: Instant::now(),
             port: None,
+            tcp,
         }
     }
 
@@ -334,11 +338,14 @@ impl fmt::Display for LogTag {
             .map(|p| p as &dyn fmt::Display)
             .unwrap_or(&" " as &dyn fmt::Display);
         format_args!(
-            "[{port} +{:04}.{:09}s]",
+            "[{port} +{:04}.{:09}s] ",
             elapsed.as_secs(),
             elapsed.subsec_nanos()
         )
         .if_supports_color(owo_colors::Stream::Stdout, |text| text.dimmed())
-        .fmt(f)
+        .fmt(f)?;
+        let conn = if self.tcp { " TCP" } else { "UART" };
+        conn.if_supports_color(owo_colors::Stream::Stdout, |text| text.magenta())
+            .fmt(f)
     }
 }
