@@ -189,6 +189,7 @@ impl SerialCollector {
         }
     }
 
+    #[inline]
     fn level_enabled(&self, metadata: &Metadata<'_>) -> bool {
         // TODO(eliza): more sophisticated filtering
         metadata.level() <= &u8_to_level(self.max_level.load(Ordering::Relaxed))
@@ -213,15 +214,24 @@ impl Collect for SerialCollector {
             meta: metadata.as_serde(),
         });
 
-        if sent {
-            // We return `sometimes` here, rather than `always`, so that traces
-            // can be skipped while inside the collector.
-            tracing_core_02::Interest::sometimes()
-        } else {
-            // if we couldn't send the metadata, skip this callsite, because the
-            // consumer will not be able to understand it without its metadata.
-            tracing_core_02::Interest::never()
+        // If we couldn't send the metadata, skip this callsite, because the
+        // consumer will not be able to understand it without its metadata.
+        if !sent {
+            return tracing_core_02::Interest::never();
         }
+
+        // Due to the fact that the collector uses `bbq` internally, we must
+        // return `Interest::sometimes` rather than `Interest::always` for
+        // `bbq` callsites, so that they can be dynamically enabled/disabled
+        // by the `enabled` method based on whether or not we are inside the
+        // collector. This avoids an infinite loop that previously occurred
+        // when enabling the `TRACE` level.
+        if metadata.target().starts_with("kernel::comms::bbq") {
+            return tracing_core_02::Interest::sometimes();
+        }
+
+        // Otherwise, always enable this callsite.
+        tracing_core_02::Interest::always()
     }
 
     fn max_level_hint(&self) -> Option<LevelFilter> {
