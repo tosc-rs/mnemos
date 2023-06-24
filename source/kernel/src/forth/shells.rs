@@ -1,18 +1,17 @@
 use core::time::Duration;
 
-use crate::drivers::emb_display::EmbDisplayClient;
-use crate::drivers::serial_mux::PortHandle;
-use crate::tracing;
-use crate::Kernel;
-use embedded_graphics::mono_font::MonoTextStyle;
-use embedded_graphics::pixelcolor::Gray8;
-use embedded_graphics::prelude::GrayColor;
-use embedded_graphics::prelude::Point;
-use embedded_graphics::primitives::Line;
-use embedded_graphics::primitives::Primitive;
-use embedded_graphics::primitives::PrimitiveStyle;
-use embedded_graphics::text::Text;
-use embedded_graphics::Drawable;
+use crate::{
+    drivers::{emb_display::EmbDisplayClient, serial_mux::PortHandle},
+    tracing, Kernel,
+};
+use embedded_graphics::{
+    mono_font::MonoTextStyle,
+    pixelcolor::Gray8,
+    prelude::{GrayColor, Point},
+    primitives::{Line, Primitive, PrimitiveStyle},
+    text::Text,
+    Drawable,
+};
 
 use futures::FutureExt;
 use input_mgr::RingLine;
