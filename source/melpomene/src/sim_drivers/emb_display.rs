@@ -89,6 +89,12 @@ struct CommanderTask {
     display_info: DisplayInfo,
 }
 
+struct Context {
+    sdisp: SimulatorDisplay<Gray8>,
+    window: Window,
+    dirty: bool,
+}
+
 impl CommanderTask {
     /// The entrypoint for the driver execution
     async fn run(mut self, width: u32, height: u32) {
@@ -112,7 +118,11 @@ impl CommanderTask {
         let mutex = self
             .kernel
             .heap()
-            .allocate_arc(Mutex::new(Some((sdisp, window))))
+            .allocate_arc(Mutex::new(Some(Context {
+                sdisp,
+                window,
+                dirty: true,
+            })))
             .await;
 
         // Spawn a task that draws the framebuffer at a regular rate of 15Hz.
@@ -120,14 +130,29 @@ impl CommanderTask {
             .spawn({
                 let mutex = mutex.clone();
                 async move {
+                    let mut idle_ticks = 0;
                     loop {
                         self.kernel
                             .sleep(Duration::from_micros(1_000_000 / 15))
                             .await;
                         let mut guard = mutex.lock().await;
                         let mut done = false;
-                        if let Some((sdisp, window)) = (&mut *guard).as_mut() {
-                            window.update(&sdisp);
+                        if let Some(Context {
+                            sdisp,
+                            window,
+                            dirty,
+                        }) = (&mut *guard).as_mut()
+                        {
+                            // If nothing has been drawn, only update the frame at 1Hz to save
+                            // CPU usage
+                            if *dirty || idle_ticks >= 15 {
+                                idle_ticks = 0;
+                                *dirty = false;
+                                window.update(&sdisp);
+                            } else {
+                                idle_ticks += 1;
+                            }
+
                             if window.events().any(|e| e == SimulatorEvent::Quit) {
                                 done = true;
                             }
@@ -177,8 +202,13 @@ impl CommanderTask {
                         let image = Image::new(&raw_img, Point::new(x, y));
 
                         let mut guard = mutex.lock().await;
-                        if let Some((sdisp, _window)) = (&mut *guard).as_mut() {
+                        if let Some(Context { sdisp, dirty, .. }) = (&mut *guard).as_mut() {
                             image.draw(sdisp).unwrap();
+                            *dirty = true;
+
+                            // Drop the guard before we reply so we don't hold it too long.
+                            drop(guard);
+
                             let _ = reply
                                 .reply_konly(req.reply_with(Ok(Response::FrameDrawn)))
                                 .await;
