@@ -59,8 +59,9 @@ impl SerialCollector {
             .expect("cannot initialize serial tracing, cannot open port 3!");
         let (tx, rx) = bbq::new_spsc_channel(k.heap(), Self::CAPACITY).await;
         self.tx.init(tx);
-        k.spawn(Self::worker(self, rx, port, k)).await;
+        //
         let dispatch = tracing_02::Dispatch::from_static(self);
+        k.spawn(Self::worker(self, rx, port, k)).await;
         tracing_02::dispatch::set_global_default(dispatch)
             .expect("cannot set global default tracing dispatcher");
     }
@@ -107,7 +108,7 @@ impl SerialCollector {
         // we probably won't use 256 whole bytes of cobs yet since all the host
         // -> target messages are quite small
         let mut cobs_buf: CobsAccumulator<16> = CobsAccumulator::new();
-
+        let mut needs_rebuild = false;
         let mut read_level = |rgr: bbq::GrantR| {
             let mut window = &rgr[..];
             let len = rgr.len();
@@ -122,7 +123,7 @@ impl SerialCollector {
                                 let lvl = lvl.map(|lvl| lvl as u8).unwrap_or(5);
                                 self.max_level.store(lvl, Ordering::Relaxed);
                                 info!("setting max level to {lvl}");
-                                // tracing_core_02::callsite::rebuild_interest_cache();
+                                tracing_core_02::callsite::rebuild_interest_cache();
                             }
                         }
 
