@@ -2,7 +2,7 @@ use crate::{comms::bbq, drivers::serial_mux};
 use level_filters::LevelFilter;
 use mnemos_trace_proto::{HostRequest, TraceEvent};
 use mycelium_util::sync::InitOnce;
-use portable_atomic::{AtomicPtr, AtomicU64, AtomicU8, AtomicUsize, Ordering};
+use portable_atomic::{AtomicBool, AtomicPtr, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
 pub use tracing_02::*;
 use tracing_core_02::span::Current;
@@ -26,6 +26,10 @@ pub struct SerialCollector {
     dropped_events: AtomicUsize,
 
     max_level: AtomicU8,
+
+    /// Tracks whether we are inside of the collector's `send_event` method, so
+    /// that BBQueue tracing can be disabled.
+    in_send: AtomicBool,
 }
 
 // === impl SerialCollector ===
@@ -46,6 +50,7 @@ impl SerialCollector {
             next_id: AtomicU64::new(1),
             dropped_events: AtomicUsize::new(0),
             max_level: AtomicU8::new(level_to_u8(max_level)),
+            in_send: AtomicBool::new(false),
         }
     }
 
@@ -68,6 +73,7 @@ impl SerialCollector {
 
     /// Serialize a `TraceEvent`, returning `true` if the event was correctly serialized.
     fn send_event<'a>(&self, sz: usize, event: impl FnOnce() -> TraceEvent<'a>) -> bool {
+        self.in_send.store(true, Ordering::Release);
         let Some(mut wgr) = self.tx.get().send_grant_exact_sync(sz) else {
             self.dropped_events.fetch_add(1, Ordering::Relaxed);
             return false;
@@ -87,6 +93,7 @@ impl SerialCollector {
             }
         };
         wgr.commit(len);
+        self.in_send.store(false, Ordering::Release);
 
         // return true if we committed a non-zero number of bytes.
         len > 0
@@ -181,16 +188,20 @@ impl SerialCollector {
             }
         }
     }
+
+    fn level_enabled(&self, metadata: &Metadata<'_>) -> bool {
+        // TODO(eliza): more sophisticated filtering
+        metadata.level() <= &u8_to_level(self.max_level.load(Ordering::Relaxed))
+    }
 }
 
 impl Collect for SerialCollector {
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
-        // TODO(eliza): more sophisticated filtering
-        metadata.level() <= &u8_to_level(self.max_level.load(Ordering::Relaxed))
+        self.level_enabled(metadata) && !self.in_send.load(Ordering::Acquire)
     }
 
     fn register_callsite(&self, metadata: &'static Metadata<'static>) -> tracing_core_02::Interest {
-        if !self.enabled(metadata) {
+        if !self.level_enabled(metadata) {
             return tracing_core_02::Interest::never();
         }
 
@@ -203,7 +214,9 @@ impl Collect for SerialCollector {
         });
 
         if sent {
-            tracing_core_02::Interest::always()
+            // We return `sometimes` here, rather than `always`, so that traces
+            // can be skipped while inside the collector.
+            tracing_core_02::Interest::sometimes()
         } else {
             // if we couldn't send the metadata, skip this callsite, because the
             // consumer will not be able to understand it without its metadata.
