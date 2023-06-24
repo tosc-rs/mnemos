@@ -61,6 +61,17 @@ struct Span {
 
 impl TraceWorker {
     pub(crate) fn run(mut self) {
+        if self.max_level == LevelFilter::TRACE {
+            let warn = "WARN".if_supports_color(Stream::Stdout, |l| l.yellow());
+            let trace = "TRCE".if_supports_color(Stream::Stdout, |l| l.purple());
+            println!(
+                "{} {warn} Max level {trace} requested, this currently causes \
+                the board to hang for some reason.\n\
+                {} {warn} TODO eliza: fix this!",
+                self.tag, self.tag
+            );
+        }
+
         let mut cobs_buf: CobsAccumulator<1024> = CobsAccumulator::new();
 
         while let Ok(chunk) = self.rx.recv() {

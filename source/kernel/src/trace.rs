@@ -108,7 +108,6 @@ impl SerialCollector {
         // we probably won't use 256 whole bytes of cobs yet since all the host
         // -> target messages are quite small
         let mut cobs_buf: CobsAccumulator<16> = CobsAccumulator::new();
-        let mut needs_rebuild = false;
         let mut read_level = |rgr: bbq::GrantR| {
             let mut window = &rgr[..];
             let len = rgr.len();
