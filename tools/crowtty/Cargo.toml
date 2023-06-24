@@ -21,6 +21,7 @@ features = ["derive"]
 
 [dependencies.postcard]
 version = "1"
+features = ["alloc"]
 
 [dependencies.owo-colors]
 version = "3.5"
@@ -34,3 +35,9 @@ default-features = true
 [dependencies.mnemos-trace-proto]
 path = "../../source/trace-proto"
 features = ["std"]
+
+[dependencies.tracing-02]
+package = "tracing"
+git = "https://github.com/tokio-rs/tracing"
+# branch = "master"
+default-features = false

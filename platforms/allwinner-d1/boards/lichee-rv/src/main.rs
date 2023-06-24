@@ -25,8 +25,7 @@ const HEAP_SIZE: usize = 384 * 1024 * 1024;
 #[used]
 static AHEAP: Ram<HEAP_SIZE> = Ram::new();
 
-static COLLECTOR: trace::SerialCollector =
-    trace::SerialCollector::new(trace::level_filters::LevelFilter::DEBUG);
+static COLLECTOR: trace::SerialCollector = trace::SerialCollector::new();
 
 /// A helper to initialize the kernel
 fn initialize_kernel() -> Result<&'static Kernel, ()> {
