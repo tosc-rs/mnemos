@@ -216,7 +216,7 @@ pub trait AsyncBuiltins<'forth, T: 'static> {
     /// VM. This allows the VM's stacks to be mutated by the async builtin function.
     ///
     /// [`Future`]: core::future::Future
-    type Future: core::future::Future<Output = Result<(), crate::Error>>;
+    type Future: core::future::Future<Output = Result<crate::vm::InterpretAction, crate::Error>>;
 
     /// A static slice of [`AsyncBuiltinEntry`]s describing the builtins
     /// provided by this implementation of `AsyncBuiltin`s.
@@ -691,7 +691,7 @@ pub mod test {
     use crate::{
         dictionary::{BuiltinEntry, DictLocation, DictionaryBump, DictionaryEntry},
         leakbox::{alloc_dict, LeakBox, LeakBoxDict},
-        Error, Forth, Word,
+        Forth, ForthResult, Word,
     };
 
     #[cfg(feature = "async")]
@@ -773,7 +773,7 @@ pub mod test {
 
     #[test]
     fn allocs_work() {
-        fn stubby(_f: &mut Forth<()>) -> Result<(), Error> {
+        fn stubby(_f: &mut Forth<()>) -> ForthResult {
             panic!("Don't ACTUALLY call me!");
         }
 
@@ -790,7 +790,7 @@ pub mod test {
 
     #[test]
     fn fork_onto_works() {
-        fn stubby(_f: &mut Forth<()>) -> Result<(), Error> {
+        fn stubby(_f: &mut Forth<()>) -> ForthResult {
             panic!("Don't ACTUALLY call me!");
         }
 
