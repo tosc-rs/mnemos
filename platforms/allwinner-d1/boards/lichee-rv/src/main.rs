@@ -11,7 +11,7 @@ use drivers::{
     Ram,
 };
 use kernel::{
-    drivers::serial_mux::{RegistrationError, SerialMuxClient, SerialMuxServer},
+    drivers::serial_mux::{PortHandle, RegistrationError, SerialMuxServer},
     trace, Kernel, KernelSettings,
 };
 use spim::{kernel_spim1, SpiSenderClient, SpiSenderServer, SPI1_TX_DONE};
@@ -214,16 +214,7 @@ fn main() -> ! {
 
     // Loopback on virtual port zero
     k.initialize(async move {
-        let mut hdl = loop {
-            match SerialMuxClient::from_registry(k).await {
-                Some(c) => break c,
-                None => {
-                    k.sleep(Duration::from_millis(100)).await;
-                }
-            }
-        };
-
-        let hdl = hdl.open_port(0, 1024).await.unwrap();
+        let hdl = PortHandle::open(k, 0, 1024).await.unwrap();
 
         loop {
             let rx = hdl.consumer().read_grant().await;
@@ -235,16 +226,7 @@ fn main() -> ! {
     .unwrap();
 
     k.initialize(async move {
-        let mut hdl = loop {
-            match SerialMuxClient::from_registry(k).await {
-                Some(c) => break c,
-                None => {
-                    k.sleep(Duration::from_millis(100)).await;
-                }
-            }
-        };
-
-        let hdl = hdl.open_port(1, 1024).await.unwrap();
+        let hdl = PortHandle::open(k, 1, 1024).await.unwrap();
 
         loop {
             hdl.send(b"Hello, world!\r\n").await;
