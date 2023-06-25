@@ -264,12 +264,9 @@ impl DisplayInfo {
         let fidx = self.frame_idx;
         self.frame_idx = self.frame_idx.wrapping_add(1);
 
-        match self.frames.try_push(FrameInfo { frame: fidx }) {
-            Ok(_) => {}
-            Err(_) => {
-                return Err(FrameError::NoFrameAvailable);
-            }
-        }
+        self
+            .frames.try_push(FrameInfo { frame: fidx })
+            .map_err(|_| FrameError::NoFrameAvailable)?;
 
         let size = (width * height) as usize;
 
@@ -300,7 +297,7 @@ impl DisplayInfo {
     fn remove_frame(&mut self, frame_id: u16) -> Result<(), FrameError> {
         let mut found = false;
         unsafe {
-            // This only removes items, and will not cause a realloc
+            // safety: This only removes items, and will not cause a realloc
             self.frames.as_vec_mut().retain(|fr| {
                 let matches = fr.frame == frame_id;
                 found |= matches;

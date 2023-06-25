@@ -10,7 +10,7 @@ use core::{
 
 // Arc
 
-pub struct Arc<T> {
+pub struct Arc<T: ?Sized> {
     inner: alloc::sync::Arc<T>,
 }
 

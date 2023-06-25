@@ -345,12 +345,9 @@ impl IncomingMuxerTask {
                 if ch.last() != Some(&0) {
                     // This is the last chunk, and it doesn't end with a zero.
                     // just add it to the accumulator, if we can.
-                    match self.buf.try_extend_from_slice(ch) {
-                        Ok(_) => {}
-                        Err(_) => {
-                            warn!("Overfilled accumulator");
-                            self.buf.clear();
-                        }
+                    if self.buf.try_extend_from_slice(ch).is_err() {
+                         warn!("Overfilled accumulator");
+                         self.buf.clear();
                     }
 
                     // Either we overfilled, or this was the last data. Move on.
@@ -363,13 +360,10 @@ impl IncomingMuxerTask {
                     ch
                 } else {
                     // We have residual data, we need to copy the chunk to the end of the buffer
-                    match self.buf.try_extend_from_slice(ch) {
-                        Ok(_) => {}
-                        Err(_) => {
-                            warn!("Overfilled accumulator");
-                            self.buf.clear();
-                            continue;
-                        }
+                    if self.buf.try_extend_from_slice(ch).is_err() {
+                        warn!("Overfilled accumulator");
+                        self.buf.clear();
+                        continue;
                     }
 
                     self.buf.as_slice_mut()
