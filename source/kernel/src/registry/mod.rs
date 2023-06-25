@@ -4,11 +4,11 @@ use crate::{
     comms::oneshot::Reusable,
     tracing::{self, debug, info},
 };
+use mnemos_alloc::fornow::collections::FixedVec;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use spitebuf::EnqueueError;
 pub use uuid::{uuid, Uuid};
-use mnemos_alloc::fornow::collections::FixedVec;
 
 use crate::comms::{
     bbq,
@@ -335,7 +335,8 @@ impl Registry {
                     req_deser: None,
                     service_id: ServiceId(self.counter),
                 },
-            }).map_err(|_| RegistrationError::RegistryFull)?;
+            })
+            .map_err(|_| RegistrationError::RegistryFull)?;
         info!(uuid = ?RD::UUID, service_id = self.counter, "Registered KOnly");
         self.counter = self.counter.wrapping_add(1);
         Ok(())

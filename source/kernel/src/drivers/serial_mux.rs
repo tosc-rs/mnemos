@@ -20,7 +20,7 @@ use crate::{
     Kernel,
 };
 use maitake::sync::Mutex;
-use mnemos_alloc::fornow::collections::{FixedVec, Arc};
+use mnemos_alloc::fornow::collections::{Arc, FixedVec};
 use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -215,10 +215,7 @@ impl SerialMuxServer {
         let sprod = sprod.into_mpmc_producer().await;
 
         let ports = FixedVec::new(max_ports).await;
-        let imutex = Arc::new(Mutex::new(MuxingInfo {
-                ports,
-                max_frame,
-            })).await;
+        let imutex = Arc::new(Mutex::new(MuxingInfo { ports, max_frame })).await;
         let (cmd_prod, cmd_cons) = KChannel::new_async(max_ports).await.split();
         let buf = FixedVec::new(max_frame).await;
         let commander = CommanderTask {
@@ -349,7 +346,7 @@ impl IncomingMuxerTask {
                     // This is the last chunk, and it doesn't end with a zero.
                     // just add it to the accumulator, if we can.
                     match self.buf.try_extend_from_slice(ch) {
-                        Ok(_) => {},
+                        Ok(_) => {}
                         Err(_) => {
                             warn!("Overfilled accumulator");
                             self.buf.clear();
@@ -365,10 +362,9 @@ impl IncomingMuxerTask {
                     // Yes, no pending data, just use the current chunk
                     ch
                 } else {
-
                     // We have residual data, we need to copy the chunk to the end of the buffer
                     match self.buf.try_extend_from_slice(ch) {
-                        Ok(_) => {},
+                        Ok(_) => {}
                         Err(_) => {
                             warn!("Overfilled accumulator");
                             self.buf.clear();

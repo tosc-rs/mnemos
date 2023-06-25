@@ -6,7 +6,6 @@ use core::{cell::UnsafeCell, ops::Deref, ptr::NonNull};
 use mnemos_alloc::fornow::collections::{Arc, ArrayBuf};
 use spitebuf::{DequeueError, EnqueueError, MpScQueue};
 
-
 /// A Kernel Channel
 pub struct KChannel<T> {
     q: Arc<MpScQueue<T, sealed::SpiteData<T>>>,

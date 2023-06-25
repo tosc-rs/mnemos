@@ -1,4 +1,4 @@
-use std::{sync::Arc, alloc::System};
+use std::{alloc::System, sync::Arc};
 
 use clap::Parser;
 use futures::FutureExt;
@@ -63,7 +63,11 @@ async fn kernel_entry(opts: MelpomeneOptions) {
         timer_granularity: maitake::time::Duration::from_micros(1),
     };
 
-    let k = unsafe { mnemos_alloc::fornow::collections::Box::into_raw(Kernel::new(settings, &AHEAP).unwrap()).as_ref().unwrap() };
+    let k = unsafe {
+        mnemos_alloc::fornow::collections::Box::into_raw(Kernel::new(settings, &AHEAP).unwrap())
+            .as_ref()
+            .unwrap()
+    };
 
     // Simulates the kernel main loop being woken by an IRQ.
     let irq = Arc::new(tokio::sync::Notify::new());

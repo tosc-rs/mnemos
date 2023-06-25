@@ -93,7 +93,7 @@ use maitake::{
     time::{Duration, Sleep, Timeout, Timer},
 };
 pub use mnemos_alloc;
-use mnemos_alloc::fornow::{UlAlloc, AHeap2, collections::Box};
+use mnemos_alloc::fornow::{collections::Box, AHeap2, UlAlloc};
 use registry::Registry;
 
 /// Shim to handle tracing v0.1 vs v0.2
@@ -166,7 +166,10 @@ pub struct KernelInner {
 }
 
 impl Kernel {
-    pub unsafe fn new<U: UlAlloc>(settings: KernelSettings, _alloc: &'static AHeap2<U>) -> Result<Box<Self>, &'static str> {
+    pub unsafe fn new<U: UlAlloc>(
+        settings: KernelSettings,
+        _alloc: &'static AHeap2<U>,
+    ) -> Result<Box<Self>, &'static str> {
         let registry = registry::Registry::new(settings.max_drivers);
 
         let scheduler = LocalScheduler::new();
@@ -179,7 +182,8 @@ impl Kernel {
         let new_kernel = Box::try_new(Kernel {
             inner,
             registry: Mutex::new(registry),
-        }).map_err(|_| "Kernel allocation failed.")?;
+        })
+        .map_err(|_| "Kernel allocation failed.")?;
 
         Ok(new_kernel)
     }

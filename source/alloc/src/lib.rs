@@ -6,9 +6,12 @@
 
 extern crate alloc;
 
-
 pub mod fornow {
-    use core::{alloc::GlobalAlloc, ptr::{NonNull, null_mut}, sync::atomic::{AtomicBool, Ordering}};
+    use core::{
+        alloc::GlobalAlloc,
+        ptr::{null_mut, NonNull},
+        sync::atomic::{AtomicBool, Ordering},
+    };
 
     use linked_list_allocator::Heap;
     use maitake::sync::{Mutex, WaitQueue};
@@ -28,7 +31,9 @@ pub mod fornow {
     }
 
     impl UlAlloc for Mlla {
-        const INIT: Self = Mlla { mlla: Mutex::new(Heap::empty()) };
+        const INIT: Self = Mlla {
+            mlla: Mutex::new(Heap::empty()),
+        };
 
         #[inline]
         unsafe fn init(&self, start: NonNull<u8>, len: usize) {
@@ -51,18 +56,17 @@ pub mod fornow {
                 Some(nn) => {
                     let mut heap = self.mlla.try_lock().unwrap();
                     heap.deallocate(nn, layout);
-                },
+                }
                 None => {
                     debug_assert!(false, "Deallocating a null?");
                     return;
-                },
+                }
             }
         }
     }
 
     #[cfg(feature = "use-std")]
     impl UlAlloc for std::alloc::System {
-
         const INIT: Self = std::alloc::System;
 
         unsafe fn init(&self, _start: NonNull<u8>, _len: usize) {
@@ -80,14 +84,11 @@ pub mod fornow {
 
     pub struct AHeap2<U> {
         allocator: U,
-
     }
 
     impl<U: UlAlloc> AHeap2<U> {
         pub const fn new() -> Self {
-            Self {
-                allocator: U::INIT,
-            }
+            Self { allocator: U::INIT }
         }
 
         pub unsafe fn init(&self, start: NonNull<u8>, len: usize) {
@@ -98,7 +99,8 @@ pub mod fornow {
     unsafe impl<U: UlAlloc> GlobalAlloc for AHeap2<U> {
         #[inline(always)]
         unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8 {
-            if INHIBIT_ALLOC.load(Ordering::SeqCst) { // TODO
+            if INHIBIT_ALLOC.load(Ordering::SeqCst) {
+                // TODO
                 return null_mut();
             }
             let ptr = self.allocator.alloc(layout);
@@ -116,7 +118,14 @@ pub mod fornow {
     }
 
     pub mod collections {
-        use core::{ops::{Deref, DerefMut}, alloc::Layout, ptr::NonNull, cell::UnsafeCell, mem::MaybeUninit, marker::PhantomData};
+        use core::{
+            alloc::Layout,
+            cell::UnsafeCell,
+            marker::PhantomData,
+            mem::MaybeUninit,
+            ops::{Deref, DerefMut},
+            ptr::NonNull,
+        };
 
         use super::OOM_WAITER;
 
@@ -128,7 +137,7 @@ pub mod fornow {
                         None => {
                             let _ = OOM_WAITER.wait().await;
                             continue;
-                        },
+                        }
                     }
                 }
             }
@@ -153,23 +162,27 @@ pub mod fornow {
         impl<T> Arc<T> {
             pub fn try_new(t: T) -> Result<Self, T> {
                 // TODO: Failable way of allocating arcs?
-                Ok(Self { inner: alloc::sync::Arc::new(t) })
+                Ok(Self {
+                    inner: alloc::sync::Arc::new(t),
+                })
             }
 
             pub async fn new(t: T) -> Self {
                 // TODO: Async way of allocating Arc?
-                Self { inner: alloc::sync::Arc::new(t) }
+                Self {
+                    inner: alloc::sync::Arc::new(t),
+                }
             }
 
             pub fn into_raw(a: Self) -> NonNull<T> {
-                unsafe {
-                    NonNull::new_unchecked(alloc::sync::Arc::into_raw(a.inner).cast_mut())
-                }
+                unsafe { NonNull::new_unchecked(alloc::sync::Arc::into_raw(a.inner).cast_mut()) }
             }
 
             #[inline(always)]
             pub unsafe fn from_raw(nn: NonNull<T>) -> Self {
-                Self { inner: alloc::sync::Arc::from_raw(nn.as_ptr()) }
+                Self {
+                    inner: alloc::sync::Arc::from_raw(nn.as_ptr()),
+                }
             }
 
             #[inline(always)]
@@ -180,7 +193,9 @@ pub mod fornow {
 
         impl<T> Clone for Arc<T> {
             fn clone(&self) -> Self {
-                Self { inner: self.inner.clone() }
+                Self {
+                    inner: self.inner.clone(),
+                }
             }
         }
 
@@ -208,7 +223,9 @@ pub mod fornow {
             }
 
             pub unsafe fn from_raw(ptr: *mut T) -> Self {
-                Self { inner: alloc::boxed::Box::from_raw(ptr) }
+                Self {
+                    inner: alloc::boxed::Box::from_raw(ptr),
+                }
             }
 
             pub async fn new(t: T) -> Self {
@@ -224,7 +241,9 @@ pub mod fornow {
                     Some(ptr) => unsafe {
                         let ptr = ptr.cast::<T>().as_ptr();
                         ptr.write(t);
-                        Ok(Self { inner: alloc::boxed::Box::from_raw(ptr) })
+                        Ok(Self {
+                            inner: alloc::boxed::Box::from_raw(ptr),
+                        })
                     },
                     None => Err(t),
                 }
@@ -314,7 +333,7 @@ pub mod fornow {
                 unsafe {
                     let ptr = NonNull::new(alloc::alloc::alloc(layout))?;
                     return Some(FixedVec {
-                        inner: Vec::from_raw_parts(ptr.cast().as_ptr(), 0, capacity)
+                        inner: Vec::from_raw_parts(ptr.cast().as_ptr(), 0, capacity),
                     });
                 }
             }
@@ -325,7 +344,7 @@ pub mod fornow {
                 unsafe {
                     let ptr = alloc(layout).await;
                     return FixedVec {
-                        inner: Vec::from_raw_parts(ptr.cast().as_ptr(), 0, capacity)
+                        inner: Vec::from_raw_parts(ptr.cast().as_ptr(), 0, capacity),
                     };
                 }
             }
@@ -399,4 +418,3 @@ pub mod fornow {
         }
     }
 }
-

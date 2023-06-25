@@ -17,7 +17,7 @@ use forth3::{
     word::Word,
     AsyncForth, CallContext,
 };
-use mnemos_alloc::fornow::collections::{FixedVec, ArrayBuf, Box, alloc, dealloc};
+use mnemos_alloc::fornow::collections::{alloc, dealloc, ArrayBuf, Box, FixedVec};
 use portable_atomic::{AtomicUsize, Ordering};
 
 pub mod shells;
@@ -60,7 +60,10 @@ impl Forth {
         let dict = params.alloc_dict().await?;
 
         let input = WordStrBuf::new(bufs.input.ptrlen().0.as_ptr().cast(), params.input_buf_size);
-        let output = OutputBuf::new(bufs.output.ptrlen().0.as_ptr().cast(), params.output_buf_size);
+        let output = OutputBuf::new(
+            bufs.output.ptrlen().0.as_ptr().cast(),
+            params.output_buf_size,
+        );
         let host_ctxt = MnemosContext::new(kernel, params, spawnulator).await;
 
         let forth = unsafe {
@@ -215,7 +218,7 @@ impl Params {
     }
 
     /// Allocate new input and output streams with the configured capacity.
-    async fn alloc_stdio(&self,) -> (bbq::BidiHandle, bbq::BidiHandle) {
+    async fn alloc_stdio(&self) -> (bbq::BidiHandle, bbq::BidiHandle) {
         bbq::new_bidi_channel(self.stdout_capacity, self.stdin_capacity).await
     }
 
@@ -231,9 +234,7 @@ impl Params {
     }
 
     /// Allocate a new `OwnedDict` with this `Params`' dictionary size.
-    async fn alloc_dict(
-        &self,
-    ) -> Result<OwnedDict<MnemosContext>, &'static str> {
+    async fn alloc_dict(&self) -> Result<OwnedDict<MnemosContext>, &'static str> {
         let layout = Dictionary::<MnemosContext>::layout(self.dictionary_size)
             .map_err(|_| "invalid dictionary size")?;
         let dict_buf = alloc(layout)
@@ -384,7 +385,10 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     let host_ctxt = MnemosContext::new(kernel, params, forth.host_ctxt.spawnulator.clone()).await;
     let child_id = host_ctxt.id;
     let input = WordStrBuf::new(bufs.input.ptrlen().0.as_ptr().cast(), params.input_buf_size);
-    let output = OutputBuf::new(bufs.output.ptrlen().0.as_ptr().cast(), params.output_buf_size);
+    let output = OutputBuf::new(
+        bufs.output.ptrlen().0.as_ptr().cast(),
+        params.output_buf_size,
+    );
 
     let mut child = unsafe {
         forth.fork(
@@ -604,7 +608,12 @@ impl BagOfHolding {
             if self.idx == 0 {
                 continue;
             }
-            if !self.inner.as_slice().iter().any(|(idx, _)| *idx == self.idx) {
+            if !self
+                .inner
+                .as_slice()
+                .iter()
+                .any(|(idx, _)| *idx == self.idx)
+            {
                 return self.idx;
             }
         }
@@ -630,16 +639,20 @@ impl BagOfHolding {
         let idx = self.next_idx();
         let tid = TypeId::of::<T>();
 
-        let _ = self.inner.try_push((
-            idx,
-            BohValue {
-                tid,
-                value_ptr,
-                dropfn: dropfn::<T>,
-            },
-        )).ok().unwrap_or_else(|| {
-            debug_assert!(false, "Push failed after checking we aren't full?");
-        });
+        let _ = self
+            .inner
+            .try_push((
+                idx,
+                BohValue {
+                    tid,
+                    value_ptr,
+                    dropfn: dropfn::<T>,
+                },
+            ))
+            .ok()
+            .unwrap_or_else(|| {
+                debug_assert!(false, "Push failed after checking we aren't full?");
+            });
 
         Some(idx)
     }

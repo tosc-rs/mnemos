@@ -29,7 +29,7 @@ use embedded_graphics_simulator::{
     BinaryColorTheme, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
 };
 use maitake::sync::Mutex;
-use mnemos_alloc::fornow::collections::{FixedVec, Arc};
+use mnemos_alloc::fornow::collections::{Arc, FixedVec};
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
     drivers::emb_display::{EmbDisplayService, FrameChunk, FrameError, Request, Response},
@@ -115,11 +115,11 @@ impl CommanderTask {
         let sdisp = SimulatorDisplay::<Gray8>::new(Size::new(width, height));
         let window = Window::new("mnemOS", &output_settings);
         let mutex = Arc::new(Mutex::new(Some(Context {
-                sdisp,
-                window,
-                dirty: true,
-            })))
-            .await;
+            sdisp,
+            window,
+            dirty: true,
+        })))
+        .await;
 
         // Spawn a task that draws the framebuffer at a regular rate of 15Hz.
         self.kernel

@@ -14,7 +14,6 @@ use maitake::sync::Mutex;
 use maitake::sync::WaitCell;
 use mnemos_alloc::fornow::collections::{Arc, ArrayBuf};
 
-
 struct BBQStorage {
     commit_waitcell: WaitCell,
     release_waitcell: WaitCell,
@@ -45,10 +44,7 @@ impl BidiHandle {
     }
 }
 
-pub async fn new_bidi_channel(
-    capacity_a: usize,
-    capacity_b: usize,
-) -> (BidiHandle, BidiHandle) {
+pub async fn new_bidi_channel(capacity_a: usize, capacity_b: usize) -> (BidiHandle, BidiHandle) {
     let (a_prod, a_cons) = new_spsc_channel(capacity_a).await;
     let (b_prod, b_cons) = new_spsc_channel(capacity_b).await;
     let a = BidiHandle {
@@ -102,7 +98,8 @@ pub async fn new_spsc_channel(capacity: usize) -> (SpscProducer, Consumer) {
         producer: Mutex::new(None),
         ring,
         _array,
-    }).await;
+    })
+    .await;
 
     // Now that we've allocated storage, the producer can be created.
 
