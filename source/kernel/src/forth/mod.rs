@@ -571,7 +571,7 @@ impl Spawnulator {
 /// The Bag of Holding contains type-erased items that can be retrieved with
 /// a provided `i32` token. A token is provided on calling [BagOfHolding::register()].
 /// At the registration time, the TypeId of the item is also recorded, and the item
-/// is moved into [`HeapBox<T>`], which is leaked and type erased.
+/// is moved into [`Box<T>`], which is leaked and type erased.
 ///
 /// When retrieving items from the Bag of Holding, the same token and type parameter
 /// `T` must be used for access. This access is made by calling [BagOfHolding::get()].
