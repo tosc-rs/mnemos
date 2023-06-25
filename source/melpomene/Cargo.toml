@@ -30,6 +30,7 @@ path = "../kernel"
 
 [dependencies.mnemos-alloc]
 version = "0.1.0"
+features = ["use-std"]
 
 [dependencies.mnemos-abi]
 path = "../abi"

@@ -1,7 +1,9 @@
 #![no_std]
 #![no_main]
 
-use core::{fmt::Write, panic::PanicInfo, sync::atomic::Ordering, time::Duration};
+extern crate alloc;
+
+use core::{fmt::Write, panic::PanicInfo, ptr::NonNull, sync::atomic::Ordering, time::Duration};
 use d1_pac::{Interrupt, DMAC, TIMER};
 use drivers::{
     dmac::Dmac,
@@ -12,6 +14,10 @@ use drivers::{
 };
 use kernel::{
     drivers::serial_mux::{PortHandle, RegistrationError, SerialMuxServer},
+    mnemos_alloc::fornow::{
+        collections::{Box, FixedVec},
+        AHeap2, Mlla,
+    },
     trace, Kernel, KernelSettings,
 };
 use spim::{kernel_spim1, SpiSenderClient, SpiSenderServer, SPI1_TX_DONE};
@@ -23,23 +29,30 @@ const HEAP_SIZE: usize = 384 * 1024 * 1024;
 
 #[link_section = ".aheap.AHEAP"]
 #[used]
-static AHEAP: Ram<HEAP_SIZE> = Ram::new();
+static AHEAP_BUF: Ram<HEAP_SIZE> = Ram::new();
+
+#[global_allocator]
+static AHEAP: AHeap2<Mlla> = AHeap2::new();
 
 static COLLECTOR: trace::SerialCollector = trace::SerialCollector::new();
 
 /// A helper to initialize the kernel
 fn initialize_kernel() -> Result<&'static Kernel, ()> {
+    unsafe {
+        AHEAP.init(NonNull::new(AHEAP_BUF.as_ptr()).unwrap(), HEAP_SIZE);
+    }
+
     let k_settings = KernelSettings {
-        heap_start: AHEAP.as_ptr(),
-        heap_size: HEAP_SIZE,
         max_drivers: 16,
-        k2u_size: 4096,
-        u2k_size: 4096,
         // Note: The timers used will be configured to 3MHz, leading to (approximately)
         // 333ns granularity.
         timer_granularity: Duration::from_nanos(333),
     };
-    let k = unsafe { Kernel::new(k_settings).map_err(drop)?.leak().as_ref() };
+    let k = unsafe {
+        Box::into_raw(Kernel::new(k_settings, &AHEAP).map_err(drop)?)
+            .as_ref()
+            .unwrap()
+    };
     Ok(k)
 }
 
@@ -95,8 +108,8 @@ fn main() -> ! {
 
         loop {
             k.sleep(Duration::from_millis(100)).await;
-            let mut msg_1 = k.heap().allocate_array_with(|| 0, 2).await;
-            msg_1.copy_from_slice(&[0x04, 0x00]);
+            let mut msg_1 = FixedVec::new(2).await;
+            msg_1.try_extend_from_slice(&[0x04, 0x00]).unwrap();
             if spim.send_wait(msg_1).await.is_ok() {
                 break;
             }
@@ -107,7 +120,10 @@ fn main() -> ! {
         // Loop, toggling the VCOM
         let mut vcom = true;
         let mut ctr = 0u32;
-        let mut linebuf = k.heap().allocate_array_with(|| 0, (52 * 240) + 2).await;
+        let mut linebuf = FixedVec::new((52 * 240) + 2).await;
+        for _ in 0..(52 * 240) + 2 {
+            let _ = linebuf.try_push(0);
+        }
 
         let forever = [0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
         let mut forever = forever.iter().copied().cycle();
@@ -134,9 +150,9 @@ fn main() -> ! {
             //
             // Reference: https://www.sharpsde.com/fileadmin/products/Displays/2016_SDE_App_Note_for_Memory_LCD_programming_V1.3.pdf
             let vc = if vcom { 0x02 } else { 0x00 };
-            linebuf[0] = 0x01 | vc;
+            linebuf.as_slice_mut()[0] = 0x01 | vc;
 
-            for (line, chunk) in linebuf.chunks_exact_mut(52).enumerate() {
+            for (line, chunk) in linebuf.as_slice_mut().chunks_exact_mut(52).enumerate() {
                 chunk[1] = (line as u8) + 1;
 
                 let val = forever.next().unwrap();

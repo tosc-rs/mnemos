@@ -26,5 +26,5 @@ version = "0.10.1"
 default-features = false
 
 [features]
-default = ["use-std"] # todo: removeme
+default = []
 use-std = []

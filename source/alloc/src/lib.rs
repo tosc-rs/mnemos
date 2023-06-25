@@ -333,7 +333,7 @@ pub mod fornow {
                 unsafe {
                     let ptr = NonNull::new(alloc::alloc::alloc(layout))?;
                     return Some(FixedVec {
-                        inner: Vec::from_raw_parts(ptr.cast().as_ptr(), 0, capacity),
+                        inner: alloc::vec::Vec::from_raw_parts(ptr.cast().as_ptr(), 0, capacity),
                     });
                 }
             }
@@ -344,7 +344,7 @@ pub mod fornow {
                 unsafe {
                     let ptr = alloc(layout).await;
                     return FixedVec {
-                        inner: Vec::from_raw_parts(ptr.cast().as_ptr(), 0, capacity),
+                        inner: alloc::vec::Vec::from_raw_parts(ptr.cast().as_ptr(), 0, capacity),
                     };
                 }
             }
