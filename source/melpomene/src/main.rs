@@ -106,39 +106,46 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     .unwrap();
 
     // Initialize the SerialMuxServer
-    k.initialize(
+    k.initialize({
+        const PORTS: usize = 16;
+        const FRAME_SIZE: usize = 512;
         async {
             // * Up to 16 virtual ports max
             // * Framed messages up to 512 bytes max each
-            let ports = 16;
-            let frame_size = 512;
-            tracing::debug!(ports, frame_size, "initializing SerialMuxServer...");
-            SerialMuxServer::register(k, ports, frame_size)
+            tracing::debug!("initializing SerialMuxServer...");
+            SerialMuxServer::register(k, PORTS, FRAME_SIZE)
                 .await
                 .unwrap();
-            tracing::info!(ports, frame_size, "SerialMuxServer initialized!");
+            tracing::info!("SerialMuxServer initialized!");
         }
-        .instrument(tracing::info_span!("SerialMuxServer")),
-    )
-    .unwrap();
-
-    // Spawn the graphics driver
-    k.initialize(async {
-        tracing::debug!(
-            "initializing SimDisplay server ({DISPLAY_WIDTH_PX}x{DISPLAY_HEIGHT_PX})..."
-        );
-        SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
-            .await
-            .unwrap();
-        tracing::info!("SimDisplayServer initialized!");
+        .instrument(tracing::info_span!(
+            "SerialMuxServer",
+            ports = PORTS,
+            frame_size = FRAME_SIZE
+        ))
     })
     .unwrap();
 
-    // Spawn a loopback port
+    // Spawn the graphics driver
     k.initialize(
         async {
-            const PORT: u16 = 0;
-            tracing::debug!(port = PORT, "initializing SerMux loopback...");
+            tracing::debug!(
+                "initializing SimDisplay server ({DISPLAY_WIDTH_PX}x{DISPLAY_HEIGHT_PX})..."
+            );
+            SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
+                .await
+                .unwrap();
+            tracing::info!("SimDisplayServer initialized!");
+        }
+        .instrument(tracing::info_span!("SimDisplayServer")),
+    )
+    .unwrap();
+
+    // Spawn a loopback port
+    k.initialize({
+        const PORT: u16 = 0;
+        async {
+            tracing::debug!("initializing SerMux loopback...");
             let mut mux_hdl = SerialMuxClient::from_registry(k).await;
             let p0 = mux_hdl.open_port(PORT, 1024).await.unwrap();
             drop(mux_hdl);
@@ -147,32 +154,32 @@ async fn kernel_entry(opts: MelpomeneOptions) {
             loop {
                 let rgr = p0.consumer().read_grant().await;
                 let len = rgr.len();
-                tracing::trace!(PORT, "Loopback read {len}B");
+                tracing::trace!("Loopback read {len}B");
                 p0.send(&rgr).await;
                 rgr.release(len);
             }
         }
-        .instrument(tracing::info_span!("Loopback")),
-    )
+        .instrument(tracing::info_span!("Loopback", port = PORT))
+    })
     .unwrap();
 
     // Spawn a hello port
-    k.initialize(
+    k.initialize({
+        const PORT: u16 = 1;
         async {
-            const PORT: u16 = 1;
-            tracing::debug!(port = PORT, "Starting SerMux 'hello world'...");
+            tracing::debug!("Starting SerMux 'hello world'...");
             let mut mux_hdl = SerialMuxClient::from_registry(k).await;
             let p1 = mux_hdl.open_port(PORT, 1024).await.unwrap();
             drop(mux_hdl);
-            tracing::info!(port = PORT, "SerMux 'hello world' running!");
+            tracing::info!("SerMux 'hello world' running!");
 
             loop {
                 k.sleep(Duration::from_secs(1)).await;
                 p1.send(b"hello\r\n").await;
             }
         }
-        .instrument(tracing::info_span!("Hello Loop")),
-    )
+        .instrument(tracing::info_span!("Hello Loop", port = PORT))
+    })
     .unwrap();
 
     // Spawn a graphical shell
