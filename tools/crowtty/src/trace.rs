@@ -147,7 +147,7 @@ impl TraceWorker {
                             .if_supports_color(Stream::Stdout, |x| x.bright_magenta()),
                         meta.target
                             .as_str()
-                            .if_supports_color(Stream::Stdout, |x| x.italic()),
+                            .if_supports_color(Stream::Stdout, |x| x.dimmed()),
                         meta.name
                             .as_str()
                             .if_supports_color(Stream::Stdout, |x| x.bold()),
@@ -173,9 +173,15 @@ impl TraceWorker {
                     return;
                 };
                 let target = meta.target.as_str();
-                let target = target.if_supports_color(Stream::Stdout, |target| target.italic());
                 let level = DisplayLevel(meta.level);
-                write!(&mut self.textbuf, "{} {level} {target}: ", self.tag).unwrap();
+                write!(
+                    &mut self.textbuf,
+                    "{} {level} {}: ",
+                    self.tag,
+                    format_args!("{target}:")
+                        .if_supports_color(Stream::Stdout, |target| target.italic())
+                )
+                .unwrap();
                 write_span_cx(&self.stack, &self.spans, &mut self.textbuf);
                 let SerializeRecordFields::De(ref fields) = fields else {
                     unreachable!("we are deserializing!");
@@ -228,8 +234,9 @@ impl TraceWorker {
                 write_span_cx(&self.stack, &self.spans, &mut self.textbuf);
                 write!(
                     &mut self.textbuf,
-                    "{}::{repr} ({:04})",
-                    target.if_supports_color(Stream::Stdout, |target| target.italic()),
+                    "{}{repr} ({:04})",
+                    format_args!("{target}::")
+                        .if_supports_color(Stream::Stdout, |target| target.dimmed()),
                     id.id,
                 )
                 .unwrap();
@@ -275,11 +282,12 @@ impl TraceWorker {
                         refs: _,
                     } = self.spans.remove(&id.id).unwrap();
                     let end = "END".if_supports_color(Stream::Stdout, |x| x.bright_red());
-                    let target = target.if_supports_color(Stream::Stdout, |x| x.italic());
                     write!(
                         &mut self.textbuf,
-                        "{} {level}  {end} {target}::{repr} ({:04}): {:?}",
+                        "{} {level}  {end} {}{repr} ({:04}): {:?}",
                         self.tag,
+                        format_args!("{target}::")
+                            .if_supports_color(Stream::Stdout, |target| target.dimmed()),
                         id.id,
                         start.elapsed()
                     )
@@ -295,9 +303,10 @@ impl TraceWorker {
 fn write_span_cx(stack: &[NonZeroU64], spans: &HashMap<NonZeroU64, Span>, textbuf: &mut String) {
     let spans = stack.iter().filter_map(|id| spans.get(id));
     let mut any = false;
+    let delim = ":".if_supports_color(Stream::Stdout, |x| x.dimmed());
     for span in spans {
         textbuf.push_str(span.repr.as_str());
-        textbuf.push(':');
+        write!(textbuf, "{delim}").unwrap();
         any = true;
     }
     if any {
@@ -328,7 +337,7 @@ fn write_kv(key: &CowString<'_>, val: &SerializeValue<'_>, to: &mut String) {
     use tracing_serde_structured::DebugRecord;
 
     let key = key.as_str();
-    let key = key.if_supports_color(Stream::Stdout, |k| k.bold());
+    let key = key.if_supports_color(Stream::Stdout, |k| k.italic());
     write!(
         to,
         "{key}{}",
