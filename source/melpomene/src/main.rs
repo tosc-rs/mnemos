@@ -6,7 +6,7 @@ use melpomene::{
     cli::{self, MelpomeneOptions},
     sim_drivers::{emb_display::SimDisplay, tcp_serial::TcpSerial},
 };
-use mnemos_alloc::heap::AHeap2;
+use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
     drivers::serial_mux::{SerialMuxClient, SerialMuxServer},
     forth::shells::graphical_shell_mono,
@@ -29,7 +29,7 @@ fn main() {
 }
 
 #[global_allocator]
-static AHEAP: AHeap2<System> = AHeap2::new();
+static AHEAP: MnemosAlloc<System> = MnemosAlloc::new();
 
 #[tokio::main(flavor = "current_thread")]
 async fn run_melpomene(opts: cli::MelpomeneOptions) {

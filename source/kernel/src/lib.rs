@@ -95,7 +95,7 @@ use maitake::{
 pub use mnemos_alloc;
 use mnemos_alloc::{
     containers::Box,
-    heap::{AHeap2, UlAlloc},
+    heap::{MnemosAlloc, UnderlyingAllocator},
 };
 use registry::Registry;
 
@@ -169,9 +169,9 @@ pub struct KernelInner {
 }
 
 impl Kernel {
-    pub unsafe fn new<U: UlAlloc>(
+    pub unsafe fn new<U: UnderlyingAllocator>(
         settings: KernelSettings,
-        _alloc: &'static AHeap2<U>,
+        _alloc: &'static MnemosAlloc<U>,
     ) -> Result<Box<Self>, &'static str> {
         let registry = registry::Registry::new(settings.max_drivers);
 
