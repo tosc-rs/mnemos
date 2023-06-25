@@ -125,9 +125,6 @@ fn main() -> ! {
             let _ = linebuf.try_push(0);
         }
 
-        let forever = [0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
-        let mut forever = forever.iter().copied().cycle();
-
         loop {
             // It takes ~50ms to send a full frame, and 20fps is every
             // 66.6ms. TODO: once we have "intervals", use that here.
@@ -152,13 +149,15 @@ fn main() -> ! {
             let vc = if vcom { 0x02 } else { 0x00 };
             linebuf.as_slice_mut()[0] = 0x01 | vc;
 
-            for (line, chunk) in linebuf.as_slice_mut().chunks_exact_mut(52).enumerate() {
-                chunk[1] = (line as u8) + 1;
+            for (line, chunk) in &mut linebuf.as_slice_mut()[1..].chunks_exact_mut(52).enumerate() {
+                chunk[0] = (line as u8) + 1;
 
-                let val = forever.next().unwrap();
-
-                for b in &mut chunk[2..] {
-                    *b = val;
+                for b in &mut chunk[1..] {
+                    if vcom {
+                        *b = 0x00;
+                    } else {
+                        *b = 0xFF;
+                    }
                 }
             }
 

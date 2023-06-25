@@ -369,7 +369,7 @@ pub mod fornow {
                     None => return Err(()),
                 };
 
-                if new_len >= self.inner.capacity() {
+                if new_len > self.inner.capacity() {
                     return Err(());
                 }
 
