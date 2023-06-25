@@ -346,8 +346,8 @@ impl IncomingMuxerTask {
                     // This is the last chunk, and it doesn't end with a zero.
                     // just add it to the accumulator, if we can.
                     if self.buf.try_extend_from_slice(ch).is_err() {
-                         warn!("Overfilled accumulator");
-                         self.buf.clear();
+                        warn!("Overfilled accumulator");
+                        self.buf.clear();
                     }
 
                     // Either we overfilled, or this was the last data. Move on.

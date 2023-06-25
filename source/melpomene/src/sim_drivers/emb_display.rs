@@ -264,8 +264,8 @@ impl DisplayInfo {
         let fidx = self.frame_idx;
         self.frame_idx = self.frame_idx.wrapping_add(1);
 
-        self
-            .frames.try_push(FrameInfo { frame: fidx })
+        self.frames
+            .try_push(FrameInfo { frame: fidx })
             .map_err(|_| FrameError::NoFrameAvailable)?;
 
         let size = (width * height) as usize;
