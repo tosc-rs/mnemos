@@ -12,7 +12,7 @@ use drivers::dmac::{
 use kernel::{
     comms::{kchannel::KChannel, oneshot::Reusable},
     maitake::sync::WaitCell,
-    mnemos_alloc::fornow::collections::FixedVec,
+    mnemos_alloc::containers::FixedVec,
     registry::{uuid, Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo, Uuid},
     Kernel,
 };

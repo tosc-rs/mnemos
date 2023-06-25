@@ -12,7 +12,7 @@ use abi::bbqueue_ipc::{BBBuffer, Consumer as InnerConsumer, Producer as InnerPro
 use abi::bbqueue_ipc::{GrantR as InnerGrantR, GrantW as InnerGrantW};
 use maitake::sync::Mutex;
 use maitake::sync::WaitCell;
-use mnemos_alloc::fornow::collections::{Arc, ArrayBuf};
+use mnemos_alloc::containers::{Arc, ArrayBuf};
 
 struct BBQStorage {
     commit_waitcell: WaitCell,

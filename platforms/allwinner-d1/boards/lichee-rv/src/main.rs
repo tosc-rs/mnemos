@@ -14,9 +14,9 @@ use drivers::{
 };
 use kernel::{
     drivers::serial_mux::{PortHandle, RegistrationError, SerialMuxServer},
-    mnemos_alloc::fornow::{
-        collections::{Box, FixedVec},
-        AHeap2, Mlla,
+    mnemos_alloc::{
+        containers::{Box, FixedVec},
+        heap::{AHeap2, Mlla},
     },
     trace, Kernel, KernelSettings,
 };

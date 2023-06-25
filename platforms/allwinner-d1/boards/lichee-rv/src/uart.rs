@@ -17,7 +17,7 @@ use kernel::{
     },
     drivers::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     maitake::sync::WaitCell,
-    mnemos_alloc::fornow::collections::Box,
+    mnemos_alloc::containers::Box,
     registry::Message,
     Kernel,
 };

@@ -17,7 +17,10 @@ use forth3::{
     word::Word,
     AsyncForth, CallContext,
 };
-use mnemos_alloc::fornow::collections::{alloc, dealloc, ArrayBuf, Box, FixedVec};
+use mnemos_alloc::{
+    containers::{ArrayBuf, Box, FixedVec},
+    heap::{alloc, dealloc},
+};
 use portable_atomic::{AtomicUsize, Ordering};
 
 pub mod shells;

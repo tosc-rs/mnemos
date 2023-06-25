@@ -11,7 +11,7 @@ use core::{
 };
 
 use maitake::sync::{Closed, WaitCell};
-use mnemos_alloc::fornow::collections::Arc;
+use mnemos_alloc::containers::Arc;
 
 /// Not waiting for anything.
 const ROSC_IDLE: u8 = 0;

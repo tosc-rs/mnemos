@@ -93,7 +93,10 @@ use maitake::{
     time::{Duration, Sleep, Timeout, Timer},
 };
 pub use mnemos_alloc;
-use mnemos_alloc::fornow::{collections::Box, AHeap2, UlAlloc};
+use mnemos_alloc::{
+    containers::Box,
+    heap::{AHeap2, UlAlloc},
+};
 use registry::Registry;
 
 /// Shim to handle tracing v0.1 vs v0.2

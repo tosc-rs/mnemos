@@ -3,7 +3,7 @@
 //! Kernel Channels are an async/await, MPSC queue, with a fixed backing storage (e.g. they are bounded).
 
 use core::{cell::UnsafeCell, ops::Deref, ptr::NonNull};
-use mnemos_alloc::fornow::collections::{Arc, ArrayBuf};
+use mnemos_alloc::containers::{Arc, ArrayBuf};
 use spitebuf::{DequeueError, EnqueueError, MpScQueue};
 
 /// A Kernel Channel
@@ -217,7 +217,7 @@ impl Drop for ErasedKProducer {
 }
 
 pub(crate) mod sealed {
-    use mnemos_alloc::fornow::collections::ArrayBuf;
+    use mnemos_alloc::containers::ArrayBuf;
 
     use super::*;
 

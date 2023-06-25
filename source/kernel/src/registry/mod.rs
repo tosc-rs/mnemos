@@ -4,7 +4,7 @@ use crate::{
     comms::oneshot::Reusable,
     tracing::{self, debug, info},
 };
-use mnemos_alloc::fornow::collections::FixedVec;
+use mnemos_alloc::containers::FixedVec;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use spitebuf::EnqueueError;

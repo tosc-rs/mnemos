@@ -31,7 +31,7 @@ use embedded_graphics::{
     pixelcolor::{Gray8, GrayColor},
     prelude::*,
 };
-use mnemos_alloc::fornow::collections::FixedVec;
+use mnemos_alloc::containers::FixedVec;
 use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -20,7 +20,7 @@ use crate::{
     Kernel,
 };
 use maitake::sync::Mutex;
-use mnemos_alloc::fornow::collections::{Arc, FixedVec};
+use mnemos_alloc::containers::{Arc, FixedVec};
 use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
