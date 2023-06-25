@@ -6,7 +6,7 @@ use melpomene::{
     cli::{self, MelpomeneOptions},
     sim_drivers::{emb_display::SimDisplay, tcp_serial::TcpSerial},
 };
-use mnemos_alloc::fornow::AHeap2;
+use mnemos_alloc::heap::AHeap2;
 use mnemos_kernel::{
     drivers::serial_mux::{SerialMuxClient, SerialMuxServer},
     forth::shells::graphical_shell_mono,
@@ -64,7 +64,7 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     };
 
     let k = unsafe {
-        mnemos_alloc::fornow::collections::Box::into_raw(Kernel::new(settings, &AHEAP).unwrap())
+        mnemos_alloc::containers::Box::into_raw(Kernel::new(settings, &AHEAP).unwrap())
             .as_ref()
             .unwrap()
     };
