@@ -167,6 +167,7 @@ pub struct KernelInner {
 }
 
 impl Kernel {
+    // AJM(SURVEY): Box<T>
     pub unsafe fn new<U: UlAlloc>(settings: KernelSettings, _alloc: &'static AHeap2<U>) -> Result<Box<Self>, &'static str> {
         let registry = registry::Registry::new(settings.max_drivers);
 

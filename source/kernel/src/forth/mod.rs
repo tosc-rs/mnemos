@@ -19,6 +19,7 @@ use forth3::{
     word::Word,
     AsyncForth, CallContext,
 };
+use mnemos_alloc::fornow::collections::FixedVec;
 use portable_atomic::{AtomicUsize, Ordering};
 
 pub mod shells;
@@ -43,6 +44,7 @@ pub struct Forth {
 
 /// Owns the heap allocations for a `Forth` task.
 struct Bufs {
+    // AJM(SURVEY): Box<[T]> x5
     dstack: Vec<Word>,
     rstack: Vec<Word>,
     cstack: Vec<CallContext<MnemosContext>>,
@@ -583,7 +585,7 @@ impl Spawnulator {
 /// type safe way.
 pub struct BagOfHolding {
     idx: i32,
-    inner: Vec<(i32, BohValue)>,
+    inner: FixedVec<(i32, BohValue)>,
 }
 
 impl BagOfHolding {
@@ -594,7 +596,7 @@ impl BagOfHolding {
     pub async fn new(max: usize) -> Self {
         BagOfHolding {
             idx: 0,
-            inner: Vec::with_capacity(max),
+            inner: FixedVec::new(max).await,
         }
     }
 
@@ -609,7 +611,7 @@ impl BagOfHolding {
             if self.idx == 0 {
                 continue;
             }
-            if !self.inner.iter().any(|(idx, _)| *idx == self.idx) {
+            if !self.inner.as_slice().iter().any(|(idx, _)| *idx == self.idx) {
                 return self.idx;
             }
         }
@@ -628,21 +630,23 @@ impl BagOfHolding {
     where
         T: 'static,
     {
-        if self.inner.capacity() == self.inner.len() {
+        if self.inner.is_full() {
             return None;
         }
         let value_ptr = NonNull::from(Box::leak(Box::new(item))).cast::<()>();
         let idx = self.next_idx();
         let tid = TypeId::of::<T>();
 
-        self.inner.push((
+        let _ = self.inner.try_push((
             idx,
             BohValue {
                 tid,
                 value_ptr,
                 dropfn: dropfn::<T>,
             },
-        ));
+        )).ok().unwrap_or_else(|| {
+            debug_assert!(false, "Push failed after checking we aren't full?");
+        });
 
         Some(idx)
     }
@@ -663,7 +667,7 @@ impl BagOfHolding {
     where
         T: 'static,
     {
-        let val = &self.inner.iter().find(|(i, _item)| *i == idx)?.1;
+        let val = &self.inner.as_slice().iter().find(|(i, _item)| *i == idx)?.1;
         let tid = TypeId::of::<T>();
         if val.tid != tid {
             return None;
@@ -678,6 +682,7 @@ struct BohValue {
     /// The type id of the `T` pointed to by `leaked`
     tid: TypeId,
     /// A non-null pointer to a `T`, contained in a leaked `HeapBox<T>`.
+    // AJM(SURVEY): Box<T>
     value_ptr: NonNull<()>,
     /// A type-erased function that will un-leak the `HeapBox<T>`, and drop it
     dropfn: fn(NonNull<()>),

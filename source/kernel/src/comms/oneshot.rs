@@ -38,6 +38,7 @@ const ROSC_CLOSED: u8 = 5;
 /// A given `Reusable<T>` can only ever have zero or one `Sender<T>`s live at any
 /// given time, and a response can be received through a call to [Reusable::receive].
 pub struct Reusable<T> {
+    // AJM(SURVEY): Arc<T>
     inner: Arc<Inner<T>>,
 }
 
@@ -46,6 +47,7 @@ pub struct Reusable<T> {
 /// It can be consumed to send a response back to the [Reusable] instance that created
 /// the [Sender].
 pub struct Sender<T> {
+    // AJM(SURVEY): Arc<T>
     inner: Arc<Inner<T>>,
 }
 

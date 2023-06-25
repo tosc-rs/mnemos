@@ -26,6 +26,7 @@ struct BBQStorage {
     producer: Mutex<Option<InnerProducer<'static>>>,
 
     ring: BBBuffer,
+    // AJM(SURVEY): array of uninit bytes
     _array: Box<[MaybeUninit<u8>]>,
 }
 
@@ -66,16 +67,19 @@ pub async fn new_bidi_channel(
 }
 
 pub struct SpscProducer {
+    // AJM(SURVEY): Arc<T>
     storage: Arc<BBQStorage>,
     producer: InnerProducer<'static>,
 }
 
 #[derive(Clone)]
 pub struct MpscProducer {
+    // AJM(SURVEY): Arc<T>
     storage: Arc<BBQStorage>,
 }
 
 pub struct Consumer {
+    // AJM(SURVEY): Arc<T>
     storage: Arc<BBQStorage>,
     consumer: InnerConsumer<'static>,
 }
@@ -133,6 +137,7 @@ pub async fn new_spsc_channel(capacity: usize) -> (SpscProducer, Consumer) {
 
 pub struct GrantW {
     grant: InnerGrantW<'static>,
+    // AJM(SURVEY): Arc<T>
     storage: Arc<BBQStorage>,
 }
 
@@ -164,6 +169,7 @@ impl GrantW {
 
 pub struct GrantR {
     grant: InnerGrantR<'static>,
+    // AJM(SURVEY): Arc<T>
     storage: Arc<BBQStorage>,
 }
 

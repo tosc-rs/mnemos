@@ -20,8 +20,8 @@ use crate::{
     Kernel,
 };
 use alloc::sync::Arc;
-use alloc::vec::Vec;
 use maitake::sync::Mutex;
+use mnemos_alloc::fornow::collections::FixedVec;
 use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -215,13 +215,13 @@ impl SerialMuxServer {
         let (sprod, scons) = serial_port.split();
         let sprod = sprod.into_mpmc_producer().await;
 
-        let ports = Vec::with_capacity(max_ports);
+        let ports = FixedVec::new(max_ports).await;
         let imutex = Arc::new(Mutex::new(MuxingInfo {
                 ports,
                 max_frame,
             }));
         let (cmd_prod, cmd_cons) = KChannel::new_async(max_ports).await.split();
-        let buf = Vec::with_capacity(max_frame);
+        let buf = FixedVec::new(max_frame).await;
         let commander = CommanderTask {
             cmd: cmd_cons,
             out: sprod,
@@ -263,7 +263,7 @@ struct PortInfo {
 }
 
 struct MuxingInfo {
-    ports: Vec<PortInfo>,
+    ports: FixedVec<PortInfo>,
     max_frame: usize,
 }
 
@@ -274,7 +274,7 @@ struct CommanderTask {
 }
 
 struct IncomingMuxerTask {
-    buf: Vec<u8>,
+    buf: FixedVec<u8>,
     incoming: bbq::Consumer,
     mux: Arc<Mutex<MuxingInfo>>,
 }
@@ -286,19 +286,20 @@ impl MuxingInfo {
         capacity: usize,
         outgoing: &bbq::MpscProducer,
     ) -> Result<PortHandle, SerialMuxError> {
-        if self.ports.capacity() == self.ports.len() {
+        if self.ports.is_full() {
             return Err(SerialMuxError::RegistryFull);
         }
-        if self.ports.iter().any(|p| p.port == port_id) {
+        if self.ports.as_slice().iter().any(|p| p.port == port_id) {
             return Err(SerialMuxError::DuplicateItem);
         }
         let (prod, cons) = bbq::new_spsc_channel(capacity).await;
 
         self.ports
-            .push(PortInfo {
+            .try_push(PortInfo {
                 port: port_id,
                 upstream: prod,
-            });
+            })
+            .map_err(|_| SerialMuxError::RegistryFull)?;
 
         let ph = PortHandle {
             port: port_id,
@@ -348,11 +349,12 @@ impl IncomingMuxerTask {
                 if ch.last() != Some(&0) {
                     // This is the last chunk, and it doesn't end with a zero.
                     // just add it to the accumulator, if we can.
-                    if (self.buf.len() + ch.len()) <= self.buf.capacity() {
-                        self.buf.extend_from_slice(ch);
-                    } else {
-                        warn!("Overfilled accumulator");
-                        self.buf.clear();
+                    match self.buf.try_extend_from_slice(ch) {
+                        Ok(_) => {},
+                        Err(_) => {
+                            warn!("Overfilled accumulator");
+                            self.buf.clear();
+                        }
                     }
 
                     // Either we overfilled, or this was the last data. Move on.
@@ -360,19 +362,22 @@ impl IncomingMuxerTask {
                 }
 
                 // Okay, we know that we have a zero terminated item. Do we have anything residual?
-                let buf = if self.buf.is_empty() {
+                let buf = if self.buf.as_slice().is_empty() {
                     // Yes, no pending data, just use the current chunk
                     ch
                 } else {
+
                     // We have residual data, we need to copy the chunk to the end of the buffer
-                    if (self.buf.len() + ch.len()) <= self.buf.capacity() {
-                        self.buf.extend_from_slice(ch);
-                    } else {
-                        warn!("Overfilled accumulator");
-                        self.buf.clear();
-                        continue;
+                    match self.buf.try_extend_from_slice(ch) {
+                        Ok(_) => {},
+                        Err(_) => {
+                            warn!("Overfilled accumulator");
+                            self.buf.clear();
+                            continue;
+                        }
                     }
-                    &mut self.buf
+
+                    self.buf.as_slice_mut()
                 };
 
                 // Great! Now decode the cobs message in place.
@@ -395,7 +400,7 @@ impl IncomingMuxerTask {
 
                 // Great, now we have a message! Let's see if we have someone listening to this port
                 let mux = self.mux.lock().await;
-                if let Some(port) = mux.ports.iter().find(|p| p.port == port_id) {
+                if let Some(port) = mux.ports.as_slice().iter().find(|p| p.port == port_id) {
                     if let Some(mut wgr) = port.upstream.send_grant_exact_sync(datab.len()) {
                         wgr.copy_from_slice(datab);
                         wgr.commit(datab.len());

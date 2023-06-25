@@ -9,6 +9,7 @@ use spitebuf::{DequeueError, EnqueueError, MpScQueue};
 
 /// A Kernel Channel
 pub struct KChannel<T> {
+    // AJM(SURVEY): Arc<T>
     q: Arc<MpScQueue<T, sealed::SpiteData<T>>>,
 }
 
@@ -17,6 +18,7 @@ pub struct KChannel<T> {
 /// A `KProducer` can be cloned multiple times, as the backing [KChannel]
 /// is an MPSC queue.
 pub struct KProducer<T> {
+    // AJM(SURVEY): Arc<T>
     q: Arc<MpScQueue<T, sealed::SpiteData<T>>>,
 }
 
@@ -26,6 +28,7 @@ pub struct KProducer<T> {
 /// as it is an MPSC queue. A `KConsumer` can also be used to create a new
 /// [KProducer] instance.
 pub struct KConsumer<T> {
+    // AJM(SURVEY): Arc<T>
     q: Arc<MpScQueue<T, sealed::SpiteData<T>>>,
 }
 
@@ -227,6 +230,7 @@ pub(crate) mod sealed {
     use super::*;
 
     pub struct SpiteData<T> {
+        // AJM(SURVEY): Box<[T]>
         pub(crate) data: Vec<UnsafeCell<spitebuf::Cell<T>>>,
     }
 
