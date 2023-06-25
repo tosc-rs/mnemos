@@ -115,7 +115,7 @@ unsafe impl<U: UlAlloc> GlobalAlloc for AHeap2<U> {
         }
         let ptr = self.allocator.alloc(layout);
         if ptr.is_null() {
-            INHIBIT_ALLOC.store(false, Ordering::SeqCst); // TODO
+            INHIBIT_ALLOC.store(true, Ordering::SeqCst); // TODO
         }
         ptr
     }
