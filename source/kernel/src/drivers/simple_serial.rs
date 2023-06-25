@@ -61,7 +61,7 @@ impl SimpleSerialClient {
 
         Some(SimpleSerialClient {
             kprod,
-            rosc: Reusable::new_async(kernel).await,
+            rosc: Reusable::new_async().await,
         })
     }
 

@@ -13,12 +13,10 @@ use crate::fmt;
 use crate::tracing::{self, info, trace};
 use abi::bbqueue_ipc::{BBBuffer, Consumer as InnerConsumer, Producer as InnerProducer};
 use abi::bbqueue_ipc::{GrantR as InnerGrantR, GrantW as InnerGrantW};
+use alloc::{boxed::Box, vec, sync::Arc};
 use maitake::sync::Mutex;
 use maitake::sync::WaitCell;
-use mnemos_alloc::{
-    containers::{HeapArc, HeapArray},
-    heap::AHeap,
-};
+
 
 struct BBQStorage {
     commit_waitcell: WaitCell,
@@ -28,7 +26,7 @@ struct BBQStorage {
     producer: Mutex<Option<InnerProducer<'static>>>,
 
     ring: BBBuffer,
-    _array: HeapArray<MaybeUninit<u8>>,
+    _array: Box<[MaybeUninit<u8>]>,
 }
 
 pub struct BidiHandle {
@@ -51,12 +49,11 @@ impl BidiHandle {
 }
 
 pub async fn new_bidi_channel(
-    alloc: &'static AHeap,
     capacity_a: usize,
     capacity_b: usize,
 ) -> (BidiHandle, BidiHandle) {
-    let (a_prod, a_cons) = new_spsc_channel(alloc, capacity_a).await;
-    let (b_prod, b_cons) = new_spsc_channel(alloc, capacity_b).await;
+    let (a_prod, a_cons) = new_spsc_channel(capacity_a).await;
+    let (b_prod, b_cons) = new_spsc_channel(capacity_b).await;
     let a = BidiHandle {
         producer: a_prod,
         consumer: b_cons,
@@ -69,17 +66,17 @@ pub async fn new_bidi_channel(
 }
 
 pub struct SpscProducer {
-    storage: HeapArc<BBQStorage>,
+    storage: Arc<BBQStorage>,
     producer: InnerProducer<'static>,
 }
 
 #[derive(Clone)]
 pub struct MpscProducer {
-    storage: HeapArc<BBQStorage>,
+    storage: Arc<BBQStorage>,
 }
 
 pub struct Consumer {
-    storage: HeapArc<BBQStorage>,
+    storage: Arc<BBQStorage>,
     consumer: InnerConsumer<'static>,
 }
 
@@ -91,11 +88,9 @@ impl SpscProducer {
     }
 }
 
-pub async fn new_spsc_channel(alloc: &'static AHeap, capacity: usize) -> (SpscProducer, Consumer) {
+pub async fn new_spsc_channel(capacity: usize) -> (SpscProducer, Consumer) {
     info!(capacity, "Creating new mpsc BBQueue channel");
-    let mut _array = alloc
-        .allocate_array_with(MaybeUninit::<u8>::uninit, capacity)
-        .await;
+    let mut _array = vec![MaybeUninit::uninit(); capacity].into_boxed_slice();
 
     let ring = BBBuffer::new();
 
@@ -103,15 +98,13 @@ pub async fn new_spsc_channel(alloc: &'static AHeap, capacity: usize) -> (SpscPr
         ring.initialize(_array.as_mut_ptr().cast(), capacity);
     }
 
-    let storage = alloc
-        .allocate_arc(BBQStorage {
-            commit_waitcell: WaitCell::new(),
-            release_waitcell: WaitCell::new(),
-            producer: Mutex::new(None),
-            ring,
-            _array,
-        })
-        .await;
+    let storage = Arc::new(BBQStorage {
+        commit_waitcell: WaitCell::new(),
+        release_waitcell: WaitCell::new(),
+        producer: Mutex::new(None),
+        ring,
+        _array,
+    });
 
     // Now that we've allocated storage, the producer can be created.
 
@@ -140,7 +133,7 @@ pub async fn new_spsc_channel(alloc: &'static AHeap, capacity: usize) -> (SpscPr
 
 pub struct GrantW {
     grant: InnerGrantW<'static>,
-    storage: HeapArc<BBQStorage>,
+    storage: Arc<BBQStorage>,
 }
 
 impl Deref for GrantW {
@@ -171,7 +164,7 @@ impl GrantW {
 
 pub struct GrantR {
     grant: InnerGrantR<'static>,
-    storage: HeapArc<BBQStorage>,
+    storage: Arc<BBQStorage>,
 }
 
 impl Deref for GrantR {
@@ -207,7 +200,7 @@ unsafe impl Sync for GrantR {}
 async fn producer_send_grant_max(
     max: usize,
     producer: &InnerProducer<'static>,
-    storage: &HeapArc<BBQStorage>,
+    storage: &Arc<BBQStorage>,
 ) -> GrantW {
     loop {
         match producer.grant_max_remaining(max) {
@@ -233,7 +226,7 @@ async fn producer_send_grant_max(
 async fn producer_send_grant_exact(
     size: usize,
     producer: &InnerProducer<'static>,
-    storage: &HeapArc<BBQStorage>,
+    storage: &Arc<BBQStorage>,
 ) -> GrantW {
     loop {
         match producer.grant_exact(size) {

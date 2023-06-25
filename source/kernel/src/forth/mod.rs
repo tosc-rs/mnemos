@@ -8,6 +8,8 @@ use crate::{
     Kernel,
 };
 use core::{any::TypeId, future::Future, ptr::NonNull, time::Duration};
+use alloc::boxed::Box;
+use alloc::vec::Vec;
 use forth3::{
     async_builtin,
     dictionary::{self, AsyncBuiltinEntry, AsyncBuiltins, Dictionary, OwnedDict},
@@ -16,10 +18,6 @@ use forth3::{
     output::OutputBuf,
     word::Word,
     AsyncForth, CallContext,
-};
-use mnemos_alloc::{
-    containers::{HeapBox, HeapFixedVec},
-    heap::{self, AHeap},
 };
 use portable_atomic::{AtomicUsize, Ordering};
 
@@ -45,11 +43,11 @@ pub struct Forth {
 
 /// Owns the heap allocations for a `Forth` task.
 struct Bufs {
-    dstack: HeapFixedVec<Word>,
-    rstack: HeapFixedVec<Word>,
-    cstack: HeapFixedVec<CallContext<MnemosContext>>,
-    input: HeapFixedVec<u8>,
-    output: HeapFixedVec<u8>,
+    dstack: Vec<Word>,
+    rstack: Vec<Word>,
+    cstack: Vec<CallContext<MnemosContext>>,
+    input: Vec<u8>,
+    output: Vec<u8>,
 }
 
 impl Forth {
@@ -58,10 +56,9 @@ impl Forth {
         params: Params,
         spawnulator: Spawnulator,
     ) -> Result<(Self, bbq::BidiHandle), &'static str> {
-        let heap = kernel.heap();
-        let (stdio, streams) = params.alloc_stdio(heap).await;
-        let mut bufs = params.alloc_bufs(heap).await;
-        let dict = params.alloc_dict(heap).await?;
+        let (stdio, streams) = params.alloc_stdio().await;
+        let mut bufs = params.alloc_bufs().await;
+        let dict = params.alloc_dict().await?;
 
         let input = WordStrBuf::new(bufs.input.as_mut_ptr(), params.input_buf_size);
         let output = OutputBuf::new(bufs.output.as_mut_ptr(), params.output_buf_size);
@@ -219,39 +216,39 @@ impl Params {
     }
 
     /// Allocate new input and output streams with the configured capacity.
-    async fn alloc_stdio(&self, heap: &'static AHeap) -> (bbq::BidiHandle, bbq::BidiHandle) {
-        bbq::new_bidi_channel(heap, self.stdout_capacity, self.stdin_capacity).await
+    async fn alloc_stdio(&self,) -> (bbq::BidiHandle, bbq::BidiHandle) {
+        bbq::new_bidi_channel(self.stdout_capacity, self.stdin_capacity).await
     }
 
     /// Allocate the buffers for a new `Forth` task, based on the provided `Params`.
-    async fn alloc_bufs(&self, heap: &'static AHeap) -> Bufs {
+    async fn alloc_bufs(&self) -> Bufs {
         // TODO(eliza): can we lock the heap once and then make *all* of these allocations?
         Bufs {
-            dstack: heap.allocate_fixed_vec(self.stack_size).await,
-            rstack: heap.allocate_fixed_vec(self.stack_size).await,
-            cstack: heap.allocate_fixed_vec(self.stack_size).await,
-            input: heap.allocate_fixed_vec(self.input_buf_size).await,
-            output: heap.allocate_fixed_vec(self.output_buf_size).await,
+            dstack: Vec::with_capacity(self.stack_size),
+            rstack: Vec::with_capacity(self.stack_size),
+            cstack: Vec::with_capacity(self.stack_size),
+            input: Vec::with_capacity(self.input_buf_size),
+            output: Vec::with_capacity(self.output_buf_size),
         }
     }
 
     /// Allocate a new `OwnedDict` with this `Params`' dictionary size.
     async fn alloc_dict(
         &self,
-        heap: &'static AHeap,
     ) -> Result<OwnedDict<MnemosContext>, &'static str> {
-        let layout = Dictionary::<MnemosContext>::layout(self.dictionary_size)
+        let _layout = Dictionary::<MnemosContext>::layout(self.dictionary_size)
             .map_err(|_| "invalid dictionary size")?;
-        let dict_buf = heap
-            .allocate_raw(layout)
-            .await
-            .cast::<core::mem::MaybeUninit<Dictionary<MnemosContext>>>();
-        tracing::trace!(
-            size = self.dictionary_size,
-            addr = &format_args!("{dict_buf:p}"),
-            "Allocated dictionary"
-        );
-        Ok(OwnedDict::new::<DropDict>(dict_buf, self.dictionary_size))
+        // let dict_buf = heap
+        //     .allocate_raw(layout)
+        //     .await
+        //     .cast::<core::mem::MaybeUninit<Dictionary<MnemosContext>>>();
+        let _dict_buf = todo!();
+        // tracing::trace!(
+        //     size = self.dictionary_size,
+        //     addr = &format_args!("{dict_buf:p}"),
+        //     "Allocated dictionary"
+        // );
+        // Ok(OwnedDict::new::<DropDict>(dict_buf, self.dictionary_size))
     }
 }
 
@@ -264,7 +261,7 @@ impl Default for Params {
 impl MnemosContext {
     async fn new(kernel: &'static Kernel, params: Params, spawnulator: Spawnulator) -> Self {
         static NEXT_TASK_ID: AtomicUsize = AtomicUsize::new(0);
-        let boh = BagOfHolding::new(kernel, params.bag_of_holding_capacity).await;
+        let boh = BagOfHolding::new(params.bag_of_holding_capacity).await;
         Self {
             boh,
             kernel,
@@ -372,17 +369,16 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     tracing::debug!("Forking Forth VM...");
     let params = forth.host_ctxt.params;
     let kernel = forth.host_ctxt.kernel;
-    let heap = kernel.heap();
 
     // TODO(eliza): store the child's stdio in the
     // parent's host context so we can actually do something with it...
-    let (stdio, _streams) = params.alloc_stdio(heap).await;
-    let mut bufs = params.alloc_bufs(heap).await;
-    let new_dict = params.alloc_dict(heap).await.map_err(|error| {
+    let (stdio, _streams) = params.alloc_stdio().await;
+    let mut bufs = params.alloc_bufs().await;
+    let new_dict = params.alloc_dict().await.map_err(|error| {
         tracing::error!(?error, "Failed to allocate dictionary for child VM");
         forth3::Error::InternalError
     })?;
-    let my_dict = params.alloc_dict(heap).await.map_err(|error| {
+    let my_dict = params.alloc_dict().await.map_err(|error| {
         tracing::error!(
             ?error,
             "Failed to allocate replacement dictionary for parent VM"
@@ -470,8 +466,9 @@ async fn sleep(
 }
 
 impl dictionary::DropDict for DropDict {
-    unsafe fn drop_dict(ptr: NonNull<u8>, layout: core::alloc::Layout) {
-        heap::deallocate_raw(ptr.cast(), layout);
+    unsafe fn drop_dict(_ptr: NonNull<u8>, _layout: core::alloc::Layout) {
+        todo!()
+        // heap::deallocate_raw(ptr.cast(), layout);
     }
 }
 
@@ -525,7 +522,7 @@ impl Spawnulator {
     /// used to spawn new `Forth` VMs.
     #[tracing::instrument(level = tracing::Level::DEBUG, skip(kernel))]
     pub async fn start_spawnulating(kernel: &'static Kernel) -> Self {
-        let (vms_tx, vms) = KChannel::new_async(kernel, Self::SPAWN_QUEUE_CAPACITY)
+        let (vms_tx, vms) = KChannel::new_async(Self::SPAWN_QUEUE_CAPACITY)
             .await
             .split();
         tracing::debug!("who spawns the spawnulator?");
@@ -586,8 +583,7 @@ impl Spawnulator {
 /// type safe way.
 pub struct BagOfHolding {
     idx: i32,
-    inner: HeapFixedVec<(i32, BohValue)>,
-    kernel: &'static Kernel,
+    inner: Vec<(i32, BohValue)>,
 }
 
 impl BagOfHolding {
@@ -595,12 +591,10 @@ impl BagOfHolding {
     ///
     /// The `kernel` parameter is used to allocate `HeapBox` elements to
     /// store the type-erased elements residing in the BagOfHolding.
-    pub async fn new(kernel: &'static Kernel, max: usize) -> Self {
-        let inner = kernel.heap().allocate_fixed_vec(max).await;
+    pub async fn new(max: usize) -> Self {
         BagOfHolding {
             idx: 0,
-            inner,
-            kernel,
+            inner: Vec::with_capacity(max),
         }
     }
 
@@ -634,15 +628,14 @@ impl BagOfHolding {
     where
         T: 'static,
     {
-        if self.inner.is_full() {
+        if self.inner.capacity() == self.inner.len() {
             return None;
         }
-        let value_ptr = self.kernel.heap().allocate(item).await.leak().cast::<()>();
+        let value_ptr = NonNull::from(Box::leak(Box::new(item))).cast::<()>();
         let idx = self.next_idx();
         let tid = TypeId::of::<T>();
 
-        // Should never fail - we checked whether we are full above already
-        let pushed = self.inner.push((
+        self.inner.push((
             idx,
             BohValue {
                 tid,
@@ -651,13 +644,7 @@ impl BagOfHolding {
             },
         ));
 
-        match pushed {
-            Ok(_) => Some(idx),
-            Err(_) => {
-                debug_assert!(false, "We already checked if this was full?");
-                None
-            }
-        }
+        Some(idx)
     }
 
     /// Attempt to retrieve an item from the Bag of Holding
@@ -709,6 +696,6 @@ impl Drop for BohValue {
 fn dropfn<T>(bs: NonNull<()>) {
     let i: NonNull<T> = bs.cast();
     unsafe {
-        let _ = HeapBox::from_leaked(i);
+        let _ = Box::from_raw(i.as_ptr());
     }
 }

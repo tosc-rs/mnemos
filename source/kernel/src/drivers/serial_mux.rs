@@ -19,8 +19,9 @@ use crate::{
     registry::{Envelope, KernelHandle, Message, RegisteredDriver},
     Kernel,
 };
+use alloc::sync::Arc;
+use alloc::vec::Vec;
 use maitake::sync::Mutex;
-use mnemos_alloc::containers::{HeapArc, HeapArray, HeapFixedVec};
 use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -106,7 +107,7 @@ impl SerialMuxClient {
 
         Some(SerialMuxClient {
             prod,
-            reply: Reusable::new_async(kernel).await,
+            reply: Reusable::new_async().await,
         })
     }
 
@@ -214,17 +215,13 @@ impl SerialMuxServer {
         let (sprod, scons) = serial_port.split();
         let sprod = sprod.into_mpmc_producer().await;
 
-        let ports = kernel.heap().allocate_fixed_vec(max_ports).await;
-        let imutex = kernel
-            .heap()
-            .allocate_arc(Mutex::new(MuxingInfo {
+        let ports = Vec::with_capacity(max_ports);
+        let imutex = Arc::new(Mutex::new(MuxingInfo {
                 ports,
-                kernel,
                 max_frame,
-            }))
-            .await;
-        let (cmd_prod, cmd_cons) = KChannel::new_async(kernel, max_ports).await.split();
-        let buf = kernel.heap().allocate_array_with(|| 0, max_frame).await;
+            }));
+        let (cmd_prod, cmd_cons) = KChannel::new_async(max_ports).await.split();
+        let buf = Vec::with_capacity(max_frame);
         let commander = CommanderTask {
             cmd: cmd_cons,
             out: sprod,
@@ -234,7 +231,6 @@ impl SerialMuxServer {
             incoming: scons,
             mux: imutex,
             buf,
-            idx: 0,
         };
 
         kernel.spawn(commander.run()).await;
@@ -267,22 +263,20 @@ struct PortInfo {
 }
 
 struct MuxingInfo {
-    kernel: &'static Kernel,
-    ports: HeapFixedVec<PortInfo>,
+    ports: Vec<PortInfo>,
     max_frame: usize,
 }
 
 struct CommanderTask {
     cmd: KConsumer<Message<SerialMuxService>>,
     out: bbq::MpscProducer,
-    mux: HeapArc<Mutex<MuxingInfo>>,
+    mux: Arc<Mutex<MuxingInfo>>,
 }
 
 struct IncomingMuxerTask {
-    buf: HeapArray<u8>,
-    idx: usize,
+    buf: Vec<u8>,
     incoming: bbq::Consumer,
-    mux: HeapArc<Mutex<MuxingInfo>>,
+    mux: Arc<Mutex<MuxingInfo>>,
 }
 
 impl MuxingInfo {
@@ -292,20 +286,19 @@ impl MuxingInfo {
         capacity: usize,
         outgoing: &bbq::MpscProducer,
     ) -> Result<PortHandle, SerialMuxError> {
-        if self.ports.is_full() {
+        if self.ports.capacity() == self.ports.len() {
             return Err(SerialMuxError::RegistryFull);
         }
         if self.ports.iter().any(|p| p.port == port_id) {
             return Err(SerialMuxError::DuplicateItem);
         }
-        let (prod, cons) = bbq::new_spsc_channel(self.kernel.heap(), capacity).await;
+        let (prod, cons) = bbq::new_spsc_channel(capacity).await;
 
         self.ports
             .push(PortInfo {
                 port: port_id,
                 upstream: prod,
-            })
-            .map_err(|_| SerialMuxError::RegistryFull)?;
+            });
 
         let ph = PortHandle {
             port: port_id,
@@ -355,12 +348,11 @@ impl IncomingMuxerTask {
                 if ch.last() != Some(&0) {
                     // This is the last chunk, and it doesn't end with a zero.
                     // just add it to the accumulator, if we can.
-                    if (self.idx + ch.len()) <= self.buf.len() {
-                        self.buf[self.idx..][..ch.len()].copy_from_slice(ch);
-                        self.idx += ch.len();
+                    if (self.buf.len() + ch.len()) <= self.buf.capacity() {
+                        self.buf.extend_from_slice(ch);
                     } else {
                         warn!("Overfilled accumulator");
-                        self.idx = 0;
+                        self.buf.clear();
                     }
 
                     // Either we overfilled, or this was the last data. Move on.
@@ -368,20 +360,19 @@ impl IncomingMuxerTask {
                 }
 
                 // Okay, we know that we have a zero terminated item. Do we have anything residual?
-                let buf = if self.idx == 0 {
+                let buf = if self.buf.is_empty() {
                     // Yes, no pending data, just use the current chunk
                     ch
                 } else {
                     // We have residual data, we need to copy the chunk to the end of the buffer
-                    if (self.idx + ch.len()) <= self.buf.len() {
-                        self.buf[self.idx..][..ch.len()].copy_from_slice(ch);
-                        self.idx += ch.len();
+                    if (self.buf.len() + ch.len()) <= self.buf.capacity() {
+                        self.buf.extend_from_slice(ch);
                     } else {
                         warn!("Overfilled accumulator");
-                        self.idx = 0;
+                        self.buf.clear();
                         continue;
                     }
-                    &mut self.buf[..self.idx]
+                    &mut self.buf
                 };
 
                 // Great! Now decode the cobs message in place.

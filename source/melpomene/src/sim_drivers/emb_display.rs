@@ -54,7 +54,7 @@ impl SimDisplay {
     ) -> Result<(), FrameError> {
         let frames = kernel.heap().allocate_array_with(|| None, max_frames).await;
 
-        let (cmd_prod, cmd_cons) = KChannel::new_async(kernel, 1).await.split();
+        let (cmd_prod, cmd_cons) = KChannel::new_async(1).await.split();
         let commander = CommanderTask {
             kernel,
             cmd: cmd_cons,

@@ -4,7 +4,7 @@ use crate::{
     comms::oneshot::Reusable,
     tracing::{self, debug, info},
 };
-use mnemos_alloc::{containers::HeapFixedVec, heap::HeapGuard};
+use alloc::vec::Vec;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use spitebuf::EnqueueError;
@@ -70,7 +70,7 @@ pub struct RegistryType {
 
 /// The driver registry used by the kernel.
 pub struct Registry {
-    items: HeapFixedVec<RegistryItem>,
+    items: Vec<RegistryItem>,
     counter: u32,
 }
 
@@ -300,9 +300,9 @@ impl RegistryType {
 
 impl Registry {
     /// Create a new registry with room for up to `max_items` registered drivers.
-    pub fn new(guard: &mut HeapGuard, max_items: usize) -> Self {
+    pub fn new(max_items: usize) -> Self {
         Self {
-            items: guard.alloc_fixed_vec(max_items).map_err(drop).unwrap(),
+            items: Vec::with_capacity(max_items),
             counter: 0,
         }
     }
@@ -335,8 +335,7 @@ impl Registry {
                     req_deser: None,
                     service_id: ServiceId(self.counter),
                 },
-            })
-            .map_err(|_| RegistrationError::RegistryFull)?;
+            });
         info!(uuid = ?RD::UUID, service_id = self.counter, "Registered KOnly");
         self.counter = self.counter.wrapping_add(1);
         Ok(())
@@ -371,8 +370,7 @@ impl Registry {
                     req_deser: Some(map_deser::<RD>),
                     service_id: ServiceId(self.counter),
                 },
-            })
-            .map_err(|_| RegistrationError::RegistryFull)?;
+            });
         info!(uuid = ?RD::UUID, service_id = self.counter, "Registered");
         self.counter = self.counter.wrapping_add(1);
         Ok(())

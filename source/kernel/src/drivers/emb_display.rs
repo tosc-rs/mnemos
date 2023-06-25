@@ -133,7 +133,7 @@ impl EmbDisplayClient {
 
         Some(EmbDisplayClient {
             prod,
-            reply: Reusable::new_async(kernel).await,
+            reply: Reusable::new_async().await,
         })
     }
 
