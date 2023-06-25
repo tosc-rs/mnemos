@@ -81,66 +81,96 @@ async fn kernel_entry(opts: MelpomeneOptions) {
             //
             // Create the buffer, and spawn the worker task, giving it one of the
             // queue handles
+            tracing::debug!("initializing simulated UART ({})", opts.serial_addr);
             TcpSerial::register(k, opts.serial_addr, 4096, 4096, irq)
                 .await
                 .unwrap();
+            tracing::info!("simulated UART ({}) initialized!", opts.serial_addr);
         }
     })
     .unwrap();
 
     // Initialize the SerialMuxServer
-    k.initialize(async {
-        // * Up to 16 virtual ports max
-        // * Framed messages up to 512 bytes max each
-        SerialMuxServer::register(k, 16, 512).await.unwrap();
+    k.initialize({
+        const PORTS: usize = 16;
+        const FRAME_SIZE: usize = 512;
+        async {
+            // * Up to 16 virtual ports max
+            // * Framed messages up to 512 bytes max each
+            tracing::debug!("initializing SerialMuxServer...");
+            SerialMuxServer::register(k, PORTS, FRAME_SIZE)
+                .await
+                .unwrap();
+            tracing::info!("SerialMuxServer initialized!");
+        }
+        .instrument(tracing::info_span!(
+            "SerialMuxServer",
+            ports = PORTS,
+            frame_size = FRAME_SIZE
+        ))
     })
     .unwrap();
 
     // Spawn the graphics driver
-    k.initialize(async {
-        SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
-            .await
-            .unwrap();
-    })
+    k.initialize(
+        async {
+            tracing::debug!(
+                "initializing SimDisplay server ({DISPLAY_WIDTH_PX}x{DISPLAY_HEIGHT_PX})..."
+            );
+            SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
+                .await
+                .unwrap();
+            tracing::info!("SimDisplayServer initialized!");
+        }
+        .instrument(tracing::info_span!("SimDisplayServer")),
+    )
     .unwrap();
 
     // Spawn a loopback port
-    k.initialize(
+    k.initialize({
+        const PORT: u16 = 0;
         async {
+            tracing::debug!("initializing SerMux loopback...");
             let mut mux_hdl = SerialMuxClient::from_registry(k).await;
-            let p0 = mux_hdl.open_port(0, 1024).await.unwrap();
+            let p0 = mux_hdl.open_port(PORT, 1024).await.unwrap();
             drop(mux_hdl);
+            tracing::info!("SerMux Loopback running!");
 
             loop {
                 let rgr = p0.consumer().read_grant().await;
                 let len = rgr.len();
+                tracing::trace!("Loopback read {len}B");
                 p0.send(&rgr).await;
                 rgr.release(len);
             }
         }
-        .instrument(tracing::info_span!("Loopback")),
-    )
+        .instrument(tracing::info_span!("Loopback", port = PORT))
+    })
     .unwrap();
 
     // Spawn a hello port
-    k.initialize(
+    k.initialize({
+        const PORT: u16 = 1;
         async {
+            tracing::debug!("Starting SerMux 'hello world'...");
             let mut mux_hdl = SerialMuxClient::from_registry(k).await;
-            let p1 = mux_hdl.open_port(1, 1024).await.unwrap();
+            let p1 = mux_hdl.open_port(PORT, 1024).await.unwrap();
             drop(mux_hdl);
+            tracing::info!("SerMux 'hello world' running!");
 
             loop {
                 k.sleep(Duration::from_secs(1)).await;
                 p1.send(b"hello\r\n").await;
             }
         }
-        .instrument(tracing::info_span!("Hello Loop")),
-    )
+        .instrument(tracing::info_span!("Hello Loop", port = PORT))
+    })
     .unwrap();
 
     // Spawn a graphical shell
     k.initialize(
         async move {
+            tracing::debug!("Starting graphics console...");
             graphical_shell_mono(
                 k,   // disp_width_px
                 400, // disp_height_px
@@ -171,18 +201,18 @@ async fn kernel_entry(opts: MelpomeneOptions) {
             // if no timers have expired on this tick, we should sleep until the
             // next timer expires *or* something is woken by I/O, to simulate a
             // hardware platform waiting for an interrupt.
-            tracing::debug!("waiting for an interrupt...");
+            tracing::trace!("waiting for an interrupt...");
 
             // Cap out at 100ms, just in case sim services aren't using the IRQ
             let amount = turn.ticks_to_next_deadline().unwrap_or(100 * 1000); // 1 ticks per us, 1000 us per ms, 100ms sleep
-            tracing::debug!("next timer expires in {amount:?}us");
+            tracing::trace!("next timer expires in {amount:?}us");
             // wait for an "interrupt"
             futures::select! {
                 _ = irq.notified().fuse() => {
-                    tracing::debug!("...woken by I/O interrupt");
+                    tracing::trace!("...woken by I/O interrupt");
                },
                _ = tokio::time::sleep(Duration::from_micros(amount.into())).fuse() => {
-                    tracing::debug!("woken by timer");
+                    tracing::trace!("woken by timer");
                }
             }
 
