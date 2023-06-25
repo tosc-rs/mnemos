@@ -19,9 +19,8 @@ use crate::{
     registry::{Envelope, KernelHandle, Message, RegisteredDriver},
     Kernel,
 };
-use alloc::sync::Arc;
 use maitake::sync::Mutex;
-use mnemos_alloc::fornow::collections::FixedVec;
+use mnemos_alloc::fornow::collections::{FixedVec, Arc};
 use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -219,7 +218,7 @@ impl SerialMuxServer {
         let imutex = Arc::new(Mutex::new(MuxingInfo {
                 ports,
                 max_frame,
-            }));
+            })).await;
         let (cmd_prod, cmd_cons) = KChannel::new_async(max_ports).await.split();
         let buf = FixedVec::new(max_frame).await;
         let commander = CommanderTask {

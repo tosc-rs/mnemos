@@ -3,13 +3,12 @@
 //! Kernel Channels are an async/await, MPSC queue, with a fixed backing storage (e.g. they are bounded).
 
 use core::{cell::UnsafeCell, ops::Deref, ptr::NonNull};
-use alloc::{vec::Vec, sync::Arc};
+use mnemos_alloc::fornow::collections::{Arc, ArrayBuf};
 use spitebuf::{DequeueError, EnqueueError, MpScQueue};
 
 
 /// A Kernel Channel
 pub struct KChannel<T> {
-    // AJM(SURVEY): Arc<T>
     q: Arc<MpScQueue<T, sealed::SpiteData<T>>>,
 }
 
@@ -18,7 +17,6 @@ pub struct KChannel<T> {
 /// A `KProducer` can be cloned multiple times, as the backing [KChannel]
 /// is an MPSC queue.
 pub struct KProducer<T> {
-    // AJM(SURVEY): Arc<T>
     q: Arc<MpScQueue<T, sealed::SpiteData<T>>>,
 }
 
@@ -28,7 +26,6 @@ pub struct KProducer<T> {
 /// as it is an MPSC queue. A `KConsumer` can also be used to create a new
 /// [KProducer] instance.
 pub struct KConsumer<T> {
-    // AJM(SURVEY): Arc<T>
     q: Arc<MpScQueue<T, sealed::SpiteData<T>>>,
 }
 
@@ -63,27 +60,20 @@ impl<T> KChannel<T> {
     /// Create a new `KChannel<T>` with room for `count` elements on the given
     /// Kernel's allocator.
     pub async fn new_async(count: usize) -> Self {
-
-        let mut ba = Vec::with_capacity(count);
-        for _ in 0..count {
-            ba.push(UnsafeCell::new(spitebuf::single_cell::<T>()));
-        }
+        let ba = ArrayBuf::new_uninit(count).await;
         let q = MpScQueue::new(sealed::SpiteData { data: ba });
         Self {
-            q: Arc::new(q),
+            q: Arc::new(q).await,
         }
     }
 
     /// Create a new `KChannel<T>` with room for `count` elements on the given
     /// Kernel's allocator. Used for pre-async initialization steps
     pub fn new(count: usize) -> Self {
-        let mut ba = Vec::with_capacity(count);
-        for _ in 0..count {
-            ba.push(UnsafeCell::new(spitebuf::single_cell::<T>()));
-        }
+        let ba = ArrayBuf::try_new_uninit(count).unwrap();
         let q = MpScQueue::new(sealed::SpiteData { data: ba });
         Self {
-            q: Arc::new(q),
+            q: Arc::try_new(q).map_err(drop).unwrap(),
         }
     }
 
@@ -131,7 +121,7 @@ impl<T> KProducer<T> {
     }
 
     pub(crate) fn type_erase(self) -> ErasedKProducer {
-        let typed_q: NonNull<MpScQueue<T, sealed::SpiteData<T>>> = unsafe { NonNull::new_unchecked(Arc::into_raw(self.q).cast_mut()) };
+        let typed_q: NonNull<MpScQueue<T, sealed::SpiteData<T>>> = Arc::into_raw(self.q);
         let erased_q: NonNull<MpScQueue<(), sealed::SpiteData<()>>> = typed_q.cast();
 
         ErasedKProducer {
@@ -179,17 +169,16 @@ impl ErasedKProducer {
     /// Clone the ErasedKProducer. The resulting ErasedKProducer will be for the same
     /// underlying [KChannel] and type.
     pub(crate) fn clone_erased<T>(&self) -> Self {
-        todo!()
-        // let typed_q: NonNull<MpScQueue<T, sealed::SpiteData<T>>> = self.erased_q.cast();
-        // unsafe {
-        //     HeapArc::increment_count(typed_q);
-        // }
+        let typed_q: NonNull<MpScQueue<T, sealed::SpiteData<T>>> = self.erased_q.cast();
+        unsafe {
+            Arc::increment_strong_count(typed_q.as_ptr());
+        }
 
-        // Self {
-        //     erased_q: self.erased_q,
-        //     dropper: self.dropper,
-        //     cloner: self.cloner,
-        // }
+        Self {
+            erased_q: self.erased_q,
+            dropper: self.dropper,
+            cloner: self.cloner,
+        }
     }
 
     /// Clone the ErasedKProducer, while also re-typing to the unleaked [KProducer] type.
@@ -199,10 +188,13 @@ impl ErasedKProducer {
     /// The type `T` MUST be the same `T` that was used to create this ErasedKProducer,
     /// otherwise undefined behavior will occur.
     pub(crate) unsafe fn clone_typed<T>(&self) -> KProducer<T> {
-        todo!()
-        // let typed_q: NonNull<MpScQueue<T, sealed::SpiteData<T>>> = self.erased_q.cast();
-        // let heap_arc = HeapArc::clone_from_leaked(typed_q);
-        // KProducer { q: heap_arc }
+        let typed_q: NonNull<MpScQueue<T, sealed::SpiteData<T>>> = self.erased_q.cast();
+        let q = unsafe {
+            Arc::increment_strong_count(typed_q.as_ptr());
+            Arc::from_raw(typed_q)
+        };
+
+        KProducer { q }
     }
 
     /// Drop the ErasedKProducer, while also re-typing the leaked [KProducer] type.
@@ -211,10 +203,9 @@ impl ErasedKProducer {
     ///
     /// The type `T` MUST be the same `T` that was used to create this ErasedKProducer,
     /// otherwise undefined behavior will occur.
-    pub(crate) unsafe fn drop_erased<T>(_ptr: NonNull<MpScQueue<(), sealed::SpiteData<()>>>) {
-        todo!()
-        // let ptr = ptr.cast::<MpScQueue<T, sealed::SpiteData<T>>>();
-        // let _ = HeapArc::from_leaked(ptr);
+    pub(crate) unsafe fn drop_erased<T>(ptr: NonNull<MpScQueue<(), sealed::SpiteData<()>>>) {
+        let ptr = ptr.cast::<MpScQueue<T, sealed::SpiteData<T>>>();
+        let _ = Arc::from_raw(ptr);
     }
 }
 
@@ -227,18 +218,18 @@ impl Drop for ErasedKProducer {
 }
 
 pub(crate) mod sealed {
+    use mnemos_alloc::fornow::collections::ArrayBuf;
+
     use super::*;
 
     pub struct SpiteData<T> {
-        // AJM(SURVEY): Box<[T]>
-        pub(crate) data: Vec<UnsafeCell<spitebuf::Cell<T>>>,
+        pub(crate) data: ArrayBuf<spitebuf::Cell<T>>,
     }
 
     unsafe impl<T: Sized> spitebuf::Storage<T> for SpiteData<T> {
         fn buf(&self) -> (*const UnsafeCell<spitebuf::Cell<T>>, usize) {
-            let ptr = self.data.as_ptr();
-            let len = self.data.len();
-            (ptr, len)
+            let (ptr, len) = self.data.ptrlen();
+            (ptr.as_ptr().cast(), len)
         }
     }
 }

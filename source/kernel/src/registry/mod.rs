@@ -4,11 +4,11 @@ use crate::{
     comms::oneshot::Reusable,
     tracing::{self, debug, info},
 };
-use alloc::vec::Vec;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use spitebuf::EnqueueError;
 pub use uuid::{uuid, Uuid};
+use mnemos_alloc::fornow::collections::FixedVec;
 
 use crate::comms::{
     bbq,
@@ -70,7 +70,7 @@ pub struct RegistryType {
 
 /// The driver registry used by the kernel.
 pub struct Registry {
-    items: Vec<RegistryItem>,
+    items: FixedVec<RegistryItem>,
     counter: u32,
 }
 
@@ -302,7 +302,7 @@ impl Registry {
     /// Create a new registry with room for up to `max_items` registered drivers.
     pub fn new(max_items: usize) -> Self {
         Self {
-            items: Vec::with_capacity(max_items),
+            items: FixedVec::try_new(max_items).unwrap(),
             counter: 0,
         }
     }
@@ -323,11 +323,11 @@ impl Registry {
         &mut self,
         kch: &KProducer<Message<RD>>,
     ) -> Result<(), RegistrationError> {
-        if self.items.iter().any(|i| i.key == RD::UUID) {
+        if self.items.as_slice().iter().any(|i| i.key == RD::UUID) {
             return Err(RegistrationError::UuidAlreadyRegistered);
         }
         self.items
-            .push(RegistryItem {
+            .try_push(RegistryItem {
                 key: RD::UUID,
                 value: RegistryValue {
                     req_resp_tuple_id: RD::type_id().type_of(),
@@ -335,7 +335,7 @@ impl Registry {
                     req_deser: None,
                     service_id: ServiceId(self.counter),
                 },
-            });
+            }).map_err(|_| RegistrationError::RegistryFull)?;
         info!(uuid = ?RD::UUID, service_id = self.counter, "Registered KOnly");
         self.counter = self.counter.wrapping_add(1);
         Ok(())
@@ -358,11 +358,11 @@ impl Registry {
         RD::Request: Serialize + DeserializeOwned,
         RD::Response: Serialize + DeserializeOwned,
     {
-        if self.items.iter().any(|i| i.key == RD::UUID) {
+        if self.items.as_slice().iter().any(|i| i.key == RD::UUID) {
             return Err(RegistrationError::UuidAlreadyRegistered);
         }
         self.items
-            .push(RegistryItem {
+            .try_push(RegistryItem {
                 key: RD::UUID,
                 value: RegistryValue {
                     req_resp_tuple_id: RD::type_id().type_of(),
@@ -370,7 +370,8 @@ impl Registry {
                     req_deser: Some(map_deser::<RD>),
                     service_id: ServiceId(self.counter),
                 },
-            });
+            })
+            .map_err(|_| RegistrationError::RegistryFull)?;
         info!(uuid = ?RD::UUID, service_id = self.counter, "Registered");
         self.counter = self.counter.wrapping_add(1);
         Ok(())
@@ -391,7 +392,7 @@ impl Registry {
         fields(uuid = ?RD::UUID),
     )]
     pub fn get<RD: RegisteredDriver>(&mut self) -> Option<KernelHandle<RD>> {
-        let item = self.items.iter().find(|i| i.key == RD::UUID)?;
+        let item = self.items.as_slice().iter().find(|i| i.key == RD::UUID)?;
         if item.value.req_resp_tuple_id != RD::type_id().type_of() {
             return None;
         }
@@ -428,7 +429,7 @@ impl Registry {
         RD::Request: Serialize + DeserializeOwned,
         RD::Response: Serialize + DeserializeOwned,
     {
-        let item = self.items.iter().find(|i| i.key == RD::UUID)?;
+        let item = self.items.as_slice().iter().find(|i| i.key == RD::UUID)?;
         let client_id = self.counter;
         info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
         self.counter = self.counter.wrapping_add(1);

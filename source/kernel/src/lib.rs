@@ -84,7 +84,6 @@ use abi::{
     bbqueue_ipc::BBBuffer,
     syscall::{KernelResponse, UserRequest},
 };
-use alloc::boxed::Box;
 use comms::{bbq::BidiHandle, kchannel::KChannel};
 pub use maitake;
 use maitake::{
@@ -94,7 +93,7 @@ use maitake::{
     time::{Duration, Sleep, Timeout, Timer},
 };
 pub use mnemos_alloc;
-use mnemos_alloc::fornow::{UlAlloc, AHeap2};
+use mnemos_alloc::fornow::{UlAlloc, AHeap2, collections::Box};
 use registry::Registry;
 
 /// Shim to handle tracing v0.1 vs v0.2
@@ -167,7 +166,6 @@ pub struct KernelInner {
 }
 
 impl Kernel {
-    // AJM(SURVEY): Box<T>
     pub unsafe fn new<U: UlAlloc>(settings: KernelSettings, _alloc: &'static AHeap2<U>) -> Result<Box<Self>, &'static str> {
         let registry = registry::Registry::new(settings.max_drivers);
 
@@ -178,10 +176,10 @@ impl Kernel {
             timer: Timer::new(settings.timer_granularity),
         };
 
-        let new_kernel = Box::new(Kernel {
+        let new_kernel = Box::try_new(Kernel {
             inner,
             registry: Mutex::new(registry),
-        });
+        }).map_err(|_| "Kernel allocation failed.")?;
 
         Ok(new_kernel)
     }
@@ -199,37 +197,7 @@ impl Kernel {
     pub fn tick(&'static self) -> maitake::scheduler::Tick {
         // Process heap allocations
         // self.heap().poll();
-
-        // // process mailbox messages
         let inner = self.inner();
-        // let u2k_buf: *mut BBBuffer = &self.inner.u2k_ring as *const _ as *mut _;
-        // let k2u_buf: *mut BBBuffer = &self.inner.k2u_ring as *const _ as *mut _;
-        // let u2k: FrameConsumer<'static> = unsafe { BBBuffer::take_framed_consumer(u2k_buf) };
-        // let _k2u: FrameProducer<'static> = unsafe { BBBuffer::take_framed_producer(k2u_buf) };
-
-        // #[allow(unreachable_code)]
-        // if let Some(mut _reg) = self.registry.try_lock() {
-        //     // Incoming messages
-        //     while let Some(msg) = u2k.read() {
-        //         match postcard::from_bytes::<UserRequest>(&msg) {
-        //             Ok(_req) => {
-        //                 // let kind = req.driver_kind();
-        //                 // if let Some(drv) = inner_mut.drivers.iter().find(|drv| drv.kind == kind) {
-        //                 //     drv.queue
-        //                 //         .enqueue_sync(Message {
-        //                 //             request: req,
-        //                 //             response: inner.user_reply.clone(),
-        //                 //         })
-        //                 //         .map_err(drop)
-        //                 //         .unwrap();
-        //                 // }
-        //                 todo!("Driver registry");
-        //             }
-        //             Err(_) => panic!(),
-        //         }
-        //         msg.release();
-        //     }
-        // }
 
         inner.scheduler.tick()
 
@@ -273,13 +241,6 @@ impl Kernel {
         Ok(self.inner.scheduler.spawn(fut))
     }
 
-    // pub fn new_task<F>(&'static self, fut: F) -> Task<F>
-    // where
-    //     F: Future + 'static,
-    // {
-    //     Task(MaitakeTask::new(fut))
-    // }
-
     pub async fn spawn<F>(&'static self, fut: F) -> JoinHandle<F::Output>
     where
         F: Future + 'static,
@@ -320,6 +281,8 @@ impl Kernel {
 // TODO: De-dupe with userspace?
 use core::{future::Future, ptr::NonNull};
 
+// #[repr(transparent)]
+// pub struct Task<F: Future + 'static>(MaitakeTask<&'static LocalStaticScheduler, F, HBStorage>);
 
 // struct HBStorage;
 

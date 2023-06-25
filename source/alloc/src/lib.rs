@@ -116,9 +116,28 @@ pub mod fornow {
     }
 
     pub mod collections {
-        use core::{ops::Deref, alloc::Layout};
+        use core::{ops::{Deref, DerefMut}, alloc::Layout, ptr::NonNull, cell::UnsafeCell, mem::MaybeUninit, marker::PhantomData};
 
         use super::OOM_WAITER;
+
+        pub async fn alloc(layout: Layout) -> NonNull<u8> {
+            loop {
+                unsafe {
+                    match NonNull::new(alloc::alloc::alloc(layout.clone())) {
+                        Some(nn) => return nn,
+                        None => {
+                            let _ = OOM_WAITER.wait().await;
+                            continue;
+                        },
+                    }
+                }
+            }
+        }
+
+        #[inline(always)]
+        pub unsafe fn dealloc(ptr: *mut u8, layout: Layout) {
+            alloc::alloc::dealloc(ptr, layout)
+        }
 
         // Arc
 
@@ -127,9 +146,36 @@ pub mod fornow {
         }
 
         impl<T> Arc<T> {
+            pub fn try_new(t: T) -> Result<Self, T> {
+                // TODO: Failable way of allocating arcs?
+                Ok(Self { inner: alloc::sync::Arc::new(t) })
+            }
+
             pub async fn new(t: T) -> Self {
                 // TODO: Async way of allocating Arc?
                 Self { inner: alloc::sync::Arc::new(t) }
+            }
+
+            pub fn into_raw(a: Self) -> NonNull<T> {
+                unsafe {
+                    NonNull::new_unchecked(alloc::sync::Arc::into_raw(a.inner).cast_mut())
+                }
+            }
+
+            #[inline(always)]
+            pub unsafe fn from_raw(nn: NonNull<T>) -> Self {
+                Self { inner: alloc::sync::Arc::from_raw(nn.as_ptr()) }
+            }
+
+            #[inline(always)]
+            pub unsafe fn increment_strong_count(ptr: *const T) {
+                alloc::sync::Arc::increment_strong_count(ptr)
+            }
+        }
+
+        impl<T> Clone for Arc<T> {
+            fn clone(&self) -> Self {
+                Self { inner: self.inner.clone() }
             }
         }
 
@@ -142,6 +188,105 @@ pub mod fornow {
             }
         }
 
+        // Box
+
+        pub struct Box<T> {
+            inner: alloc::boxed::Box<T>,
+        }
+
+        impl<T> Box<T> {
+            pub fn into_raw(me: Self) -> *mut T {
+                alloc::boxed::Box::into_raw(me.inner)
+            }
+
+            pub unsafe fn from_raw(ptr: *mut T) -> Self {
+                Self { inner: alloc::boxed::Box::from_raw(ptr) }
+            }
+
+            pub async fn new(t: T) -> Self {
+                let ptr: *mut T = alloc(Layout::new::<T>()).await.cast().as_ptr();
+                unsafe {
+                    ptr.write(t);
+                    Self::from_raw(ptr)
+                }
+            }
+
+            pub fn try_new(t: T) -> Result<Self, T> {
+                match NonNull::new(unsafe { alloc::alloc::alloc(Layout::new::<T>()) }) {
+                    Some(ptr) => unsafe {
+                        let ptr = ptr.cast::<T>().as_ptr();
+                        ptr.write(t);
+                        Ok(Self { inner: alloc::boxed::Box::from_raw(ptr) })
+                    },
+                    None => Err(t),
+                }
+            }
+        }
+
+        impl<T> Deref for Box<T> {
+            type Target = alloc::boxed::Box<T>;
+
+            #[inline(always)]
+            fn deref(&self) -> &Self::Target {
+                &self.inner
+            }
+        }
+
+        impl<T> DerefMut for Box<T> {
+            #[inline(always)]
+            fn deref_mut(&mut self) -> &mut Self::Target {
+                &mut self.inner
+            }
+        }
+
+        pub struct ArrayBuf<T> {
+            ptr: NonNull<UnsafeCell<MaybeUninit<T>>>,
+            _pd: PhantomData<*const T>,
+            len: usize,
+        }
+
+        impl<T> ArrayBuf<T> {
+            fn layout(len: usize) -> Layout {
+                Layout::array::<UnsafeCell<MaybeUninit<T>>>(len).unwrap()
+            }
+
+            pub fn try_new_uninit(len: usize) -> Option<Self> {
+                assert_ne!(len, 0, "ZST ArrayBuf doesn't make sense");
+                let layout = Self::layout(len);
+                let ptr = NonNull::new(unsafe { alloc::alloc::alloc(layout) })?.cast();
+                Some(ArrayBuf {
+                    ptr,
+                    _pd: PhantomData,
+                    len,
+                })
+            }
+
+            pub async fn new_uninit(len: usize) -> Self {
+                assert_ne!(len, 0, "ZST ArrayBuf doesn't make sense");
+                let layout = Self::layout(len);
+                let ptr = alloc(layout).await.cast();
+                ArrayBuf {
+                    ptr,
+                    _pd: PhantomData,
+                    len,
+                }
+            }
+
+            pub fn ptrlen(&self) -> (NonNull<UnsafeCell<MaybeUninit<T>>>, usize) {
+                (self.ptr, self.len)
+            }
+        }
+
+        impl<T> Drop for ArrayBuf<T> {
+            fn drop(&mut self) {
+                debug_assert_ne!(self.len, 0, "how did you do that");
+                let layout = Self::layout(self.len);
+                unsafe {
+                    alloc::alloc::dealloc(self.ptr.as_ptr().cast(), layout);
+                }
+            }
+        }
+
         // FixedVec
 
         pub struct FixedVec<T> {
@@ -149,23 +294,26 @@ pub mod fornow {
         }
 
         impl<T> FixedVec<T> {
+            pub fn try_new(capacity: usize) -> Option<Self> {
+                let layout = Layout::array::<T>(capacity).unwrap();
+
+                unsafe {
+                    let ptr = NonNull::new(alloc::alloc::alloc(layout))?;
+                    return Some(FixedVec {
+                        inner: Vec::from_raw_parts(ptr.cast().as_ptr(), 0, capacity)
+                    });
+                }
+            }
+
             pub async fn new(capacity: usize) -> Self {
                 let layout = Layout::array::<T>(capacity).unwrap();
-                loop {
-                    let ptr = unsafe {
-                        alloc::alloc::alloc(layout.clone())
-                    };
-                    if ptr.is_null() {
-                        let _ = OOM_WAITER.wait().await;
-                        continue;
-                    }
-                    unsafe {
-                        return FixedVec {
-                            inner: Vec::from_raw_parts(ptr.cast(), 0, capacity)
-                        };
-                    }
-                }
 
+                unsafe {
+                    let ptr = alloc(layout).await;
+                    return FixedVec {
+                        inner: Vec::from_raw_parts(ptr.cast().as_ptr(), 0, capacity)
+                    };
+                }
             }
 
             #[inline]

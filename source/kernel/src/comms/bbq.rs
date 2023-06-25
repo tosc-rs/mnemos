@@ -4,18 +4,15 @@
 //! This extends the underlying bbqueue type exposed by the ABI crate, allowing
 //! for async kernel-to-kernel (including driver services) usage.
 
-use core::{
-    mem::MaybeUninit,
-    ops::{Deref, DerefMut},
-};
+use core::ops::{Deref, DerefMut};
 
 use crate::fmt;
 use crate::tracing::{self, info, trace};
 use abi::bbqueue_ipc::{BBBuffer, Consumer as InnerConsumer, Producer as InnerProducer};
 use abi::bbqueue_ipc::{GrantR as InnerGrantR, GrantW as InnerGrantW};
-use alloc::{boxed::Box, vec, sync::Arc};
 use maitake::sync::Mutex;
 use maitake::sync::WaitCell;
+use mnemos_alloc::fornow::collections::{Arc, ArrayBuf};
 
 
 struct BBQStorage {
@@ -26,8 +23,7 @@ struct BBQStorage {
     producer: Mutex<Option<InnerProducer<'static>>>,
 
     ring: BBBuffer,
-    // AJM(SURVEY): array of uninit bytes
-    _array: Box<[MaybeUninit<u8>]>,
+    _array: ArrayBuf<u8>,
 }
 
 pub struct BidiHandle {
@@ -67,19 +63,16 @@ pub async fn new_bidi_channel(
 }
 
 pub struct SpscProducer {
-    // AJM(SURVEY): Arc<T>
     storage: Arc<BBQStorage>,
     producer: InnerProducer<'static>,
 }
 
 #[derive(Clone)]
 pub struct MpscProducer {
-    // AJM(SURVEY): Arc<T>
     storage: Arc<BBQStorage>,
 }
 
 pub struct Consumer {
-    // AJM(SURVEY): Arc<T>
     storage: Arc<BBQStorage>,
     consumer: InnerConsumer<'static>,
 }
@@ -94,12 +87,13 @@ impl SpscProducer {
 
 pub async fn new_spsc_channel(capacity: usize) -> (SpscProducer, Consumer) {
     info!(capacity, "Creating new mpsc BBQueue channel");
-    let mut _array = vec![MaybeUninit::uninit(); capacity].into_boxed_slice();
+    let mut _array = ArrayBuf::new_uninit(capacity).await;
 
     let ring = BBBuffer::new();
 
     unsafe {
-        ring.initialize(_array.as_mut_ptr().cast(), capacity);
+        let (ptr, len) = _array.ptrlen();
+        ring.initialize(ptr.as_ptr().cast(), len);
     }
 
     let storage = Arc::new(BBQStorage {
@@ -108,7 +102,7 @@ pub async fn new_spsc_channel(capacity: usize) -> (SpscProducer, Consumer) {
         producer: Mutex::new(None),
         ring,
         _array,
-    });
+    }).await;
 
     // Now that we've allocated storage, the producer can be created.
 
@@ -137,7 +131,6 @@ pub async fn new_spsc_channel(capacity: usize) -> (SpscProducer, Consumer) {
 
 pub struct GrantW {
     grant: InnerGrantW<'static>,
-    // AJM(SURVEY): Arc<T>
     storage: Arc<BBQStorage>,
 }
 
@@ -169,7 +162,6 @@ impl GrantW {
 
 pub struct GrantR {
     grant: InnerGrantR<'static>,
-    // AJM(SURVEY): Arc<T>
     storage: Arc<BBQStorage>,
 }
 

@@ -8,8 +8,6 @@ use crate::{
     Kernel,
 };
 use core::{any::TypeId, future::Future, ptr::NonNull, time::Duration};
-use alloc::boxed::Box;
-use alloc::vec::Vec;
 use forth3::{
     async_builtin,
     dictionary::{self, AsyncBuiltinEntry, AsyncBuiltins, Dictionary, OwnedDict},
@@ -19,7 +17,7 @@ use forth3::{
     word::Word,
     AsyncForth, CallContext,
 };
-use mnemos_alloc::fornow::collections::FixedVec;
+use mnemos_alloc::fornow::collections::{FixedVec, ArrayBuf, Box, alloc, dealloc};
 use portable_atomic::{AtomicUsize, Ordering};
 
 pub mod shells;
@@ -44,12 +42,11 @@ pub struct Forth {
 
 /// Owns the heap allocations for a `Forth` task.
 struct Bufs {
-    // AJM(SURVEY): Box<[T]> x5
-    dstack: Vec<Word>,
-    rstack: Vec<Word>,
-    cstack: Vec<CallContext<MnemosContext>>,
-    input: Vec<u8>,
-    output: Vec<u8>,
+    dstack: ArrayBuf<Word>,
+    rstack: ArrayBuf<Word>,
+    cstack: ArrayBuf<CallContext<MnemosContext>>,
+    input: ArrayBuf<u8>,
+    output: ArrayBuf<u8>,
 }
 
 impl Forth {
@@ -59,18 +56,18 @@ impl Forth {
         spawnulator: Spawnulator,
     ) -> Result<(Self, bbq::BidiHandle), &'static str> {
         let (stdio, streams) = params.alloc_stdio().await;
-        let mut bufs = params.alloc_bufs().await;
+        let bufs = params.alloc_bufs().await;
         let dict = params.alloc_dict().await?;
 
-        let input = WordStrBuf::new(bufs.input.as_mut_ptr(), params.input_buf_size);
-        let output = OutputBuf::new(bufs.output.as_mut_ptr(), params.output_buf_size);
+        let input = WordStrBuf::new(bufs.input.ptrlen().0.as_ptr().cast(), params.input_buf_size);
+        let output = OutputBuf::new(bufs.output.ptrlen().0.as_ptr().cast(), params.output_buf_size);
         let host_ctxt = MnemosContext::new(kernel, params, spawnulator).await;
 
         let forth = unsafe {
             AsyncForth::new(
-                (bufs.dstack.as_mut_ptr(), params.stack_size),
-                (bufs.rstack.as_mut_ptr(), params.stack_size),
-                (bufs.cstack.as_mut_ptr(), params.stack_size),
+                (bufs.dstack.ptrlen().0.as_ptr().cast(), params.stack_size),
+                (bufs.rstack.ptrlen().0.as_ptr().cast(), params.stack_size),
+                (bufs.cstack.ptrlen().0.as_ptr().cast(), params.stack_size),
                 dict,
                 input,
                 output,
@@ -224,13 +221,12 @@ impl Params {
 
     /// Allocate the buffers for a new `Forth` task, based on the provided `Params`.
     async fn alloc_bufs(&self) -> Bufs {
-        // TODO(eliza): can we lock the heap once and then make *all* of these allocations?
         Bufs {
-            dstack: Vec::with_capacity(self.stack_size),
-            rstack: Vec::with_capacity(self.stack_size),
-            cstack: Vec::with_capacity(self.stack_size),
-            input: Vec::with_capacity(self.input_buf_size),
-            output: Vec::with_capacity(self.output_buf_size),
+            dstack: ArrayBuf::new_uninit(self.stack_size).await,
+            rstack: ArrayBuf::new_uninit(self.stack_size).await,
+            cstack: ArrayBuf::new_uninit(self.stack_size).await,
+            input: ArrayBuf::new_uninit(self.input_buf_size).await,
+            output: ArrayBuf::new_uninit(self.output_buf_size).await,
         }
     }
 
@@ -238,19 +234,17 @@ impl Params {
     async fn alloc_dict(
         &self,
     ) -> Result<OwnedDict<MnemosContext>, &'static str> {
-        let _layout = Dictionary::<MnemosContext>::layout(self.dictionary_size)
+        let layout = Dictionary::<MnemosContext>::layout(self.dictionary_size)
             .map_err(|_| "invalid dictionary size")?;
-        // let dict_buf = heap
-        //     .allocate_raw(layout)
-        //     .await
-        //     .cast::<core::mem::MaybeUninit<Dictionary<MnemosContext>>>();
-        let _dict_buf = todo!();
-        // tracing::trace!(
-        //     size = self.dictionary_size,
-        //     addr = &format_args!("{dict_buf:p}"),
-        //     "Allocated dictionary"
-        // );
-        // Ok(OwnedDict::new::<DropDict>(dict_buf, self.dictionary_size))
+        let dict_buf = alloc(layout)
+            .await
+            .cast::<core::mem::MaybeUninit<Dictionary<MnemosContext>>>();
+        tracing::trace!(
+            size = self.dictionary_size,
+            addr = &format_args!("{dict_buf:p}"),
+            "Allocated dictionary"
+        );
+        Ok(OwnedDict::new::<DropDict>(dict_buf, self.dictionary_size))
     }
 }
 
@@ -375,7 +369,7 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     // TODO(eliza): store the child's stdio in the
     // parent's host context so we can actually do something with it...
     let (stdio, _streams) = params.alloc_stdio().await;
-    let mut bufs = params.alloc_bufs().await;
+    let bufs = params.alloc_bufs().await;
     let new_dict = params.alloc_dict().await.map_err(|error| {
         tracing::error!(?error, "Failed to allocate dictionary for child VM");
         forth3::Error::InternalError
@@ -389,16 +383,16 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     })?;
     let host_ctxt = MnemosContext::new(kernel, params, forth.host_ctxt.spawnulator.clone()).await;
     let child_id = host_ctxt.id;
-    let input = WordStrBuf::new(bufs.input.as_mut_ptr(), params.input_buf_size);
-    let output = OutputBuf::new(bufs.output.as_mut_ptr(), params.output_buf_size);
+    let input = WordStrBuf::new(bufs.input.ptrlen().0.as_ptr().cast(), params.input_buf_size);
+    let output = OutputBuf::new(bufs.output.ptrlen().0.as_ptr().cast(), params.output_buf_size);
 
     let mut child = unsafe {
         forth.fork(
             new_dict,
             my_dict,
-            (bufs.dstack.as_mut_ptr(), params.stack_size),
-            (bufs.rstack.as_mut_ptr(), params.stack_size),
-            (bufs.cstack.as_mut_ptr(), params.stack_size),
+            (bufs.dstack.ptrlen().0.as_ptr().cast(), params.stack_size),
+            (bufs.rstack.ptrlen().0.as_ptr().cast(), params.stack_size),
+            (bufs.cstack.ptrlen().0.as_ptr().cast(), params.stack_size),
             input,
             output,
             host_ctxt,
@@ -468,9 +462,8 @@ async fn sleep(
 }
 
 impl dictionary::DropDict for DropDict {
-    unsafe fn drop_dict(_ptr: NonNull<u8>, _layout: core::alloc::Layout) {
-        todo!()
-        // heap::deallocate_raw(ptr.cast(), layout);
+    unsafe fn drop_dict(ptr: NonNull<u8>, layout: core::alloc::Layout) {
+        dealloc(ptr.as_ptr().cast(), layout);
     }
 }
 
@@ -633,7 +626,7 @@ impl BagOfHolding {
         if self.inner.is_full() {
             return None;
         }
-        let value_ptr = NonNull::from(Box::leak(Box::new(item))).cast::<()>();
+        let value_ptr = NonNull::new(Box::into_raw(Box::new(item).await))?.cast();
         let idx = self.next_idx();
         let tid = TypeId::of::<T>();
 
@@ -682,7 +675,6 @@ struct BohValue {
     /// The type id of the `T` pointed to by `leaked`
     tid: TypeId,
     /// A non-null pointer to a `T`, contained in a leaked `HeapBox<T>`.
-    // AJM(SURVEY): Box<T>
     value_ptr: NonNull<()>,
     /// A type-erased function that will un-leak the `HeapBox<T>`, and drop it
     dropfn: fn(NonNull<()>),
