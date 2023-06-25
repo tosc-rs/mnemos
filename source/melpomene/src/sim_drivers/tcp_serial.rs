@@ -27,8 +27,8 @@ impl TcpSerial {
         outgoing_size: usize,
         irq: Arc<Notify>,
     ) -> Result<(), ()> {
-        let (a_ring, b_ring) = new_bidi_channel(kernel.heap(), incoming_size, outgoing_size).await;
-        let (prod, cons) = KChannel::<Message<SimpleSerialService>>::new_async(kernel, 2)
+        let (a_ring, b_ring) = new_bidi_channel(incoming_size, outgoing_size).await;
+        let (prod, cons) = KChannel::<Message<SimpleSerialService>>::new_async(2)
             .await
             .split();
 

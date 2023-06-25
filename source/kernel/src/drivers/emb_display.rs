@@ -31,7 +31,7 @@ use embedded_graphics::{
     pixelcolor::{Gray8, GrayColor},
     prelude::*,
 };
-use mnemos_alloc::containers::HeapArray;
+use mnemos_alloc::fornow::collections::FixedVec;
 use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -201,7 +201,7 @@ impl EmbDisplayClient {
 /// FrameChunk is recieved after client has sent a request for one
 pub struct FrameChunk {
     pub frame_id: u16,
-    pub bytes: HeapArray<u8>,
+    pub bytes: FixedVec<u8>,
     pub start_x: i32,
     pub start_y: i32,
     pub width: u32,
@@ -231,7 +231,7 @@ impl DrawTarget for FrameChunk {
 
             let index: u32 = x + y * self.width;
             // TODO: Implement bound checks and return BufferFull if needed
-            self.bytes[index as usize] = color.luma();
+            self.bytes.as_slice_mut()[index as usize] = color.luma();
         }
 
         Ok(())

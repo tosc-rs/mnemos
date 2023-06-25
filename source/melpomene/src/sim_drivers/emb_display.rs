@@ -29,7 +29,7 @@ use embedded_graphics_simulator::{
     BinaryColorTheme, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
 };
 use maitake::sync::Mutex;
-use mnemos_alloc::containers::HeapArray;
+use mnemos_alloc::fornow::collections::{FixedVec, Arc};
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
     drivers::emb_display::{EmbDisplayService, FrameChunk, FrameError, Request, Response},
@@ -52,14 +52,13 @@ impl SimDisplay {
         width: u32,
         height: u32,
     ) -> Result<(), FrameError> {
-        let frames = kernel.heap().allocate_array_with(|| None, max_frames).await;
+        let frames = FixedVec::new(max_frames).await;
 
         let (cmd_prod, cmd_cons) = KChannel::new_async(1).await.split();
         let commander = CommanderTask {
             kernel,
             cmd: cmd_cons,
             display_info: DisplayInfo {
-                kernel,
                 frames,
                 frame_idx: 0,
             },
@@ -115,10 +114,7 @@ impl CommanderTask {
         // only whenever line characters actually arrive.
         let sdisp = SimulatorDisplay::<Gray8>::new(Size::new(width, height));
         let window = Window::new("mnemOS", &output_settings);
-        let mutex = self
-            .kernel
-            .heap()
-            .allocate_arc(Mutex::new(Some(Context {
+        let mutex = Arc::new(Mutex::new(Some(Context {
                 sdisp,
                 window,
                 dirty: true,
@@ -243,7 +239,7 @@ impl CommanderTask {
 /// Using the display's device interface
 fn frame_display(fc: &mut FrameChunk) -> Result<ImageRaw<Gray8>, ()> {
     let raw_image: ImageRaw<Gray8>;
-    raw_image = ImageRaw::<Gray8>::new(fc.bytes.as_ref(), fc.width);
+    raw_image = ImageRaw::<Gray8>::new(fc.bytes.as_slice(), fc.width);
     Ok(raw_image)
 }
 
@@ -252,11 +248,8 @@ struct FrameInfo {
 }
 
 struct DisplayInfo {
-    kernel: &'static Kernel,
     frame_idx: u16,
-    // TODO: HeapFixedVec has like none of the actual vec methods. For now
-    // use HeapArray with optionals to make it easier to find + pop individual items
-    frames: HeapArray<Option<FrameInfo>>,
+    frames: FixedVec<FrameInfo>,
 }
 
 impl DisplayInfo {
@@ -268,48 +261,53 @@ impl DisplayInfo {
         width: u32,
         height: u32,
     ) -> Result<FrameChunk, FrameError> {
-        let found = self.frames.iter_mut().find(|f| f.is_none());
+        let fidx = self.frame_idx;
+        self.frame_idx = self.frame_idx.wrapping_add(1);
 
-        if let Some(slot) = found {
-            let fidx = self.frame_idx;
-            self.frame_idx = self.frame_idx.wrapping_add(1);
-
-            *slot = Some(FrameInfo { frame: fidx });
-
-            let size = (width * height) as usize;
-
-            // TODO: So, in the future, we might not want to ACTUALLY allocate here. Instead,
-            // we might want to allocate ALL potential frame chunks at registration time and
-            // hand those out, rather than requiring an allocation here.
-            //
-            // TODO: We might want to do ANY input checking here:
-            //
-            // * Making sure the request is smaller than the actual display
-            // * Making sure the request exists entirely within the actual display
-            let bytes = self.kernel.heap().allocate_array_with(|| 0, size).await;
-            let fc = FrameChunk {
-                frame_id: fidx,
-                bytes,
-                start_x,
-                start_y,
-                width,
-                height,
-            };
-
-            Ok(fc)
-        } else {
-            Err(FrameError::NoFrameAvailable)
+        match self.frames.try_push(FrameInfo { frame: fidx }) {
+            Ok(_) => {}
+            Err(_) => {
+                return Err(FrameError::NoFrameAvailable);
+            }
         }
+
+        let size = (width * height) as usize;
+
+        // TODO: So, in the future, we might not want to ACTUALLY allocate here. Instead,
+        // we might want to allocate ALL potential frame chunks at registration time and
+        // hand those out, rather than requiring an allocation here.
+        //
+        // TODO: We might want to do ANY input checking here:
+        //
+        // * Making sure the request is smaller than the actual display
+        // * Making sure the request exists entirely within the actual display
+        let mut bytes = FixedVec::new(size).await;
+        for _ in 0..size {
+            let _ = bytes.try_push(0);
+        }
+        let fc = FrameChunk {
+            frame_id: fidx,
+            bytes,
+            start_x,
+            start_y,
+            width,
+            height,
+        };
+
+        Ok(fc)
     }
 
     fn remove_frame(&mut self, frame_id: u16) -> Result<(), FrameError> {
-        let found = self
-            .frames
-            .iter_mut()
-            .find(|f| matches!(f, Some(FrameInfo { frame }) if *frame == frame_id));
-
-        if let Some(slot) = found {
-            *slot = None;
+        let mut found = false;
+        unsafe {
+            // This only removes items, and will not cause a realloc
+            self.frames.as_vec_mut().retain(|fr| {
+                let matches = fr.frame == frame_id;
+                found |= matches;
+                !matches
+            });
+        }
+        if found {
             Ok(())
         } else {
             Err(FrameError::NoSuchFrame)

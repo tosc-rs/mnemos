@@ -1,8 +1,8 @@
 #![cfg_attr(not(feature = "use-std"), no_std)]
 
-pub mod containers;
-pub mod heap;
-pub mod node;
+// pub mod containers;
+// pub mod heap;
+// pub mod node;
 
 extern crate alloc;
 
@@ -145,6 +145,11 @@ pub mod fornow {
             inner: alloc::sync::Arc<T>,
         }
 
+        // These require the same bounds as `alloc::sync::Arc`'s `Send` and `Sync`
+        // impls.
+        unsafe impl<T: Send + Sync> Send for Arc<T> {}
+        unsafe impl<T: Send + Sync> Sync for Arc<T> {}
+
         impl<T> Arc<T> {
             pub fn try_new(t: T) -> Result<Self, T> {
                 // TODO: Failable way of allocating arcs?
@@ -193,6 +198,9 @@ pub mod fornow {
         pub struct Box<T> {
             inner: alloc::boxed::Box<T>,
         }
+
+        unsafe impl<T: Send> Send for Box<T> {}
+        unsafe impl<T: Sync> Sync for Box<T> {}
 
         impl<T> Box<T> {
             pub fn into_raw(me: Self) -> *mut T {
@@ -245,6 +253,9 @@ pub mod fornow {
             len: usize,
         }
 
+        unsafe impl<T: Send> Send for ArrayBuf<T> {}
+        unsafe impl<T: Sync> Sync for ArrayBuf<T> {}
+
         impl<T> ArrayBuf<T> {
             fn layout(len: usize) -> Layout {
                 Layout::array::<UnsafeCell<MaybeUninit<T>>>(len).unwrap()
@@ -292,6 +303,9 @@ pub mod fornow {
         pub struct FixedVec<T> {
             inner: alloc::vec::Vec<T>,
         }
+
+        unsafe impl<T: Send> Send for FixedVec<T> {}
+        unsafe impl<T: Sync> Sync for FixedVec<T> {}
 
         impl<T> FixedVec<T> {
             pub fn try_new(capacity: usize) -> Option<Self> {
