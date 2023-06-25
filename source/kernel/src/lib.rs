@@ -12,18 +12,19 @@
 //! outside the kernel (or are required by any kernel services), as well as starting and running
 //! the kernel itself.
 //!
+//! ## Setting up the Allocator
+//!
+//! Before creating the kernel, a [MnemosAlloc][mnemos_alloc::heap::MnemosAlloc] instance must be
+//! registered as a [GlobalAlloc][core::alloc::GlobalAlloc], and if the
+//! [UnderlyingAllocator][mnemos_alloc::heap::UnderlyingAllocator] requires initialization,
+//! it must occur before creating the kernel.
+//!
+//! The kernel will be allocated using the provided allocator.
+//!
 //! ## Creating the kernel
 //!
-//! To create the kernel, you give it a region of memory (as a `*mut u8` + `usize`), by calling
-//! [`Kernel::new()`].
-//!
-//! At this point, the system is in "blocking" mode.
-//!
-//! Using the given region of memory, the kernel bootstraps itself, and creates the following:
-//!
-//! * An async executor, intended for "kernel services"
-//! * A kernel service discovery registry
-//! * An async heap allocator, intended for use by kernel services
+//! The allocator and any kernel settings are provided to the kernel constructor. The kernel
+//! will allocate itself, and return an owned kernel entity.
 //!
 //! After creation, the executor is *not* running yet.
 //!
@@ -85,11 +86,12 @@ use abi::{
     syscall::{KernelResponse, UserRequest},
 };
 use comms::{bbq::BidiHandle, kchannel::KChannel};
+use core::{future::Future, ptr::NonNull};
 pub use maitake;
 use maitake::{
     scheduler::LocalScheduler,
     sync::Mutex,
-    task::JoinHandle,
+    task::{BoxStorage, JoinHandle, Storage},
     time::{Duration, Sleep, Timeout, Timer},
 };
 pub use mnemos_alloc;
@@ -169,6 +171,10 @@ pub struct KernelInner {
 }
 
 impl Kernel {
+    /// Create a new kernel with the given allocator and settings.
+    ///
+    /// The allocator MUST be initialized if required, and be ready to allocate
+    /// data.
     pub unsafe fn new<U: UnderlyingAllocator>(
         settings: KernelSettings,
         _alloc: &'static MnemosAlloc<U>,
@@ -202,12 +208,8 @@ impl Kernel {
     }
 
     pub fn tick(&'static self) -> maitake::scheduler::Tick {
-        // Process heap allocations
-        // self.heap().poll();
         let inner = self.inner();
-
         inner.scheduler.tick()
-
         // TODO: Send time to userspace?
     }
 
@@ -252,8 +254,10 @@ impl Kernel {
     where
         F: Future + 'static,
     {
-        // TODO: allocator await?
-        self.inner.scheduler.spawn(fut)
+        let bx = Box::new(maitake::task::Task::new(fut))
+            .await
+            .into_alloc_box();
+        self.spawn_allocated(bx)
     }
 
     pub async fn with_registry<F, R>(&'static self, f: F) -> R
@@ -264,12 +268,15 @@ impl Kernel {
         f(&mut guard)
     }
 
-    // pub fn spawn_allocated<F>(&'static self, task: Box<Task<F>>) -> JoinHandle<F::Output>
-    // where
-    //     F: Future + 'static,
-    // {
-    //     self.inner.scheduler.spawn_allocated::<F, BoxStorage>(task)
-    // }
+    pub fn spawn_allocated<F>(
+        &'static self,
+        task: <BoxStorage as Storage<LocalScheduler, F>>::StoredTask,
+    ) -> JoinHandle<F::Output>
+    where
+        F: Future + 'static,
+    {
+        self.inner.scheduler.spawn_allocated(task)
+    }
 
     /// Returns a [`Sleep`] future that sleeps for the specified [`Duration`].
     #[inline]
@@ -284,28 +291,3 @@ impl Kernel {
         self.inner.timer.timeout(duration, f)
     }
 }
-
-// TODO: De-dupe with userspace?
-use core::{future::Future, ptr::NonNull};
-
-// #[repr(transparent)]
-// pub struct Task<F: Future + 'static>(MaitakeTask<&'static LocalStaticScheduler, F, HBStorage>);
-
-// struct HBStorage;
-
-// impl<F: Future + 'static> Storage<&'static LocalStaticScheduler, F> for HBStorage {
-//     type StoredTask = HeapBox<Task<F>>;
-
-//     fn into_raw(
-//         task: HeapBox<Task<F>>,
-//     ) -> NonNull<MaitakeTask<&'static LocalStaticScheduler, F, Self>> {
-//         task.leak()
-//             .cast::<MaitakeTask<&'static LocalStaticScheduler, F, HBStorage>>()
-//     }
-
-//     fn from_raw(
-//         ptr: NonNull<MaitakeTask<&'static LocalStaticScheduler, F, Self>>,
-//     ) -> HeapBox<Task<F>> {
-//         unsafe { HeapBox::from_leaked(ptr.cast::<Task<F>>()) }
-//     }
-// }

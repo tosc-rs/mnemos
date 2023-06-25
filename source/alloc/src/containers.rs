@@ -149,6 +149,11 @@ impl<T> Box<T> {
             inner: alloc::boxed::Box::from_raw(ptr),
         }
     }
+
+    /// Convert to a regular old alloc box
+    pub fn into_alloc_box(self) -> alloc::boxed::Box<T> {
+        self.inner
+    }
 }
 
 impl<T> Deref for Box<T> {

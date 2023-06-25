@@ -16,7 +16,7 @@ use kernel::{
     drivers::serial_mux::{PortHandle, RegistrationError, SerialMuxServer},
     mnemos_alloc::{
         containers::{Box, FixedVec},
-        heap::{AHeap2, Mlla},
+        heap::{MnemosAlloc, SingleThreadedLinkedListAllocator},
     },
     trace, Kernel, KernelSettings,
 };
@@ -32,7 +32,7 @@ const HEAP_SIZE: usize = 384 * 1024 * 1024;
 static AHEAP_BUF: Ram<HEAP_SIZE> = Ram::new();
 
 #[global_allocator]
-static AHEAP: AHeap2<Mlla> = AHeap2::new();
+static AHEAP: MnemosAlloc<SingleThreadedLinkedListAllocator> = MnemosAlloc::new();
 
 static COLLECTOR: trace::SerialCollector = trace::SerialCollector::new();
 
