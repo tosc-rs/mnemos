@@ -1,12 +1,12 @@
-use mnemos_alloc::containers::HeapArray;
-use uuid::Uuid;
-
 use crate::{
+    buf::{ArrayBuf, OwnedReadBuf},
     comms::oneshot::Reusable,
-    registry::{known_uuids, Envelope, KernelHandle, RegisteredDriver},
+    registry::{known_uuids, Envelope, KernelHandle, OneshotRequestError, RegisteredDriver},
 };
 use core::fmt;
 use embedded_hal_async::i2c;
+use mnemos_alloc::containers::FixedVec;
+use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Service Definition
@@ -51,17 +51,17 @@ pub struct I2cError {
 pub enum Transfer {
     Single(Op),
     ReadWrite {
-        read: HeapArray<u8>,
+        read: OwnedReadBuf,
         read_len: usize,
-        write: HeapArray<u8>,
+        write: ArrayBuf<u8>,
         write_len: usize,
     },
-    Transaction(HeapArray<Op>),
+    Transaction(FixedVec<Op>),
 }
 
 pub enum Op {
-    Read { buf: HeapArray<u8>, len: usize },
-    Write { buf: HeapArray<u8>, len: usize },
+    Read { buf: OwnedReadBuf, len: usize },
+    Write { buf: ArrayBuf<u8>, len: usize },
 }
 
 #[derive(Debug)]
@@ -86,13 +86,13 @@ impl I2cClient {
         &mut self,
         addr: Addr,
         len: usize,
-        buf: HeapArray<u8>,
-    ) -> Result<HeapArray<u8>, I2cError> {
+        buf: OwnedReadBuf,
+    ) -> Result<OwnedReadBuf, I2cError> {
         assert!(
-            buf.len() >= len,
+            buf.remaining() >= len,
             "insufficent space in buffer for requested read from {addr:?}! \
-            buf.len() = {}, read len = {len}",
-            buf.len(),
+            buf.remaining() = {}, read len = {len}",
+            buf.remaining(),
         );
 
         let xfer = Transfer::Single(Op::Read { buf, len });
@@ -124,8 +124,8 @@ impl I2cClient {
         &mut self,
         addr: Addr,
         len: usize,
-        buf: HeapArray<u8>,
-    ) -> Result<HeapArray<u8>, I2cError> {
+        buf: ArrayBuf<u8>,
+    ) -> Result<ArrayBuf<u8>, I2cError> {
         assert!(
             buf.len() >= len,
             "buffer contains fewer bytes than the requested write to {addr:?}! \
