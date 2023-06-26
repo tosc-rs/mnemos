@@ -60,7 +60,7 @@ impl SerialCollector {
             .await
             .expect("cannot initialize serial tracing, cannot open port 3!");
 
-        let (tx, rx) = bbq::new_spsc_channel(k.heap(), Self::CAPACITY).await;
+        let (tx, rx) = bbq::new_spsc_channel(Self::CAPACITY).await;
         self.tx.init(tx);
 
         // set the default tracing collector

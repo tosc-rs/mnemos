@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{alloc::System, sync::Arc};
 
 use clap::Parser;
 use futures::FutureExt;
@@ -6,6 +6,7 @@ use melpomene::{
     cli::{self, MelpomeneOptions},
     sim_drivers::{emb_display::SimDisplay, tcp_serial::TcpSerial},
 };
+use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
     drivers::serial_mux::{SerialMuxClient, SerialMuxServer},
     forth::shells::graphical_shell_mono,
@@ -19,9 +20,6 @@ use tokio::{
 use tracing::Instrument;
 const DISPLAY_WIDTH_PX: u32 = 400;
 const DISPLAY_HEIGHT_PX: u32 = 240;
-/// The Allwinner D1 has 1GB of memory, so we can definitely get away with two
-/// 1MB heaps.
-const HEAP_SIZE: usize = 1024 * 1024;
 
 fn main() {
     let args = cli::Args::parse();
@@ -29,6 +27,9 @@ fn main() {
     let _span = tracing::info_span!("Melpo").entered();
     run_melpomene(args.melpomene);
 }
+
+#[global_allocator]
+static AHEAP: MnemosAlloc<System> = MnemosAlloc::new();
 
 #[tokio::main(flavor = "current_thread")]
 async fn run_melpomene(opts: cli::MelpomeneOptions) {
@@ -56,33 +57,17 @@ async fn run_melpomene(opts: cli::MelpomeneOptions) {
 
 #[tracing::instrument(name = "Kernel", level = "info", skip(opts))]
 async fn kernel_entry(opts: MelpomeneOptions) {
-    // First, we'll do some stuff that later the linker script will do...
-    fn alloc_heap() -> (*mut u8, usize) {
-        use std::mem::ManuallyDrop;
-        // use `Vec::with_capacity` to allocate the memory without having to
-        // create a stack array, or initialize the memory.
-        // the vector is intentionally leaked.
-        let mut mem = ManuallyDrop::new(Vec::<u8>::with_capacity(HEAP_SIZE));
-        let slice = mem.spare_capacity_mut();
-        // we use the *actual* size of the allocation, since liballoc may have
-        // given us more than we asked for.
-        let sz = slice.len();
-        (slice.as_mut_ptr().cast(), sz)
-    }
-
-    let (heap_start, heap_size) = alloc_heap();
-
     let settings = KernelSettings {
-        heap_start,
-        heap_size,
         max_drivers: 16,
-        k2u_size: 4096,
-        u2k_size: 4096,
         // TODO(eliza): chosen totally arbitrarily
         timer_granularity: maitake::time::Duration::from_micros(1),
     };
 
-    let k = unsafe { Kernel::new(settings).unwrap().leak().as_ref() };
+    let k = unsafe {
+        mnemos_alloc::containers::Box::into_raw(Kernel::new(settings, &AHEAP).unwrap())
+            .as_ref()
+            .unwrap()
+    };
 
     // Simulates the kernel main loop being woken by an IRQ.
     let irq = Arc::new(tokio::sync::Notify::new());

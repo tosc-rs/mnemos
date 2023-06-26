@@ -17,7 +17,7 @@ use core::{
     ptr::NonNull,
     sync::atomic::{AtomicPtr, Ordering},
 };
-use mnemos_alloc::{containers::HeapBox, heap::AHeap};
+// use mnemos_alloc::{containers::HeapBox, heap::AHeap};
 
 #[repr(transparent)]
 pub struct Task<F>(MaitakeTask<&'static StaticScheduler, F, HBStorage>)

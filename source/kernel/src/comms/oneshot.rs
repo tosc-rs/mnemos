@@ -11,9 +11,7 @@ use core::{
 };
 
 use maitake::sync::{Closed, WaitCell};
-use mnemos_alloc::containers::HeapArc;
-
-use crate::Kernel;
+use mnemos_alloc::containers::Arc;
 
 /// Not waiting for anything.
 const ROSC_IDLE: u8 = 0;
@@ -40,7 +38,7 @@ const ROSC_CLOSED: u8 = 5;
 /// A given `Reusable<T>` can only ever have zero or one `Sender<T>`s live at any
 /// given time, and a response can be received through a call to [Reusable::receive].
 pub struct Reusable<T> {
-    inner: HeapArc<Inner<T>>,
+    inner: Arc<Inner<T>>,
 }
 
 /// A single-use One-Shot channel sender
@@ -48,7 +46,7 @@ pub struct Reusable<T> {
 /// It can be consumed to send a response back to the [Reusable] instance that created
 /// the [Sender].
 pub struct Sender<T> {
-    inner: HeapArc<Inner<T>>,
+    inner: Arc<Inner<T>>,
 }
 
 // An error type for the Reusable channel and Sender
@@ -77,9 +75,9 @@ struct Inner<T> {
 
 impl<T> Reusable<T> {
     /// Create a new `Reusable<T>` using the heap from the given kernel
-    pub async fn new_async(kernel: &'static Kernel) -> Self {
+    pub async fn new_async() -> Self {
         Self {
-            inner: kernel.heap().allocate_arc(Inner::new()).await,
+            inner: Arc::new(Inner::new()).await,
         }
     }
 

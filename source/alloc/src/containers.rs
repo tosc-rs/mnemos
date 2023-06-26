@@ -1,363 +1,374 @@
-use crate::node::{Active, ActiveArr};
-use core::marker::PhantomData;
-use core::mem::MaybeUninit;
-use core::ptr::{addr_of, addr_of_mut, drop_in_place};
-use core::slice::{from_raw_parts, from_raw_parts_mut};
-use core::sync::atomic::{AtomicUsize, Ordering};
+//! Async-aware Container Types
+//!
+//! These types play well with [MnemosAlloc][crate::heap::MnemosAlloc]
+
+use crate::heap::alloc;
 use core::{
-    fmt,
-    mem::forget,
+    alloc::Layout,
+    cell::UnsafeCell,
+    mem::MaybeUninit,
     ops::{Deref, DerefMut},
     ptr::NonNull,
 };
 
-/// An Anachro Heap Box Type
-pub struct HeapBox<T> {
-    pub(crate) ptr: NonNull<Active<T>>,
-    pub(crate) pd: PhantomData<Active<T>>,
+//
+// Arc
+//
+
+/// A wrapper of [`alloc::sync::Arc<T>`]
+pub struct Arc<T: ?Sized> {
+    inner: alloc::sync::Arc<T>,
 }
-
-pub(crate) struct ArcInner<T> {
-    pub(crate) data: T,
-    pub(crate) refcnt: AtomicUsize,
-}
-
-pub struct HeapArc<T> {
-    pub(crate) ptr: NonNull<Active<ArcInner<T>>>,
-    pub(crate) pd: PhantomData<Active<ArcInner<T>>>,
-}
-
-/// An Anachro Heap Array Type
-pub struct HeapArray<T> {
-    pub(crate) ptr: NonNull<ActiveArr<T>>,
-    pub(crate) pd: PhantomData<Active<T>>,
-}
-
-/// An Anachro Heap Array Type
-pub struct HeapFixedVec<T> {
-    pub(crate) ptr: NonNull<ActiveArr<MaybeUninit<T>>>,
-    pub(crate) len: usize,
-    pub(crate) pd: PhantomData<Active<MaybeUninit<T>>>,
-}
-
-// === impl HeapBox ===
-
-unsafe impl<T: Send> Send for HeapBox<T> {}
-unsafe impl<T: Sync> Sync for HeapBox<T> {}
-
-impl<T> Deref for HeapBox<T> {
-    type Target = T;
-
-    fn deref(&self) -> &Self::Target {
-        unsafe { &*Active::<T>::data(self.ptr).as_ptr() }
-    }
-}
-
-impl<T> DerefMut for HeapBox<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe { &mut *Active::<T>::data(self.ptr).as_ptr() }
-    }
-}
-
-impl<T> HeapBox<T> {
-    pub unsafe fn from_leaked(ptr: NonNull<T>) -> Self {
-        Self {
-            ptr: Active::<T>::from_leaked_ptr(ptr),
-            pd: PhantomData,
-        }
-    }
-
-    /// Leak the contents of this box, never to be recovered (probably)
-    pub fn leak(self) -> NonNull<T> {
-        let nn = unsafe { Active::<T>::data(self.ptr) };
-        forget(self);
-        nn
-    }
-}
-
-impl<T> Drop for HeapBox<T> {
-    fn drop(&mut self) {
-        unsafe {
-            let item_ptr = Active::<T>::data(self.ptr).as_ptr();
-            drop_in_place(item_ptr);
-            Active::<T>::yeet(self.ptr);
-        }
-    }
-}
-
-// === impl ArcInner ===
-
-impl<T> ArcInner<T> {
-    pub unsafe fn from_leaked_ptr(data: NonNull<T>) -> NonNull<ArcInner<T>> {
-        let ptr = data
-            .cast::<u8>()
-            .as_ptr()
-            .offset(Self::data_offset())
-            .cast::<ArcInner<T>>();
-        NonNull::new_unchecked(ptr)
-    }
-
-    #[inline(always)]
-    fn data_offset() -> isize {
-        let dummy: ArcInner<MaybeUninit<T>> = ArcInner {
-            data: MaybeUninit::uninit(),
-            refcnt: AtomicUsize::new(0),
-        };
-        let dummy_ptr: *const ArcInner<MaybeUninit<T>> = &dummy;
-        let data_ptr = unsafe { addr_of!((*dummy_ptr).data) };
-        unsafe { dummy_ptr.cast::<u8>().offset_from(data_ptr.cast::<u8>()) }
-    }
-}
-
-// === impl HeapArc ===
 
 // These require the same bounds as `alloc::sync::Arc`'s `Send` and `Sync`
 // impls.
-unsafe impl<T: Send + Sync> Send for HeapArc<T> {}
-unsafe impl<T: Send + Sync> Sync for HeapArc<T> {}
+unsafe impl<T: Send + Sync> Send for Arc<T> {}
+unsafe impl<T: Send + Sync> Sync for Arc<T> {}
 
-impl<T> HeapArc<T> {
-    /// Leak the contents of this box, never to be recovered (probably)
-    pub fn leak(self) -> NonNull<T> {
-        unsafe {
-            let nn = Active::<ArcInner<T>>::data(self.ptr);
-            forget(self);
-            let data_ptr = addr_of_mut!((*nn.as_ptr()).data);
-            NonNull::new_unchecked(data_ptr)
-        }
+impl<T> Arc<T> {
+    /// Attempt to allocate a new reference counted T.
+    ///
+    /// Returns an error containing the provided value if the allocation
+    /// could not immediately succeed.
+    ///
+    /// NOTE/TODO: Today this will panic if not immediately successful. This should
+    /// be fixed in the future
+    pub fn try_new(t: T) -> Result<Self, T> {
+        Ok(Self {
+            inner: alloc::sync::Arc::new(t),
+        })
     }
 
-    /// Create a clone of a given leaked `HeapArc<T>`. DOES increase the refcount.
-    pub unsafe fn clone_from_leaked(ptr: NonNull<T>) -> Self {
-        let new = Self::from_leaked(ptr);
-
-        let aitem_nn = Active::<ArcInner<T>>::data(new.ptr);
-        aitem_nn.as_ref().refcnt.fetch_add(1, Ordering::SeqCst);
-
-        new
-    }
-
-    /// Re-takes ownership of a leaked `HeapArc<T>`. Does NOT increase the refcount.
-    pub unsafe fn from_leaked(ptr: NonNull<T>) -> Self {
-        let arc_inner_nn: NonNull<ArcInner<T>> = ArcInner::from_leaked_ptr(ptr);
+    /// Attempt to allocate a new reference counted T.
+    ///
+    /// Will not complete until the allocation succeeds
+    ///
+    /// NOTE/TODO: Today this will panic if not immediately successful. This should
+    /// be fixed in the future
+    pub async fn new(t: T) -> Self {
         Self {
-            ptr: Active::<ArcInner<T>>::from_leaked_ptr(arc_inner_nn),
-            pd: PhantomData,
+            inner: alloc::sync::Arc::new(t),
         }
     }
 
-    pub unsafe fn increment_count(ptr: NonNull<T>) {
-        let arc_inner_nn: NonNull<ArcInner<T>> = ArcInner::from_leaked_ptr(ptr);
-        arc_inner_nn.as_ref().refcnt.fetch_add(1, Ordering::SeqCst);
+    /// Convert into a pointer
+    ///
+    /// This does NOT change the strong reference count
+    pub fn into_raw(a: Self) -> NonNull<T> {
+        unsafe { NonNull::new_unchecked(alloc::sync::Arc::into_raw(a.inner).cast_mut()) }
+    }
+
+    /// Restore from a pointer
+    ///
+    /// This does NOT change the strong reference count. This has the same
+    /// safety invariants as [alloc::sync::Arc].
+    #[inline(always)]
+    pub unsafe fn from_raw(nn: NonNull<T>) -> Self {
+        Self {
+            inner: alloc::sync::Arc::from_raw(nn.as_ptr()),
+        }
+    }
+
+    /// Increment the strong reference count
+    ///
+    /// This has the same afety invariants as [alloc::sync::Arc::increment_strong_count()].
+    #[inline(always)]
+    pub unsafe fn increment_strong_count(ptr: *const T) {
+        alloc::sync::Arc::increment_strong_count(ptr)
     }
 }
 
-impl<T> Deref for HeapArc<T> {
-    type Target = T;
+impl<T> Clone for Arc<T> {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+        }
+    }
+}
+
+impl<T> Deref for Arc<T> {
+    type Target = alloc::sync::Arc<T>;
 
     #[inline(always)]
     fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+//
+// Box
+//
+
+/// A wrapper of [`alloc::boxed::Box<T>`]
+pub struct Box<T> {
+    inner: alloc::boxed::Box<T>,
+}
+
+unsafe impl<T: Send> Send for Box<T> {}
+unsafe impl<T: Sync> Sync for Box<T> {}
+
+impl<T> Box<T> {
+    /// Attempt to allocate a new owned T.
+    ///
+    /// Will not complete until the allocation succeeds.
+    pub async fn new(t: T) -> Self {
+        let ptr: *mut T = alloc(Layout::new::<T>()).await.cast().as_ptr();
         unsafe {
-            let aiptr: *mut ArcInner<T> = Active::<ArcInner<T>>::data(self.ptr).as_ptr();
-            let dptr: *const T = addr_of!((*aiptr).data);
-            &*dptr
+            ptr.write(t);
+            Self::from_raw(ptr)
+        }
+    }
+
+    /// Attempt to allocate a new owned T.
+    ///
+    /// Returns an error containing the provided value if the allocation
+    /// could not immediately succeed.
+    pub fn try_new(t: T) -> Result<Self, T> {
+        match NonNull::new(unsafe { alloc::alloc::alloc(Layout::new::<T>()) }) {
+            Some(ptr) => unsafe {
+                let ptr = ptr.cast::<T>().as_ptr();
+                ptr.write(t);
+                Ok(Self {
+                    inner: alloc::boxed::Box::from_raw(ptr),
+                })
+            },
+            None => Err(t),
+        }
+    }
+
+    /// Convert into a pointer
+    pub fn into_raw(me: Self) -> *mut T {
+        alloc::boxed::Box::into_raw(me.inner)
+    }
+
+    /// Convert from a pointer
+    ///
+    /// This has the same safety invariants as [alloc::boxed::Box::from_raw()]
+    pub unsafe fn from_raw(ptr: *mut T) -> Self {
+        Self {
+            inner: alloc::boxed::Box::from_raw(ptr),
+        }
+    }
+
+    /// Convert to a regular old alloc box
+    pub fn into_alloc_box(self) -> alloc::boxed::Box<T> {
+        self.inner
+    }
+}
+
+impl<T> Deref for Box<T> {
+    type Target = alloc::boxed::Box<T>;
+
+    #[inline(always)]
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl<T> DerefMut for Box<T> {
+    #[inline(always)]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
+//
+// ArrayBuf
+//
+
+/// A spooky owned array type
+///
+/// This type represents ownership of essentially an `UnsafeCell<MaybeUninit<[T]>>`.
+///
+/// It is intended as a low level building block for things like bbqueue and other data
+/// structures that need to own a specific number of items, and would like to set their
+/// own safety invariants, without manually using `alloc`.
+pub struct ArrayBuf<T> {
+    ptr: NonNull<UnsafeCell<MaybeUninit<T>>>,
+    len: usize,
+}
+
+unsafe impl<T: Send> Send for ArrayBuf<T> {}
+unsafe impl<T: Sync> Sync for ArrayBuf<T> {}
+
+impl<T> ArrayBuf<T> {
+    /// Gets the layout for `len` items
+    ///
+    /// Panics if creating the layout would fail (e.g. too large for the platform)
+    fn layout(len: usize) -> Layout {
+        Layout::array::<UnsafeCell<MaybeUninit<T>>>(len).unwrap()
+    }
+
+    /// Try to allocate a new ArrayBuf with storage for `len` items.
+    ///
+    /// Returns None if the allocation does not succeed immediately.
+    ///
+    /// Panics if the len is zero, or large enough that creating the layout would fail
+    pub fn try_new_uninit(len: usize) -> Option<Self> {
+        assert_ne!(len, 0, "ZST ArrayBuf doesn't make sense");
+        let layout = Self::layout(len);
+        let ptr = NonNull::new(unsafe { alloc::alloc::alloc(layout) })?.cast();
+        Some(ArrayBuf { ptr, len })
+    }
+
+    /// Try to allocate a new ArrayBuf with storage for `len` items.
+    ///
+    /// Will not return until allocation succeeds.
+    ///
+    /// Panics if the len is zero, or large enough that creating the layout would fail
+    pub async fn new_uninit(len: usize) -> Self {
+        assert_ne!(len, 0, "ZST ArrayBuf doesn't make sense");
+        let layout = Self::layout(len);
+        let ptr = alloc(layout).await.cast();
+        ArrayBuf { ptr, len }
+    }
+
+    /// Obtain a pointer to the heap allocated storage, as well as the length of items
+    ///
+    /// This does NOT leak the heap allocation. The returned pointer has the lifetime
+    /// of this `ArrayBuf`.
+    pub fn ptrlen(&self) -> (NonNull<UnsafeCell<MaybeUninit<T>>>, usize) {
+        (self.ptr, self.len)
+    }
+}
+
+impl<T> Drop for ArrayBuf<T> {
+    fn drop(&mut self) {
+        debug_assert_ne!(self.len, 0, "how did you do that");
+        let layout = Self::layout(self.len);
+        unsafe {
+            alloc::alloc::dealloc(self.ptr.as_ptr().cast(), layout);
         }
     }
 }
 
-impl<T> Drop for HeapArc<T> {
-    fn drop(&mut self) {
+//
+// FixedVec
+//
+
+/// A `Vec` with a fixed upper size
+///
+/// Semantically, [FixedVec] works basically the same as [alloc::vec::Vec], however
+/// [FixedVec] will NOT ever reallocate to increase size. In practice, this acts like
+/// a heap allocated version of heapless' Vec type.
+pub struct FixedVec<T> {
+    inner: alloc::vec::Vec<T>,
+}
+
+unsafe impl<T: Send> Send for FixedVec<T> {}
+unsafe impl<T: Sync> Sync for FixedVec<T> {}
+
+impl<T> FixedVec<T> {
+    /// Try to allocate a new FixedVec with storage for UP TO `capacity` items.
+    ///
+    /// Returns None if the allocation does not succeed immediately.
+    ///
+    /// Panics if the len is zero, or large enough that creating the layout would fail
+    pub fn try_new(capacity: usize) -> Option<Self> {
+        assert_ne!(capacity, 0, "ZST FixedVec doesn't make sense");
+        let layout = Layout::array::<T>(capacity).unwrap();
+
         unsafe {
-            let (aiptr, needs_drop) = {
-                let aitem_ptr = Active::<ArcInner<T>>::data(self.ptr).as_ptr();
-                let old = (*aitem_ptr).refcnt.fetch_sub(1, Ordering::SeqCst);
-                debug_assert_ne!(old, 0);
-                (aitem_ptr, old == 1)
+            let ptr = NonNull::new(alloc::alloc::alloc(layout))?;
+            return Some(FixedVec {
+                inner: alloc::vec::Vec::from_raw_parts(ptr.cast().as_ptr(), 0, capacity),
+            });
+        }
+    }
+
+    /// Try to allocate a new FixedVec with storage for UP TO `capacity` items.
+    ///
+    /// Will not return until allocation succeeds.
+    ///
+    /// Panics if the len is zero, or large enough that creating the layout would fail
+    pub async fn new(capacity: usize) -> Self {
+        assert_ne!(capacity, 0, "ZST FixedVec doesn't make sense");
+        let layout = Layout::array::<T>(capacity).unwrap();
+
+        unsafe {
+            let ptr = alloc(layout).await;
+            return FixedVec {
+                inner: alloc::vec::Vec::from_raw_parts(ptr.cast().as_ptr(), 0, capacity),
             };
-
-            if needs_drop {
-                drop_in_place(aiptr);
-                Active::<ArcInner<T>>::yeet(self.ptr);
-            }
         }
     }
-}
 
-impl<T> Clone for HeapArc<T> {
-    fn clone(&self) -> Self {
-        unsafe {
-            let aitem_nn = Active::<ArcInner<T>>::data(self.ptr);
-            aitem_nn.as_ref().refcnt.fetch_add(1, Ordering::SeqCst);
-
-            HeapArc {
-                ptr: self.ptr,
-                pd: PhantomData,
-            }
-        }
-    }
-}
-
-impl<T: fmt::Display> fmt::Display for HeapArc<T> {
+    /// Attempt to push an item into the fixed vec.
+    ///
+    /// Returns an error if the fixed vec is full
     #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Display::fmt(&**self, f)
+    pub fn try_push(&mut self, t: T) -> Result<(), T> {
+        if self.is_full() {
+            Err(t)
+        } else {
+            self.inner.push(t);
+            Ok(())
+        }
     }
-}
 
-impl<T: fmt::Debug> fmt::Debug for HeapArc<T> {
+    /// Attempt to push an item into the fixed vec.
+    ///
+    /// Returns an error if the slice would not fit in the capacity.
+    /// If an error is returned, the contents of the FixedVec is unchanged
     #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&**self, f)
-    }
-}
+    pub fn try_extend_from_slice(&mut self, sli: &[T]) -> Result<(), ()>
+    where
+        T: Clone,
+    {
+        let new_len = match self.inner.len().checked_add(sli.len()) {
+            Some(c) => c,
+            None => return Err(()),
+        };
 
-impl<T> fmt::Pointer for HeapArc<T> {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Pointer::fmt(&self.ptr, f)
-    }
-}
-
-// === impl HeapArray ===
-
-unsafe impl<T: Send> Send for HeapArray<T> {}
-unsafe impl<T: Sync> Sync for HeapArray<T> {}
-
-impl<T> Deref for HeapArray<T> {
-    type Target = [T];
-
-    fn deref(&self) -> &Self::Target {
-        unsafe {
-            let (nn_ptr, count) = ActiveArr::<T>::data(self.ptr);
-            from_raw_parts(nn_ptr.as_ptr(), count)
+        if new_len > self.inner.capacity() {
+            return Err(());
         }
-    }
-}
 
-impl<T> DerefMut for HeapArray<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe {
-            let (nn_ptr, count) = ActiveArr::<T>::data(self.ptr);
-            from_raw_parts_mut(nn_ptr.as_ptr(), count)
-        }
-    }
-}
-
-impl<T> HeapArray<T> {
-    // pub unsafe fn from_leaked(ptr: *mut T, count: usize) -> Self {
-    //     Self { ptr, count }
-    // }
-
-    /// Leak the contents of this box, never to be recovered (probably)
-    pub fn leak(self) -> (NonNull<T>, usize) {
-        unsafe {
-            let (nn_ptr, count) = ActiveArr::<T>::data(self.ptr);
-            forget(self);
-            (nn_ptr, count)
-        }
-    }
-}
-
-impl<T> Drop for HeapArray<T> {
-    fn drop(&mut self) {
-        unsafe {
-            let (start, count) = ActiveArr::<T>::data(self.ptr);
-            let start = start.as_ptr();
-            for i in 0..count {
-                drop_in_place(start.add(i));
-            }
-            ActiveArr::<T>::yeet(self.ptr);
-        }
-    }
-}
-
-impl<T> fmt::Debug for HeapArray<T>
-where
-    [T]: fmt::Debug,
-{
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&**self, f)
-    }
-}
-
-impl<T> fmt::Pointer for HeapArray<T> {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Pointer::fmt(&self.ptr, f)
-    }
-}
-
-// === impl HeapFixedVec ===
-
-unsafe impl<T: Send> Send for HeapFixedVec<T> {}
-unsafe impl<T: Sync> Sync for HeapFixedVec<T> {}
-
-impl<T> Deref for HeapFixedVec<T> {
-    type Target = [T];
-
-    fn deref(&self) -> &Self::Target {
-        unsafe {
-            let (nn_ptr, _count) = ActiveArr::<MaybeUninit<T>>::data(self.ptr);
-            from_raw_parts(nn_ptr.as_ptr().cast::<T>(), self.len)
-        }
-    }
-}
-
-impl<T> DerefMut for HeapFixedVec<T> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        unsafe {
-            let (nn_ptr, _count) = ActiveArr::<MaybeUninit<T>>::data(self.ptr);
-            from_raw_parts_mut(nn_ptr.as_ptr().cast::<T>(), self.len)
-        }
-    }
-}
-
-impl<T> HeapFixedVec<T> {
-    pub fn push(&mut self, item: T) -> Result<(), T> {
-        let (nn_ptr, count) = unsafe { ActiveArr::<MaybeUninit<T>>::data(self.ptr) };
-        if count == self.len {
-            return Err(item);
-        }
-        unsafe {
-            nn_ptr.as_ptr().cast::<T>().add(self.len).write(item);
-            self.len += 1;
-        }
+        self.inner.extend_from_slice(sli);
         Ok(())
     }
 
+    /// Obtain a reference to the underlying [alloc::vec::Vec]
+    #[inline]
+    pub fn as_vec(&self) -> &alloc::vec::Vec<T> {
+        &self.inner
+    }
+
+    /// Get inner mutable vec
+    ///
+    /// SAFETY:
+    ///
+    /// You must not do anything that could realloc or increase the capacity.
+    /// We want an exact upper limit.
+    ///
+    /// This would not be memory unsafe, but would violate the invariants of [FixedVec],
+    /// which is supposed to have a fixed upper size.
+    #[inline]
+    pub unsafe fn as_vec_mut(&mut self) -> &mut alloc::vec::Vec<T> {
+        &mut self.inner
+    }
+
+    /// Obtain a reference to the current contents
+    #[inline]
+    pub fn as_slice(&self) -> &[T] {
+        &self.inner
+    }
+
+    /// Obtain a mutable reference to the current contents
+    #[inline]
+    pub fn as_slice_mut(&mut self) -> &mut [T] {
+        &mut self.inner
+    }
+
+    /// Clear the FixedVec
+    #[inline]
+    pub fn clear(&mut self) {
+        self.inner.clear();
+    }
+
+    /// Is the FixedVec full?
+    #[inline]
     pub fn is_full(&self) -> bool {
-        let (_nn_ptr, count) = unsafe { ActiveArr::<MaybeUninit<T>>::data(self.ptr) };
-        count == self.len
-    }
-}
-
-impl<T> Drop for HeapFixedVec<T> {
-    fn drop(&mut self) {
-        unsafe {
-            let (start, _count) = ActiveArr::<MaybeUninit<T>>::data(self.ptr);
-            let start = start.as_ptr().cast::<T>();
-            for i in 0..self.len {
-                drop_in_place(start.add(i));
-            }
-            ActiveArr::<MaybeUninit<T>>::yeet(self.ptr);
-        }
-    }
-}
-
-impl<T> fmt::Debug for HeapFixedVec<T>
-where
-    [T]: fmt::Debug,
-{
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Debug::fmt(&**self, f)
-    }
-}
-
-impl<T> fmt::Pointer for HeapFixedVec<T> {
-    #[inline]
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt::Pointer::fmt(&self.ptr, f)
+        self.inner.len() == self.inner.capacity()
     }
 }

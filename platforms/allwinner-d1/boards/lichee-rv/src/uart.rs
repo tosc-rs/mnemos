@@ -17,6 +17,7 @@ use kernel::{
     },
     drivers::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     maitake::sync::WaitCell,
+    mnemos_alloc::containers::Box,
     registry::Message,
     Kernel,
 };
@@ -170,19 +171,19 @@ impl D1Uart {
     ) -> Result<(), ()> {
         assert_eq!(tx_channel.channel_index(), 0);
 
-        let (kprod, kcons) = KChannel::<Message<SimpleSerialService>>::new_async(k, 4)
+        let (kprod, kcons) = KChannel::<Message<SimpleSerialService>>::new_async(4)
             .await
             .split();
-        let (fifo_a, fifo_b) = new_bidi_channel(k.heap(), cap_in, cap_out).await;
+        let (fifo_a, fifo_b) = new_bidi_channel(cap_in, cap_out).await;
 
         let _server_hdl = k.spawn(D1Uart::serial_server(fifo_b, kcons)).await;
 
         let (prod, cons) = fifo_a.split();
         let _send_hdl = k.spawn(D1Uart::sending(cons, tx_channel)).await;
 
-        let boxed_prod = k.heap().allocate(prod).await;
-        let leaked_prod = boxed_prod.leak();
-        let old = UART_RX.swap(leaked_prod.as_ptr(), Ordering::AcqRel);
+        let boxed_prod = Box::new(prod).await;
+        let leaked_prod = Box::into_raw(boxed_prod);
+        let old = UART_RX.swap(leaked_prod, Ordering::AcqRel);
         assert_eq!(old, null_mut());
 
         k.with_registry(|reg| reg.register_konly::<SimpleSerialService>(&kprod))

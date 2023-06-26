@@ -12,7 +12,7 @@ use drivers::dmac::{
 use kernel::{
     comms::{kchannel::KChannel, oneshot::Reusable},
     maitake::sync::WaitCell,
-    mnemos_alloc::containers::HeapArray,
+    mnemos_alloc::containers::FixedVec,
     registry::{uuid, Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo, Uuid},
     Kernel,
 };
@@ -98,7 +98,7 @@ pub struct SpiSenderServer;
 
 impl SpiSenderServer {
     pub async fn register(kernel: &'static Kernel, queued: usize) -> Result<(), ()> {
-        let (kprod, kcons) = KChannel::new_async(kernel, queued).await.split();
+        let (kprod, kcons) = KChannel::new_async(queued).await.split();
 
         kernel
             .spawn(async move {
@@ -115,18 +115,20 @@ impl SpiSenderServer {
                     let Message { msg, reply } = msg;
                     let SpiSenderRequest::Send(ref payload) = msg.body;
 
+                    let len = payload.as_slice().len();
+
                     spi.spi_bcc.modify(|_r, w| {
                         // "Single Mode Transmit Counter" - the number of bytes to send
-                        w.stc().variant(payload.len() as u32);
+                        w.stc().variant(len as u32);
                         w
                     });
                     spi.spi_mbc.modify(|_r, w| {
                         // Master Burst Counter
-                        w.mbc().variant(payload.len() as u32);
+                        w.mbc().variant(len as u32);
                         w
                     });
                     spi.spi_mtc.modify(|_r, w| {
-                        w.mwtc().variant(payload.len() as u32);
+                        w.mwtc().variant(len as u32);
                         w
                     });
                     // Start transfer
@@ -136,9 +138,9 @@ impl SpiSenderServer {
                     });
 
                     let d_cfg = DescriptorConfig {
-                        source: payload.as_ptr().cast(),
+                        source: payload.as_slice().as_ptr().cast(),
                         destination: txd_ptr,
-                        byte_counter: payload.len(),
+                        byte_counter: len,
                         link: None,
                         wait_clock_cycles: 0,
                         bmode: BModeSel::Normal,
@@ -188,11 +190,11 @@ impl SpiSenderServer {
 }
 
 pub enum SpiSenderRequest {
-    Send(HeapArray<u8>),
+    Send(FixedVec<u8>),
 }
 
 pub enum SpiSenderResponse {
-    Sent(HeapArray<u8>),
+    Sent(FixedVec<u8>),
 }
 
 pub enum SpiSenderError {
@@ -210,14 +212,11 @@ impl SpiSenderClient {
 
         Ok(SpiSenderClient {
             hdl,
-            osc: Reusable::new_async(kernel).await,
+            osc: Reusable::new_async().await,
         })
     }
 
-    pub async fn send_wait(
-        &mut self,
-        data: HeapArray<u8>,
-    ) -> Result<HeapArray<u8>, SpiSenderError> {
+    pub async fn send_wait(&mut self, data: FixedVec<u8>) -> Result<FixedVec<u8>, SpiSenderError> {
         self.hdl
             .send(
                 SpiSenderRequest::Send(data),

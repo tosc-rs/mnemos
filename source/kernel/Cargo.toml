@@ -67,6 +67,7 @@ optional = true
 [dependencies.maitake]
 version = "0.1.0"
 default-features = false
+features = ["alloc"]
 
 [dependencies.mycelium-util]
 version = "0.1.0"

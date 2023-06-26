@@ -12,18 +12,19 @@
 //! outside the kernel (or are required by any kernel services), as well as starting and running
 //! the kernel itself.
 //!
+//! ## Setting up the Allocator
+//!
+//! Before creating the kernel, a [MnemosAlloc][mnemos_alloc::heap::MnemosAlloc] instance must be
+//! registered as a [GlobalAlloc][core::alloc::GlobalAlloc], and if the
+//! [UnderlyingAllocator][mnemos_alloc::heap::UnderlyingAllocator] requires initialization,
+//! it must occur before creating the kernel.
+//!
+//! The kernel will be allocated using the provided allocator.
+//!
 //! ## Creating the kernel
 //!
-//! To create the kernel, you give it a region of memory (as a `*mut u8` + `usize`), by calling
-//! [`Kernel::new()`].
-//!
-//! At this point, the system is in "blocking" mode.
-//!
-//! Using the given region of memory, the kernel bootstraps itself, and creates the following:
-//!
-//! * An async executor, intended for "kernel services"
-//! * A kernel service discovery registry
-//! * An async heap allocator, intended for use by kernel services
+//! The allocator and any kernel settings are provided to the kernel constructor. The kernel
+//! will allocate itself, and return an owned kernel entity.
 //!
 //! After creation, the executor is *not* running yet.
 //!
@@ -70,6 +71,8 @@
 #![allow(clippy::missing_safety_doc)]
 #![feature(impl_trait_in_assoc_type)]
 
+extern crate alloc;
+
 pub mod comms;
 pub mod drivers;
 pub(crate) mod fmt;
@@ -79,22 +82,23 @@ pub mod registry;
 pub mod trace;
 
 use abi::{
-    bbqueue_ipc::{
-        framed::{FrameConsumer, FrameProducer},
-        BBBuffer,
-    },
+    bbqueue_ipc::BBBuffer,
     syscall::{KernelResponse, UserRequest},
 };
 use comms::{bbq::BidiHandle, kchannel::KChannel};
+use core::{future::Future, ptr::NonNull};
 pub use maitake;
 use maitake::{
-    scheduler::{LocalStaticScheduler, TaskStub},
+    scheduler::LocalScheduler,
     sync::Mutex,
-    task::{JoinHandle, Storage, Task as MaitakeTask},
+    task::{BoxStorage, JoinHandle, Storage},
     time::{Duration, Sleep, Timeout, Timer},
 };
 pub use mnemos_alloc;
-use mnemos_alloc::{containers::HeapBox, heap::AHeap};
+use mnemos_alloc::{
+    containers::Box,
+    heap::{MnemosAlloc, UnderlyingAllocator},
+};
 use registry::Registry;
 
 /// Shim to handle tracing v0.1 vs v0.2
@@ -132,19 +136,13 @@ pub(crate) mod tracing {
     pub use tracing_02::*;
 }
 
-use crate::tracing::info;
-
 pub struct Rings {
     pub u2k: NonNull<BBBuffer>,
     pub k2u: NonNull<BBBuffer>,
 }
 
 pub struct KernelSettings {
-    pub heap_start: *mut u8,
-    pub heap_size: usize,
     pub max_drivers: usize,
-    pub k2u_size: usize,
-    pub u2k_size: usize,
     pub timer_granularity: Duration,
 }
 
@@ -159,96 +157,48 @@ pub struct Kernel {
     inner: KernelInner,
     /// The run-time driver registry, accessed via an async Mutex
     registry: Mutex<Registry>,
-    heap: NonNull<AHeap>,
 }
 
 unsafe impl Sync for Kernel {}
 
 pub struct KernelInner {
-    u2k_ring: BBBuffer,
-    k2u_ring: BBBuffer,
     /// MnemOS currently only targets single-threaded platforms, so we can use a
     /// `maitake` scheduler capable of running `!Send` futures.
-    scheduler: LocalStaticScheduler,
+    scheduler: LocalScheduler,
 
     /// Maitake timer wheel.
     timer: Timer,
 }
 
 impl Kernel {
-    pub unsafe fn new(settings: KernelSettings) -> Result<HeapBox<Self>, &'static str> {
-        info!(
-            start = ?settings.heap_start,
-            size = settings.heap_size,
-            "Initializing heap"
-        );
-        let (nn_heap, mut guard) = AHeap::bootstrap(settings.heap_start, settings.heap_size)
-            .map_err(|_| "failed to initialize heap")?;
+    /// Create a new kernel with the given allocator and settings.
+    ///
+    /// The allocator MUST be initialized if required, and be ready to allocate
+    /// data.
+    pub unsafe fn new<U: UnderlyingAllocator>(
+        settings: KernelSettings,
+        _alloc: &'static MnemosAlloc<U>,
+    ) -> Result<Box<Self>, &'static str> {
+        let registry = registry::Registry::new(settings.max_drivers);
 
-        let registry = registry::Registry::new(&mut guard, settings.max_drivers);
-        let (nn_u2k_buf, u2k_len) = guard
-            .alloc_box_array_with(|| 0, settings.u2k_size)
-            .map_err(|_| "failed to allocate u2k ring buf")?
-            .leak();
-        let (nn_k2u_buf, k2u_len) = guard
-            .alloc_box_array_with(|| 0, settings.k2u_size)
-            .map_err(|_| "failed to allocate k2u ring buf")?
-            .leak();
-        let u2k_ring = BBBuffer::new();
-        let k2u_ring = BBBuffer::new();
-
-        // SAFETY: The data buffers live in a heap allocation, which have a stable
-        // location. Therefore it is acceptable to initialize the rings using these
-        // buffers, then moving the HANDLES into the KernelInner structure.
-        //
-        // The BBBuffers themselves ONLY have a stable address AFTER they have been
-        // written into the static `inner` field. DO NOT create producers/consumers
-        // until that has happened.
-        u2k_ring.initialize(nn_u2k_buf.as_ptr(), u2k_len);
-        k2u_ring.initialize(nn_k2u_buf.as_ptr(), k2u_len);
-
-        // Safety: We only use the static stub once
-        let stub: &'static TaskStub = guard
-            .alloc_box(TaskStub::new())
-            .map_err(|_| "failed to allocate task stub")?
-            .leak()
-            .as_ref();
-        let scheduler = LocalStaticScheduler::new_with_static_stub(stub);
-        let timer = Timer::new(settings.timer_granularity);
+        let scheduler = LocalScheduler::new();
 
         let inner = KernelInner {
-            u2k_ring,
-            k2u_ring,
             scheduler,
-            timer,
+            timer: Timer::new(settings.timer_granularity),
         };
 
-        let new_kernel = guard
-            .alloc_box(Kernel {
-                inner,
-                registry: Mutex::new(registry),
-                heap: nn_heap,
-            })
-            .map_err(|_| "failed to allocate new kernel box")?;
+        let new_kernel = Box::try_new(Kernel {
+            inner,
+            registry: Mutex::new(registry),
+        })
+        .map_err(|_| "Kernel allocation failed.")?;
 
         Ok(new_kernel)
     }
 
     fn inner(&'static self) -> &'static KernelInner {
         &self.inner
-    }
-
-    pub fn rings(&'static self) -> Rings {
-        unsafe {
-            Rings {
-                u2k: NonNull::new_unchecked(&self.inner.u2k_ring as *const _ as *mut _),
-                k2u: NonNull::new_unchecked(&self.inner.k2u_ring as *const _ as *mut _),
-            }
-        }
-    }
-
-    pub fn heap(&'static self) -> &'static AHeap {
-        unsafe { self.heap.as_ref() }
     }
 
     #[inline]
@@ -258,42 +208,8 @@ impl Kernel {
     }
 
     pub fn tick(&'static self) -> maitake::scheduler::Tick {
-        // Process heap allocations
-        self.heap().poll();
-
-        // process mailbox messages
         let inner = self.inner();
-        let u2k_buf: *mut BBBuffer = &self.inner.u2k_ring as *const _ as *mut _;
-        let k2u_buf: *mut BBBuffer = &self.inner.k2u_ring as *const _ as *mut _;
-        let u2k: FrameConsumer<'static> = unsafe { BBBuffer::take_framed_consumer(u2k_buf) };
-        let _k2u: FrameProducer<'static> = unsafe { BBBuffer::take_framed_producer(k2u_buf) };
-
-        #[allow(unreachable_code)]
-        if let Some(mut _reg) = self.registry.try_lock() {
-            // Incoming messages
-            while let Some(msg) = u2k.read() {
-                match postcard::from_bytes::<UserRequest>(&msg) {
-                    Ok(_req) => {
-                        // let kind = req.driver_kind();
-                        // if let Some(drv) = inner_mut.drivers.iter().find(|drv| drv.kind == kind) {
-                        //     drv.queue
-                        //         .enqueue_sync(Message {
-                        //             request: req,
-                        //             response: inner.user_reply.clone(),
-                        //         })
-                        //         .map_err(drop)
-                        //         .unwrap();
-                        // }
-                        todo!("Driver registry");
-                    }
-                    Err(_) => panic!(),
-                }
-                msg.release();
-            }
-        }
-
         inner.scheduler.tick()
-
         // TODO: Send time to userspace?
     }
 
@@ -331,31 +247,17 @@ impl Kernel {
     where
         F: Future + 'static,
     {
-        let task = self.new_task(fut);
-        let mut guard = self
-            .heap()
-            .lock()
-            .map_err(|_| "kernel heap already locked")?;
-        let task_box = guard
-            .alloc_box(task)
-            .map_err(|_| "could not allocate task storage")?;
-        Ok(self.spawn_allocated(task_box))
-    }
-
-    pub fn new_task<F>(&'static self, fut: F) -> Task<F>
-    where
-        F: Future + 'static,
-    {
-        Task(MaitakeTask::new(fut))
+        Ok(self.inner.scheduler.spawn(fut))
     }
 
     pub async fn spawn<F>(&'static self, fut: F) -> JoinHandle<F::Output>
     where
         F: Future + 'static,
     {
-        let task = Task(MaitakeTask::new(fut));
-        let atask = self.heap().allocate(task).await;
-        self.spawn_allocated(atask)
+        let bx = Box::new(maitake::task::Task::new(fut))
+            .await
+            .into_alloc_box();
+        self.spawn_allocated(bx)
     }
 
     pub async fn with_registry<F, R>(&'static self, f: F) -> R
@@ -366,11 +268,14 @@ impl Kernel {
         f(&mut guard)
     }
 
-    pub fn spawn_allocated<F>(&'static self, task: HeapBox<Task<F>>) -> JoinHandle<F::Output>
+    pub fn spawn_allocated<F>(
+        &'static self,
+        task: <BoxStorage as Storage<LocalScheduler, F>>::StoredTask,
+    ) -> JoinHandle<F::Output>
     where
         F: Future + 'static,
     {
-        self.inner.scheduler.spawn_allocated::<F, HBStorage>(task)
+        self.inner.scheduler.spawn_allocated(task)
     }
 
     /// Returns a [`Sleep`] future that sleeps for the specified [`Duration`].
@@ -384,30 +289,5 @@ impl Kernel {
     #[inline]
     pub fn timeout<F: Future>(&'static self, duration: Duration, f: F) -> Timeout<'static, F> {
         self.inner.timer.timeout(duration, f)
-    }
-}
-
-// TODO: De-dupe with userspace?
-use core::{future::Future, ptr::NonNull};
-
-#[repr(transparent)]
-pub struct Task<F: Future + 'static>(MaitakeTask<&'static LocalStaticScheduler, F, HBStorage>);
-
-struct HBStorage;
-
-impl<F: Future + 'static> Storage<&'static LocalStaticScheduler, F> for HBStorage {
-    type StoredTask = HeapBox<Task<F>>;
-
-    fn into_raw(
-        task: HeapBox<Task<F>>,
-    ) -> NonNull<MaitakeTask<&'static LocalStaticScheduler, F, Self>> {
-        task.leak()
-            .cast::<MaitakeTask<&'static LocalStaticScheduler, F, HBStorage>>()
-    }
-
-    fn from_raw(
-        ptr: NonNull<MaitakeTask<&'static LocalStaticScheduler, F, Self>>,
-    ) -> HeapBox<Task<F>> {
-        unsafe { HeapBox::from_leaked(ptr.cast::<Task<F>>()) }
     }
 }
