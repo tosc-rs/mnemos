@@ -230,6 +230,14 @@ impl<T> ArrayBuf<T> {
     pub fn ptrlen(&self) -> (NonNull<UnsafeCell<MaybeUninit<T>>>, usize) {
         (self.ptr, self.len)
     }
+
+    /// Returns the length of the `ArrayBuf`.
+    #[inline]
+    #[must_use]
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.len
+    }
 }
 
 impl<T> Drop for ArrayBuf<T> {
@@ -238,6 +246,31 @@ impl<T> Drop for ArrayBuf<T> {
         let layout = Self::layout(self.len);
         unsafe {
             alloc::alloc::dealloc(self.ptr.as_ptr().cast(), layout);
+        }
+    }
+}
+
+impl<T> Deref for ArrayBuf<T> {
+    type Target = [UnsafeCell<MaybeUninit<T>>];
+    fn deref(&self) -> &Self::Target {
+        unsafe {
+            // Safety: the `ArrayBuf` logically owns `self.ptr`, and it is only
+            // deallocated when the `ArrayBuf` is dropped. The `ArrayBuf` was
+            // allocated with a layout of `self.len` `T`s, and thus the
+            // constructed slice should not exceed the bounds of the allocation.
+            core::slice::from_raw_parts(self.ptr.as_ptr(), self.len)
+        }
+    }
+}
+
+impl<T> DerefMut for ArrayBuf<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe {
+            // Safety: the `ArrayBuf` logically owns `self.ptr`, and it is only
+            // deallocated when the `ArrayBuf` is dropped. The `ArrayBuf` was
+            // allocated with a layout of `self.len` `T`s, and thus the
+            // constructed slice should not exceed the bounds of the allocation.
+            core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len)
         }
     }
 }

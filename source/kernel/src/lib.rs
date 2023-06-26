@@ -73,6 +73,7 @@
 
 extern crate alloc;
 
+pub mod buf;
 pub mod comms;
 pub mod drivers;
 pub(crate) mod fmt;
