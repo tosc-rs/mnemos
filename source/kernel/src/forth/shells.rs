@@ -19,7 +19,7 @@ use profont::PROFONT_12_POINT;
 
 // ----
 
-// .instrument(tracing::info_span!("Update clock")),
+#[tracing::instrument(skip(k))]
 pub async fn graphical_shell_mono(
     k: &'static Kernel,
     disp_width_px: u32,

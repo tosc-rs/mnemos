@@ -78,6 +78,7 @@ pub mod drivers;
 pub(crate) mod fmt;
 pub mod forth;
 pub mod registry;
+pub mod servers;
 #[cfg(feature = "tracing-02")]
 pub mod trace;
 

@@ -8,14 +8,15 @@ use melpomene::{
 };
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
-    drivers::serial_mux::{SerialMuxClient, SerialMuxServer},
+    drivers::serial_mux::{SerialMuxServer, WellKnown},
     forth::shells::graphical_shell_mono,
+    servers::{sermux_hello, sermux_loopback, SermuxHelloSettings, SermuxLoopbackSettings},
     Kernel, KernelSettings,
 };
 use tokio::{
     task,
     time::{self, Duration},
-}; // fuse()
+};
 
 use tracing::Instrument;
 const DISPLAY_WIDTH_PX: u32 = 400;
@@ -112,76 +113,29 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     .unwrap();
 
     // Spawn the graphics driver
-    k.initialize(
-        async {
-            tracing::debug!(
-                "initializing SimDisplay server ({DISPLAY_WIDTH_PX}x{DISPLAY_HEIGHT_PX})..."
-            );
-            SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
-                .await
-                .unwrap();
-            tracing::info!("SimDisplayServer initialized!");
-        }
-        .instrument(tracing::info_span!("SimDisplayServer")),
-    )
+    k.initialize(async move {
+        SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
+            .await
+            .unwrap();
+    })
     .unwrap();
 
     // Spawn a loopback port
-    k.initialize({
-        const PORT: u16 = 0;
-        async {
-            tracing::debug!("initializing SerMux loopback...");
-            let mut mux_hdl = SerialMuxClient::from_registry(k).await;
-            let p0 = mux_hdl.open_port(PORT, 1024).await.unwrap();
-            drop(mux_hdl);
-            tracing::info!("SerMux Loopback running!");
-
-            loop {
-                let rgr = p0.consumer().read_grant().await;
-                let len = rgr.len();
-                tracing::trace!("Loopback read {len}B");
-                p0.send(&rgr).await;
-                rgr.release(len);
-            }
-        }
-        .instrument(tracing::info_span!("Loopback", port = PORT))
-    })
-    .unwrap();
+    let loopback_settings = SermuxLoopbackSettings::default();
+    k.initialize(sermux_loopback(k, loopback_settings)).unwrap();
 
     // Spawn a hello port
-    k.initialize({
-        const PORT: u16 = 1;
-        async {
-            tracing::debug!("Starting SerMux 'hello world'...");
-            let mut mux_hdl = SerialMuxClient::from_registry(k).await;
-            let p1 = mux_hdl.open_port(PORT, 1024).await.unwrap();
-            drop(mux_hdl);
-            tracing::info!("SerMux 'hello world' running!");
-
-            loop {
-                k.sleep(Duration::from_secs(1)).await;
-                p1.send(b"hello\r\n").await;
-            }
-        }
-        .instrument(tracing::info_span!("Hello Loop", port = PORT))
-    })
-    .unwrap();
+    let hello_settings = SermuxHelloSettings::default();
+    k.initialize(sermux_hello(k, hello_settings)).unwrap();
 
     // Spawn a graphical shell
-    k.initialize(
-        async move {
-            tracing::debug!("Starting graphics console...");
-            graphical_shell_mono(
-                k,   // disp_width_px
-                400, // disp_height_px
-                240, // port
-                2,   // capacity
-                1024,
-            )
-            .await;
-        }
-        .instrument(tracing::info_span!("Graphics Console")),
-    )
+    k.initialize(graphical_shell_mono(
+        k,
+        DISPLAY_WIDTH_PX,
+        DISPLAY_HEIGHT_PX,
+        WellKnown::PsuedoKeyboard as u16,
+        1024, // capacity
+    ))
     .unwrap();
 
     loop {
