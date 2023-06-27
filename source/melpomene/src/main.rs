@@ -158,7 +158,10 @@ async fn kernel_entry(opts: MelpomeneOptions) {
             tracing::trace!("waiting for an interrupt...");
 
             // Cap out at 100ms, just in case sim services aren't using the IRQ
-            let amount = turn.ticks_to_next_deadline().unwrap_or(100 * 1000); // 1 ticks per us, 1000 us per ms, 100ms sleep
+
+            // 1 ticks per us, 1000 us per ms, 100ms sleep
+            const CAP: u64 = 100 * 1000;
+            let amount = turn.ticks_to_next_deadline().unwrap_or(CAP);
             tracing::trace!("next timer expires in {amount:?}us");
             // wait for an "interrupt"
             futures::select! {

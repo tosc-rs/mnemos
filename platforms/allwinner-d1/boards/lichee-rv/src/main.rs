@@ -13,15 +13,18 @@ use drivers::{
     Ram,
 };
 use kernel::{
-    drivers::serial_mux::{PortHandle, RegistrationError, SerialMuxServer},
+    drivers::serial_mux::SerialMuxServer,
     mnemos_alloc::{
         containers::{Box, FixedVec},
         heap::{MnemosAlloc, SingleThreadedLinkedListAllocator},
     },
+    servers::{sermux_hello, sermux_loopback, SermuxHelloSettings, SermuxLoopbackSettings},
     trace, Kernel, KernelSettings,
 };
 use spim::{kernel_spim1, SpiSenderClient, SpiSenderServer, SPI1_TX_DONE};
+use tracing::Instrument;
 use uart::D1Uart;
+
 mod spim;
 mod uart;
 
@@ -196,58 +199,41 @@ fn main() -> ! {
     })
     .unwrap();
 
-    // Initialize SerialMux
-    let mux_done = k
-        .initialize(async move {
-            loop {
-                // Now, right now this is a little awkward, but what I'm doing here is spawning
-                // a new virtual mux, and configuring it with:
-                // * Up to 16 virtual ports max
-                // * Framed messages up to 512 bytes max each
-                match SerialMuxServer::register(k, 16, 512).await {
-                    Ok(_) => break,
-                    Err(RegistrationError::SerialPortNotFound) => {
-                        // Uart probably isn't registered yet. Try again in a bit
-                        k.sleep(Duration::from_millis(10)).await;
-                    }
-                    Err(e) => {
-                        panic!("uhhhh {e:?}");
-                    }
-                }
-            }
-        })
-        .unwrap();
+    // Initialize the SerialMuxServer
+    k.initialize({
+        const PORTS: usize = 16;
+        const FRAME_SIZE: usize = 512;
+        async {
+            // * Up to 16 virtual ports max
+            // * Framed messages up to 512 bytes max each
+            tracing::debug!("initializing SerialMuxServer...");
+            SerialMuxServer::register(k, PORTS, FRAME_SIZE)
+                .await
+                .unwrap();
+            tracing::info!("SerialMuxServer initialized!");
+        }
+        .instrument(tracing::info_span!(
+            "SerialMuxServer",
+            ports = PORTS,
+            frame_size = FRAME_SIZE
+        ))
+    })
+    .unwrap();
 
     // initialize tracing
     k.initialize(async move {
-        mux_done.await.unwrap();
         COLLECTOR.start(k).await;
         trace::info!("started tracing");
     })
     .unwrap();
 
-    // Loopback on virtual port zero
-    k.initialize(async move {
-        let hdl = PortHandle::open(k, 0, 1024).await.unwrap();
+    // Spawn a loopback port
+    let loopback_settings = SermuxLoopbackSettings::default();
+    k.initialize(sermux_loopback(k, loopback_settings)).unwrap();
 
-        loop {
-            let rx = hdl.consumer().read_grant().await;
-            let all_len = rx.len();
-            hdl.send(&rx).await;
-            rx.release(all_len);
-        }
-    })
-    .unwrap();
-
-    k.initialize(async move {
-        let hdl = PortHandle::open(k, 1, 1024).await.unwrap();
-
-        loop {
-            hdl.send(b"Hello, world!\r\n").await;
-            k.sleep(Duration::from_secs(1)).await;
-        }
-    })
-    .unwrap();
+    // Spawn a hello port
+    let hello_settings = SermuxHelloSettings::default();
+    k.initialize(sermux_hello(k, hello_settings)).unwrap();
 
     // NOTE: if you change the timer frequency, make sure you update
     // initialize_kernel() below to correct the kernel timer wheel
@@ -291,11 +277,16 @@ fn main() -> ! {
         if turn.expired == 0 && !tick.has_remaining {
             let wfi_start = timer0.current_value();
 
+            tracing::trace!("waiting for an interrupt...");
+
             // TODO(AJM): Sometimes there is no "next" in the timer wheel, even though there should
             // be. Don't take lack of timer wheel presence as the ONLY heuristic of whether we
             // should just wait for SOME interrupt to occur. For now, force a max sleep of 100ms
             // which is still probably wrong.
-            let amount = turn.ticks_to_next_deadline().unwrap_or(100 * 1000 * 3); // 3 ticks per us, 1000 us per ms, 100ms sleep
+
+            // 3 ticks per us, 1000 us per ms, 100ms sleep
+            const CAP: u64 = 100 * 1000;
+            let amount = turn.ticks_to_next_deadline().unwrap_or(CAP);
 
             // Don't sleep for too long until james figures out wrapping timers
             let amount = amount.min(0x4000_0000) as u32;

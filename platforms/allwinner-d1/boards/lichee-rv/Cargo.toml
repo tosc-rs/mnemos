@@ -25,3 +25,10 @@ features = ["async-await"]
 path = "../../../../source/kernel"
 default-features = false
 features = ["tracing-02"]
+
+[dependencies.tracing]
+package = "tracing"
+git = "https://github.com/tokio-rs/tracing"
+# branch = "master"
+features = ["attributes"]
+default-features = false
