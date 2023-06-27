@@ -31,6 +31,9 @@ impl Default for SermuxLoopbackSettings {
     }
 }
 
+/// Spawns a loopback server
+///
+/// Listens to all input from the given port, and echos it back
 #[tracing::instrument(skip(kernel))]
 pub async fn sermux_loopback(kernel: &'static Kernel, settings: SermuxLoopbackSettings) {
     let SermuxLoopbackSettings { port, buffer_size } = settings;
@@ -51,6 +54,7 @@ pub async fn sermux_loopback(kernel: &'static Kernel, settings: SermuxLoopbackSe
 // Sermux Hello
 //
 
+/// Hello Server Settings
 #[derive(Debug, Clone)]
 pub struct SermuxHelloSettings {
     /// Port number. Defaults to [WellKnown::Loopback]
@@ -74,6 +78,9 @@ impl Default for SermuxHelloSettings {
     }
 }
 
+/// Spawns a hello server
+///
+/// Periodically prints a message as a sign of life
 #[tracing::instrument(skip(kernel))]
 pub async fn sermux_hello(kernel: &'static Kernel, settings: SermuxHelloSettings) {
     let SermuxHelloSettings {
