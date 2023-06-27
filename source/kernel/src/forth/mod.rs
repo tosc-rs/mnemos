@@ -56,6 +56,15 @@ impl Forth {
         params: Params,
     ) -> Result<(Self, bbq::BidiHandle), &'static str> {
         let (stdio, streams) = params.alloc_stdio().await;
+        let forth = Self::new_with_stdio(kernel, params, stdio).await?;
+        Ok((forth, streams))
+    }
+
+    pub async fn new_with_stdio(
+        kernel: &'static Kernel,
+        params: Params,
+        stdio: bbq::BidiHandle,
+    ) -> Result<Self, &'static str> {
         let bufs = params.alloc_bufs().await;
         let dict = params.alloc_dict().await?;
 
@@ -88,7 +97,7 @@ impl Forth {
             stdio,
             _bufs: bufs,
         };
-        Ok((forth, streams))
+        Ok(forth)
     }
 
     #[tracing::instrument(
