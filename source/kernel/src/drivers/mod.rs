@@ -16,6 +16,7 @@
 //!       other services declared here in the kernel. For an example of this, see
 //!       the [serial_mux] module.
 
+pub mod forth_spawnulator;
 pub mod emb_display;
 pub mod serial_mux;
 pub mod simple_serial;

@@ -17,6 +17,8 @@ use futures::FutureExt;
 use input_mgr::RingLine;
 use profont::PROFONT_12_POINT;
 
+use super::Forth;
+
 // ----
 
 // .instrument(tracing::info_span!("Update clock")),
@@ -86,10 +88,11 @@ pub async fn graphical_shell_mono(
     // Leave out 4 for the implicit margin of two characters on each gutter.
     let mut rline = RingLine::<16, 46>::new();
 
-    let tid0_future = k.initialize_forth_tid0(Default::default());
-    let tid0 = tid0_future
-        .await
-        .expect("TID 0 initialization task must succeed");
+    let (task, tid_io) = Forth::new(k, Default::default()).await
+        .expect("Forth spawning must succeed");
+
+    // Spawn the forth task
+    k.spawn(task.run()).await;
 
     loop {
         // Wait until there is a frame buffer ready. There wouldn't be if we've spammed frames
@@ -121,9 +124,9 @@ pub async fn graphical_shell_mono(
                         Err(_) if b == b'\n' => {
                             let needed = rline.local_editing_len();
                             if needed != 0 {
-                                let mut tid0_wgr = tid0.producer().send_grant_exact(needed).await;
-                                rline.copy_local_editing_to(&mut tid0_wgr).unwrap();
-                                tid0_wgr.commit(needed);
+                                let mut tid_io_wgr = tid_io.producer().send_grant_exact(needed).await;
+                                rline.copy_local_editing_to(&mut tid_io_wgr).unwrap();
+                                tid_io_wgr.commit(needed);
                                 rline.submit_local_editing();
                                 break 'input;
                             }
@@ -136,9 +139,9 @@ pub async fn graphical_shell_mono(
 
                 rgr.release(used);
             },
-            output = tid0.consumer().read_grant().fuse() => {
+            output = tid_io.consumer().read_grant().fuse() => {
                 let len = output.len();
-                tracing::trace!(len, "Received output from TID0");
+                tracing::trace!(len, "Received output from tid_io");
                 for &b in output.iter() {
                     // TODO(eliza): what if this errors lol
                     if b == b'\n' {

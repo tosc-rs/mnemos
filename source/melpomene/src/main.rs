@@ -8,7 +8,10 @@ use melpomene::{
 };
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
-    drivers::serial_mux::{SerialMuxClient, SerialMuxServer},
+    drivers::{
+        forth_spawnulator::SpawnulatorServer,
+        serial_mux::{SerialMuxClient, SerialMuxServer},
+    },
     forth::shells::graphical_shell_mono,
     Kernel, KernelSettings,
 };
@@ -183,6 +186,9 @@ async fn kernel_entry(opts: MelpomeneOptions) {
         .instrument(tracing::info_span!("Graphics Console")),
     )
     .unwrap();
+
+    // Spawn the spawnulator
+    k.initialize(SpawnulatorServer::register(k, 16)).unwrap();
 
     loop {
         // Tick the scheduler
