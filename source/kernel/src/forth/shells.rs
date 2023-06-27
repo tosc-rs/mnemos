@@ -19,9 +19,33 @@ use profont::PROFONT_12_POINT;
 
 use super::Forth;
 
-// ----
+pub async fn sermux_shell(k: &'static Kernel, port: u16, capacity: usize) {
+    let port = PortHandle::open(k, port, capacity).await.unwrap();
+    let (task, tid_io) = Forth::new(k, Default::default())
+        .await
+        .expect("Forth spawning must succeed");
+    k.spawn(task.run()).await;
+    k.spawn(async move {
+        loop {
+            futures::select_biased! {
+                rgr = port.consumer().read_grant().fuse() => {
+                    let needed = rgr.len();
+                    let mut tid_io_wgr = tid_io.producer().send_grant_exact(needed).await;
+                    tid_io_wgr.copy_from_slice(&rgr);
+                    tid_io_wgr.commit(needed);
+                    rgr.release(needed);
+                },
+                output = tid_io.consumer().read_grant().fuse() => {
+                    let needed = output.len();
+                    port.send(&output).await;
+                    output.release(needed);
+                }
+            }
+        }
+    })
+    .await;
+}
 
-// .instrument(tracing::info_span!("Update clock")),
 pub async fn graphical_shell_mono(
     k: &'static Kernel,
     disp_width_px: u32,

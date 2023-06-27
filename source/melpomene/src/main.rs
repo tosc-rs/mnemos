@@ -12,7 +12,7 @@ use mnemos_kernel::{
         forth_spawnulator::SpawnulatorServer,
         serial_mux::{SerialMuxClient, SerialMuxServer},
     },
-    forth::shells::graphical_shell_mono,
+    forth::shells::{graphical_shell_mono, sermux_shell},
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -152,23 +152,24 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     .unwrap();
 
     // Spawn a hello port
-    k.initialize({
-        const PORT: u16 = 1;
-        async {
-            tracing::debug!("Starting SerMux 'hello world'...");
-            let mut mux_hdl = SerialMuxClient::from_registry(k).await;
-            let p1 = mux_hdl.open_port(PORT, 1024).await.unwrap();
-            drop(mux_hdl);
-            tracing::info!("SerMux 'hello world' running!");
+    // k.initialize({
+    //     const PORT: u16 = 1;
+    //     async {
+    //         tracing::debug!("Starting SerMux 'hello world'...");
+    //         let mut mux_hdl = SerialMuxClient::from_registry(k).await;
+    //         let p1 = mux_hdl.open_port(PORT, 1024).await.unwrap();
+    //         drop(mux_hdl);
+    //         tracing::info!("SerMux 'hello world' running!");
 
-            loop {
-                k.sleep(Duration::from_secs(1)).await;
-                p1.send(b"hello\r\n").await;
-            }
-        }
-        .instrument(tracing::info_span!("Hello Loop", port = PORT))
-    })
-    .unwrap();
+    //         loop {
+    //             k.sleep(Duration::from_secs(1)).await;
+    //             p1.send(b"hello\r\n").await;
+    //         }
+    //     }
+    //     .instrument(tracing::info_span!("Hello Loop", port = PORT))
+    // })
+    // .unwrap();
+    k.initialize(sermux_shell(k, 1, 1024)).unwrap();
 
     // Spawn a graphical shell
     k.initialize(
