@@ -88,7 +88,8 @@ pub async fn graphical_shell_mono(
     // Leave out 4 for the implicit margin of two characters on each gutter.
     let mut rline = RingLine::<16, 46>::new();
 
-    let (task, tid_io) = Forth::new(k, Default::default()).await
+    let (task, tid_io) = Forth::new(k, Default::default())
+        .await
         .expect("Forth spawning must succeed");
 
     // Spawn the forth task

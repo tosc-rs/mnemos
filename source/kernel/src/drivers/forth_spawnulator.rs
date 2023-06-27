@@ -112,11 +112,11 @@ impl SpawnulatorClient {
             Ok(_) => {
                 tracing::trace!(task.id = id, "enqueued");
                 Ok(())
-            },
+            }
             Err(_) => {
                 tracing::info!(task.id = id, "spawnulator task seems to be dead");
                 Err(forth3::Error::InternalError)
-            },
+            }
         }
     }
 }
@@ -135,10 +135,11 @@ impl SpawnulatorServer {
     /// Start the spawnulator background task, returning a handle that can be
     /// used to spawn new `Forth` VMs.
     #[tracing::instrument(level = tracing::Level::DEBUG, skip(kernel))]
-    pub async fn register(kernel: &'static Kernel, capacity: usize) -> Result<(), RegistrationError> {
-        let (cmd_prod, cmd_cons) = KChannel::new_async(capacity)
-            .await
-            .split();
+    pub async fn register(
+        kernel: &'static Kernel,
+        capacity: usize,
+    ) -> Result<(), RegistrationError> {
+        let (cmd_prod, cmd_cons) = KChannel::new_async(capacity).await.split();
         tracing::debug!("who spawns the spawnulator?");
         kernel
             .spawn(SpawnulatorServer::spawnulate(kernel, cmd_cons))
