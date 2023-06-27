@@ -18,7 +18,8 @@ pub struct Twi0 {
 }
 
 impl Twi0 {
-    pub unsafe fn kernel_twi0(twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
+    /// Initialize TWI0 with the MangoPi MQ Pro pin mappings.
+    pub unsafe fn mq_pro(twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
         // Initialization for TWI driver
         // Step 1: configure corresponding GPIO multiplex function as TWI mode
         gpio.pg_cfg1.modify(|_r, w| {
@@ -29,9 +30,20 @@ impl Twi0 {
             w.pg13_select().twi0_sda();
             w
         });
+
         // TODO(eliza): do we need to disable pullups? The MQ Pro schematic
         // indicates that there's a 10k pullup on these pins...
 
+        Self::init(twi, ccu)
+    }
+
+    /// Initialize TWI0 with the Lichee RV Dock pin mappings.
+    pub unsafe fn lichee_rv(twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
+        todo!("eliza: Lichee RV pin mappings")
+    }
+
+    /// This assumes the GPIO pin mappings are already configured.
+    unsafe fn init(twi: TWI0, ccu: &mut CCU) -> Self {
         ccu.twi_bgr.modify(|_r, w| {
             // Step 2: Set TWI_BGR_REG[TWI(n)_GATING] to 0 to close TWI(n) clock.
             w.twi0_gating().mask();
