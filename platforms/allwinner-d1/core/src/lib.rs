@@ -73,7 +73,7 @@ impl D1 {
                 .unwrap()
         };
 
-        let [ch0, _, ch2, ..] = dmac.channels;
+        let [ch0, _, ch2, ch3, ..] = dmac.channels;
         dmac.dmac.dmac_irq_en0.modify(|_r, w| {
             // used for UART0 DMA sending
             w.dma0_queue_irq_en().enabled();
@@ -81,6 +81,8 @@ impl D1 {
             w.dma1_queue_irq_en().enabled();
             // used for TWI0 driver DMA sending
             w.dma2_queue_irq_en().enabled();
+            // used for TWI0 driver DMA recv
+            w.dma3_queue_irq_en().enabled();
             w
         });
 
@@ -251,6 +253,10 @@ impl D1 {
 
             if r.dma2_queue_irq_pend().bit_is_set() {
                 twi::TWI0_DRV_TX_DONE.wake();
+            }
+
+            if r.dma3_queue_irq_pend().bit_is_set() {
+                twi::TWI0_DRV_RX_DONE.wake();
             }
 
             // Will write-back and high bits
