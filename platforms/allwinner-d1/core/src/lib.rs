@@ -28,6 +28,7 @@ use self::{
     dmac::Dmac,
     drivers::{
         spim::{self, SpiSenderServer},
+        twi,
         uart::{D1Uart, Uart},
     },
     plic::{Plic, Priority},
@@ -72,12 +73,14 @@ impl D1 {
                 .unwrap()
         };
 
-        let [ch0, ..] = dmac.channels;
+        let [ch0, _, ch2, ..] = dmac.channels;
         dmac.dmac.dmac_irq_en0.modify(|_r, w| {
             // used for UART0 DMA sending
             w.dma0_queue_irq_en().enabled();
             // used for SPI1 DMA sending
             w.dma1_queue_irq_en().enabled();
+            // used for TWI0 driver DMA sending
+            w.dma2_queue_irq_en().enabled();
             w
         });
 
@@ -231,8 +234,10 @@ impl D1 {
 
     /// DMAC ISR handler
     ///
-    /// At the moment, we only service the Channel 0 interrupt,
-    /// which indicates that the serial transmission is complete.
+    /// At the moment, we service the interrupts on the following channels:
+    /// * Channel 0: UART0 TX
+    /// * Channel 1: SPI1 TX
+    /// * Channel 2: TWI0 driver TX
     fn handle_dmac() {
         let dmac = unsafe { &*DMAC::PTR };
         dmac.dmac_irq_pend0.modify(|r, w| {
@@ -242,6 +247,10 @@ impl D1 {
 
             if r.dma1_queue_irq_pend().bit_is_set() {
                 spim::SPI1_TX_DONE.wake();
+            }
+
+            if r.dma2_queue_irq_pend().bit_is_set() {
+                twi::TWI0_DRV_TX_DONE.wake();
             }
 
             // Will write-back and high bits

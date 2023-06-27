@@ -1,25 +1,35 @@
 use d1_pac::{CCU, GPIO, TWI0};
+use kernel::{
+    drivers::i2c::Addr,
+    buf::{OwnedReadBuf, ArrayBuf},
+    maitake::sync::WaitCell,
+};
 use drivers::dmac::{
     descriptor::{
         AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType,
     },
     Channel, ChannelMode,
 };
-use kernel::{
-    comms::{kchannel::KChannel, oneshot::Reusable},
-    maitake::sync::WaitCell,
-    mnemos_alloc::containers::FixedVec,
-    registry::{uuid, Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo, Uuid},
-    Kernel,
-};
+use core::ptr::NonNull;
 
-pub struct Twi0 {
-    _x: (),
+/// TWI 0 configured in TWI driver mode.
+///
+/// TWI driver mode is packet-oriented, and reads and writes to/from
+/// target device registers *by register address*. This mode allows DMA
+/// transfers to I2C devices.
+// TODO(eliza): add TWI engine mode.
+pub struct Twi0Driver {
+    twi: TWI0,
+    tx_chan: Channel,
 }
 
-impl Twi0 {
+pub static TWI0_DRV_TX_DONE: WaitCell = WaitCell::new();
+
+impl Twi0Driver {
+    const TX_DMA_CHANNEL: u8 = 2;
+
     /// Initialize TWI0 with the MangoPi MQ Pro pin mappings.
-    pub unsafe fn mq_pro(twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
+    pub unsafe fn mq_pro(twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO, tx_chan: Channel) -> Self {
         // Initialization for TWI driver
         // Step 1: configure corresponding GPIO multiplex function as TWI mode
         gpio.pg_cfg1.modify(|_r, w| {
@@ -34,16 +44,16 @@ impl Twi0 {
         // TODO(eliza): do we need to disable pullups? The MQ Pro schematic
         // indicates that there's a 10k pullup on these pins...
 
-        Self::init(twi, ccu)
+        Self::init(twi, ccu, tx_chan)
     }
 
     /// Initialize TWI0 with the Lichee RV Dock pin mappings.
-    pub unsafe fn lichee_rv(twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
+    pub unsafe fn lichee_rv(twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO, tx_chan: Channel) -> Self {
         todo!("eliza: Lichee RV pin mappings")
     }
 
     /// This assumes the GPIO pin mappings are already configured.
-    unsafe fn init(twi: TWI0, ccu: &mut CCU) -> Self {
+    unsafe fn init(twi: TWI0, ccu: &mut CCU, tx_chan: Channel) -> Self {
         ccu.twi_bgr.modify(|_r, w| {
             // Step 2: Set TWI_BGR_REG[TWI(n)_GATING] to 0 to close TWI(n) clock.
             w.twi0_gating().mask();
@@ -99,6 +109,90 @@ impl Twi0 {
             // TODO(eliza): what are the thresholds for RXFIFO and TXFIFO?
             w
         });
-        Twi0 { _x: () }
+        Twi0Driver { twi, tx_chan }
+    }
+
+    pub async fn write_register(
+        &mut self,
+        addr: Addr,
+        register: u8,
+        data: ArrayBuf<u8>,
+        len: u16,
+    ) -> ArrayBuf<u8> {
+        self.twi.twi_drv_slv.write(|w| {
+            // set target address
+            match addr {
+                Addr::SevenBit(addr) => {
+                    w.slv_id().variant(addr);
+                }
+                Addr::TenBit(addr) => todo!("eliza: implement 10 bit addresses {addr:?}"),
+            }
+
+            // set command to 0 to indicate a write
+            w.cmd().write();
+            w
+        });
+
+        self.twi.twi_drv_fmt.write(|w| {
+            // XXX(eliza): does this just disable the TWI driver's target
+            // register address mode? i hope it does.
+            // if this doesn't work we probably need to use a different
+            // interface...
+            w.addr_byte().variant(register);
+            w.data_byte().variant(len);
+            w
+        });
+
+        self.twi.twi_drv_cfg.modify(|_r, w| {
+            w.packet_cnt().variant(1);
+            w
+        });
+
+        // configure DMA channel
+        let descriptor = {
+            let (source_ptr, _) = data.ptrlen();
+            let source = source_ptr.as_ptr().cast::<()>();
+            // XXX(eliza): is this correct???
+            let destination = self.twi.twi_drv_send_fifo_acc.as_ptr() as *mut ();
+            let config = DescriptorConfig {
+                source,
+                destination,
+                byte_counter: len as usize,
+                link: None,
+                wait_clock_cycles: 0,
+                bmode: BModeSel::Normal,
+                dest_width: DataWidth::Bit8,
+                dest_addr_mode: AddressMode::IoMode,
+                dest_block_size: BlockSize::Byte1,
+                dest_drq_type: DestDrqType::Twi0,
+                src_data_width: DataWidth::Bit8,
+                src_addr_mode: AddressMode::LinearMode,
+                src_block_size: BlockSize::Byte1,
+                src_drq_type: SrcDrqType::Dram,
+            };
+            config.try_into().map_err(drop).expect("bad descriptor config???")
+        };
+        unsafe {
+            self.tx_chan.set_channel_modes(ChannelMode::Wait, ChannelMode::Wait);
+            self.tx_chan.start_descriptor(NonNull::from(&descriptor));
+        }
+        TWI0_DRV_TX_DONE
+            .wait()
+            .await
+            .expect("TWI0_DRV_TX_DONE WaitCell should never be closed");
+        unsafe {
+            self.tx_chan.stop_dma();
+        }
+        data
+    }
+
+    pub async fn read_register(
+        &mut self,
+        addr: Addr,
+        register: u8,
+        data: OwnedReadBuf,
+        len: u16,
+    ) -> OwnedReadBuf {
+        todo!("eliza")
     }
 }
