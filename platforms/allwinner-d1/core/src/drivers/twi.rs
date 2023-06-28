@@ -8,8 +8,8 @@ use core::ptr::NonNull;
 use d1_pac::{CCU, GPIO, TWI0};
 use kernel::{
     buf::{ArrayBuf, OwnedReadBuf},
+    drivers::i2c::Addr,
     maitake::sync::WaitCell,
-    services::i2c::Addr,
 };
 
 /// TWI 0 configured in TWI driver mode.
@@ -23,7 +23,6 @@ pub struct Twi0Driver {
     tx_chan: Channel,
     rx_chan: Channel,
 }
-
 pub static TWI0_DRV_TX_DONE: WaitCell = WaitCell::new();
 pub static TWI0_DRV_RX_DONE: WaitCell = WaitCell::new();
 
