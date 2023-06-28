@@ -60,16 +60,16 @@ fmt:
 # build a Mnemos binary for the Allwinner D1
 build-d1: (_get-cargo-binutils)
     #!/usr/bin/env bash
-    cd {{ _d1_dir}}/lichee-rv
-    {{ _cargo }} build --release
+    cd {{ _d1_dir}}
+    {{ _cargo }} build -p lichee-rv --release
     {{ _cargo }} objcopy --release -- \
         -O binary \
-        ../../../../{{ _d1_bin_path }}
+        ./{{ _d1_bin_path }}
 
 # flash an Allwinner D1 using xfel
 flash-d1: (build-d1)
     xfel ddr d1
-    xfel write {{ _d1_start_addr }} {{ _d1_bin_path }}
+    xfel write {{ _d1_start_addr }} {{ _d1_dir}}/{{ _d1_bin_path }}
     xfel exec {{ _d1_start_addr }}
 
 _get-cargo-binutils:
