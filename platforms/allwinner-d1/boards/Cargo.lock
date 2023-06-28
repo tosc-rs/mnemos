@@ -354,6 +354,7 @@ version = "0.1.0"
 dependencies = [
  "d1-pac",
  "drivers",
+ "embedded-graphics",
  "embedded-hal",
  "futures",
  "mnemos",
