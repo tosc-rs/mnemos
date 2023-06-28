@@ -60,6 +60,7 @@ impl D1 {
         spim: spim::Spim1,
         dmac: Dmac,
         plic: Plic,
+        twi0: twi::Twi0Engine,
     ) -> Result<Self, ()> {
         let k_settings = KernelSettings {
             max_drivers: 16,
@@ -79,10 +80,10 @@ impl D1 {
             w.dma0_queue_irq_en().enabled();
             // used for SPI1 DMA sending
             w.dma1_queue_irq_en().enabled();
-            // used for TWI0 driver DMA sending
-            w.dma2_queue_irq_en().enabled();
-            // used for TWI0 driver DMA recv
-            w.dma3_queue_irq_en().enabled();
+            // // used for TWI0 driver DMA sending
+            // w.dma2_queue_irq_en().enabled();
+            // // used for TWI0 driver DMA recv
+            // w.dma3_queue_irq_en().enabled();
             w
         });
 
@@ -133,6 +134,27 @@ impl D1 {
         // Spawn a hello port
         let hello_settings = HelloSettings::default();
         k.initialize(hello(k, hello_settings)).unwrap();
+
+        k.initialize(async move {
+            use kernel::services::i2c;
+            k.sleep(Duration::from_secs(4)).await;
+            trace::info!("trying TWI0 tx...");
+            // try to read the part ID from the ENS160...
+            let res = twi0.write(i2c::Addr::SevenBit(0x58), &[0x00]).await;
+            trace::info!("TWI0 send to 0x50: {res:?}");
+
+            let mut buf = [core::mem::MaybeUninit::<u8>::new(0); 2];
+            let res = twi0.read(i2c::Addr::SevenBit(0x58), &mut buf[..]).await;
+            match res {
+                Ok(_) => unsafe {
+                    let lo = buf[0].assume_init();
+                    let hi = buf[1].assume_init();
+                    trace::info!("TWI0 read 2 bytes from 0x58: [{lo:#x}, {hi:#x}]");
+                },
+                Err(error) => trace::error!("TWI0 read from 0x58: {error:?}"),
+            }
+        })
+        .unwrap();
 
         Ok(Self {
             kernel: k,

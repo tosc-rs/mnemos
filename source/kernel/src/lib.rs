@@ -89,6 +89,7 @@ use abi::{
 };
 use comms::kchannel::KChannel;
 use core::{future::Future, ptr::NonNull};
+pub use embedded_hal_async;
 pub use maitake;
 use maitake::{
     scheduler::LocalScheduler,

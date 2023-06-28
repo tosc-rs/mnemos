@@ -6,7 +6,7 @@ extern crate alloc;
 use core::time::Duration;
 use mnemos_d1_core::{
     dmac::Dmac,
-    drivers::{sharp_display::SharpDisplay, spim::kernel_spim1, uart::kernel_uart},
+    drivers::{sharp_display::SharpDisplay, spim::kernel_spim1, uart::kernel_uart, twi},
     plic::Plic,
     timer::Timers,
     Ram, D1,
@@ -31,8 +31,9 @@ fn main() -> ! {
     let timers = Timers::new(p.TIMER);
     let dmac = Dmac::new(p.DMAC, &mut p.CCU);
     let plic = Plic::new(p.PLIC);
+    let twi0 = unsafe { twi::Twi0Engine::mq_pro(p.TWI0, &mut p.CCU, &mut p.GPIO,) };
 
-    let d1 = D1::initialize(timers, uart, spim, dmac, plic).unwrap();
+    let d1 = D1::initialize(timers, uart, spim, dmac, plic, twi).unwrap();
 
     p.GPIO.pd_cfg2.modify(|_r, w| {
         w.pd18_select().output();
