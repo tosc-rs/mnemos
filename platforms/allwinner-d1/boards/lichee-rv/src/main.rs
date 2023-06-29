@@ -3,7 +3,7 @@
 
 extern crate alloc;
 
-use core::{time::Duration};
+use core::{time::Duration, panic::PanicInfo};
 use mnemos_d1_core::{
     drivers::{
         self,
@@ -22,7 +22,6 @@ const HEAP_SIZE: usize = 384 * 1024 * 1024;
 #[link_section = ".aheap.AHEAP"]
 #[used]
 static AHEAP_BUF: Ram<HEAP_SIZE> = Ram::new();
-
 
 #[allow(non_snake_case)]
 #[riscv_rt::entry]

@@ -3,7 +3,7 @@
 
 extern crate alloc;
 
-use core::{time::Duration};
+use core::{time::Duration, panic::PanicInfo};
 use mnemos_d1_core::{
     drivers::{
         self,

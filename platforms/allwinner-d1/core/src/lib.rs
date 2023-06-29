@@ -27,7 +27,7 @@ use self::{
         uart::{D1Uart, Uart},
     },
     plic::{Plic, Priority},
-    timer::{Timer, Timer0, Timer1, TimerMode, TimerPrescaler, Timers},
+    timer::{Timer, TimerMode, TimerPrescaler, Timers},
 };
 
 pub struct D1 {

@@ -486,6 +486,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mq-pro"
+version = "0.1.0"
+dependencies = [
+ "d1-pac",
+ "embedded-hal",
+ "futures",
+ "mnemos",
+ "mnemos-d1-core",
+ "riscv",
+ "riscv-rt",
+]
+
+[[package]]
 name = "mycelium-bitfield"
 version = "0.1.2"
 source = "git+https://github.com/hawkw/mycelium.git?rev=cbcfc62a6ea3646fb43f2c159cfdc19b3d932004#cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"

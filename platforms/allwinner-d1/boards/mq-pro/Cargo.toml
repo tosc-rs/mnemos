@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-# mnemos drivers
-drivers = { path = "../../drivers" }
+# D1 core
+mnemos-d1-core = { path = "../../core" }
 
 # rust-embedded crates
 riscv = "0.10"
