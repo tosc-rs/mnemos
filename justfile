@@ -58,16 +58,17 @@ fmt:
 
 
 # build a Mnemos binary for the Allwinner D1
-build-d1: (_get-cargo-binutils)
+build-d1 board='mq-pro': (_get-cargo-binutils)
     #!/usr/bin/env bash
     cd {{ _d1_dir}}
-    {{ _cargo }} build -p lichee-rv --release
-    {{ _cargo }} objcopy --release -- \
+    {{ _cargo }} build -p {{ board }} --release
+    {{ _cargo }} objcopy -p {{ board }} --release \
+        -- \
         -O binary \
         ./{{ _d1_bin_path }}
 
 # flash an Allwinner D1 using xfel
-flash-d1: (build-d1)
+flash-d1 board='mq-pro': (build-d1 board)
     xfel ddr d1
     xfel write {{ _d1_start_addr }} {{ _d1_dir}}/{{ _d1_bin_path }}
     xfel exec {{ _d1_start_addr }}
@@ -86,7 +87,6 @@ _get-cargo-binutils:
     if confirm "      install it?"; then
         cargo install cargo-binutils
     fi
-
 
 _get-nextest:
     #!/usr/bin/env bash
