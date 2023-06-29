@@ -2,13 +2,13 @@
 
 use core::ptr::NonNull;
 
-use d1_pac::{CCU, GPIO, SPI_DBI};
-use drivers::dmac::{
+use crate::dmac::{
     descriptor::{
         AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType,
     },
     Channel, ChannelMode,
 };
+use d1_pac::{CCU, GPIO, SPI_DBI};
 use kernel::{
     comms::{kchannel::KChannel, oneshot::Reusable},
     maitake::sync::WaitCell,

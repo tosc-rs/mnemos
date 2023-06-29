@@ -2,6 +2,7 @@
 
 pub mod dmac;
 pub mod plic;
+pub mod spim;
 pub mod timer;
 pub mod uart;
 
