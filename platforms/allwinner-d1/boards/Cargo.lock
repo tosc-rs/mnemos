@@ -157,6 +157,7 @@ name = "drivers"
 version = "0.1.0"
 dependencies = [
  "d1-pac",
+ "mnemos",
  "riscv",
  "riscv-rt",
 ]
