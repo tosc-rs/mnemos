@@ -1,10 +1,9 @@
 #![no_std]
 
 pub mod dmac;
+pub mod drivers;
 pub mod plic;
-pub mod spim;
 pub mod timer;
-pub mod uart;
 
 use core::{cell::UnsafeCell, mem::MaybeUninit};
 

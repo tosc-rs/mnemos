@@ -640,16 +640,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "drivers"
-version = "0.1.0"
-dependencies = [
- "d1-pac",
- "mnemos",
- "riscv",
- "riscv-rt",
-]
-
-[[package]]
 name = "dumbloader"
 version = "0.1.0"
 dependencies = [
@@ -1536,6 +1526,16 @@ dependencies = [
  "heapless",
  "linked_list_allocator",
  "maitake",
+]
+
+[[package]]
+name = "mnemos-d1-core"
+version = "0.1.0"
+dependencies = [
+ "d1-pac",
+ "mnemos",
+ "riscv",
+ "riscv-rt",
 ]
 
 [[package]]

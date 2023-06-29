@@ -5,12 +5,14 @@ extern crate alloc;
 
 use core::{fmt::Write, panic::PanicInfo, ptr::NonNull, sync::atomic::Ordering, time::Duration};
 use d1_pac::{Interrupt, DMAC, TIMER};
-use drivers::{
+use mnemos_d1_core::{
+    drivers::{
+        uart::{kernel_uart, Uart, D1Uart},
+        spim::{kernel_spim1, SpiSenderClient, SpiSenderServer, SPI1_TX_DONE},
+    },
     dmac::Dmac,
-    plic::{Plic, Priority},
     timer::{Timer, TimerMode, TimerPrescaler, Timers},
-    uart::{kernel_uart, Uart, D1Uart},
-    spim::{kernel_spim1, SpiSenderClient, SpiSenderServer, SPI1_TX_DONE},
+    plic::{Plic, Priority},
     Ram,
 };
 use kernel::{

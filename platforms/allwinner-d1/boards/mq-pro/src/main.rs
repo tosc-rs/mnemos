@@ -5,11 +5,14 @@ extern crate alloc;
 
 use core::{fmt::Write, panic::PanicInfo, ptr::NonNull, sync::atomic::Ordering, time::Duration};
 use d1_pac::{Interrupt, DMAC, TIMER};
-use drivers::{
+use mnemos_d1_core::{
+    drivers::{
+        uart::{kernel_uart, Uart, D1Uart},
+        spim::{kernel_spim1, SpiSenderClient, SpiSenderServer, SPI1_TX_DONE},
+    },
     dmac::Dmac,
-    plic::{Plic, Priority},
     timer::{Timer, TimerMode, TimerPrescaler, Timers},
-    uart::{kernel_uart, Uart},
+    plic::{Plic, Priority},
     Ram,
 };
 use kernel::{
@@ -20,10 +23,6 @@ use kernel::{
     },
     trace, Kernel, KernelSettings,
 };
-use spim::{kernel_spim1, SpiSenderClient, SpiSenderServer, SPI1_TX_DONE};
-use uart::D1Uart;
-mod spim;
-mod uart;
 
 const HEAP_SIZE: usize = 384 * 1024 * 1024;
 

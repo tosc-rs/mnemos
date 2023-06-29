@@ -153,16 +153,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "drivers"
-version = "0.1.0"
-dependencies = [
- "d1-pac",
- "mnemos",
- "riscv",
- "riscv-rt",
-]
-
-[[package]]
 name = "embedded-graphics"
 version = "0.7.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -354,10 +344,10 @@ name = "lichee-rv"
 version = "0.1.0"
 dependencies = [
  "d1-pac",
- "drivers",
  "embedded-hal",
  "futures",
  "mnemos",
+ "mnemos-d1-core",
  "riscv",
  "riscv-rt",
 ]
@@ -474,6 +464,16 @@ dependencies = [
  "heapless",
  "linked_list_allocator",
  "maitake",
+]
+
+[[package]]
+name = "mnemos-d1-core"
+version = "0.1.0"
+dependencies = [
+ "d1-pac",
+ "mnemos",
+ "riscv",
+ "riscv-rt",
 ]
 
 [[package]]
