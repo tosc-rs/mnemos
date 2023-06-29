@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "./lichee-rv",
+    "./mq-pro",
 ]
 
 [patch.crates-io.maitake]
