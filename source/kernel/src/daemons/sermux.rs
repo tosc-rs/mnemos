@@ -20,6 +20,7 @@ pub struct LoopbackSettings {
     pub port: u16,
     /// Buffer size, in bytes. Defaults to 128
     pub buffer_size: usize,
+    _priv: (),
 }
 
 impl Default for LoopbackSettings {
@@ -27,6 +28,7 @@ impl Default for LoopbackSettings {
         Self {
             port: WellKnown::Loopback as u16,
             buffer_size: 128,
+            _priv: (),
         }
     }
 }
@@ -36,7 +38,11 @@ impl Default for LoopbackSettings {
 /// Listens to all input from the given port, and echos it back
 #[tracing::instrument(skip(kernel))]
 pub async fn loopback(kernel: &'static Kernel, settings: LoopbackSettings) {
-    let LoopbackSettings { port, buffer_size } = settings;
+    let LoopbackSettings {
+        port,
+        buffer_size,
+        _priv,
+    } = settings;
     tracing::debug!("initializing SerMux loopback...");
     let p0 = PortHandle::open(kernel, port, buffer_size).await.unwrap();
     tracing::info!("SerMux Loopback running!");
@@ -57,7 +63,7 @@ pub async fn loopback(kernel: &'static Kernel, settings: LoopbackSettings) {
 /// Hello Server Settings
 #[derive(Debug, Clone)]
 pub struct HelloSettings {
-    /// Port number. Defaults to [WellKnown::Loopback]
+    /// Port number. Defaults to [WellKnown::Hello]
     pub port: u16,
     /// Buffer size, in bytes. Defaults to 32
     pub buffer_size: usize,
@@ -65,6 +71,7 @@ pub struct HelloSettings {
     pub message: &'static [u8],
     /// Interval between messages. Defaults to 1 second
     pub interval: Duration,
+    _priv: (),
 }
 
 impl Default for HelloSettings {
@@ -74,6 +81,7 @@ impl Default for HelloSettings {
             buffer_size: 32,
             message: b"hello\r\n",
             interval: Duration::from_secs(1),
+            _priv: (),
         }
     }
 }
@@ -88,6 +96,7 @@ pub async fn hello(kernel: &'static Kernel, settings: HelloSettings) {
         buffer_size,
         message,
         interval,
+        _priv,
     } = settings;
     tracing::debug!("Starting SerMux 'hello world'...");
     let p1 = PortHandle::open(kernel, port, buffer_size).await.unwrap();
