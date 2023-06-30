@@ -24,7 +24,7 @@ _fmt := if env_var_or_default("GITHUB_ACTIONS", "") != "true" { "" } else {
 }
 
 _d1_start_addr := "0x40000000"
-_d1_bin_path := "target/riscv64imac-unknown-none-elf/mnemos.bin"
+_d1_bin_path := "target/riscv64imac-unknown-none-elf"
 _d1_dir := "platforms/allwinner-d1/boards"
 
 # arguments to pass to all RustDoc invocations
@@ -61,16 +61,16 @@ fmt:
 build-d1 board='mq-pro': (_get-cargo-binutils)
     #!/usr/bin/env bash
     cd {{ _d1_dir}}
-    {{ _cargo }} build -p {{ board }} --release
-    {{ _cargo }} objcopy -p {{ board }} --release \
+    {{ _cargo }} build --bin {{ board }} --release
+    {{ _cargo }} objcopy --bin {{ board }} --release \
         -- \
         -O binary \
-        ./{{ _d1_bin_path }}
+        ./{{ _d1_bin_path }}/mnemos-{{ board }}.bin
 
 # flash an Allwinner D1 using xfel
 flash-d1 board='mq-pro': (build-d1 board)
     xfel ddr d1
-    xfel write {{ _d1_start_addr }} {{ _d1_dir}}/{{ _d1_bin_path }}
+    xfel write {{ _d1_start_addr }} {{ _d1_dir}}/{{ _d1_bin_path }}/mnemos-{{ board }}.bin
     xfel exec {{ _d1_start_addr }}
 
 _get-cargo-binutils:

@@ -340,19 +340,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f92be4933c13fd498862a9e02a3055f8a8d9c039ce33db97306fd5a6caa7f29b"
 
 [[package]]
-name = "lichee-rv"
-version = "0.1.0"
-dependencies = [
- "d1-pac",
- "embedded-hal",
- "futures",
- "mnemos",
- "mnemos-d1-core",
- "riscv",
- "riscv-rt",
-]
-
-[[package]]
 name = "linked_list_allocator"
 version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -467,6 +454,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "mnemos-d1"
+version = "0.1.0"
+dependencies = [
+ "d1-pac",
+ "embedded-hal",
+ "futures",
+ "mnemos",
+ "mnemos-d1-core",
+ "riscv",
+ "riscv-rt",
+]
+
+[[package]]
 name = "mnemos-d1-core"
 version = "0.1.0"
 dependencies = [
@@ -483,19 +483,6 @@ dependencies = [
  "serde",
  "tracing-core 0.2.0",
  "tracing-serde-structured",
-]
-
-[[package]]
-name = "mq-pro"
-version = "0.1.0"
-dependencies = [
- "d1-pac",
- "embedded-hal",
- "futures",
- "mnemos",
- "mnemos-d1-core",
- "riscv",
- "riscv-rt",
 ]
 
 [[package]]
