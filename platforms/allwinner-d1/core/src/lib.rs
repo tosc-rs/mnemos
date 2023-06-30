@@ -13,7 +13,9 @@ use d1_pac::{Interrupt, DMAC, TIMER};
 use kernel::{
     drivers::serial_mux::SerialMuxServer,
     mnemos_alloc::containers::Box,
-    trace::{self, Instrument}, Kernel, KernelSettings, servers::{sermux_loopback, sermux_hello, SermuxHelloSettings, SermuxLoopbackSettings},
+    servers::{sermux_hello, sermux_loopback, SermuxHelloSettings, SermuxLoopbackSettings},
+    trace::{self, Instrument},
+    Kernel, KernelSettings,
 };
 
 pub use self::ram::Ram;
