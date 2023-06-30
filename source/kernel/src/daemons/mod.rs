@@ -13,6 +13,8 @@ use crate::{
     tracing, Kernel,
 };
 
+pub mod shells;
+
 //
 // Sermux Loopback
 //

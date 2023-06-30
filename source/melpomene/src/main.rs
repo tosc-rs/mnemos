@@ -8,8 +8,10 @@ use melpomene::{
 };
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
-    daemons::{sermux_hello, sermux_loopback, SermuxHelloSettings, SermuxLoopbackSettings},
-    forth::shells::graphical_shell_mono,
+    daemons::{
+        sermux_hello, sermux_loopback, shells::graphical_shell_mono, SermuxHelloSettings,
+        SermuxLoopbackSettings,
+    },
     services::serial_mux::{SerialMuxServer, WellKnown},
     Kernel, KernelSettings,
 };

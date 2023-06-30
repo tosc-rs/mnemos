@@ -23,8 +23,6 @@ use mnemos_alloc::{
 };
 use portable_atomic::{AtomicUsize, Ordering};
 
-pub mod shells;
-
 #[derive(Copy, Clone, Debug)]
 #[non_exhaustive]
 pub struct Params {
