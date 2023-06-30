@@ -3,7 +3,7 @@
 
 extern crate alloc;
 
-use core::{time::Duration, panic::PanicInfo};
+use core::time::Duration;
 use mnemos_d1_core::{
     drivers::{
         self,
@@ -26,7 +26,7 @@ static AHEAP_BUF: Ram<HEAP_SIZE> = Ram::new();
 #[allow(non_snake_case)]
 #[riscv_rt::entry]
 fn main() -> ! {
-    unsafe { crate::initialize_heap(&AHEAP_BUF); }
+    unsafe { mnemos_d1::initialize_heap(&AHEAP_BUF); }
 
     let mut p = unsafe { d1_pac::Peripherals::steal() };
     let uart = unsafe { kernel_uart(&mut p.CCU, &mut p.GPIO, p.UART0) };
@@ -35,7 +35,7 @@ fn main() -> ! {
     let dmac = Dmac::new(p.DMAC, &mut p.CCU);
     let plic = Plic::new(p.PLIC);
 
-    let d1 = D1::initialize(&AHEAP_BUF, timers, uart, spim, dmac, plic).unwrap();
+    let d1 = D1::initialize( timers, uart, spim, dmac, plic).unwrap();
 
     p.GPIO.pc_cfg0.modify(|_r, w| {
         w.pc1_select().output();
