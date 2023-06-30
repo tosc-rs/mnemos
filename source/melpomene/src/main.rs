@@ -8,9 +8,9 @@ use melpomene::{
 };
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
+    daemons::{sermux_hello, sermux_loopback, SermuxHelloSettings, SermuxLoopbackSettings},
     drivers::serial_mux::{SerialMuxServer, WellKnown},
     forth::shells::graphical_shell_mono,
-    servers::{sermux_hello, sermux_loopback, SermuxHelloSettings, SermuxLoopbackSettings},
     Kernel, KernelSettings,
 };
 use tokio::{
