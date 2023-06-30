@@ -1,7 +1,7 @@
 use core::time::Duration;
 
 use crate::{
-    drivers::{emb_display::EmbDisplayClient, serial_mux::PortHandle},
+    services::{emb_display::EmbDisplayClient, serial_mux::PortHandle},
     tracing, Kernel,
 };
 use embedded_graphics::{
@@ -17,11 +17,11 @@ use futures::FutureExt;
 use input_mgr::RingLine;
 use profont::PROFONT_12_POINT;
 
-use super::Forth;
+use crate::forth::Forth;
 
 // ----
 
-// .instrument(tracing::info_span!("Update clock")),
+#[tracing::instrument(skip(k))]
 pub async fn graphical_shell_mono(
     k: &'static Kernel,
     disp_width_px: u32,

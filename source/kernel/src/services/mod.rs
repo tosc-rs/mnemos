@@ -1,4 +1,4 @@
-//! # Mnemos Driver Services
+//! # Mnemos Services
 //!
 //! This module contains the declaration of services built in to the
 //! kernel.
@@ -15,6 +15,8 @@
 //!     * typically only when the service has no external dependencies, other than
 //!       other services declared here in the kernel. For an example of this, see
 //!       the [serial_mux] module.
+//!
+//! For examples of using these services, see the [daemons][crate::daemons] module.
 
 pub mod emb_display;
 pub mod forth_spawnulator;

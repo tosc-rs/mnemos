@@ -1,7 +1,7 @@
 [toolchain]
 channel = "nightly-2023-05-29"
 profile = "minimal"
-components = ["rustfmt"]
+components = ["rustfmt", "llvm-tools-preview"]
 targets = [
     # Allwinner D1
     "riscv64imac-unknown-none-elf",

@@ -31,7 +31,22 @@ The project layout contains the following folders:
 [`platforms/`]: .platforms/
 [`tools/`]: ./tools/
 
-## Get Involved
+## Getting Started
+
+Currently, the primary supported hardware platform for MnemOS is the
+Allwinner D1, a RISC-V system-on-chip (SOC). Instructions for running MnemOS on
+D1 single-board computer can be found in [`platforms/allwinner-d1/README.md`].
+
+If you don't have access to a supported D1 board, or want a quicker development
+workflow for testing cross-platform changes, MnemOS also has a software
+simulator, called [Melpomene]. Melpomene runs as a userspace application binary on
+a development machine, and runs the MnemOS kernel with simulated hardware.
+Melpomene can be run using the `cargo melpomene` Cargo alias.
+
+[`platforms/allwinner-d1/README.md`]: ./platforms/allwinner-d1/README.md
+[Melpomene]: ./source/melpomene
+
+## Getting Involved
 
 Join us on Matrix: [#mnemos-dev:beeper.com](https://matrix.to/#/#mnemos-dev:beeper.com)
 

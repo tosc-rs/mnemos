@@ -1,10 +1,3 @@
-#![no_std]
-
-pub mod dmac;
-pub mod plic;
-pub mod timer;
-pub mod uart;
-
 use core::{cell::UnsafeCell, mem::MaybeUninit};
 
 pub struct Ram<const N: usize> {

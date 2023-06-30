@@ -1,8 +1,8 @@
-use crate::drivers::forth_spawnulator::SpawnulatorClient;
+use crate::services::forth_spawnulator::SpawnulatorClient;
 use crate::tracing;
 use crate::{
     comms::bbq,
-    drivers::serial_mux::{PortHandle, SerialMuxClient},
+    services::serial_mux::{PortHandle, SerialMuxClient},
     Kernel,
 };
 use core::{any::TypeId, future::Future, ptr::NonNull, time::Duration};
@@ -20,8 +20,6 @@ use mnemos_alloc::{
     heap::{alloc, dealloc},
 };
 use portable_atomic::{AtomicUsize, Ordering};
-
-pub mod shells;
 
 #[derive(Copy, Clone, Debug)]
 #[non_exhaustive]

@@ -1,0 +1,23 @@
+[package]
+name = "mnemos-d1-core"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+riscv = "0.10"
+d1-pac = "0.0.31"
+
+# kernel
+[dependencies.mnemos]
+path = "../../../source/kernel"
+default-features = false
+features = ["tracing-02"]
+
+# tracing 0.2
+[dependencies.tracing]
+git = "https://github.com/tokio-rs/tracing"
+# branch = "master"
+features = ["attributes"]
+default-features = false

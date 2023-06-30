@@ -640,15 +640,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "drivers"
-version = "0.1.0"
-dependencies = [
- "d1-pac",
- "riscv",
- "riscv-rt",
-]
-
-[[package]]
 name = "dumbloader"
 version = "0.1.0"
 dependencies = [
@@ -1538,6 +1529,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "mnemos-d1-core"
+version = "0.1.0"
+dependencies = [
+ "d1-pac",
+ "mnemos",
+ "riscv",
+ "tracing 0.2.0",
+]
+
+[[package]]
 name = "mnemos-std"
 version = "0.1.0"
 dependencies = [
@@ -1981,12 +1982,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "r0"
-version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bd7a31eed1591dcbc95d92ad7161908e72f4677f8fabf2a32ca49b4237cbf211"
-
-[[package]]
 name = "rand"
 version = "0.6.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2233,39 +2228,6 @@ dependencies = [
  "bit_field",
  "critical-section",
  "embedded-hal",
-]
-
-[[package]]
-name = "riscv-rt"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "102c52c89defde24dedf9ac077cc69df77b85aa2400dd2d5aad6eea6a6a5c089"
-dependencies = [
- "r0",
- "riscv",
- "riscv-rt-macros",
- "riscv-target",
-]
-
-[[package]]
-name = "riscv-rt-macros"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f38509d7b17c2f604ceab3e5ff8ac97bb8cd2f544688c512be75c715edaf4daf"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 1.0.109",
-]
-
-[[package]]
-name = "riscv-target"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "88aa938cda42a0cf62a20cfe8d139ff1af20c2e681212b5b34adb5a58333f222"
-dependencies = [
- "lazy_static",
- "regex",
 ]
 
 [[package]]
