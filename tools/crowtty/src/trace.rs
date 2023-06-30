@@ -176,10 +176,10 @@ impl TraceWorker {
                 let level = DisplayLevel(meta.level);
                 write!(
                     &mut self.textbuf,
-                    "{} {level} {}: ",
+                    "{} {level} {} ",
                     self.tag,
                     format_args!("{target}:")
-                        .if_supports_color(Stream::Stdout, |target| target.italic())
+                        .if_supports_color(Stream::Stdout, |target| target.dimmed())
                 )
                 .unwrap();
                 write_span_cx(&self.stack, &self.spans, &mut self.textbuf);

@@ -65,7 +65,7 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     };
 
     let k = unsafe {
-        mnemos_alloc::containers::Box::into_raw(Kernel::new(settings, &AHEAP).unwrap())
+        mnemos_alloc::containers::Box::into_raw(Kernel::new(settings).unwrap())
             .as_ref()
             .unwrap()
     };
