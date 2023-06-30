@@ -26,6 +26,8 @@ static AHEAP_BUF: Ram<HEAP_SIZE> = Ram::new();
 #[allow(non_snake_case)]
 #[riscv_rt::entry]
 fn main() -> ! {
+    unsafe { crate::initialize_heap(&AHEAP_BUF); }
+
     let mut p = unsafe { d1_pac::Peripherals::steal() };
     let uart = unsafe { kernel_uart(&mut p.CCU, &mut p.GPIO, p.UART0) };
     let spim = unsafe { kernel_spim1(p.SPI_DBI, &mut p.CCU, &mut p.GPIO) };
@@ -64,9 +66,4 @@ fn main() -> ! {
     .unwrap();
 
     d1.run()
-}
-
-#[panic_handler]
-fn handler(info: &PanicInfo) -> ! {
-    D1::handle_panic(info)
 }

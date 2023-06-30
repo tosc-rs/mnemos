@@ -8,14 +8,11 @@ pub mod plic;
 mod ram;
 pub mod timer;
 
-use core::{fmt::Write, panic::PanicInfo, ptr::NonNull, sync::atomic::Ordering, time::Duration};
+use core::{fmt::Write, panic::PanicInfo, sync::atomic::Ordering, time::Duration};
 use d1_pac::{Interrupt, DMAC, TIMER};
 use kernel::{
     drivers::serial_mux::{PortHandle, RegistrationError, SerialMuxServer},
-    mnemos_alloc::{
-        containers::Box,
-        heap::{MnemosAlloc, SingleThreadedLinkedListAllocator},
-    },
+    mnemos_alloc::containers::Box,
     trace, Kernel, KernelSettings,
 };
 
@@ -38,24 +35,24 @@ pub struct D1 {
     _spim: spim::Spim1,
 }
 
-#[global_allocator]
-pub static AHEAP: MnemosAlloc<SingleThreadedLinkedListAllocator> = MnemosAlloc::new();
-
 static COLLECTOR: trace::SerialCollector = trace::SerialCollector::new();
 
 impl D1 {
-    pub fn initialize<const HEAP_SIZE: usize>(
-        heap_buf: &'static Ram<HEAP_SIZE>,
+    /// Initialize MnemOS for the D1.
+    ///
+    /// This function configures the hardware platform and spawns driver
+    /// services for SPI and UART, as well as the Serial Mux and Tracing
+    /// services.
+    ///
+    /// **Note**: Initialize the global allocator prior to calling this
+    /// function.
+    pub fn initialize(
         timers: Timers,
         uart: Uart,
         spim: spim::Spim1,
         dmac: Dmac,
         plic: Plic,
     ) -> Result<Self, ()> {
-        unsafe {
-            AHEAP.init(NonNull::new(heap_buf.as_ptr()).unwrap(), HEAP_SIZE);
-        }
-
         let k_settings = KernelSettings {
             max_drivers: 16,
             // Note: The timers used will be configured to 3MHz, leading to (approximately)
@@ -63,7 +60,7 @@ impl D1 {
             timer_granularity: Duration::from_nanos(333),
         };
         let k = unsafe {
-            Box::into_raw(Kernel::new(k_settings, &AHEAP).map_err(drop)?)
+            Box::into_raw(Kernel::new(k_settings).map_err(drop)?)
                 .as_ref()
                 .unwrap()
         };

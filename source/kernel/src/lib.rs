@@ -95,10 +95,7 @@ use maitake::{
     time::{Duration, Sleep, Timeout, Timer},
 };
 pub use mnemos_alloc;
-use mnemos_alloc::{
-    containers::Box,
-    heap::{MnemosAlloc, UnderlyingAllocator},
-};
+use mnemos_alloc::containers::Box;
 use registry::Registry;
 
 /// Shim to handle tracing v0.1 vs v0.2
@@ -171,14 +168,11 @@ pub struct KernelInner {
 }
 
 impl Kernel {
-    /// Create a new kernel with the given allocator and settings.
+    /// Create a new kernel with the given settings.
     ///
     /// The allocator MUST be initialized if required, and be ready to allocate
     /// data.
-    pub unsafe fn new<U: UnderlyingAllocator>(
-        settings: KernelSettings,
-        _alloc: &'static MnemosAlloc<U>,
-    ) -> Result<Box<Self>, &'static str> {
+    pub unsafe fn new(settings: KernelSettings) -> Result<Box<Self>, &'static str> {
         let registry = registry::Registry::new(settings.max_drivers);
 
         let scheduler = LocalScheduler::new();
