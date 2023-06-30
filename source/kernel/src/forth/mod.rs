@@ -4,7 +4,7 @@ use crate::{
         bbq,
         kchannel::{KChannel, KConsumer, KProducer},
     },
-    drivers::serial_mux::{PortHandle, SerialMuxClient},
+    services::serial_mux::{PortHandle, SerialMuxClient},
     Kernel,
 };
 use core::{any::TypeId, future::Future, ptr::NonNull, time::Duration};

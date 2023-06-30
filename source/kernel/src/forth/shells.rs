@@ -1,7 +1,7 @@
 use core::time::Duration;
 
 use crate::{
-    drivers::{emb_display::EmbDisplayClient, serial_mux::PortHandle},
+    services::{emb_display::EmbDisplayClient, serial_mux::PortHandle},
     tracing, Kernel,
 };
 use embedded_graphics::{

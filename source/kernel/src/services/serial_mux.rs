@@ -3,7 +3,7 @@
 //! Allows the creation of virtual "ports" over a single serial link
 //!
 //! This module includes the service definition, client definition, as well
-//! as a server definition that relies on the [`SimpleSerial`][crate::drivers::simple_serial]
+//! as a server definition that relies on the [`SimpleSerial`][crate::services::simple_serial]
 //! service to provide the service implementation.
 
 use core::time::Duration;
@@ -15,8 +15,8 @@ use crate::{
         kchannel::{KChannel, KConsumer},
         oneshot::Reusable,
     },
-    drivers::simple_serial::SimpleSerialClient,
     registry::{Envelope, KernelHandle, Message, RegisteredDriver},
+    services::simple_serial::SimpleSerialClient,
     Kernel,
 };
 use maitake::sync::Mutex;

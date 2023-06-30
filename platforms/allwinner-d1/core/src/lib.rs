@@ -12,8 +12,8 @@ use core::{fmt::Write, panic::PanicInfo, sync::atomic::Ordering, time::Duration}
 use d1_pac::{Interrupt, DMAC, TIMER};
 use kernel::{
     daemons::{sermux_hello, sermux_loopback, SermuxHelloSettings, SermuxLoopbackSettings},
-    drivers::serial_mux::SerialMuxServer,
     mnemos_alloc::containers::Box,
+    services::serial_mux::SerialMuxServer,
     trace::{self, Instrument},
     Kernel, KernelSettings,
 };

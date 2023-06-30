@@ -32,8 +32,8 @@ use maitake::sync::Mutex;
 use mnemos_alloc::containers::{Arc, FixedVec};
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
-    drivers::emb_display::{EmbDisplayService, FrameChunk, FrameError, Request, Response},
     registry::Message,
+    services::emb_display::{EmbDisplayService, FrameChunk, FrameError, Request, Response},
     Kernel,
 };
 

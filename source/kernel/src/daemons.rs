@@ -1,11 +1,15 @@
-//! Servers
+//! Daemons
 //!
-//! This module contains servers that may be useful for systems
+//! This module contains tasks that run in the background and perform
+//! some ongoing responsibility.
+//!
+//! Unlike [services][crate::services], daemons are not exposed as a
+//! client/server via the [registry][crate::registry].
 
 use core::time::Duration;
 
 use crate::{
-    drivers::serial_mux::{PortHandle, WellKnown},
+    services::serial_mux::{PortHandle, WellKnown},
     tracing, Kernel,
 };
 
