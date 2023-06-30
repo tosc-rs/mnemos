@@ -63,7 +63,7 @@ pub async fn loopback(kernel: &'static Kernel, settings: LoopbackSettings) {
 /// Hello Server Settings
 #[derive(Debug, Clone)]
 pub struct HelloSettings {
-    /// Port number. Defaults to [WellKnown::Hello]
+    /// Port number. Defaults to [WellKnown::HelloWorld]
     pub port: u16,
     /// Buffer size, in bytes. Defaults to 32
     pub buffer_size: usize,
