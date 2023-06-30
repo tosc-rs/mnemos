@@ -59,10 +59,11 @@ fmt:
 
 # build a Mnemos binary for the Allwinner D1
 build-d1 board='mq-pro': (_get-cargo-binutils)
-    #!/usr/bin/env bash
-    cd {{ _d1_dir}}
-    {{ _cargo }} build --bin {{ board }} --release
-    {{ _cargo }} objcopy --bin {{ board }} --release \
+    cd {{ _d1_dir}} && {{ _cargo }} build --bin {{ board }} --release
+    cd {{ _d1_dir}} && \
+        {{ _cargo }} objcopy \
+        --bin {{ board }} \
+        --release \
         -- \
         -O binary \
         ./{{ _d1_bin_path }}/mnemos-{{ board }}.bin
