@@ -41,13 +41,13 @@ default:
 check:
     {{ _cargo }} check \
         --workspace \
-        --lib --bins --examples --tests --benches \
+        --lib --bins --examples --tests --benches --all-features \
         {{ _fmt }}
     (cd {{ _d1_dir }}; {{ _cargo }} check --workspace {{ _fmt }})
 
 # test all packages, across workspaces
 test: (_get-nextest)
-    {{ _cargo }} nextest run --workspace
+    {{ _cargo }} nextest run --workspace --all-features
     # uncomment this if we actually add tests to the D1 platform
     # (cd {{ _d1_dir }}; {{ _cargo }} nextest run --workspace)
 
