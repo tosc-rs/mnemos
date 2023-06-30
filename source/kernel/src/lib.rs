@@ -86,7 +86,7 @@ use abi::{
     bbqueue_ipc::BBBuffer,
     syscall::{KernelResponse, UserRequest},
 };
-use comms::{bbq::BidiHandle, kchannel::KChannel};
+use comms::kchannel::KChannel;
 use core::{future::Future, ptr::NonNull};
 pub use maitake;
 use maitake::{
@@ -215,27 +215,6 @@ impl Kernel {
     /// have a "kernel.init()" or something that does this and other global inits?
     pub fn set_global_timer(&'static self) -> Result<(), maitake::time::AlreadyInitialized> {
         maitake::time::set_global_timer(self.timer())
-    }
-
-    /// Spawn the initial Forth task (task ID 0), returning a [`BidiHandle`] for
-    /// the spawned task's standard input and standard output streams.
-    ///
-    /// This should only be called once.
-    pub fn initialize_forth_tid0(&'static self, params: forth::Params) -> JoinHandle<BidiHandle> {
-        use forth::{Forth, Spawnulator};
-        self.initialize(async move {
-            tracing::debug!("spawning Task 0...");
-            // TODO(eliza): maybe the spawnulator should live in the driver registry
-            // or something.
-            let spawnulator = Spawnulator::start_spawnulating(self).await;
-            let (tid0, tid0_streams) = Forth::new(self, params, spawnulator)
-                .await
-                .expect("spawning forth TID0 should succeed");
-            self.spawn(tid0.run()).await;
-            tracing::info!("Task 0 spawned!");
-            tid0_streams
-        })
-        .expect("spawning forth TID0 should succeed")
     }
 
     pub fn initialize<F>(&'static self, fut: F) -> Result<JoinHandle<F::Output>, &'static str>

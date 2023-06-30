@@ -12,7 +12,10 @@ use mnemos_kernel::{
         sermux::{hello, loopback, HelloSettings, LoopbackSettings},
         shells::graphical_shell_mono,
     },
-    services::serial_mux::{SerialMuxServer, WellKnown},
+    services::{
+        forth_spawnulator::SpawnulatorServer,
+        serial_mux::{SerialMuxServer, WellKnown},
+    },
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -139,6 +142,9 @@ async fn kernel_entry(opts: MelpomeneOptions) {
         1024, // capacity
     ))
     .unwrap();
+
+    // Spawn the spawnulator
+    k.initialize(SpawnulatorServer::register(k, 16)).unwrap();
 
     loop {
         // Tick the scheduler
