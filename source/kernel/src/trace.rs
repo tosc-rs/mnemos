@@ -1,4 +1,4 @@
-use crate::{comms::bbq, drivers::serial_mux};
+use crate::{comms::bbq, services::serial_mux};
 use level_filters::LevelFilter;
 use mnemos_trace_proto::{HostRequest, TraceEvent};
 use mycelium_util::sync::InitOnce;

@@ -32,8 +32,8 @@ use maitake::sync::Mutex;
 use mnemos_alloc::containers::{Arc, FixedVec};
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
-    drivers::emb_display::{EmbDisplayService, FrameChunk, FrameError, Request, Response},
     registry::Message,
+    services::emb_display::{EmbDisplayService, FrameChunk, FrameError, Request, Response},
     Kernel,
 };
 
@@ -46,12 +46,14 @@ impl SimDisplay {
     ///
     /// Registration will also start the simulated display, meaning that the display
     /// window will appear.
+    #[tracing::instrument(skip(kernel))]
     pub async fn register(
         kernel: &'static Kernel,
         max_frames: usize,
         width: u32,
         height: u32,
     ) -> Result<(), FrameError> {
+        tracing::debug!("initializing SimDisplay server ({width}x{height})...");
         let frames = FixedVec::new(max_frames).await;
 
         let (cmd_prod, cmd_cons) = KChannel::new_async(1).await.split();
@@ -70,6 +72,8 @@ impl SimDisplay {
             .with_registry(|reg| reg.register_konly::<EmbDisplayService>(&cmd_prod))
             .await
             .map_err(|_| FrameError::DisplayAlreadyExists)?;
+
+        tracing::info!("SimDisplayServer initialized!");
 
         Ok(())
     }

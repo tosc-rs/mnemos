@@ -15,3 +15,9 @@ path = "../../../source/kernel"
 default-features = false
 features = ["tracing-02"]
 
+# tracing 0.2
+[dependencies.tracing]
+git = "https://github.com/tokio-rs/tracing"
+# branch = "master"
+features = ["attributes"]
+default-features = false

@@ -11,9 +11,11 @@ pub mod timer;
 use core::{fmt::Write, panic::PanicInfo, sync::atomic::Ordering, time::Duration};
 use d1_pac::{Interrupt, DMAC, TIMER};
 use kernel::{
-    drivers::serial_mux::{PortHandle, RegistrationError, SerialMuxServer},
+    daemons::sermux::{hello, loopback, HelloSettings, LoopbackSettings},
     mnemos_alloc::containers::Box,
-    trace, Kernel, KernelSettings,
+    services::serial_mux::SerialMuxServer,
+    trace::{self, Instrument},
+    Kernel, KernelSettings,
 };
 
 pub use self::ram::Ram;
@@ -87,58 +89,41 @@ impl D1 {
         })
         .unwrap();
 
-        // Initialize SerialMux
-        let mux_done = k
-            .initialize(async move {
-                loop {
-                    // Now, right now this is a little awkward, but what I'm doing here is spawning
-                    // a new virtual mux, and configuring it with:
-                    // * Up to 16 virtual ports max
-                    // * Framed messages up to 512 bytes max each
-                    match SerialMuxServer::register(k, 16, 512).await {
-                        Ok(_) => break,
-                        Err(RegistrationError::SerialPortNotFound) => {
-                            // Uart probably isn't registered yet. Try again in a bit
-                            k.sleep(Duration::from_millis(10)).await;
-                        }
-                        Err(e) => {
-                            panic!("uhhhh {e:?}");
-                        }
-                    }
-                }
-            })
-            .unwrap();
+        // Initialize the SerialMuxServer
+        k.initialize({
+            const PORTS: usize = 16;
+            const FRAME_SIZE: usize = 512;
+            async {
+                // * Up to 16 virtual ports max
+                // * Framed messages up to 512 bytes max each
+                tracing::debug!("initializing SerialMuxServer...");
+                SerialMuxServer::register(k, PORTS, FRAME_SIZE)
+                    .await
+                    .unwrap();
+                tracing::info!("SerialMuxServer initialized!");
+            }
+            .instrument(tracing::info_span!(
+                "SerialMuxServer",
+                ports = PORTS,
+                frame_size = FRAME_SIZE
+            ))
+        })
+        .unwrap();
 
         // initialize tracing
         k.initialize(async move {
-            mux_done.await.unwrap();
             COLLECTOR.start(k).await;
             trace::info!("started tracing");
         })
         .unwrap();
 
-        // Loopback on virtual port zero
-        k.initialize(async move {
-            let hdl = PortHandle::open(k, 0, 1024).await.unwrap();
+        // Spawn a loopback port
+        let loopback_settings = LoopbackSettings::default();
+        k.initialize(loopback(k, loopback_settings)).unwrap();
 
-            loop {
-                let rx = hdl.consumer().read_grant().await;
-                let all_len = rx.len();
-                hdl.send(&rx).await;
-                rx.release(all_len);
-            }
-        })
-        .unwrap();
-
-        k.initialize(async move {
-            let hdl = PortHandle::open(k, 1, 1024).await.unwrap();
-
-            loop {
-                hdl.send(b"Hello, world!\r\n").await;
-                k.sleep(Duration::from_secs(1)).await;
-            }
-        })
-        .unwrap();
+        // Spawn a hello port
+        let hello_settings = HelloSettings::default();
+        k.initialize(hello(k, hello_settings)).unwrap();
 
         Ok(Self {
             kernel: k,

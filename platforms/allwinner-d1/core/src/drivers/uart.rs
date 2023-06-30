@@ -16,10 +16,10 @@ use kernel::{
         bbq::{new_bidi_channel, BidiHandle, Consumer, GrantW, SpscProducer},
         kchannel::{KChannel, KConsumer},
     },
-    drivers::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     maitake::sync::WaitCell,
     mnemos_alloc::containers::Box,
     registry::Message,
+    services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     Kernel,
 };
 

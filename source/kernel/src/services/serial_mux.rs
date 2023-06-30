@@ -3,7 +3,7 @@
 //! Allows the creation of virtual "ports" over a single serial link
 //!
 //! This module includes the service definition, client definition, as well
-//! as a server definition that relies on the [`SimpleSerial`][crate::drivers::simple_serial]
+//! as a server definition that relies on the [`SimpleSerial`][crate::services::simple_serial]
 //! service to provide the service implementation.
 
 use core::time::Duration;
@@ -15,13 +15,32 @@ use crate::{
         kchannel::{KChannel, KConsumer},
         oneshot::Reusable,
     },
-    drivers::simple_serial::SimpleSerialClient,
     registry::{Envelope, KernelHandle, Message, RegisteredDriver},
+    services::simple_serial::SimpleSerialClient,
     Kernel,
 };
 use maitake::sync::Mutex;
 use mnemos_alloc::containers::{Arc, FixedVec};
 use uuid::Uuid;
+
+////////////////////////////////////////////////////////////////////////////////
+// Well Known Ports
+////////////////////////////////////////////////////////////////////////////////
+
+/// Well known [SerialMuxService] ports
+#[repr(u16)]
+#[non_exhaustive]
+pub enum WellKnown {
+    /// A bidirectional loopback channel - echos all characters back
+    Loopback = 0,
+    /// An output-only channel for sending periodic sign of life messages
+    HelloWorld = 1,
+    /// An input-only channel to act as a keyboard for a GUI application
+    /// such as a forth console, when there is no hardware keyboard available
+    PsuedoKeyboard = 2,
+    /// A bidirectional for binary encoded tracing messages
+    BinaryTracing = 3,
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Service Definition

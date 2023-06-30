@@ -74,10 +74,11 @@
 extern crate alloc;
 
 pub mod comms;
-pub mod drivers;
+pub mod daemons;
 pub(crate) mod fmt;
 pub mod forth;
 pub mod registry;
+pub mod services;
 #[cfg(feature = "tracing-02")]
 pub mod trace;
 
