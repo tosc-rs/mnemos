@@ -21,3 +21,6 @@ git = "https://github.com/tokio-rs/tracing"
 # branch = "master"
 features = ["attributes"]
 default-features = false
+
+[dependencies.embedded-graphics]
+version = "0.7.1"
