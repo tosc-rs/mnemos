@@ -9,8 +9,8 @@ use melpomene::{
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
     daemons::{
-        sermux_hello, sermux_loopback, shells::graphical_shell_mono, SermuxHelloSettings,
-        SermuxLoopbackSettings,
+        sermux::{hello, loopback, HelloSettings, LoopbackSettings},
+        shells::graphical_shell_mono,
     },
     services::serial_mux::{SerialMuxServer, WellKnown},
     Kernel, KernelSettings,
@@ -123,12 +123,12 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     .unwrap();
 
     // Spawn a loopback port
-    let loopback_settings = SermuxLoopbackSettings::default();
-    k.initialize(sermux_loopback(k, loopback_settings)).unwrap();
+    let loopback_settings = LoopbackSettings::default();
+    k.initialize(loopback(k, loopback_settings)).unwrap();
 
     // Spawn a hello port
-    let hello_settings = SermuxHelloSettings::default();
-    k.initialize(sermux_hello(k, hello_settings)).unwrap();
+    let hello_settings = HelloSettings::default();
+    k.initialize(hello(k, hello_settings)).unwrap();
 
     // Spawn a graphical shell
     k.initialize(graphical_shell_mono(

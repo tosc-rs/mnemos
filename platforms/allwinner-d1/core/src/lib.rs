@@ -11,7 +11,7 @@ pub mod timer;
 use core::{fmt::Write, panic::PanicInfo, sync::atomic::Ordering, time::Duration};
 use d1_pac::{Interrupt, DMAC, TIMER};
 use kernel::{
-    daemons::{sermux_hello, sermux_loopback, SermuxHelloSettings, SermuxLoopbackSettings},
+    daemons::sermux::{hello, loopback, HelloSettings, LoopbackSettings},
     mnemos_alloc::containers::Box,
     services::serial_mux::SerialMuxServer,
     trace::{self, Instrument},
@@ -118,12 +118,12 @@ impl D1 {
         .unwrap();
 
         // Spawn a loopback port
-        let loopback_settings = SermuxLoopbackSettings::default();
-        k.initialize(sermux_loopback(k, loopback_settings)).unwrap();
+        let loopback_settings = LoopbackSettings::default();
+        k.initialize(loopback(k, loopback_settings)).unwrap();
 
         // Spawn a hello port
-        let hello_settings = SermuxHelloSettings::default();
-        k.initialize(sermux_hello(k, hello_settings)).unwrap();
+        let hello_settings = HelloSettings::default();
+        k.initialize(hello(k, hello_settings)).unwrap();
 
         Ok(Self {
             kernel: k,
