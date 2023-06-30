@@ -473,7 +473,6 @@ dependencies = [
  "d1-pac",
  "mnemos",
  "riscv",
- "riscv-rt",
  "tracing 0.2.0",
 ]
 

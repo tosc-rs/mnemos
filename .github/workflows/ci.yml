@@ -31,15 +31,9 @@ env:
   RUST_BACKTRACE: short
 
 jobs:
-  # run `cargo check` with the host target triple.
-  #
-  # NOTE: the `lichee-rv` crate is excluded as it is a no-std package, and when building
-  # the entire workspace, this setting isn't respected, leading to compile errors about
-  # duplicate panic-handler definitions.
-  #
-  # See the `check-allwinner-d1` job below that builds that project specifically.
-  check-host:
-    name: cargo check (host)
+  # run `just check`
+  check:
+    name: just check
     # needs: changed_paths
     # if: needs.changed_paths.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
@@ -50,42 +44,14 @@ jobs:
       run: rustup show
     - uses: olix0r/cargo-action-fmt@ee1ef42932e44794821dab57ef1bf7a73df8b21f
     - uses: actions/checkout@v2
-    - name: run cargo check
-      run: |
-        cargo check \
-          --workspace \
-          --all-features \
-          --quiet \
-          --message-format=json |
-          cargo-action-fmt
+    - uses: extractions/setup-just@v1
+    - name: run just check
+      run: just check
 
-  # See `check-host` NOTE above for details
-  check-allwinner-d1:
-    name: cargo check (allwinner d1)
-    # needs: changed_paths
-    # if: needs.changed_paths.outputs.should_skip != 'true'
-    runs-on: ubuntu-latest
-    steps:
-    - name: install rust toolchain
-      run: rustup show
-    - uses: olix0r/cargo-action-fmt@ee1ef42932e44794821dab57ef1bf7a73df8b21f
-    - uses: actions/checkout@v2
-    - name: run cargo check
-      run: |
-        cd platforms/allwinner-d1/boards
-        cargo check \
-          --workspace
-          --target riscv64imac-unknown-none-elf \
-          --quiet \
-          --message-format=json |
-          cargo-action-fmt
-
-  # run `cargo nextest run` with the host target triple.
-  #
-  # See `check-host` NOTE above for details regarding the excluded crate(s).
-  test-host:
-    name: cargo nextest run (host)
-    needs: check-host # skip on commits that don't compile.
+  # run `just test`
+  test:
+    name: just test
+    needs: check # skip on commits that don't compile.
     # needs: changed_paths
     # if: needs.changed_paths.outputs.should_skip != 'true'
     runs-on: ubuntu-latest
@@ -99,17 +65,15 @@ jobs:
     - name: install nextest
       uses: taiki-e/install-action@nextest
     - uses: actions/checkout@v2
-    - name: cargo nextest run
-      run: |
-        cargo nextest run \
-          --workspace \
-          --all-features
+    - uses: extractions/setup-just@v1
+    - name: just test
+      run: just test
 
-  # (just forth3) - run miri tests
+  # (test-host forth3) - run miri tests
   test-host-miri:
     runs-on: ubuntu-latest
     name: cargo miri test (host)
-    needs: check-host
+    needs: check
     # TODO(eliza): only run this if forth3 changed?
     # needs: changed_paths
     # if: needs.changed_paths.outputs.should_skip != 'true'
@@ -139,7 +103,7 @@ jobs:
 
   # check that RustDoc builds
   #
-  # See `check-host` NOTE above for details regarding the excluded crate(s).
+  # See `check` NOTE above for details regarding the excluded crate(s).
   docs:
     # needs: changed_paths
     # if: needs.changed_paths.outputs.should_skip != 'true'
