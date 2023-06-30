@@ -46,8 +46,7 @@ jobs:
     - uses: actions/checkout@v2
     - uses: extractions/setup-just@v1
     - name: run just check
-      run: |
-        just check
+      run: just check
 
   # run `just test`
   test:
@@ -68,8 +67,7 @@ jobs:
     - uses: actions/checkout@v2
     - uses: extractions/setup-just@v1
     - name: just test
-      run: |
-        just test
+      run: just test
 
   # (test-host forth3) - run miri tests
   test-host-miri:
