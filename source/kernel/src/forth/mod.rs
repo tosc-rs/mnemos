@@ -281,7 +281,13 @@ impl MnemosContext {
             kernel,
             params,
             id: NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed),
-            spawnulator: SpawnulatorClient::from_registry(kernel).await,
+            spawnulator: kernel
+                .timeout(
+                    params.spawnulator_timeout,
+                    SpawnulatorClient::from_registry(kernel),
+                )
+                .await
+                .expect("Spawnulator client timed out - is the spawnulator running?"),
         }
     }
 }
@@ -445,17 +451,24 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
         "Forked Forth VM!"
     );
 
-    forth
-        .host_ctxt
-        .spawnulator
-        .spawn(child)
-        .await
-        .map_err(|error| {
-            tracing::error!(?error, "Failed to enqueue child task to spawn!");
-            forth3::Error::InternalError
-        })?;
+    let spawn_fut = forth.host_ctxt.spawnulator.spawn(child);
 
-    Ok(())
+    let timeout_res = kernel.timeout(params.spawnulator_timeout, spawn_fut).await;
+
+    match timeout_res {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(error)) => {
+            tracing::error!(?error, "Failed to enqueue child task to spawn!");
+            Err(forth3::Error::InternalError)
+        }
+        Err(e) => {
+            tracing::error!(
+                ?e,
+                "Spawning child task failed - is the spawnulator running?"
+            );
+            Err(forth3::Error::InternalError)
+        }
+    }
 }
 
 /// Binding for [`Kernel::sleep()`]
