@@ -38,7 +38,7 @@
 //! different queue (the scheduler's run queue), but I couldn't easily come up
 //! with another solution...
 
-use core::time::Duration;
+use core::{convert::Infallible, time::Duration};
 
 use uuid::Uuid;
 
@@ -62,7 +62,7 @@ pub struct Spawnulator;
 impl RegisteredDriver for Spawnulator {
     type Request = Request;
     type Response = Response;
-    type Error = Error;
+    type Error = Infallible;
 
     const UUID: Uuid = FORTH_SPAWNULATOR;
 }
@@ -72,7 +72,6 @@ impl RegisteredDriver for Spawnulator {
 ////////////////////////////////////////////////////////////////////////////////
 pub struct Request(forth::Forth);
 pub struct Response;
-pub struct Error;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Client Definition
@@ -80,7 +79,7 @@ pub struct Error;
 
 pub struct SpawnulatorClient {
     hdl: KernelHandle<Spawnulator>,
-    reply: Reusable<Envelope<Result<Response, Error>>>,
+    reply: Reusable<Envelope<Result<Response, Infallible>>>,
 }
 
 impl SpawnulatorClient {

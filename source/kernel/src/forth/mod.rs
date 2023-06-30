@@ -31,6 +31,8 @@ pub struct Params {
     pub stdin_capacity: usize,
     pub stdout_capacity: usize,
     pub bag_of_holding_capacity: usize,
+    pub spawnulator_timeout: Duration,
+    _priv: (),
 }
 
 pub struct Forth {
@@ -227,6 +229,8 @@ impl Params {
             stdin_capacity: 1024,
             stdout_capacity: 1024,
             bag_of_holding_capacity: 16,
+            spawnulator_timeout: Duration::from_secs(5),
+            _priv: (),
         }
     }
 
