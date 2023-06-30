@@ -102,8 +102,8 @@ building `xfel` from source for Linux, MacOS, and Windows can be found
 [`rust-toolchain.toml`]: ./../../../rust-toolchain.toml
 [xfel-build]: https://xboot.org/xfel/#/?id=build-from-source
 [xfel-win]: https://xboot.org/xfel/#/?id=windows-platform
-[`xfel-nix`]: https://github.com/hawkw/dotfiles/blob/736d80487687b0610a1b17f5bbec6b22a501207c/nixos/pkgs/xfel.nix
-[`xfel-nix-udev`]: https://github.com/hawkw/dotfiles/blob/736d80487687b0610a1b17f5bbec6b22a501207c/nixos/machines/noctis.nix#L102-L104
+[xfel-nix]: https://github.com/hawkw/dotfiles/blob/736d80487687b0610a1b17f5bbec6b22a501207c/nixos/pkgs/xfel.nix
+[xfel-nix-udev]: https://github.com/hawkw/dotfiles/blob/736d80487687b0610a1b17f5bbec6b22a501207c/nixos/machines/noctis.nix#L102-L104
 
 ## License
 
