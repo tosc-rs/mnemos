@@ -259,11 +259,17 @@ pub unsafe fn kernel_uart(ccu: &mut CCU, gpio: &mut GPIO, uart0: UART0) -> Uart 
 pub struct Uart(d1_pac::UART0);
 impl core::fmt::Write for Uart {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        self.write(s.as_bytes());
+        Ok(())
+    }
+}
+
+impl Uart {
+    pub fn write(&mut self, buf: &[u8]) {
         while self.0.usr.read().tfnf().bit_is_clear() {}
-        for byte in s.as_bytes() {
+        for byte in buf {
             self.0.thr().write(|w| unsafe { w.thr().bits(*byte) });
             while self.0.usr.read().tfnf().bit_is_clear() {}
         }
-        Ok(())
     }
 }

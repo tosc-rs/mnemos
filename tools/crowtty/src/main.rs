@@ -252,6 +252,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mux = " MUX".if_supports_color(Stream::Stdout, |s| s.cyan());
     let dmux = "DMUX".if_supports_color(Stream::Stdout, |s| s.bright_purple());
     let err = "ERR!".if_supports_color(Stream::Stdout, |err| err.red());
+    let text = "TEXT".if_supports_color(Stream::Stdout, |s| s.bright_yellow());
     loop {
         let mut buf = [0u8; 256];
 
@@ -299,8 +300,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     hdl.out.send(remain.to_vec()).ok();
                 }
+            } else if let Ok(s) = std::str::from_utf8(&carry[..]) {
+                for line in s.lines() {
+                    println!("{tag} {text} {line}");
+                }
             } else {
-                println!("{} {dmux} {err} Bad decode!", tag);
+                println!("{tag} {dmux} {err} Bad decode!");
             }
             // if let Ok(msg) = Message::decode_in_place(&mut carry) {
 

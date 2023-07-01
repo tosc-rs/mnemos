@@ -8,7 +8,12 @@ pub mod plic;
 mod ram;
 pub mod timer;
 
-use core::{fmt::Write, panic::PanicInfo, sync::atomic::Ordering, time::Duration};
+use core::{
+    fmt::Write,
+    panic::PanicInfo,
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 use d1_pac::{Interrupt, DMAC, TIMER};
 use kernel::{
     daemons::sermux::{hello, loopback, HelloSettings, LoopbackSettings},
@@ -260,14 +265,50 @@ impl D1 {
     }
 
     pub fn handle_panic(info: &PanicInfo) -> ! {
+        // Disable interrupts.
+        unsafe {
+            riscv::interrupt::disable();
+        }
+
+        // Avoid double panics.
+        static PANICKING: AtomicBool = AtomicBool::new(false);
+        if PANICKING.swap(true, Ordering::SeqCst) {
+            die();
+        }
+
+        // TODO(eliza): abort any in-flight DMAs.
+
         // Ugly but works
         let mut uart: Uart = unsafe { core::mem::transmute(()) };
 
-        write!(&mut uart, "\r\n").ok();
-        write!(&mut uart, "{}\r\n", info).ok();
+        // end any existing SerMux frame on the UART
+        uart.write(&[0]);
 
-        loop {
-            core::sync::atomic::fence(Ordering::SeqCst);
+        // write out the panic message in plaintext
+        write!(&mut uart, "\r\n{info}\r\n").ok();
+        // end the SerMux frame so crowtty can decode the panic message as utf8
+        uart.write(&[0]);
+
+        write!(
+            &mut uart,
+            "you've met with a terrible fate, haven't you?\r\n"
+        )
+        .ok();
+        uart.write(&[0]);
+
+        die();
+
+        /// to sleep, perchance to dream; aye, there's the rub,
+        /// for in that sleep of death, what dreams may come?
+        fn die() -> ! {
+            loop {
+                // wait for an interrupt to pause the CPU. since we just
+                // disabled interrupts above, this will keep the CPU in a low
+                // power state until it's reset.
+                unsafe {
+                    riscv::asm::wfi();
+                }
+            }
         }
     }
 }
