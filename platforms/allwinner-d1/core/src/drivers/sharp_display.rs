@@ -18,6 +18,10 @@
 //! Clients of the driver can draw into the sub-frames that they receive, then send
 //! them back to be rendered into the total frame. Any data in the client's sub-frame
 //! will replace the current contents of the whole frame buffer.
+//!
+//! ## Wire format
+//!
+//! Reference: https://www.sharpsde.com/fileadmin/products/Displays/2016_SDE_App_Note_for_Memory_LCD_programming_V1.3.pdf
 
 use core::time::Duration;
 
@@ -40,7 +44,31 @@ use crate::spim::SpiSenderClient;
 
 const WIDTH: usize = 400;
 const HEIGHT: usize = 240;
+
+// Every pixel is one bit
 const WIDTH_BYTES: usize = WIDTH / 8;
+
+// Foreach LINE (240x) - 52 bytes total:
+//   * 1 byte for line number
+//   * (400bits / 8 = 50bytes) of data (one bit per pixel)
+//   * 1 "dummy" byte
+const LINE_COMMAND_IDX: usize = 0;
+const LINE_COMMAND_BYTES: usize = 1;
+const LINE_DUMMY_BYTES: usize = 1;
+const LINE_DATA_BYTES: usize = WIDTH_BYTES;
+const LINE_BYTES: usize = LINE_COMMAND_BYTES + LINE_DATA_BYTES + LINE_DUMMY_BYTES;
+
+// Every FRAME gets a 1 byte command, all of the lines, and one extra dummy byte
+const FRAME_COMMAND_IDX: usize = 0;
+const FRAME_COMMAND_BYTES: usize = 1;
+const FRAME_DUMMY_BYTES: usize = 1;
+const FRAME_DATA_BYTES: usize = HEIGHT * LINE_BYTES;
+const FRAME_BYTES: usize = FRAME_COMMAND_BYTES + FRAME_DATA_BYTES + FRAME_DUMMY_BYTES;
+
+mod commands {
+    pub const WRITE_LINE: u8 = 0b0000_0001;
+    pub const VCOM_MASK: u8 = 0b0000_0010;
+}
 
 /// Implements the [`EmbDisplayService`] service interface
 pub struct SharpDisplay;
@@ -52,8 +80,8 @@ impl SharpDisplay {
     /// window will appear.
     pub async fn register(kernel: &'static Kernel, max_frames: usize) -> Result<(), FrameError> {
         let frames = FixedVec::new(max_frames).await;
-        let mut linebuf = FixedVec::new((52 * 240) + 2).await;
-        for _ in 0..(52 * 240) + 2 {
+        let mut linebuf = FixedVec::new(FRAME_BYTES).await;
+        for _ in 0..FRAME_BYTES {
             let _ = linebuf.try_push(0);
         }
 
@@ -132,8 +160,8 @@ impl Dimensions for FullFrame {
         Rectangle::new(
             Point { x: 0, y: 0 },
             Size {
-                width: 400,
-                height: 240,
+                width: WIDTH as u32,
+                height: HEIGHT as u32,
             },
         )
     }
@@ -185,9 +213,23 @@ impl VCom {
 ///
 /// This task draws whenever there are pending (or "dirty") changes to the frame
 /// buffer, or at a base rate of 2Hz. At the moment, we only do a full redraw to
-/// ensure that VCOM is updated periodically. In the future, we can likely send
-/// a "no-op" command instead of a full frame redraw if the dirty flag has not
-/// been set, as a power optimization or latency improvement.
+/// ensure that VCOM is updated periodically.
+///
+/// ## Room for improvement
+///
+/// In the future, we can likely send a "no-op" command instead of a full frame
+/// redraw if the dirty flag has not been set, as a power optimization or latency
+/// improvement. This is not necessary if we are using GPIO VCOM instead of SPI
+/// VCOM toggling.
+///
+/// We could also keep track of "dirty lines" instead of just a whole "dirty frame",
+/// and only pull lines that have changed. This would help when typing a on a single
+/// line, and only one font-height needs to be redrawn.
+///
+/// For example: a single line is 52 * 8 bits, or 416 bits, or 208us at 2MHz. For
+/// sending an entire 240 line frame, this is 208 * 240us, or 49_920 us. If we can
+/// only are updating one 12pt font line, which is 15 pixels tall, this would reduce
+/// our sending time from 49.9ms to 3.1ms.
 struct Draw {
     kernel: &'static Kernel,
     buf: FixedVec<u8>,
@@ -199,21 +241,37 @@ impl Draw {
     async fn run(mut self) {
         loop {
             let c = self.ctxt.lock().await;
-            // render into
-            let vc = 0x01 | if c.vcom { 0x02 } else { 0x00 };
-            self.buf.as_slice_mut()[0] = 0x01 | vc;
+            // render into the buffer
+            let mut cmd = commands::WRITE_LINE;
+            if c.vcom {
+                cmd |= commands::VCOM_MASK;
+            }
 
-            let out_lines = self.buf.as_slice_mut()[1..].chunks_exact_mut(52);
+            // Write the command
+            self.buf.as_slice_mut()[FRAME_COMMAND_IDX] = cmd;
+
+            // Now we need to write all the lines, zip together the dest buffer
+            // with our current frame buffer
+            let out_lines = self.buf.as_slice_mut()[FRAME_COMMAND_BYTES..].chunks_exact_mut(LINE_BYTES);
             let in_lines = c.sdisp.frame.iter();
             let lines = out_lines.zip(in_lines);
 
             for (line, (oline, iline)) in &mut lines.enumerate() {
-                oline[0] = (line as u8) + 1;
-                oline[1..51].copy_from_slice(iline);
+                // Lines are 1-indexed on the wire
+                oline[LINE_COMMAND_IDX] = (line as u8) + 1;
+                // We keep our internal frame buffer in the same format as the wire
+                oline[LINE_COMMAND_BYTES..][..LINE_DATA_BYTES].copy_from_slice(iline);
+                // We don't need to write the dummy byte for the line
             }
 
-            self.buf = self.spim.send_wait(self.buf).await.map_err(drop).unwrap();
+            // Drop the mutex once we're done using the framebuffer data
             drop(c);
+
+            // We don't need to write the (extra) dummy byte for the frame
+
+            self.buf = self.spim.send_wait(self.buf).await.map_err(drop).unwrap();
+
+            // Wait a reasonable amount of time to redraw
             let _ = self
                 .kernel
                 .timeout(Duration::from_millis(500), DIRTY.wait())
