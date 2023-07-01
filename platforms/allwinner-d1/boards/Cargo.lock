@@ -471,6 +471,7 @@ name = "mnemos-d1-core"
 version = "0.1.0"
 dependencies = [
  "d1-pac",
+ "embedded-graphics",
  "mnemos",
  "riscv",
  "tracing 0.2.0",
