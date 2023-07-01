@@ -1,6 +1,5 @@
 use owo_colors::{OwoColorize, Stream};
 use serde::{Deserialize, Serialize};
-use serialport::SerialPort;
 use std::collections::HashMap;
 use std::fmt;
 use std::io::{ErrorKind, Read, Write};
@@ -10,6 +9,22 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{sleep, spawn, JoinHandle};
 use std::time::{Duration, Instant};
 use tracing_02::level_filters::LevelFilter;
+
+/// Unfortunately, the `serialport` crate seems to have some issues on M-series Macs.
+///
+/// For these hosts, we use a patched version of the crate that has some hacky
+/// fixes applied that seem to resolve the issue.
+///
+/// Context: <https://github.com/serialport/serialport-rs/issues/49>
+mod serial {
+    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    pub use serialport_macos_hack::*;
+
+    #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+    pub use serialport_regular::*;
+}
+
+use serial::SerialPort;
 
 #[derive(Serialize, Deserialize)]
 pub struct Chunk {
@@ -101,7 +116,7 @@ impl Connect {
     }
 
     fn new_from_serial(path: &str, baud: u32) -> Self {
-        let port = serialport::new(path, baud)
+        let port = serial::new(path, baud)
             .timeout(Duration::from_millis(10))
             .open()
             .unwrap();

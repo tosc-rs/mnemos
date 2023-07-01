@@ -3,10 +3,19 @@ name = "crowtty"
 version = "0.1.0"
 edition = "2021"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
-[dependencies]
-serialport = "4.0.1"
+### See `main.rs::serial` comments for why these duplicate dependencies exit
+
+[dependencies.serialport_regular]
+package = "serialport"
+version = "4.0.1"
+
+[dependencies.serialport_macos_hack]
+package = "serialport"
+git = "https://github.com/metta-systems/serialport-rs"
+rev = "7fec572529ec35b82bd4e3636d897fe2f1c2233f"
+
+###
 
 [dependencies.cobs]
 version = "0.2"
