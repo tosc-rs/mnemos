@@ -281,12 +281,25 @@ impl D1 {
         // Ugly but works
         let mut uart: Uart = unsafe { core::mem::transmute(()) };
 
-        write!(&mut uart, "\r\n").ok();
-        write!(&mut uart, "{}\r\n", info).ok();
+        // end any existing SerMux frame on the UART
+        uart.write(&[0]);
+
+        // write out the panic message in plaintext
+        write!(&mut uart, "\r\n{info}\r\n").ok();
+        // end the SerMux frame so crowtty can decode the panic message as utf8
+        uart.write(&[0]);
+
+        write!(
+            &mut uart,
+            "you've met with a terrible fate, haven't you?\r\n"
+        )
+        .ok();
         uart.write(&[0]);
 
         die();
 
+        /// to sleep, perchance to dream; aye, there's the rub,
+        /// for in that sleep of death, what dreams may come?
         fn die() -> ! {
             loop {
                 // wait for an interrupt to pause the CPU. since we just
