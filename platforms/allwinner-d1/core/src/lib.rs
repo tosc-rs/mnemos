@@ -8,7 +8,12 @@ pub mod plic;
 mod ram;
 pub mod timer;
 
-use core::{fmt::Write, panic::PanicInfo, sync::atomic::Ordering, time::Duration};
+use core::{
+    fmt::Write,
+    panic::PanicInfo,
+    sync::atomic::{AtomicBool, Ordering},
+    time::Duration,
+};
 use d1_pac::{Interrupt, DMAC, TIMER};
 use kernel::{
     daemons::sermux::{hello, loopback, HelloSettings, LoopbackSettings},
@@ -260,14 +265,31 @@ impl D1 {
     }
 
     pub fn handle_panic(info: &PanicInfo) -> ! {
+        // Disable interrupts.
+        unsafe {
+            riscv::interrupt::disable();
+        }
+
+        // Avoid double panics.
+        static PANICKING: AtomicBool = AtomicBool::new(false);
+        if PANICKING.swap(true, Ordering::SeqCst) {
+            die();
+        }
+
+        // TODO(eliza): abort any in-flight DMAs.
+
         // Ugly but works
         let mut uart: Uart = unsafe { core::mem::transmute(()) };
 
         write!(&mut uart, "\r\n").ok();
         write!(&mut uart, "{}\r\n", info).ok();
 
-        loop {
-            core::sync::atomic::fence(Ordering::SeqCst);
+        die();
+
+        fn die() -> ! {
+            loop {
+                core::sync::atomic::fence(Ordering::SeqCst);
+            }
         }
     }
 }
