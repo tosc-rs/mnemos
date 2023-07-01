@@ -283,6 +283,7 @@ impl D1 {
 
         write!(&mut uart, "\r\n").ok();
         write!(&mut uart, "{}\r\n", info).ok();
+        uart.write(&[0]);
 
         die();
 
