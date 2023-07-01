@@ -222,7 +222,7 @@ impl Draw {
     }
 }
 
-/// This task is spawned by the call to [`SimDisplay::register`]. It is a single
+/// This task is spawned by the call to [`SharpDisplay::register`]. It is a single
 /// async function that will process requests, and periodically redraw the
 /// framebuffer.
 struct CommanderTask {
