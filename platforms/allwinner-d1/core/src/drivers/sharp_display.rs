@@ -2,7 +2,8 @@
 //!
 //! This is an early attempt at a "frame buffer" style display driver. It provides a
 //! [emb_display service][kernel::services::emb_display] server, and uses the
-//!
+//! d1-core specific [SpiSender][crate::drivers::spim::SpiSender] service as an SPI
+//! "backend" for rendering.
 //!
 //! This implementation is sort of a work in progress, it isn't really a *great*
 //! long-term solution, but rather "okay for now".
@@ -21,7 +22,7 @@
 //!
 //! ## Wire format
 //!
-//! Reference: https://www.sharpsde.com/fileadmin/products/Displays/2016_SDE_App_Note_for_Memory_LCD_programming_V1.3.pdf
+//! Reference: <https://www.sharpsde.com/fileadmin/products/Displays/2016_SDE_App_Note_for_Memory_LCD_programming_V1.3.pdf>
 
 use core::time::Duration;
 
