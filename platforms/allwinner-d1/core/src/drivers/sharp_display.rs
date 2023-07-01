@@ -252,7 +252,8 @@ impl Draw {
 
             // Now we need to write all the lines, zip together the dest buffer
             // with our current frame buffer
-            let out_lines = self.buf.as_slice_mut()[FRAME_COMMAND_BYTES..].chunks_exact_mut(LINE_BYTES);
+            let out_lines =
+                self.buf.as_slice_mut()[FRAME_COMMAND_BYTES..].chunks_exact_mut(LINE_BYTES);
             let in_lines = c.sdisp.frame.iter();
             let lines = out_lines.zip(in_lines);
 
