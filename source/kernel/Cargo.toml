@@ -13,6 +13,8 @@ categories = [
 ]
 license = "MIT OR Apache-2.0"
 
+build = "build.rs"
+
 [lib]
 name = "kernel"
 
@@ -117,6 +119,9 @@ rev = "de95e610cc79db6d59ad6b40eb2d82adebb4e033"
 
 [dependencies.profont]
 version = "0.6.1"
+
+[build-dependencies]
+vergen = { version = "8.0.0", features = ["cargo", "git", "gitcl", "rustc",] }
 
 [features]
 default = ["tracing-01"]
