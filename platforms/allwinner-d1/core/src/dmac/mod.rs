@@ -15,10 +15,12 @@ pub mod descriptor;
 
 pub struct Dmac {
     pub dmac: DMAC, // TODO: not this
-    pub channels: [Channel; 16],
+    pub channels: [Channel; Self::CHANNEL_COUNT as usize],
 }
 
 impl Dmac {
+    pub const CHANNEL_COUNT: u8 = 16;
+
     pub fn new(dmac: DMAC, ccu: &mut CCU) -> Self {
         ccu.dma_bgr.write(|w| w.gating().pass().rst().deassert());
         Self {
@@ -51,7 +53,7 @@ pub struct Channel {
 
 impl Channel {
     pub unsafe fn summon_channel(idx: u8) -> Channel {
-        assert!(idx < 16);
+        assert!(idx < Dmac::CHANNEL_COUNT);
         Self { idx }
     }
 
