@@ -276,7 +276,16 @@ impl D1 {
             die();
         }
 
-        // TODO(eliza): abort any in-flight DMAs.
+        // Cancel any in-flight DMA requests. It's particularly important to
+        // cancel the UART TX DMA channel, because we're about to dump the panic
+        // message to the UART, but we may as well tear down any other in-flight
+        // DMAs.
+        for idx in 0..Dmac::CHANNEL_COUNT {
+            unsafe {
+                let mut ch = dmac::Channel::summon_channel(idx);
+                ch.stop_dma();
+            }
+        }
 
         // Ugly but works
         let mut uart: Uart = unsafe { core::mem::transmute(()) };
