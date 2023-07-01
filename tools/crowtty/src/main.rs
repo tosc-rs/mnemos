@@ -289,16 +289,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         while let Some(pos) = carry.iter().position(|b| *b == 0) {
             let new_chunk = carry.split_off(pos + 1);
             if let Ok(used) = cobs::decode_in_place(&mut carry) {
-                let mut bytes = [0u8; 2];
-                let (port, remain) = carry[..used].split_at(2);
-                bytes.copy_from_slice(port);
-                let port = u16::from_le_bytes(bytes);
+                const PORT_LEN: usize = 2;
+                if carry.len() >= PORT_LEN {
+                    let mut bytes = [0u8; PORT_LEN];
+                    let (port, remain) = carry[..used].split_at(2);
+                    bytes.copy_from_slice(port);
+                    let port = u16::from_le_bytes(bytes);
 
-                if let Some(hdl) = manager.workers.get_mut(&port) {
-                    if verbose {
-                        println!("{} {dmux} {}B -> :{port}", tag.port(port), remain.len());
+                    if let Some(hdl) = manager.workers.get_mut(&port) {
+                        if verbose {
+                            println!("{} {dmux} {}B -> :{port}", tag.port(port), remain.len());
+                        }
+                        hdl.out.send(remain.to_vec()).ok();
                     }
-                    hdl.out.send(remain.to_vec()).ok();
+                } else {
+                    // we decoded a single byte, which we can't demux (as
+                    // there's no port number).
+                    let byte = carry[0];
+
+                    // if the byte was 0, it was probably sent to terminate any
+                    // existing frame, but there was no frame; in that case, we
+                    // can just ignore it. if it wasn't a zero, print it,
+                    // because that's weird.
+                    if byte != 0 {
+                        println!(
+                            "{tag} {dmux} {err} a {byte:#02x} is loose in the cat room! (no port)"
+                        );
+                    }
                 }
             } else if let Ok(s) = std::str::from_utf8(&carry[..]) {
                 for line in s.lines() {
