@@ -113,9 +113,9 @@ impl SharpDisplay {
             ctxt,
         };
 
-        kernel.spawn(commander.run()).await;
-        kernel.spawn(vcom.run()).await;
-        kernel.spawn(draw.run()).await;
+        kernel.spawn(commander.cmd_run()).await;
+        kernel.spawn(vcom.vcom_run()).await;
+        kernel.spawn(draw.draw_run()).await;
 
         kernel
             .with_registry(|reg| reg.register_konly::<EmbDisplayService>(&cmd_prod))
@@ -201,11 +201,13 @@ struct VCom {
 }
 
 impl VCom {
-    pub async fn run(self) {
+    #[tracing::instrument(skip(self))]
+    pub async fn vcom_run(self) {
         loop {
             self.kernel.sleep(Duration::from_secs(1)).await;
             let mut c = self.ctxt.lock().await;
             c.vcom = !c.vcom;
+            tracing::debug!(vcom = c.vcom, "Toggling vcom");
         }
     }
 }
@@ -239,7 +241,8 @@ struct Draw {
 }
 
 impl Draw {
-    async fn run(mut self) {
+    #[tracing::instrument(skip(self))]
+    async fn draw_run(mut self) {
         loop {
             let c = self.ctxt.lock().await;
             // render into the buffer
@@ -293,7 +296,8 @@ struct CommanderTask {
 
 impl CommanderTask {
     /// The entrypoint for the driver execution
-    async fn run(mut self) {
+    #[tracing::instrument(skip(self))]
+    async fn cmd_run(mut self) {
         // This loop services incoming client requests.
         //
         // Generally, don't handle errors when replying to clients, this indicates that they
@@ -317,8 +321,19 @@ impl CommanderTask {
                         .await
                         .map(Response::FrameChunkAllocated);
 
-                    let resp = req.reply_with(res);
+                    if res.is_ok() {
+                        tracing::debug!(start_x, start_y, width, height, "allocated frame",);
+                    } else {
+                        tracing::warn!(
+                            start_x,
+                            start_y,
+                            width,
+                            height,
+                            "refused to allocate frame"
+                        );
+                    }
 
+                    let resp = req.reply_with(res);
                     let _ = reply.reply_konly(resp).await;
                 }
                 Request::Draw(fc) => match self.display_info.remove_frame(fc.frame_id) {
@@ -329,6 +344,7 @@ impl CommanderTask {
 
                         let mut guard = self.ctxt.lock().await;
 
+                        tracing::debug!("Drawing frame");
                         image.draw(&mut guard.sdisp).unwrap();
                         DIRTY.wake();
 
@@ -340,12 +356,14 @@ impl CommanderTask {
                             .await;
                     }
                     Err(e) => {
+                        tracing::warn!("Refused to draw frame");
                         let _ = reply.reply_konly(req.reply_with(Err(e))).await;
                     }
                 },
                 Request::Drop(fc) => {
                     let _ = match self.display_info.remove_frame(fc.frame_id) {
                         Ok(_) => {
+                            tracing::debug!("Dropped frame");
                             reply
                                 .reply_konly(req.reply_with(Ok(Response::FrameDropped)))
                                 .await
