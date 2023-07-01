@@ -15,7 +15,7 @@ use tracing_02::level_filters::LevelFilter;
 /// For these hosts, we use a patched version of the crate that has some hacky
 /// fixes applied that seem to resolve the issue.
 ///
-/// Context: https://github.com/serialport/serialport-rs/issues/49
+/// Context: <https://github.com/serialport/serialport-rs/issues/49>
 mod serial {
     #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
     pub use serialport_macos_hack::*;
