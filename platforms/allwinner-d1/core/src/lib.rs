@@ -289,7 +289,12 @@ impl D1 {
 
         fn die() -> ! {
             loop {
-                core::sync::atomic::fence(Ordering::SeqCst);
+                // wait for an interrupt to pause the CPU. since we just
+                // disabled interrupts above, this will keep the CPU in a low
+                // power state until it's reset.
+                unsafe {
+                    riscv::asm::wfi();
+                }
             }
         }
     }
