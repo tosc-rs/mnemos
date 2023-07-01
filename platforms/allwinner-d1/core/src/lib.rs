@@ -118,7 +118,6 @@ impl D1 {
         // initialize tracing
         k.initialize(async move {
             COLLECTOR.start(k).await;
-            trace::info!("started tracing");
         })
         .unwrap();
 
