@@ -4,7 +4,7 @@ use crate::dmac::{
     },
     Channel, ChannelMode,
 };
-use core::ptr::NonNull;
+use core::{mem::MaybeUninit, ptr::NonNull};
 use d1_pac::{CCU, GPIO, TWI0};
 use kernel::{
     buf::{ArrayBuf, OwnedReadBuf},
