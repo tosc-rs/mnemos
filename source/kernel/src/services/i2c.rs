@@ -167,6 +167,17 @@ impl fmt::Debug for Addr {
     }
 }
 
+impl Addr {
+    /// Returns the low 7 bits of this address.
+    #[must_use]
+    pub fn low_bits(self) -> u8 {
+        match self {
+            Self::SevenBit(bits) => bits,
+            Self::TenBit(bits) => (bits & 0b0111_1111) as u8,
+        }
+    }
+}
+
 // === impl I2cError ===
 
 impl I2cError {
