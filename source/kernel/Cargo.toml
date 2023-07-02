@@ -117,6 +117,10 @@ rev = "de95e610cc79db6d59ad6b40eb2d82adebb4e033"
 git = "https://github.com/tosc-rs/teletype/"
 rev = "de95e610cc79db6d59ad6b40eb2d82adebb4e033"
 
+[dependencies.sermux-proto]
+path = "../sermux-proto"
+default-features = false
+
 [dependencies.profont]
 version = "0.6.1"
 

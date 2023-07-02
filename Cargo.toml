@@ -9,6 +9,7 @@ members = [
     "source/melpomene",
     "source/alloc",
     "source/forth3",
+    "source/sermux-proto",
     "source/trace-proto",
 
     # tools
