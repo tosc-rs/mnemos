@@ -70,12 +70,13 @@ pub struct PortChunk<'a> {
 impl<'a> PortChunk<'a> {
     /// Create a new PortChunk from the given port and data
     #[inline]
-    pub fn new(port: u16, chunk: &'a [u8]) -> Self {
+    pub fn new(port: impl Into<u16>, chunk: &'a [u8]) -> Self {
         Self { port, chunk }
     }
 
     /// Calculate the size required to encode the given data payload size
     #[inline]
+    #[must_use]
     pub fn buffer_required(&self) -> usize {
         // Room for COBS(port:u16 + data:[u8; len]) plus a terminating zero
         cobs::max_encoding_length(self.chunk.len() + size_of::<u16>() + 1)
@@ -151,14 +152,16 @@ pub struct OwnedPortChunk {
 
 #[cfg(feature = "use-std")]
 impl OwnedPortChunk {
-    /// Create a new PortChunk from the given port and data
+    /// Create a new OwnedPortChunk from the given port and data
     #[inline]
+    #[must_use]
     pub fn new(port: u16, chunk: Vec<u8>) -> Self {
         Self { port, chunk }
     }
 
     /// Calculate the size required to encode the given data payload size
     #[inline]
+    #[must_use]
     pub fn buffer_required(&self) -> usize {
         // Room for COBS(port:u16 + data:[u8; len]) plus a terminating zero
         cobs::max_encoding_length(self.chunk.len() + size_of::<u16>() + 1)
