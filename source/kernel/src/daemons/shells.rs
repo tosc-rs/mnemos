@@ -95,6 +95,17 @@ pub async fn sermux_shell(k: &'static Kernel, settings: SermuxShellSettings) {
 /// Settings for the [graphical_shell_mono] daemon
 ///
 /// This does NOT implement [Default]. Instead use [GraphicalShellSettings::with_display_size].
+///
+/// For example:
+/// ```
+/// use kernel::daemons::shells::GraphicalShellSettings;
+/// let shell = GraphicalShellSettings {
+///     // override the capacity with a larger value:
+///     capacity: 512,
+///    ..GraphicalShellSettings::with_display_size(420, 69), // nice!
+/// };
+/// # drop(shell);
+/// ```
 #[derive(Debug)]
 pub struct GraphicalShellSettings {
     /// Sermux port to use as a PsuedoKeyboard.
