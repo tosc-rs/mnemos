@@ -146,7 +146,7 @@ impl GraphicalShellSettings {
     }
 }
 
-/// Spawns a graphical shell using the [EmbDisplayService][crate::services::emb_display::EmbDisplayService] service
+/// Spawns a graphical shell using the [EmbDisplayService](crate::services::emb_display::EmbDisplayService) service
 #[tracing::instrument(skip(k))]
 pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSettings) {
     let GraphicalShellSettings {

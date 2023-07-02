@@ -36,18 +36,22 @@ pub enum WellKnown {
     /// An output-only channel for sending periodic sign of life messages
     HelloWorld = 1,
     /// An input-only channel to act as a keyboard for a GUI application
-    /// such as a forth console, when there is no hardware keyboard available
+    /// such as a forth console, when there is no hardware keyboard available.
+    ///
+    /// Unlike the ForthShell ports, which serve as ssh/telnet like bidirectional
+    /// items, PsuedoKeyboard is only used to receive the input, as the output is
+    /// shown on a graphical terminal
     PsuedoKeyboard = 2,
     /// A bidirectional for binary encoded tracing messages
     BinaryTracing = 3,
 
-    /// An interactive forth shell (1/4)
+    /// A bidirectional interactive forth shell (1/4)
     ForthShell0 = 10,
-    /// An interactive forth shell (2/4)
+    /// A bidirectional interactive forth shell (2/4)
     ForthShell1 = 11,
-    /// An interactive forth shell (3/4)
+    /// A bidirectional interactive forth shell (3/4)
     ForthShell2 = 12,
-    /// An interactive forth shell (4/4)
+    /// A bidirectional interactive forth shell (4/4)
     ForthShell3 = 13,
 }
 
