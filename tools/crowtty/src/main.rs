@@ -1,6 +1,6 @@
 use owo_colors::{OwoColorize, Stream};
 use serde::{Deserialize, Serialize};
-use sermux_proto::{Error as SPError, OwnedPortChunk, WellKnown};
+use sermux_proto::{DecodeError, OwnedPortChunk, WellKnown};
 use std::{
     collections::HashMap,
     fmt,
@@ -155,7 +155,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         WellKnown::PsuedoKeyboard,
     ]
     .into_iter()
-    .map(|p| p as u16)
+    .map(Into::into)
     {
         let (inp_send, inp_recv) = channel();
         let (out_send, out_recv) = channel();
@@ -318,7 +318,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         hdl.out.send(chunk.to_vec()).ok();
                     }
                 }
-                Err(SPError::CobsDecodeFailed) => {
+                Err(DecodeError::CobsDecodeFailed) => {
                     if let Ok(s) = std::str::from_utf8(&carry[..]) {
                         success = true;
                         for line in s.lines() {
@@ -326,7 +326,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                Err(SPError::MalformedFrame) => {
+                Err(DecodeError::MalformedFrame) => {
                     success = true;
 
                     // If the malformed frame is JUST a null terminator, this is probably
@@ -335,7 +335,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("{tag} {dmux} {err} bonus data? {carry:#02x?}");
                     }
                 }
-                Err(_) => {}
             }
 
             if !success {

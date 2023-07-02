@@ -6,7 +6,7 @@
 
 #![cfg_attr(not(any(test, feature = "use-std")), no_std)]
 
-use core::mem::size_of;
+use core::{fmt::Display, mem::size_of};
 
 ////////////////////////////////////////////////////////////////////////////////
 // Well Known Ports
@@ -47,18 +47,42 @@ impl Into<u16> for WellKnown {
 }
 
 #[derive(Debug, PartialEq, Copy, Clone)]
-pub enum Error {
+pub enum EncodeError {
     /// The provided buffer is not suitable in size
     InsufficientSize,
     /// Ran out of room while filling a buffer, this is likely
     /// an error in the `sermux-proto` library.
     UnexpectedBufferFull,
+}
+
+impl Display for EncodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let st = match self {
+            EncodeError::InsufficientSize => "InsufficientSize",
+            EncodeError::UnexpectedBufferFull => "UnexpectedBufferFull",
+        };
+        f.write_str(st)
+    }
+}
+
+#[derive(Debug, PartialEq, Copy, Clone)]
+pub enum DecodeError {
     /// The cobs decoding process failed. The message was likely
     /// malformed or not a sermux-proto frame
     CobsDecodeFailed,
     /// Cobs decoding succeeded, but the resulting data was not
     /// a valid sermux-proto frame
     MalformedFrame,
+}
+
+impl Display for DecodeError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let st = match self {
+            DecodeError::CobsDecodeFailed => "CobsDecodeFailed",
+            DecodeError::MalformedFrame => "MalformedFrame",
+        };
+        f.write_str(st)
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -71,7 +95,10 @@ impl<'a> PortChunk<'a> {
     /// Create a new PortChunk from the given port and data
     #[inline]
     pub fn new(port: impl Into<u16>, chunk: &'a [u8]) -> Self {
-        Self { port, chunk }
+        Self {
+            port: port.into(),
+            chunk,
+        }
     }
 
     /// Calculate the size required to encode the given data payload size
@@ -83,26 +110,26 @@ impl<'a> PortChunk<'a> {
     }
 
     /// Encodes the current [PortChunk] into the given buffer
-    pub fn encode_to<'b>(&self, out_buf: &'b mut [u8]) -> Result<&'b mut [u8], Error> {
+    pub fn encode_to<'b>(&self, out_buf: &'b mut [u8]) -> Result<&'b mut [u8], EncodeError> {
         let PortChunk { port, chunk } = self;
         if out_buf.len() < self.buffer_required() {
-            return Err(Error::InsufficientSize);
+            return Err(EncodeError::InsufficientSize);
         }
 
         let mut encoder = cobs::CobsEncoder::new(out_buf);
         encoder
             .push(&port.to_le_bytes())
-            .map_err(|_| Error::UnexpectedBufferFull)?;
+            .map_err(|_| EncodeError::UnexpectedBufferFull)?;
         encoder
             .push(chunk)
-            .map_err(|_| Error::UnexpectedBufferFull)?;
+            .map_err(|_| EncodeError::UnexpectedBufferFull)?;
         let used = encoder
             .finalize()
-            .map_err(|_| Error::UnexpectedBufferFull)?;
+            .map_err(|_| EncodeError::UnexpectedBufferFull)?;
         // Get the encoded amount, with room for an extra zero terminator
         let res = out_buf
             .get_mut(..used + 1)
-            .ok_or(Error::UnexpectedBufferFull)?;
+            .ok_or(EncodeError::UnexpectedBufferFull)?;
         res[used] = 0;
         Ok(res)
     }
@@ -110,16 +137,16 @@ impl<'a> PortChunk<'a> {
     /// Decodes a [PortChunk] from the given buffer
     ///
     /// NOTE: This MAY mutate `data`, even if the decoding fails.
-    pub fn decode_from(data: &'a mut [u8]) -> Result<Self, Error> {
-        let dec_len = cobs::decode_in_place(data).map_err(|_| Error::CobsDecodeFailed)?;
+    pub fn decode_from(data: &'a mut [u8]) -> Result<Self, DecodeError> {
+        let dec_len = cobs::decode_in_place(data).map_err(|_| DecodeError::CobsDecodeFailed)?;
 
         // Messages must have a port and at least one data byte to be
         // well formed
         if dec_len < (size_of::<u16>() + 1) {
-            return Err(Error::MalformedFrame);
+            return Err(DecodeError::MalformedFrame);
         }
 
-        let frame = data.get(..dec_len).ok_or(Error::MalformedFrame)?;
+        let frame = data.get(..dec_len).ok_or(DecodeError::MalformedFrame)?;
 
         let mut port_bytes = [0u8; size_of::<u16>()];
         let (port_data, chunk) = frame.split_at(size_of::<u16>());
@@ -168,7 +195,7 @@ impl OwnedPortChunk {
     }
 
     /// Encodes the current [PortChunk] into the given buffer
-    pub fn encode_to<'b>(&self, out_buf: &'b mut [u8]) -> Result<&'b mut [u8], Error> {
+    pub fn encode_to<'b>(&self, out_buf: &'b mut [u8]) -> Result<&'b mut [u8], EncodeError> {
         let pc = self.as_port_chunk();
         pc.encode_to(out_buf)
     }
@@ -176,7 +203,7 @@ impl OwnedPortChunk {
     /// Decodes an [OwnedPortChunk] from the given buffer
     ///
     /// Unlike [PortChunk::decode_from], this will not mutate the given buffer.
-    pub fn decode(data: &[u8]) -> Result<Self, Error> {
+    pub fn decode(data: &[u8]) -> Result<Self, DecodeError> {
         let mut data = data.to_vec();
         let pc = PortChunk::decode_from(&mut data)?;
         let port = pc.port;
@@ -200,7 +227,7 @@ mod test {
     #[test]
     fn len_calc_right() {
         let data = [1, 2, 3, 4];
-        let pc = PortChunk::new(0x4269, &data);
+        let pc = PortChunk::new(0x4269u16, &data);
         let reqd = pc.buffer_required();
         assert_eq!(8, reqd);
         let mut buf = [0u8; 8];
@@ -208,7 +235,7 @@ mod test {
         assert_eq!(&[7, 0x69, 0x42, 1, 2, 3, 4, 0], res);
 
         let data = [1u8; 256];
-        let pc = PortChunk::new(0x4269, &data);
+        let pc = PortChunk::new(0x4269u16, &data);
         let reqd = pc.buffer_required();
         assert_eq!(261, reqd);
         let mut buf = [0u8; 261];
@@ -237,28 +264,28 @@ mod test {
         let mut data = [0];
         assert_eq!(
             PortChunk::decode_from(&mut data),
-            Err(Error::MalformedFrame)
+            Err(DecodeError::MalformedFrame)
         );
 
         // cobs header + delim (zero size)
         let mut data = [1, 0];
         assert_eq!(
             PortChunk::decode_from(&mut data),
-            Err(Error::MalformedFrame)
+            Err(DecodeError::MalformedFrame)
         );
 
         // cobs header + 1 data byte
         let mut data = [1, 1, 0];
         assert_eq!(
             PortChunk::decode_from(&mut data),
-            Err(Error::MalformedFrame)
+            Err(DecodeError::MalformedFrame)
         );
 
         // cobs header + 2 data byte
         let mut data = [1, 1, 1, 0];
         assert_eq!(
             PortChunk::decode_from(&mut data),
-            Err(Error::MalformedFrame)
+            Err(DecodeError::MalformedFrame)
         );
 
         // cobs header + 3 data byte (2 byte port, 1 byte chunk)
@@ -272,14 +299,14 @@ mod test {
         let mut data = [100, 2, 3, 0];
         assert_eq!(
             PortChunk::decode_from(&mut data),
-            Err(Error::CobsDecodeFailed)
+            Err(DecodeError::CobsDecodeFailed)
         );
 
         // secondary cobs pointer goes past the end
         let mut data = [2, 2, 2, 0];
         assert_eq!(
             PortChunk::decode_from(&mut data),
-            Err(Error::CobsDecodeFailed)
+            Err(DecodeError::CobsDecodeFailed)
         );
     }
 }
