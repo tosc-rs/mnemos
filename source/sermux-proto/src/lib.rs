@@ -12,7 +12,7 @@ use core::mem::size_of;
 // Well Known Ports
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Well known [SerialMuxService] ports
+/// Well known `SerialMuxService` ports
 #[repr(u16)]
 #[non_exhaustive]
 pub enum WellKnown {
