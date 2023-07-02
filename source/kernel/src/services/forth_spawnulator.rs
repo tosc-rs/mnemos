@@ -57,9 +57,9 @@ use crate::{
 ////////////////////////////////////////////////////////////////////////////////
 // Service Definition
 ////////////////////////////////////////////////////////////////////////////////
-pub struct Spawnulator;
+pub struct SpawnulatorService;
 
-impl RegisteredDriver for Spawnulator {
+impl RegisteredDriver for SpawnulatorService {
     type Request = Request;
     type Response = Response;
     type Error = Infallible;
@@ -78,7 +78,7 @@ pub struct Response;
 ////////////////////////////////////////////////////////////////////////////////
 
 pub struct SpawnulatorClient {
-    hdl: KernelHandle<Spawnulator>,
+    hdl: KernelHandle<SpawnulatorService>,
     reply: Reusable<Envelope<Result<Response, Infallible>>>,
 }
 
@@ -96,7 +96,9 @@ impl SpawnulatorClient {
     }
 
     pub async fn from_registry_no_retry(kernel: &'static Kernel) -> Option<Self> {
-        let prod = kernel.with_registry(|reg| reg.get::<Spawnulator>()).await?;
+        let prod = kernel
+            .with_registry(|reg| reg.get::<SpawnulatorService>())
+            .await?;
 
         Some(SpawnulatorClient {
             hdl: prod,
@@ -145,14 +147,14 @@ impl SpawnulatorServer {
             .await;
         tracing::debug!("spawnulator spawnulated!");
         kernel
-            .with_registry(|reg| reg.register_konly::<Spawnulator>(&cmd_prod))
+            .with_registry(|reg| reg.register_konly::<SpawnulatorService>(&cmd_prod))
             .await
             .map_err(|_| RegistrationError::SpawnulatorAlreadyRegistered)?;
         Ok(())
     }
 
     #[tracing::instrument(skip(kernel, vms))]
-    async fn spawnulate(kernel: &'static Kernel, vms: KConsumer<Message<Spawnulator>>) {
+    async fn spawnulate(kernel: &'static Kernel, vms: KConsumer<Message<SpawnulatorService>>) {
         tracing::debug!("spawnulator running...");
         while let Ok(msg) = vms.dequeue_async().await {
             let mut vm = None;
