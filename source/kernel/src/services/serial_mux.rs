@@ -40,6 +40,21 @@ pub enum WellKnown {
     PsuedoKeyboard = 2,
     /// A bidirectional for binary encoded tracing messages
     BinaryTracing = 3,
+
+    /// An interactive forth shell (1/4)
+    ForthShell0 = 10,
+    /// An interactive forth shell (2/4)
+    ForthShell1 = 11,
+    /// An interactive forth shell (3/4)
+    ForthShell2 = 12,
+    /// An interactive forth shell (4/4)
+    ForthShell3 = 13,
+}
+
+impl Into<u16> for WellKnown {
+    fn into(self) -> u16 {
+        self as u16
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////

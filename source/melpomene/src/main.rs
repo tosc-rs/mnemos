@@ -10,12 +10,9 @@ use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
     daemons::{
         sermux::{hello, loopback, HelloSettings, LoopbackSettings},
-        shells::graphical_shell_mono,
+        shells::{graphical_shell_mono, GraphicalShellSettings},
     },
-    services::{
-        forth_spawnulator::SpawnulatorServer,
-        serial_mux::{SerialMuxServer, WellKnown},
-    },
+    services::{forth_spawnulator::SpawnulatorServer, serial_mux::SerialMuxServer},
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -134,14 +131,9 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     k.initialize(hello(k, hello_settings)).unwrap();
 
     // Spawn a graphical shell
-    k.initialize(graphical_shell_mono(
-        k,
-        DISPLAY_WIDTH_PX,
-        DISPLAY_HEIGHT_PX,
-        WellKnown::PsuedoKeyboard as u16,
-        1024, // capacity
-    ))
-    .unwrap();
+    let mut guish = GraphicalShellSettings::with_display_size(DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX);
+    guish.capacity = 1024;
+    k.initialize(graphical_shell_mono(k, guish)).unwrap();
 
     // Spawn the spawnulator
     k.initialize(SpawnulatorServer::register(k, 16)).unwrap();
