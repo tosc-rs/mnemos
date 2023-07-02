@@ -432,13 +432,18 @@ impl Twi0Engine {
             w.a_ack().variant(true);
             w.m_stp().variant(true);
             // enable interrupts
-            w.int_en().low();
+            w.int_en().high();
             w
         });
 
-        // we only want to be the bus controller, so zero our address
-        twi.twi_addr.write(|w| w.sla().variant(0));
-        twi.twi_xaddr.write(|w| w.slax().variant(0));
+        // hopefully this is basically the same as udelay(5)
+        for _ in 0..5 * 1000 {
+            core::hint::spin_loop();
+        }
+
+        // // we only want to be the bus controller, so zero our address
+        // twi.twi_addr.write(|w| w.sla().variant(0));
+        // twi.twi_xaddr.write(|w| w.slax().variant(0));
 
         Self { twi }
     }
@@ -453,11 +458,11 @@ impl Twi0Engine {
         // Step 1: Clear TWI_EFR register, and set TWI_CNTR[A_ACK] to 1, and
         // configure TWI_CNTR[M_STA] to 1 to transmit the START signal.
         guard.twi.twi_efr.reset();
-        guard.twi.twi_cntr.modify(|_r, w| {
-            w.m_sta().variant(true);
-            w.a_ack().variant(true);
-            w
-        });
+        guard.twi.twi_cntr.modify(|_r, w| w.a_ack().variant(true));
+        guard
+            .twi
+            .twi_cntr
+            .modify(|_r, w: &mut twi::twi_cntr::W| w.m_sta().variant(true));
         guard.data.state = State::WaitForStart(addr);
         guard.data.op = Op::Write { buf, pos: 0 };
         // TODO(eliza): this is where we really need to be able to subscribe
@@ -605,7 +610,10 @@ impl TwiData {
     fn advance_isr(&mut self, twi: &twi::RegisterBlock, waiter: &WaitCell) {
         use core::fmt::Write;
         use status::*;
-        let status: u8 = twi.twi_stat.read().sta().bits() as u8;
+        // for _ in 0..200 {
+        //     core::hint::spin_loop();
+        // }
+        let status: u8 = twi.twi_stat.read().sta().bits();
 
         // Ugly but works
         let mut uart: crate::drivers::uart::Uart = unsafe { core::mem::transmute(()) };
@@ -619,19 +627,32 @@ impl TwiData {
         uart.write(&[0]);
         tracing::info!(status = ?format_args!("{status:#x}"), state = ?self.state, "TWI interrupt");
         self.state = match self.state {
-            State::Idle => {
-                // TODO: send a STOP?
-                State::Idle
-            }
+            // State::Idle => {
+            //     // TODO: send a STOP?
+            //     State::Idle
+            // }
             State::WaitForStart(addr)
                 if status == START_TRANSMITTED || status == REPEATED_START_TRANSMITTED =>
             {
                 // send the address
-                twi.twi_data.write(|w| w.data().variant(addr.low_bits()));
+                let dir = match self.op {
+                    Op::Write { .. } => 0b1,
+                    _ => 0b0,
+                };
+                twi.twi_data
+                    .write(|w| w.data().variant(addr.low_bits() | dir));
                 State::WaitForAddr1Ack(addr)
             }
             State::WaitForStart(addr) => {
-                twi.twi_cntr.modify(|_r, w| w.m_stp().variant(true));
+                twi.twi_cntr
+                    .modify(|_r, w: &mut twi::twi_cntr::W| w.m_sta().variant(true));
+                // // twi.twi_cntr.modify(|_r, w| w.int_flag().clear_bit());
+                // State::WaitForStart(addr)
+
+                // hopefully this is basically the same as udelay(5)
+                for _ in 0..5 * 1000 {
+                    core::hint::spin_loop();
+                }
                 State::WaitForStart(addr)
             }
             State::WaitForAddr1Ack(Addr::SevenBit(_)) if status == ADDR1_ACKED =>
@@ -733,6 +754,7 @@ mod status {
         match status {
             ADDR1_NACKED => ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address),
             TX_DATA_NACKED => ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data),
+            ADDR1_READ_NACKED => ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address),
             _ => ErrorKind::Other,
         }
     }
@@ -752,6 +774,9 @@ mod status {
     pub const TX_DATA_ACKED: u8 = 0x28;
     /// 0x30: Data byte transmitted in master mode, ACK not received
     pub const TX_DATA_NACKED: u8 = 0x30;
+
+    pub const ADDR1_READ_ACKED: u8 = 0x40;
+    pub const ADDR1_READ_NACKED: u8 = 0x48;
 
     /// 0x50: Data byte received in master mode, ACK transmitted
     pub const RX_DATA_ACKED: u8 = 0x50;
