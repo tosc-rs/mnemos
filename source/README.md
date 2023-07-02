@@ -22,7 +22,9 @@ Focus on userspace will resume after more progress has been made on the kernel.
 * [`melpomene/`] - Melpomene is the simulator for MnemOS development
 * [`mstd/`] - This is the userspace "standard library", which wraps mnemos-specific capabilities
 * [`notes/`] - Miscellaneous development notes
+* [`sermux-proto`] - Wire types used for the Serial Mux service, which allows for multiplexed "ports" over a serial link
 * [`spitebuf/`] - This is an async, mpsc library which powers the Kernel's `KChannel` data type
+* [`trace-proto`] - Wire types used for sending binary encoded `tracing` data from the target to a host
 
 [`abi/`]: ./abi/
 [`alloc/`]: ./alloc
@@ -31,7 +33,9 @@ Focus on userspace will resume after more progress has been made on the kernel.
 [`melpomene/`]: ./melpomene/
 [`mstd/`]: ./mstd/
 [`notes/`]: ./notes/
+[`sermux-proto`]: ./sermux-proto
 [`spitebuf/`]: ./spitebuf
+[`trace-proto`]: ./trace-proto
 
 [Forth]: https://forth-standard.org/
 

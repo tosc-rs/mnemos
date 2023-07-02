@@ -557,6 +557,7 @@ dependencies = [
  "serde",
  "serialport 4.0.1",
  "serialport 4.2.1",
+ "sermux-proto",
  "tracing 0.2.0",
  "tracing-serde-structured",
 ]
@@ -1524,6 +1525,7 @@ dependencies = [
  "profont",
  "ring-drawer",
  "serde",
+ "sermux-proto",
  "spitebuf",
  "tracing 0.1.37",
  "tracing 0.2.0",
@@ -2446,6 +2448,13 @@ dependencies = [
  "regex",
  "scopeguard",
  "winapi",
+]
+
+[[package]]
+name = "sermux-proto"
+version = "0.1.0"
+dependencies = [
+ "cobs",
 ]
 
 [[package]]

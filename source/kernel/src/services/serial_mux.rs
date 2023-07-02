@@ -21,45 +21,11 @@ use crate::{
 };
 use maitake::sync::Mutex;
 use mnemos_alloc::containers::{Arc, FixedVec};
+use sermux_proto::PortChunk;
 use uuid::Uuid;
 
-////////////////////////////////////////////////////////////////////////////////
-// Well Known Ports
-////////////////////////////////////////////////////////////////////////////////
-
-/// Well known [SerialMuxService] ports
-#[repr(u16)]
-#[non_exhaustive]
-pub enum WellKnown {
-    /// A bidirectional loopback channel - echos all characters back
-    Loopback = 0,
-    /// An output-only channel for sending periodic sign of life messages
-    HelloWorld = 1,
-    /// An input-only channel to act as a keyboard for a GUI application
-    /// such as a forth console, when there is no hardware keyboard available.
-    ///
-    /// Unlike the ForthShell ports, which serve as ssh/telnet like bidirectional
-    /// items, PsuedoKeyboard is only used to receive the input, as the output is
-    /// shown on a graphical terminal
-    PsuedoKeyboard = 2,
-    /// A bidirectional for binary encoded tracing messages
-    BinaryTracing = 3,
-
-    /// A bidirectional interactive forth shell (1/4)
-    ForthShell0 = 10,
-    /// A bidirectional interactive forth shell (2/4)
-    ForthShell1 = 11,
-    /// A bidirectional interactive forth shell (3/4)
-    ForthShell2 = 12,
-    /// A bidirectional interactive forth shell (4/4)
-    ForthShell3 = 13,
-}
-
-impl Into<u16> for WellKnown {
-    fn into(self) -> u16 {
-        self as u16
-    }
-}
+// Well known ports live in the sermux_proto crate
+pub use sermux_proto::WellKnown;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Service Definition
@@ -187,14 +153,14 @@ impl PortHandle {
         let msg_chunk = self.max_frame / 2;
 
         for chunk in data.chunks(msg_chunk) {
-            let enc_chunk = cobs::max_encoding_length(chunk.len() + 2);
-            let mut wgr = self.outgoing.send_grant_exact(enc_chunk + 1).await;
-            let mut encoder = cobs::CobsEncoder::new(&mut wgr);
-            encoder.push(&self.port.to_le_bytes()).unwrap();
-            encoder.push(chunk).unwrap();
-            let used = encoder.finalize().unwrap();
-            wgr[used] = 0;
-            wgr.commit(used + 1);
+            let pc = PortChunk::new(self.port, chunk);
+            let needed = pc.buffer_required();
+            let mut wgr = self.outgoing.send_grant_exact(needed).await;
+            let used = pc
+                .encode_to(&mut wgr)
+                .expect("sermux encoding should not fail")
+                .len();
+            wgr.commit(used);
         }
     }
 }

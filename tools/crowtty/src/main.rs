@@ -1,13 +1,16 @@
 use owo_colors::{OwoColorize, Stream};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::fmt;
-use std::io::{ErrorKind, Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver, Sender};
-use std::thread::{sleep, spawn, JoinHandle};
-use std::time::{Duration, Instant};
+use sermux_proto::{DecodeError, OwnedPortChunk, WellKnown};
+use std::{
+    collections::HashMap,
+    fmt,
+    io::{ErrorKind, Read, Write},
+    net::{TcpListener, TcpStream},
+    path::PathBuf,
+    sync::mpsc::{channel, Receiver, Sender},
+    thread::{sleep, spawn, JoinHandle},
+    time::{Duration, Instant},
+};
 use tracing_02::level_filters::LevelFilter;
 
 /// Unfortunately, the `serialport` crate seems to have some issues on M-series Macs.
@@ -146,7 +149,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // # connect to port N - stdio
     // stty -icanon -echo && ncat 127.0.0.1 $PORT
     // ```
-    for i in [0, 1, 2].into_iter() {
+    for i in [
+        WellKnown::Loopback,
+        WellKnown::HelloWorld,
+        WellKnown::PsuedoKeyboard,
+    ]
+    .into_iter()
+    .map(Into::into)
+    {
         let (inp_send, inp_recv) = channel();
         let (out_send, out_recv) = channel();
 
@@ -232,13 +242,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         manager.workers.insert(i, handle);
     }
 
-    // spawn tracing on port 3
+    // spawn tracing listener
+    let trace_port = WellKnown::BinaryTracing as u16;
     let trace_handle = {
         let (inp_send, inp_recv) = channel();
         let (out_send, out_recv) = channel::<Vec<u8>>();
         let max_level = args.trace_level;
         let thread_hdl = spawn(move || {
-            trace::TraceWorker::new(max_level, inp_send, out_recv, tag.port(3), verbose).run()
+            trace::TraceWorker::new(max_level, inp_send, out_recv, tag.port(trace_port), verbose)
+                .run()
         });
         WorkerHandle {
             out: out_send,
@@ -247,7 +259,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
-    manager.workers.insert(3, trace_handle);
+    manager.workers.insert(trace_port, trace_handle);
 
     let mux = " MUX".if_supports_color(Stream::Stdout, |s| s.cyan());
     let dmux = "DMUX".if_supports_color(Stream::Stdout, |s| s.bright_purple());
@@ -286,50 +298,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         carry.extend_from_slice(&buf[..used]);
 
+        // TODO: We probably want some kind of timeout here to force a flush
+        // of the data even if we never get a null, like for example if we aren't
+        // getting serial-mux data at all, and just getting plaintext with no nulls
+        // at all.
         while let Some(pos) = carry.iter().position(|b| *b == 0) {
-            let new_chunk = carry.split_off(pos + 1);
-            if let Ok(used) = cobs::decode_in_place(&mut carry) {
-                const PORT_LEN: usize = 2;
-                if carry.len() >= PORT_LEN {
-                    let mut bytes = [0u8; PORT_LEN];
-                    let (port, remain) = carry[..used].split_at(2);
-                    bytes.copy_from_slice(port);
-                    let port = u16::from_le_bytes(bytes);
+            let remainder = carry.split_off(pos + 1);
 
+            // Success means we printed something more useful than "bad decode",
+            // even if the actual decoding failed
+            let mut success = false;
+            match OwnedPortChunk::decode(&carry) {
+                Ok(OwnedPortChunk { port, chunk }) => {
+                    success = true;
                     if let Some(hdl) = manager.workers.get_mut(&port) {
                         if verbose {
-                            println!("{} {dmux} {}B -> :{port}", tag.port(port), remain.len());
+                            println!("{} {dmux} {}B -> :{port}", tag.port(port), chunk.len());
                         }
-                        hdl.out.send(remain.to_vec()).ok();
+                        hdl.out.send(chunk.to_vec()).ok();
                     }
-                } else {
-                    // we decoded a single byte, which we can't demux (as
-                    // there's no port number).
-                    let byte = carry[0];
+                }
+                Err(DecodeError::CobsDecodeFailed) => {
+                    if let Ok(s) = std::str::from_utf8(&carry[..]) {
+                        success = true;
+                        for line in s.lines() {
+                            println!("{tag} {text} {line}");
+                        }
+                    }
+                }
+                Err(DecodeError::MalformedFrame) => {
+                    success = true;
 
-                    // if the byte was 0, it was probably sent to terminate any
-                    // existing frame, but there was no frame; in that case, we
-                    // can just ignore it. if it wasn't a zero, print it,
-                    // because that's weird.
-                    if byte != 0 {
-                        println!(
-                            "{tag} {dmux} {err} a {byte:#02x} is loose in the cat room! (no port)"
-                        );
+                    // If the malformed frame is JUST a null terminator, this is probably
+                    // a "frame flush" event, like we are just about to panic.
+                    if carry != &[0x00] {
+                        println!("{tag} {dmux} {err} bonus data? {carry:#02x?}");
                     }
                 }
-            } else if let Ok(s) = std::str::from_utf8(&carry[..]) {
-                for line in s.lines() {
-                    println!("{tag} {text} {line}");
-                }
-            } else {
+            }
+
+            if !success {
                 println!("{tag} {dmux} {err} Bad decode!");
             }
-            // if let Ok(msg) = Message::decode_in_place(&mut carry) {
 
-            // } else {
-            //     println!("Bad decode!");
-            // }
-            carry = new_chunk;
+            carry = remainder;
         }
 
         sleep(Duration::from_millis(10));
