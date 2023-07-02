@@ -50,13 +50,12 @@ pub static TWI0_DRV_RX_DONE: WaitCell = WaitCell::new();
 
 /// Data used by a TWI interrupt.
 struct Twi {
-    twi: &'static twi::RegisterBlock,
     data: UnsafeCell<TwiData>,
     waiter: WaitCell,
 }
 
 struct TwiDataGuard<'a> {
-    twi: &'static twi::RegisterBlock,
+    twi: &'a twi::RegisterBlock,
     data: &'a mut TwiData,
 }
 
@@ -67,7 +66,6 @@ struct TwiData {
 }
 
 static TWI0_ISR: Twi = Twi {
-    twi: unsafe { &*TWI0::PTR },
     data: UnsafeCell::new(TwiData {
         state: State::Idle,
         op: Op::None,
@@ -393,8 +391,16 @@ impl Twi0Engine {
 
     /// Handle a TWI 0 interrupt
     pub fn handle_interrupt() {
-        unsafe {
-            TWI0_ISR.isr();
+        tracing::info!("TWI 0 interrupt");
+        let twi = unsafe { &*TWI0::PTR };
+        let data = unsafe {
+            // safety: it's okay to do this because this function can only be
+            // called from inside the ISR.
+            &mut (*TWI0_ISR.data.get())
+        };
+
+        while twi.twi_cntr.read().int_flag() == true {
+            data.advance_isr(twi, &TWI0_ISR.waiter);
         }
     }
 
@@ -423,7 +429,7 @@ impl Twi0Engine {
             // enable bus responses.
             w.bus_en().respond();
             // enable auto-acknowledgement
-            // w.a_ack().variant(true);
+            w.a_ack().variant(true);
             w.m_stp().variant(true);
             // enable interrupts
             w.int_en().low();
@@ -437,171 +443,50 @@ impl Twi0Engine {
         Self { twi }
     }
 
-    async fn wfi(&mut self) -> Result<u8, ErrorKind> {
-        use core::{future::Future, task::Poll};
-        let wait = TWI0_ENG_IRQ.wait();
-        // register the waiter *before* we enable interrupts again
-        futures::pin_mut!(wait);
-        let mut needs_unmask = true;
-        futures::future::poll_fn(|cx| match wait.as_mut().poll(cx) {
-            Poll::Pending if needs_unmask => {
-                needs_unmask = false;
-                self.twi.twi_cntr.modify(|_r, w| {
-                    // w.int_flag().clear_bit();
-                    w.int_en().high();
-                    w
-                });
-                Poll::Pending
-            }
-            x => return x,
-        })
-        .await;
-
-        // wait.await.expect("cannot be closed");
-
-        // let wait = TWI0_ENG_IRQ.wait().await;
-        let stat = self.twi.twi_stat.read().bits();
-        kernel::trace::info!("TWI0 stat: {:#x}", stat);
-        let stat = match stat as u8 {
-            // 0x00: Bus error
-            bits if bits == 0x00 => Err(ErrorKind::Bus),
-            // 0x08: START condition transmitted
-            bits if bits == 0x08 => Ok(bits),
-            // 0x10: Repeated START condition transmitted
-            bits if bits == 0x10 => Ok(bits),
-            // 0x18: Address + Write bit transmitted, ACK received
-            bits if bits == 0x18 => Ok(bits),
-            // 0x20: Address + Write bit transmitted, ACK not received
-            bits if bits == 0x20 => Err(ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address)),
-            // 0x28: Data byte transmitted in master mode, ACK received
-            bits if bits == 0x28 => Ok(bits),
-            // 0x30: Data byte transmitted in master mode, ACK not received
-            bits if bits == 0x30 => Err(ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data)),
-            // 0x38: Arbitration lost in address or data byte
-            bits if bits == 0x38 => Err(ErrorKind::ArbitrationLoss),
-            // 0x40: Address + Read bit transmitted, ACK received
-            bits if bits == 0x40 => Ok(bits),
-            // 0x48: Address + Read bit transmitted, ACK not received
-            bits if bits == 0x48 => Err(ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address)),
-            // 0x50: Data byte received in master mode, ACK transmitted
-            bits if bits == 0x50 => Ok(bits),
-            // 0x58: Data byte received in master mode, no ACK transmitted
-            // XXX(eliza): is this an error? why would we not ack?
-            bits if bits == 0x58 => Ok(bits),
-            // 0x60: Slave address + Write bit received, ACK transmitted
-            //
-            // Note: this is technically not an error in theory, but this driver
-            // only ever operates as the I2C controller, rather than the target.
-            // So, if we see this status in the middle of a bus operation, we
-            // were incorrectly operating in target mode?
-            bits if bits == 0x60 => Err(ErrorKind::Other),
-            // 0x68: Arbitration lost in the address as master, slave address +
-            // Write bit received, ACK transmitted
-            //
-            // Note: again, this is not an error condition from the perspective
-            // of the bus, but we expect to be the I2C controller.
-            bits if bits == 0x68 => Err(ErrorKind::ArbitrationLoss),
-            // 0x70: General Call address received, ACK transmitted
-            // TODO(eliza): handle I2C general calls..
-            bits if bits == 0x70 => Ok(bits),
-            // 0x78: Arbitration lost in the address as master, General Call
-            // address received, ACK transmitted
-            // TODO(eliza): handle I2C general calls..
-            bits if bits == 0x78 => Ok(bits),
-            // 0x80: Data byte received after slave address received, ACK
-            // transmitted
-            bits if bits == 0x80 => Err(ErrorKind::Other),
-            // 0x88: Data byte received after slave address received, not ACK
-            // transmitted
-            // 0x90: Data byte received after General Call received, ACK
-            // transmitted
-            // 0x80: Data byte received after slave address received, ACK
-            // transmitted
-            // 0x98: Data byte received after General Call received, not ACK
-            // transmitted
-            // 0xA0: STOP or repeated START condition received in slave mode
-            // 0xA8: Slave address + Read bit received, ACK transmitted
-            // 0xB0: Arbitration lost in the address as master, slave address +
-            // Read bit received, ACK transmitted
-            bits if bits == 0xb0 => Err(ErrorKind::ArbitrationLoss),
-            // 0xB8: Data byte transmitted in slave mode, ACK received
-            // 0xC0: Data byte transmitted in slave mode, ACK not received
-            // 0xC8: The Last byte transmitted in slave mode, ACK received
-            // 0xD0: Second Address byte + Write bit transmitted, ACK receive
-            bits if bits == 0xd0 => Ok(bits),
-            // 0xD8: Second Address byte + Write bit transmitted, ACK not
-            // received
-            bits if bits == 0xd8 => Err(ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address)),
-            // 0xF8: No relevant status information, INT_FLAG=0
-            bits if bits == 0xf8 => Ok(bits),
-            // any unrecognized status, or statuses related to us operating as
-            // the I2C target, should return an error.
-            _ => Err(ErrorKind::Other),
-        };
-
-        stat
-    }
-
-    async fn send_byte(&mut self, byte: u8) -> Result<(), ErrorKind> {
-        self.twi.twi_data.write(|w| w.data().variant(byte));
-        self.wfi().await?;
-        Ok(())
-    }
-
-    async fn send_addr(&mut self, addr: Addr) -> Result<(), ErrorKind> {
-        match addr {
-            Addr::SevenBit(addr) => self.send_byte(addr).await?,
-            Addr::TenBit(addr) => {
-                let [low, high] = addr.to_le_bytes();
-                self.send_byte(low).await?;
-                self.send_byte(high).await?;
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn write(&mut self, addr: Addr, data: &[u8]) -> Result<(), ErrorKind> {
-        // Step 1: Clear TWI_EFR register, and configure TWI_CNTR[M_STA] to 1 to
-        // transmit the START signal.
-        self.twi.twi_efr.reset();
-        self.twi.twi_cntr.modify(|_r, w| {
-            w.bus_en().respond();
+    pub async fn write(
+        &mut self,
+        addr: Addr,
+        buf: FixedVec<u8>,
+    ) -> Result<FixedVec<u8>, ErrorKind> {
+        // tracing::info!("start twi write");
+        let guard = TWI0_ISR.lock(&self.twi);
+        // Step 1: Clear TWI_EFR register, and set TWI_CNTR[A_ACK] to 1, and
+        // configure TWI_CNTR[M_STA] to 1 to transmit the START signal.
+        guard.twi.twi_efr.reset();
+        guard.twi.twi_cntr.modify(|_r, w| {
+            w.m_sta().variant(true);
             w.a_ack().variant(true);
-            w.int_en().low();
             w
         });
-        self.twi.twi_cntr.modify(|_r, w| w.m_sta().variant(true));
+        guard.data.state = State::WaitForStart(addr);
+        guard.data.op = Op::Write { buf, pos: 0 };
+        // TODO(eliza): this is where we really need to be able to subscribe
+        // to the WaitCell eagerly, *before* we drop the guard and unlock
+        // the interrupt, so we don't race...
 
-        // wait for an interrupt to confirm the transmission of the START
-        // signal.
-        // TODO(eliza): maybe check the status?
-        let status = self.wfi().await;
+        let wait = TWI0_ISR.waiter.wait();
+        futures::pin_mut!(wait);
+        futures::poll!(&mut wait);
+        drop(guard);
+        wait.await.unwrap();
 
-        kernel::trace::info!("M_STA = 1");
+        let guard = TWI0_ISR.lock(&self.twi);
 
-        kernel::trace::info!("START interrupt");
-
-        // Step 2: After the START signal is transmitted, the first interrupt is
-        // triggered, then write device ID to TWI_DATA (For a 10-bit device ID,
-        // firstly write the first byte ID, secondly write the second byte ID in
-        // the next interrupt).
-        self.send_addr(addr).await?;
-
-        kernel::trace::info!("ADDR interrupted");
-
-        // Step 3: Interrupt is triggered after data address transmission
-        // completes, write data to be transmitted to TWI_DATA (For consecutive
-        // write data operation, every byte transmission completion triggers
-        // interrupt, during interrupt write the next byte data to TWI_DATA).
-        for &byte in data {
-            self.send_byte(byte).await?;
-        }
-
-        // Step 5: After transmission completes, write TWI_CNTR[M_STP] to 1 to
-        // transmit the STOP signal and end this write-operation.
-        self.twi.twi_cntr.modify(|_r, w| w.m_stp().variant(true));
-
-        Ok(())
+        guard.twi.twi_cntr.modify(|_r, w| {
+            w.m_stp().variant(true);
+            w.a_ack().variant(false);
+            w
+        });
+        let res = if let Some(err) = guard.data.err.take() {
+            Err(err)
+        } else {
+            match core::mem::replace(&mut guard.data.op, Op::None) {
+                Op::Write { buf, .. } => Ok(buf),
+                _ => unreachable!(),
+            }
+        };
+        core::mem::forget(guard);
+        res
     }
 
     pub async fn read(
@@ -609,23 +494,43 @@ impl Twi0Engine {
         addr: Addr,
         buf: OwnedReadBuf,
         amt: usize,
-    ) -> Result<(), ErrorKind> {
-        {
-            let guard = TWI0_ISR.lock();
-            // Step 1: Clear TWI_EFR register, and set TWI_CNTR[A_ACK] to 1, and
-            // configure TWI_CNTR[M_STA] to 1 to transmit the START signal.
-            guard.twi.twi_efr.reset();
-            guard.twi.twi_cntr.modify(|_r, w| {
-                w.m_sta().variant(true);
-                w.a_ack().variant(true);
-                w
-            });
-            guard.data.state = State::WaitForAddr1Ack(addr);
-            guard.data.op = Op::Read { buf, amt, read: 0 };
-            // TODO(eliza): this is where we really need to be able to subscribe
-            // to the WaitCell eagerly, *before* we drop the guard and unlock
-            // the interrupt, so we don't race...
-        };
+    ) -> Result<OwnedReadBuf, ErrorKind> {
+        let guard = TWI0_ISR.lock(&self.twi);
+        // Step 1: Clear TWI_EFR register, and set TWI_CNTR[A_ACK] to 1, and
+        // configure TWI_CNTR[M_STA] to 1 to transmit the START signal.
+        guard.twi.twi_efr.reset();
+        guard.twi.twi_cntr.modify(|_r, w| {
+            w.m_sta().variant(true);
+            w.a_ack().variant(true);
+            w
+        });
+        guard.data.state = State::WaitForStart(addr);
+        guard.data.op = Op::Read { buf, amt, read: 0 };
+        // TODO(eliza): this is where we really need to be able to subscribe
+        // to the WaitCell eagerly, *before* we drop the guard and unlock
+        // the interrupt, so we don't race...
+
+        // let wait = TWI0_ISR.waiter.wait();
+        // futures::pin_mut!(wait);
+        // futures::poll!(&mut wait);
+        drop(guard);
+        TWI0_ISR.waiter.wait().await.unwrap();
+
+        let guard = TWI0_ISR.lock(&self.twi);
+
+        guard.twi.twi_cntr.modify(|_r, w| {
+            w.m_stp().variant(true);
+            w.a_ack().variant(false);
+            w
+        });
+        if let Some(err) = guard.data.err.take() {
+            Err(err)
+        } else {
+            match core::mem::replace(&mut guard.data.op, Op::None) {
+                Op::Read { buf, .. } => Ok(buf),
+                _ => unreachable!(),
+            }
+        }
 
         // // wait for an interrupt to confirm the transmission of the START
         // // signal.
@@ -660,22 +565,17 @@ impl Twi0Engine {
 
         // // Step 6: Write TWI_CNTR[M_STP] to 1 to transmit the STOP signal and
         // // end this read-operation.
-        // self.twi.twi_cntr.modify(|_r, w| w.m_stp().variant(true));
-
-        Ok(())
     }
 }
 
 impl Twi {
     #[must_use]
-    fn lock(&self) -> TwiDataGuard<'_> {
+    fn lock<'a>(&'a self, twi: &'a twi::RegisterBlock) -> TwiDataGuard<'a> {
+        tracing::info!("locking twi");
         // disable TWI interrupts while holding the guard.
-        self.twi.twi_cntr.modify(|_r, w| w.int_en().low());
+        twi.twi_cntr.modify(|_r, w| w.int_en().low());
         let data = unsafe { &mut *(self.data.get()) };
-        TwiDataGuard {
-            data,
-            twi: self.twi,
-        }
+        TwiDataGuard { data, twi }
     }
 }
 
@@ -701,23 +601,24 @@ impl DerefMut for TwiDataGuard<'_> {
     }
 }
 
-impl Twi {
-    unsafe fn isr(&self) {
-        while self.twi.twi_cntr.read().int_flag() == true {
-            self.advance_isr();
-        }
-    }
-
-    unsafe fn advance_isr(&self) {
+impl TwiData {
+    fn advance_isr(&mut self, twi: &twi::RegisterBlock, waiter: &WaitCell) {
+        use core::fmt::Write;
         use status::*;
-        let data = unsafe {
-            // safety: it's okay to do this because this function can only be
-            // called from inside the ISR.
-            &mut (*self.data.get())
-        };
-        let status = self.twi.twi_stat.read().bits();
-        tracing::info!(status = ?format_args!("{status:#x}"), state = ?data.state, "TWI interrupt");
-        data.state = match data.state {
+        let status: u8 = twi.twi_stat.read().sta().bits() as u8;
+
+        // Ugly but works
+        let mut uart: crate::drivers::uart::Uart = unsafe { core::mem::transmute(()) };
+
+        // end any existing SerMux frame on the UART
+        uart.write(&[0]);
+
+        // write out the panic message in plaintext
+        write!(&mut uart, "TWI INT: {status:#x}, {:?}", self.state).ok();
+        // end the SerMux frame so crowtty can decode the panic message as utf8
+        uart.write(&[0]);
+        tracing::info!(status = ?format_args!("{status:#x}"), state = ?self.state, "TWI interrupt");
+        self.state = match self.state {
             State::Idle => {
                 // TODO: send a STOP?
                 State::Idle
@@ -726,21 +627,21 @@ impl Twi {
                 if status == START_TRANSMITTED || status == REPEATED_START_TRANSMITTED =>
             {
                 // send the address
-                self.twi
-                    .twi_data
-                    .write(|w| w.data().variant(addr.low_bits()));
+                twi.twi_data.write(|w| w.data().variant(addr.low_bits()));
                 State::WaitForAddr1Ack(addr)
+            }
+            State::WaitForStart(addr) => {
+                twi.twi_cntr.modify(|_r, w| w.m_stp().variant(true));
+                State::WaitForStart(addr)
             }
             State::WaitForAddr1Ack(Addr::SevenBit(_)) if status == ADDR1_ACKED =>
             // TODO(eliza): handle 10 bit addr...
             {
-                match &mut data.op {
+                match &mut self.op {
                     Op::None => unreachable!(),
                     Op::Write { buf, ref mut pos } => {
                         // send the first byte of data
-                        self.twi
-                            .twi_data
-                            .write(|w| w.data().variant(buf.as_slice()[0]));
+                        twi.twi_data.write(|w| w.data().variant(buf.as_slice()[0]));
                         *pos += 1;
                         State::WaitForAck
                     }
@@ -753,15 +654,16 @@ impl Twi {
             // XXX(eliza): is this an error? why would we not ack?
                 status == RX_DATA_NACKED =>
             {
-                match &mut data.op {
+                match &mut self.op {
                     Op::Read { buf, amt, read } => {
-                        let data = self.twi.twi_data.read().data().bits();
+                        let data = twi.twi_data.read().data().bits();
                         buf.copy_from_slice(&[data]);
                         *read += 1;
                         if read < amt {
                             State::WaitForData
                         } else {
-                            self.waiter.wake();
+                            waiter.wake();
+                            twi.twi_cntr.modify(|_r, w| w.int_en().low());
                             // TODO(eliza): do we disable the IRQ until the
                             // waiter has advanced our state, in case it wants
                             // to read data...?
@@ -772,17 +674,17 @@ impl Twi {
                 }
             }
             State::WaitForAck if status == TX_DATA_ACKED => {
-                match &mut data.op {
+                match &mut self.op {
                     Op::Write { buf, pos } => {
                         if *pos < buf.as_slice().len() {
                             // send the next byte of data
-                            self.twi
-                                .twi_data
+                            twi.twi_data
                                 .write(|w| w.data().variant(buf.as_slice()[*pos]));
                             *pos += 1;
                             State::WaitForAck
                         } else {
-                            self.waiter.wake();
+                            waiter.wake();
+                            twi.twi_cntr.modify(|_r, w| w.int_en().low());
                             // TODO(eliza): do we disable the IRQ until the
                             // waiter has advanced our state, in case it wants
                             // to read data...?
@@ -793,8 +695,17 @@ impl Twi {
                 }
             }
             _ => {
-                data.err = Some(status::error(status));
-                self.waiter.wake();
+                let err = status::error(status);
+
+                // write out the panic message in plaintext
+                write!(&mut uart, "TWI ERR: {status:#x}, {err:?}, {:?}", self.state).ok();
+
+                // end the SerMux frame so crowtty can decode the panic message as utf8
+                uart.write(&[0]);
+                self.err = Some(err);
+                // twi.twi_cntr.modify(|_r, w| w.int_en().low());
+                twi.twi_cntr.modify(|_r, w| w.m_stp().variant(true));
+                waiter.wake();
                 State::Idle
             }
         };
@@ -818,7 +729,7 @@ fn pinmap_twi0_mq_pro(gpio: &mut GPIO) {
 
 mod status {
     use super::*;
-    pub(super) fn error(status: u32) -> ErrorKind {
+    pub(super) fn error(status: u8) -> ErrorKind {
         match status {
             ADDR1_NACKED => ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address),
             TX_DATA_NACKED => ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data),
@@ -827,25 +738,24 @@ mod status {
     }
 
     /// 0x08: START condition transmitted
-    pub const START_TRANSMITTED: u32 = 0x08;
+    pub const START_TRANSMITTED: u8 = 0x08;
 
     /// 0x10: Repeated START condition transmitted
-    pub const REPEATED_START_TRANSMITTED: u32 = 0x10;
-
+    pub const REPEATED_START_TRANSMITTED: u8 = 0x10;
     /// 0x18: Address + Write bit transmitted, ACK received
-    pub const ADDR1_ACKED: u32 = 0x18;
+    pub const ADDR1_ACKED: u8 = 0x18;
 
     /// 0x20: Address + Write bit transmitted, ACK not received
-    pub const ADDR1_NACKED: u32 = 0x20;
+    pub const ADDR1_NACKED: u8 = 0x20;
 
     /// 0x28: Data byte transmitted in master mode, ACK received
-    pub const TX_DATA_ACKED: u32 = 0x28;
+    pub const TX_DATA_ACKED: u8 = 0x28;
     /// 0x30: Data byte transmitted in master mode, ACK not received
-    pub const TX_DATA_NACKED: u32 = 0x30;
+    pub const TX_DATA_NACKED: u8 = 0x30;
 
     /// 0x50: Data byte received in master mode, ACK transmitted
-    pub const RX_DATA_ACKED: u32 = 0x50;
+    pub const RX_DATA_ACKED: u8 = 0x50;
 
     /// 0x58: Data byte received in master mode, no ACK transmitted
-    pub const RX_DATA_NACKED: u32 = 0x58;
+    pub const RX_DATA_NACKED: u8 = 0x58;
 }

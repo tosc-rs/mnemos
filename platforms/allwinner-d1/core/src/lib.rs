@@ -16,8 +16,9 @@ use core::{
 };
 use d1_pac::{Interrupt, DMAC, TIMER};
 use kernel::{
+    buf::OwnedReadBuf,
     daemons::sermux::{hello, loopback, HelloSettings, LoopbackSettings},
-    mnemos_alloc::containers::Box,
+    mnemos_alloc::containers::{Box, FixedVec},
     services::serial_mux::SerialMuxServer,
     trace::{self, Instrument},
     Kernel, KernelSettings,
@@ -137,22 +138,26 @@ impl D1 {
 
         k.initialize(async move {
             use kernel::services::i2c;
+
+            trace::info!("waiting to try TWI0 tx...");
             k.sleep(Duration::from_secs(4)).await;
             trace::info!("trying TWI0 tx...");
             // try to read the part ID from the ENS160...
-            let res = twi0.write(i2c::Addr::SevenBit(0x53), &[0x00]).await;
+            let mut buf = FixedVec::<u8>::new(1).await;
+            buf.try_push(0x00).unwrap();
+            let res = twi0.write(i2c::Addr::SevenBit(0x53), buf).await.map(|_| ());
             trace::info!("TWI0 send to 0x53: {res:?}");
 
-            let mut buf = [core::mem::MaybeUninit::<u8>::new(0); 2];
-            let res = twi0.read(i2c::Addr::SevenBit(0x53), &mut buf[..]).await;
-            match res {
-                Ok(_) => unsafe {
-                    let lo = buf[0].assume_init();
-                    let hi = buf[1].assume_init();
-                    trace::info!("TWI0 read 2 bytes from 0x53: [{lo:#x}, {hi:#x}]");
-                },
-                Err(error) => trace::error!("TWI0 read from 0x53: {error:?}"),
-            }
+            // let buf = OwnedReadBuf::new(2).await;
+            // let res = twi0.read(i2c::Addr::SevenBit(0x53), buf, 2).await;
+            // match res {
+            //     Ok(buf) => {
+            //         let lo = buf.initialized()[0];
+            //         let hi = buf.initialized()[1];
+            //         trace::info!("TWI0 read 2 bytes from 0x53: [{lo:#x}, {hi:#x}]");
+            //     }
+            //     Err(error) => trace::error!("TWI0 read from 0x53: {error:?}"),
+            // }
         })
         .unwrap();
 
