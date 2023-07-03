@@ -670,9 +670,9 @@ impl TwiData {
                 uart.write(&[0]);
                 // send the address
                 twi.twi_data.write(|w| w.data().variant(bits));
-                for _ in 0..5 * 1000 {
-                    core::hint::spin_loop();
-                }
+                // for _ in 0..5 * 1000 {
+                //     core::hint::spin_loop();
+                // }
 
                 State::WaitForAddr1Ack(addr)
             }
@@ -686,11 +686,11 @@ impl TwiData {
             State::WaitForAddr1Ack(addr) if status == REPEATED_START_TRANSMITTED => {
                 // The data sheet specifically says that we don't have to do
                 // this, but it seems to be lying...
-                twi.twi_cntr.modify(|_r, w| w.m_sta().clear_bit());
+                // twi.twi_cntr.modify(|_r, w| w.m_sta().clear_bit());
                 // hopefully this is basically the same as udelay(5)
-                for _ in 0..5 * 1000 {
-                    core::hint::spin_loop();
-                }
+                // for _ in 0..5 * 1000 {
+                //     core::hint::spin_loop();
+                // }
 
                 State::WaitForAddr1Ack(addr)
             }
