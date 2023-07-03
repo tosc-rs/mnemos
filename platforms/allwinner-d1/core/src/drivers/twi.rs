@@ -420,6 +420,15 @@ impl Twi0Engine {
             w
         });
 
+        twi.twi_ccr.modify(|_r, w| {
+            // according to the data sheet, setting CLK_M = 11, CLK_N = 1
+            // means 100kHz.
+            // setting CLK_M to 2 instead would get us 400kHz.
+            w.clk_m().variant(11);
+            w.clk_n().variant(1);
+            w
+        });
+
         // Step 6: Configure TWI_CNTR[BUS_EN] and TWI_CNTR[A_ACK], when using interrupt mode, set
         // TWI_CNTR[INT_EN] to 1, and register the system interrupt. In slave mode, configure TWI_ADDR and
         // TWI_XADDR registers to finish TWI initialization configuration
