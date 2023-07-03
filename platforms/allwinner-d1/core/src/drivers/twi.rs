@@ -391,7 +391,7 @@ impl Twi0Engine {
 
     /// Handle a TWI 0 interrupt
     pub fn handle_interrupt() {
-        tracing::info!("TWI 0 interrupt");
+        // tracing::info!("TWI 0 interrupt");
         let twi = unsafe { &*TWI0::PTR };
         let data = unsafe {
             // safety: it's okay to do this because this function can only be
@@ -399,7 +399,9 @@ impl Twi0Engine {
             &mut (*TWI0_ISR.data.get())
         };
 
-        data.advance_isr(twi, &TWI0_ISR.waiter);
+        while twi.twi_cntr.read().int_flag().bit_is_set() {
+            data.advance_isr(twi, &TWI0_ISR.waiter);
+        }
     }
 
     /// This assumes the GPIO pin mappings are already configured.
@@ -630,6 +632,7 @@ impl TwiData {
         // }
         let status: u8 = twi.twi_stat.read().sta().bits();
 
+        tracing::info!(status = ?format_args!("{status:#x}"), state = ?self.state, "TWI interrupt");
         // Ugly but works
         let mut uart: crate::drivers::uart::Uart = unsafe { core::mem::transmute(()) };
 
@@ -640,7 +643,6 @@ impl TwiData {
         write!(&mut uart, "TWI INT: {status:#x}, {:?}", self.state).ok();
         // end the SerMux frame so crowtty can decode the panic message as utf8
         uart.write(&[0]);
-        // tracing::info!(status = ?format_args!("{status:#x}"), state = ?self.state, "TWI interrupt");
 
         self.state = match self.state {
             // State::Idle => {
@@ -650,9 +652,6 @@ impl TwiData {
             State::WaitForStart(addr)
                 if status == START_TRANSMITTED || status == REPEATED_START_TRANSMITTED =>
             {
-                // The data sheet specifically says that we don't have to do
-                // this, but it seems to be lying...
-                twi.twi_cntr.modify(|_r, w| w.m_sta().clear_bit());
                 let bits = {
                     // lowest bit is 1 if reading, 0 if writing.
                     let dir = match self.op {
@@ -674,6 +673,9 @@ impl TwiData {
                 //     core::hint::spin_loop();
                 // }
 
+                // The data sheet specifically says that we don't have to do
+                // this, but it seems to be lying...
+                twi.twi_cntr.modify(|_r, w| w.m_sta().clear_bit());
                 State::WaitForAddr1Ack(addr)
             }
             State::WaitForStart(addr) => {
@@ -779,13 +781,15 @@ impl TwiData {
                 // // end the SerMux frame so crowtty can decode the panic message as utf8
                 // uart.write(&[0]);
                 self.err = Some(err);
-                twi.twi_cntr.modify(|_r, w| w.int_en().low());
-                twi.twi_cntr.modify(|_r, w| w.m_stp().variant(true));
+                twi.twi_cntr.modify(|_r, w| {
+                    w.int_en().low();
+                    w.m_stp().variant(true);
+                    w
+                });
                 waiter.wake();
                 State::Idle
             }
         };
-
         twi.twi_cntr.modify(|_r, w| w.int_flag().clear_bit());
     }
 }
