@@ -148,16 +148,19 @@ impl D1 {
             let res = twi0.write(i2c::Addr::SevenBit(0x53), buf).await.map(|_| ());
             trace::info!("TWI0 send to 0x53: {res:?}");
 
-            // let buf = OwnedReadBuf::new(2).await;
-            // let res = twi0.read(i2c::Addr::SevenBit(0x53), buf, 2).await;
-            // match res {
-            //     Ok(buf) => {
-            //         let lo = buf.initialized()[0];
-            //         let hi = buf.initialized()[1];
-            //         trace::info!("TWI0 read 2 bytes from 0x53: [{lo:#x}, {hi:#x}]");
-            //     }
-            //     Err(error) => trace::error!("TWI0 read from 0x53: {error:?}"),
-            // }
+            k.sleep(Duration::from_secs(2)).await;
+            kernel::maitake::future::yield_now().await;
+            let buf = OwnedReadBuf::new(2).await;
+            trace::info!("trying TWI0 rx...");
+            let res = twi0.read(i2c::Addr::SevenBit(0x53), buf, 2).await;
+            match res {
+                Ok(buf) => {
+                    let lo = buf.initialized()[0];
+                    let hi = buf.initialized()[1];
+                    trace::info!("TWI0 read 2 bytes from 0x53: [{lo:#x}, {hi:#x}]");
+                }
+                Err(error) => trace::error!("TWI0 read from 0x53: {error:?}"),
+            }
         })
         .unwrap();
 
