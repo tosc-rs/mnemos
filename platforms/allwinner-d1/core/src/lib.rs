@@ -153,6 +153,8 @@ impl D1 {
             let buf = OwnedReadBuf::new(2).await;
             trace::info!("trying TWI0 rx...");
             let res = twi0.read(i2c::Addr::SevenBit(0x53), buf, 2).await;
+
+            k.sleep(Duration::from_secs(5)).await;
             match res {
                 Ok(buf) => {
                     let lo = buf.initialized()[0];

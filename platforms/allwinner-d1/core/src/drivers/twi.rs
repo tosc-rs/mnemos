@@ -399,9 +399,7 @@ impl Twi0Engine {
             &mut (*TWI0_ISR.data.get())
         };
 
-        while twi.twi_cntr.read().int_flag().bit_is_set() {
-            data.advance_isr(twi, &TWI0_ISR.waiter);
-        }
+        data.advance_isr(twi, &TWI0_ISR.waiter);
     }
 
     /// This assumes the GPIO pin mappings are already configured.
@@ -482,7 +480,8 @@ impl Twi0Engine {
         futures::pin_mut!(wait);
         futures::poll!(&mut wait);
         drop(guard);
-        wait.await.unwrap();
+        wait.await;
+        kernel::trace::info!("wait returned");
 
         let guard = TWI0_ISR.lock(&self.twi);
 
@@ -531,6 +530,7 @@ impl Twi0Engine {
         drop(guard);
         // TWI0_ISR.waiter.wait().await;
         wait.await.unwrap();
+        kernel::trace::info!("read wait returned");
 
         let guard = TWI0_ISR.lock(&self.twi);
 
@@ -626,23 +626,13 @@ impl TwiData {
         // }
         // if let State::WaitForStart(_) = self.state {
         //     // hopefully this is basically the same as udelay(5)
-        // for _ in 0..5 * 100_000 {
-        //     core::hint::spin_loop();
-        // }
+        for _ in 0..5 * 1_000 {
+            core::hint::spin_loop();
+        }
         // }
         let status: u8 = twi.twi_stat.read().sta().bits();
 
         tracing::info!(status = ?format_args!("{status:#x}"), state = ?self.state, "TWI interrupt");
-        // Ugly but works
-        let mut uart: crate::drivers::uart::Uart = unsafe { core::mem::transmute(()) };
-
-        // end any existing SerMux frame on the UART
-        uart.write(&[0]);
-
-        // write out the panic message in plaintext
-        write!(&mut uart, "TWI INT: {status:#x}, {:?}", self.state).ok();
-        // end the SerMux frame so crowtty can decode the panic message as utf8
-        uart.write(&[0]);
 
         self.state = match self.state {
             // State::Idle => {
@@ -663,19 +653,16 @@ impl TwiData {
                         Addr::TenBit(_) => todo!("eliza: implement ten bit addrs"),
                     }
                 };
-                // write out the panic message in plaintext
-                write!(&mut uart, "TWI BITS: {bits:#b}").ok();
-                // end the SerMux frame so crowtty can decode the panic message as utf8
-                uart.write(&[0]);
+
                 // send the address
                 twi.twi_data.write(|w| w.data().variant(bits));
                 // for _ in 0..5 * 1000 {
                 //     core::hint::spin_loop();
                 // }
 
-                // The data sheet specifically says that we don't have to do
-                // this, but it seems to be lying...
-                twi.twi_cntr.modify(|_r, w| w.m_sta().clear_bit());
+                // // The data sheet specifically says that we don't have to do
+                // // this, but it seems to be lying...
+                // twi.twi_cntr.modify(|_r, w| w.m_sta().clear_bit());
                 State::WaitForAddr1Ack(addr)
             }
             State::WaitForStart(addr) => {
@@ -774,12 +761,6 @@ impl TwiData {
             }
             _ => {
                 let err = status::error(status);
-
-                // // write out the panic message in plaintext
-                // write!(&mut uart, "TWI ERR: {status:#x}, {err:?}, {:?}", self.state).ok();
-
-                // // end the SerMux frame so crowtty can decode the panic message as utf8
-                // uart.write(&[0]);
                 self.err = Some(err);
                 twi.twi_cntr.modify(|_r, w| {
                     w.int_en().low();
