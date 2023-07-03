@@ -576,6 +576,7 @@ impl Twi0Engine {
 impl Twi {
     #[must_use]
     fn lock<'a>(&'a self, twi: &'a twi::RegisterBlock) -> TwiDataGuard<'a> {
+        kernel::trace::info!("twi locked");
         // disable TWI interrupts while holding the guard.
         twi.twi_cntr.modify(|_r, w| w.int_en().low());
         let data = unsafe { &mut *(self.data.get()) };
@@ -614,9 +615,9 @@ impl TwiData {
         // }
         // if let State::WaitForStart(_) = self.state {
         //     // hopefully this is basically the same as udelay(5)
-        for _ in 0..5 * 1000 {
-            core::hint::spin_loop();
-        }
+        // for _ in 0..5 * 100_000 {
+        //     core::hint::spin_loop();
+        // }
         // }
         let status: u8 = twi.twi_stat.read().sta().bits();
 
@@ -647,15 +648,23 @@ impl TwiData {
                     // lowest bit is 1 if reading, 0 if writing.
                     let dir = match self.op {
                         Op::Read { .. } => 0b1,
-                        _ => 0b1,
+                        _ => 0b0,
                     };
                     match addr {
-                        Addr::SevenBit(addr) => (addr << 1) | dir,
+                        Addr::SevenBit(addr) => ((addr & 0x7f) << 1) | dir,
                         Addr::TenBit(_) => todo!("eliza: implement ten bit addrs"),
                     }
                 };
+                // write out the panic message in plaintext
+                write!(&mut uart, "TWI BITS: {bits:#b}").ok();
+                // end the SerMux frame so crowtty can decode the panic message as utf8
+                uart.write(&[0]);
                 // send the address
                 twi.twi_data.write(|w| w.data().variant(bits));
+                for _ in 0..5 * 1000 {
+                    core::hint::spin_loop();
+                }
+
                 State::WaitForAddr1Ack(addr)
             }
             State::WaitForStart(addr) => {
@@ -693,12 +702,14 @@ impl TwiData {
             State::WaitForAddr1Ack(Addr::SevenBit(_)) if status == ADDR1_READ_ACKED =>
             // TODO(eliza): handle 10 bit addr...
             {
-                if let Op::Read { .. } = self.op {
-                    State::WaitForAck
-                } else {
-                    unreachable!(
-                        "if we sent an address with a read bit, we should be in a read state"
-                    )
+                match self.op {
+                    Op::Read { .. } => State::WaitForData,
+                    Op::None =>                     unreachable!(
+                        "if we sent an address with a read bit, we should be in a read state (was None)"
+                    ),
+                    Op::Write { .. } => unreachable!(
+                        "if we sent an address with a read bit, we should be in a read state (was Write)"
+                    ),
                 }
             }
             State::WaitForData
@@ -715,12 +726,12 @@ impl TwiData {
                         if read < amt {
                             State::WaitForData
                         } else {
+                            twi.twi_cntr.modify(|_r, w| w.int_en().low());
                             waiter.wake();
                             // twi.twi_cntr.modify(|_r, w| w.m_stp().variant(true));
                             // TODO(eliza): do we disable the IRQ until the
                             // waiter has advanced our state, in case it wants
                             // to read data...?
-                            twi.twi_cntr.modify(|_r, w| w.int_en().low());
                             State::Idle
                         }
                     }
@@ -737,13 +748,13 @@ impl TwiData {
                             *pos += 1;
                             State::WaitForAck
                         } else {
+                            twi.twi_cntr.modify(|_r, w| w.int_en().low());
                             waiter.wake();
                             // twi.twi_cntr.modify(|_r, w| w.m_stp().variant(true));
                             // TODO(eliza): do we disable the IRQ until the
                             // waiter has advanced our state, in case it wants
                             // to read data...?
 
-                            twi.twi_cntr.modify(|_r, w| w.int_en().low());
                             State::Idle
                         }
                     }
