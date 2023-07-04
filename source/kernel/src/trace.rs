@@ -1,4 +1,5 @@
 use crate::{comms::bbq, services::serial_mux};
+use core::time::Duration;
 use level_filters::LevelFilter;
 use mnemos_trace_proto::{HostRequest, TraceEvent};
 use mycelium_util::sync::InitOnce;
@@ -21,9 +22,17 @@ pub struct SerialCollector {
     next_id: AtomicU64,
 
     /// Counter of events that were dropped due to insufficient buffer capacity.
-    ///
-    // TODO(eliza): Currently, this is recorded but not actually consumed...
     dropped_events: AtomicUsize,
+
+    /// Counter of new spans that were dropped due to insufficient buffer capacity.
+    dropped_spans: AtomicUsize,
+
+    /// Counter of metadata that was dropped due to insufficient buffer capacity.
+    dropped_metas: AtomicUsize,
+
+    /// Counter of span enter/exit/clone/drop messages that were dropped due to
+    /// insufficient buffer capacity.
+    dropped_span_activity: AtomicUsize,
 
     max_level: AtomicU8,
 
@@ -37,7 +46,6 @@ pub struct SerialCollector {
 impl SerialCollector {
     pub const PORT: u16 = 3;
     const CAPACITY: usize = 1024 * 4;
-
     pub const fn new() -> Self {
         Self::with_max_level(LevelFilter::OFF)
     }
@@ -49,6 +57,9 @@ impl SerialCollector {
             current_meta: AtomicPtr::new(core::ptr::null_mut()),
             next_id: AtomicU64::new(1),
             dropped_events: AtomicUsize::new(0),
+            dropped_spans: AtomicUsize::new(0),
+            dropped_metas: AtomicUsize::new(0),
+            dropped_span_activity: AtomicUsize::new(0),
             max_level: AtomicU8::new(level_to_u8(max_level)),
             in_send: AtomicBool::new(false),
         }
@@ -76,7 +87,6 @@ impl SerialCollector {
     fn send_event<'a>(&self, sz: usize, event: impl FnOnce() -> TraceEvent<'a>) -> bool {
         self.in_send.store(true, Ordering::Release);
         let Some(mut wgr) = self.tx.get().send_grant_exact_sync(sz) else {
-            self.dropped_events.fetch_add(1, Ordering::Relaxed);
             return false;
         };
 
@@ -88,10 +98,7 @@ impl SerialCollector {
         // a write grant for can be reused.
         let len = match postcard::to_slice_cobs(&ev, &mut wgr[..]) {
             Ok(encoded) => encoded.len(),
-            Err(_) => {
-                self.dropped_events.fetch_add(1, Ordering::Relaxed);
-                0
-            }
+            Err(_) => 0,
         };
         wgr.commit(len);
         self.in_send.store(false, Ordering::Release);
@@ -188,14 +195,37 @@ impl SerialCollector {
 
             loop {
                 futures::select_biased! {
+                    // something to send to the serial port!
                     rgr = rx.read_grant().fuse() => {
                         let len = rgr.len();
                         port.send(&rgr[..]).await;
-                        rgr.release(len)
+                        rgr.release(len);
                     },
+                    // got a host message!
                     rgr = port.consumer().read_grant().fuse() => {
                         read_level(rgr);
                     },
+                    // every few seconds, check if we left anything good on the floor
+                    _ = k.sleep(Duration::from_secs(3)).fuse() => {
+                        let new_spans = self.dropped_spans.swap(0, Ordering::Relaxed);
+                        let events = self.dropped_events.swap(0, Ordering::Relaxed);
+                        let span_activity = self.dropped_events.swap(0, Ordering::Relaxed);
+                        let metas = self.dropped_metas.swap(0, Ordering::Relaxed);
+                        if new_spans + events + span_activity + metas > 0 {
+                            let mut buf = [0u8; 256];
+                            let buf = {
+                                let ev = TraceEvent::Discarded {
+                                    new_spans,
+                                    events,
+                                    span_activity,
+                                    metas,
+                                };
+                                postcard::to_slice_cobs(&ev, &mut buf[..])
+                                    .expect("failed to encode dropped msg")
+                            };
+                            port.send(buf).await;
+                        }
+                    }
                     // TODO(eliza): make the host also send a heartbeat, and
                     // if we don't get it, break back to the idle loop...
                 }
@@ -231,6 +261,7 @@ impl Collect for SerialCollector {
         // If we couldn't send the metadata, skip this callsite, because the
         // consumer will not be able to understand it without its metadata.
         if !sent {
+            self.dropped_metas.fetch_add(1, Ordering::Relaxed);
             return tracing_core_02::Interest::never();
         }
 
@@ -258,13 +289,15 @@ impl Collect for SerialCollector {
             span::Id::from_u64(id)
         };
 
-        self.send_event(1024, || TraceEvent::NewSpan {
+        if !self.send_event(1024, || TraceEvent::NewSpan {
             id: id.as_serde(),
             meta: span.metadata().callsite().into(),
             parent: span.parent().map(AsSerde::as_serde),
             is_root: span.is_root(),
             fields: SerializeSpanFields::Ser(span.values()),
-        });
+        }) {
+            self.dropped_spans.fetch_add(1, Ordering::Relaxed);
+        }
 
         id
     }
@@ -274,11 +307,15 @@ impl Collect for SerialCollector {
     }
 
     fn enter(&self, span: &span::Id) {
-        self.send_event(16, || TraceEvent::Enter(span.as_serde()));
+        if !self.send_event(16, || TraceEvent::Enter(span.as_serde())) {
+            self.dropped_span_activity.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     fn exit(&self, span: &span::Id) {
-        self.send_event(16, || TraceEvent::Exit(span.as_serde()));
+        if !self.send_event(16, || TraceEvent::Exit(span.as_serde())) {
+            self.dropped_span_activity.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     fn record_follows_from(&self, _: &span::Id, _: &span::Id) {
@@ -286,11 +323,13 @@ impl Collect for SerialCollector {
     }
 
     fn event(&self, event: &Event<'_>) {
-        self.send_event(1024, || TraceEvent::Event {
+        if !self.send_event(1024, || TraceEvent::Event {
             meta: event.metadata().callsite().into(),
             fields: SerializeRecordFields::Ser(event),
             parent: event.parent().map(AsSerde::as_serde),
-        });
+        }) {
+            self.dropped_events.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     fn current_span(&self) -> Current {
@@ -309,12 +348,16 @@ impl Collect for SerialCollector {
     }
 
     fn clone_span(&self, span: &span::Id) -> span::Id {
-        self.send_event(16, || TraceEvent::CloneSpan(span.as_serde()));
+        if !self.send_event(16, || TraceEvent::CloneSpan(span.as_serde())) {
+            self.dropped_span_activity.fetch_add(1, Ordering::Relaxed);
+        }
         span.clone()
     }
 
     fn try_close(&self, span: span::Id) -> bool {
-        self.send_event(16, || TraceEvent::DropSpan(span.as_serde()));
+        if !self.send_event(16, || TraceEvent::DropSpan(span.as_serde())) {
+            self.dropped_span_activity.fetch_add(1, Ordering::Relaxed);
+        }
         false
     }
 }
