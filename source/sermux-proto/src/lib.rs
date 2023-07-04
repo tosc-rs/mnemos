@@ -207,9 +207,10 @@ impl OwnedPortChunk {
         let mut data = data.to_vec();
         let pc = PortChunk::decode_from(&mut data)?;
         let port = pc.port;
-        let len = pc.chunk.len();
-        data.shrink_to(len);
-        Ok(OwnedPortChunk { port, chunk: data })
+        Ok(OwnedPortChunk {
+            port,
+            chunk: pc.chunk.to_vec(),
+        })
     }
 
     /// Borrows self as a [PortChunk]
