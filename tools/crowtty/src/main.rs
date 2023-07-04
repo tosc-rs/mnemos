@@ -7,9 +7,9 @@ use std::{
     io::{ErrorKind, Read, Write},
     net::{TcpListener, TcpStream},
     path::PathBuf,
-    sync::mpsc::{channel, Receiver, Sender},
+    sync::{mpsc::{channel, Receiver, Sender}, Mutex},
     thread::{sleep, spawn, JoinHandle},
-    time::{Duration, Instant},
+    time::{Duration, Instant}, fs::File,
 };
 use tracing_02::level_filters::LevelFilter;
 
@@ -20,12 +20,27 @@ use tracing_02::level_filters::LevelFilter;
 ///
 /// Context: <https://github.com/serialport/serialport-rs/issues/49>
 mod serial {
-    #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
-    pub use serialport_macos_hack::*;
+    // #[cfg(all(target_arch = "aarch64", target_os = "macos"))]
+    // pub use serialport_macos_hack::*;
 
-    #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
+    // #[cfg(not(all(target_arch = "aarch64", target_os = "macos")))]
     pub use serialport_regular::*;
 }
+
+struct Debug {
+    start: Instant,
+    file: File,
+}
+
+use once_cell::sync::Lazy;
+
+static DEBUG: Lazy<Mutex<Debug>> = Lazy::new(|| {
+    let file = File::create("debug.log").unwrap();
+    Mutex::new(Debug {
+        start: Instant::now(),
+        file,
+    })
+});
 
 use serial::SerialPort;
 
@@ -88,14 +103,32 @@ enum Command {
 impl std::io::Write for Connect {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         match self {
-            Connect::Serial(s) => s.write(buf),
+            Connect::Serial(s) => {
+                let mut d = DEBUG.lock().unwrap();
+                let elap = d.start.elapsed();
+                let _ = writeln!(&mut d.file, "WRITE ({:?}): {:02X?}", elap, buf);
+                let res = s.write(buf);
+                let elap = d.start.elapsed();
+                let _ = writeln!(&mut d.file, "  -> ({:?}): {:?}", elap, res);
+                d.file.flush().unwrap();
+                res
+            },
             Connect::Tcp(t) => t.write(buf),
         }
     }
 
     fn flush(&mut self) -> std::io::Result<()> {
         match self {
-            Connect::Serial(s) => s.flush(),
+            Connect::Serial(s) => {
+                let mut d = DEBUG.lock().unwrap();
+                let elap = d.start.elapsed();
+                let _ = writeln!(&mut d.file, "FLUSH ({:?})", elap);
+                let res = s.flush();
+                let elap = d.start.elapsed();
+                let _ = writeln!(&mut d.file, "  -> ({:?}): {:?}", elap, res);
+                d.file.flush().unwrap();
+                res
+            },
             Connect::Tcp(t) => t.flush(),
         }
     }
@@ -104,7 +137,20 @@ impl std::io::Write for Connect {
 impl std::io::Read for Connect {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
         match self {
-            Connect::Serial(s) => s.read(buf),
+            Connect::Serial(s) => {
+                let mut d = DEBUG.lock().unwrap();
+                let elap = d.start.elapsed();
+                let _ = writeln!(&mut d.file, "READ  ({:?}): len {}", elap, buf.len());
+                let res = s.read(buf);
+                let elap = d.start.elapsed();
+                if let Ok(amt) = res {
+                    let _ = writeln!(&mut d.file, "  -> ({:?}): {:02X?}", elap, &buf[..amt]);
+                } else {
+                    let _ = writeln!(&mut d.file, "  -> ({:?}): {:?}", elap, res);
+                }
+                d.file.flush().unwrap();
+                res
+            },
             Connect::Tcp(t) => t.read(buf),
         }
     }

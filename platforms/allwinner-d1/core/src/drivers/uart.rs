@@ -244,7 +244,7 @@ pub unsafe fn kernel_uart(ccu: &mut CCU, gpio: &mut GPIO, uart0: UART0) -> Uart 
     uart0.lcr.write(|w| w.dlab().divisor_latch());
 
     // Baudrates
-    uart0.dll().write(|w| unsafe { w.dll().bits(13) });
+    uart0.dll().write(|w| unsafe { w.dll().bits(156) });
     uart0.dlh().write(|w| unsafe { w.dlh().bits(0) });
 
     // Unlatch baud rate, set width

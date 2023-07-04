@@ -47,12 +47,12 @@ fn main() -> ! {
         .initialize(SharpDisplay::register(d1.kernel, 4))
         .unwrap();
 
-    d1.kernel
-        .initialize(async move {
-            d1.kernel.sleep(Duration::from_secs(15)).await;
-            panic!("Whoopsie");
-        })
-        .unwrap();
+    // d1.kernel
+    //     .initialize(async move {
+    //         d1.kernel.sleep(Duration::from_secs(15)).await;
+    //         panic!("Whoopsie");
+    //     })
+    //     .unwrap();
 
     // Initialize LED loop
     d1.kernel

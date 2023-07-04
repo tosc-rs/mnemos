@@ -3,6 +3,9 @@ name = "crowtty"
 version = "0.1.0"
 edition = "2021"
 
+[dependencies]
+once_cell = "1.18.0"
+
 
 ### See `main.rs::serial` comments for why these duplicate dependencies exit
 

@@ -552,6 +552,7 @@ dependencies = [
  "clap 4.3.5",
  "cobs",
  "mnemos-trace-proto",
+ "once_cell",
  "owo-colors",
  "postcard 1.0.4",
  "serde",
