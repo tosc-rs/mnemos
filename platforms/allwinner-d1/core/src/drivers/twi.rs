@@ -166,7 +166,8 @@ impl Twi0Engine {
         addr: Addr,
         buf: FixedVec<u8>,
     ) -> Result<FixedVec<u8>, ErrorKind> {
-        // tracing::info!("start twi write");
+        tracing::info!("start twi write");
+
         let guard = TWI0_ISR.lock(&self.twi);
         // Step 1: Clear TWI_EFR register, and set TWI_CNTR[A_ACK] to 1, and
         // configure TWI_CNTR[M_STA] to 1 to transmit the START signal.
@@ -184,8 +185,10 @@ impl Twi0Engine {
 
         let wait = TWI0_ISR.waiter.wait();
         futures::pin_mut!(wait);
-        futures::poll!(&mut wait);
+        let poll = futures::poll!(&mut wait);
+        tracing::info!(?poll, "wait for twi write");
         drop(guard);
+        // TWI0_ISR.waiter.wait().await;
         wait.await;
         kernel::trace::info!("wait returned");
 
@@ -204,7 +207,6 @@ impl Twi0Engine {
                 _ => unreachable!(),
             }
         };
-        core::mem::forget(guard);
         res
     }
 
@@ -295,7 +297,8 @@ impl Twi {
     fn lock<'a>(&'a self, twi: &'a twi::RegisterBlock) -> TwiDataGuard<'a> {
         kernel::trace::info!("twi locked");
         // disable TWI interrupts while holding the guard.
-        twi.twi_cntr.modify(|_r, w| w.int_en().low());
+        // twi.twi_cntr.modify(|_r, w| w.int_en().low());
+        unsafe { riscv::interrupt::disable() };
         let data = unsafe { &mut *(self.data.get()) };
         TwiDataGuard { data, twi }
     }
@@ -305,7 +308,8 @@ impl Drop for TwiDataGuard<'_> {
     fn drop(&mut self) {
         // now that we're done accessing the TWI data, we can re-enable the
         // interrupt.
-        self.twi.twi_cntr.modify(|_r, w| w.int_en().high())
+        // self.twi.twi_cntr.modify(|_r, w| w.int_en().high())
+        unsafe { riscv::interrupt::enable() };
     }
 }
 
@@ -327,140 +331,143 @@ impl TwiData {
     fn advance_isr(&mut self, twi: &twi::RegisterBlock, waiter: &WaitCell) {
         use status::*;
 
-        // for _ in 0..10_000 {
+        // delay before reading the status register
+        // for _ in 0..100_000 {
         //     core::hint::spin_loop();
         // }
         let status: u8 = twi.twi_stat.read().sta().bits();
 
         tracing::info!(status = ?format_args!("{status:#x}"), state = ?self.state, "TWI interrupt");
+        twi.twi_cntr.modify(|cntr_r, cntr_w| {
 
-        self.state = match self.state {
-            // State::Idle => {
-            //     // TODO: send a STOP?
-            //     State::Idle
-            // }
-            State::WaitForStart(addr)
-                if status == START_TRANSMITTED || status == REPEATED_START_TRANSMITTED =>
-            {
-                let bits = {
-                    // lowest bit is 1 if reading, 0 if writing.
-                    let dir = match self.op {
-                        Op::Read { .. } => 0b1,
-                        _ => 0b0,
-                    };
-                    match addr {
-                        Addr::SevenBit(addr) => ((addr & 0x7f) << 1) | dir,
-                        Addr::TenBit(_) => todo!("eliza: implement ten bit addrs"),
-                    }
-                };
-
-                // send the address
-                twi.twi_data.write(|w| w.data().variant(bits));
-                // for _ in 0..5 * 1000 {
-                //     core::hint::spin_loop();
+            self.state = match self.state {
+                // State::Idle => {
+                //     // TODO: send a STOP?
+                //     State::Idle
                 // }
-
-                // The data sheet specifically says that we don't have to do
-                // this, but it seems to be lying...
-                twi.twi_cntr.modify(|_r, w| w.m_sta().clear_bit());
-                State::WaitForAddr1Ack(addr)
-            }
-            State::WaitForStart(addr) => {
-                twi.twi_cntr
-                    .modify(|_r, w: &mut twi::twi_cntr::W| w.m_sta().variant(true));
-
                 State::WaitForStart(addr)
-            }
-            // Sometimes we get the interrupt with this bit set multiple times.
-            State::WaitForAddr1Ack(addr) if status == REPEATED_START_TRANSMITTED => {
-                State::WaitForAddr1Ack(addr)
-            }
-            State::WaitForAddr1Ack(Addr::SevenBit(_)) if status == ADDR1_WRITE_ACKED =>
-            // TODO(eliza): handle 10 bit addr...
-            {
-                if let Op::Write { buf, ref mut pos } = &mut self.op {
-                    // send the first byte of data
-                    twi.twi_data.write(|w| w.data().variant(buf.as_slice()[0]));
-                    *pos += 1;
-                    State::WaitForAck
-                } else {
-                    unreachable!(
-                        "if we sent an address with a write bit, we should be in a write state"
-                    )
-                }
-            }
-            State::WaitForAddr1Ack(Addr::SevenBit(_)) if status == ADDR1_READ_ACKED =>
-            // TODO(eliza): handle 10 bit addr...
-            {
-                match self.op {
-                    Op::Read { .. } => State::WaitForData,
-                    Op::None =>                     unreachable!(
-                        "if we sent an address with a read bit, we should be in a read state (was None)"
-                    ),
-                    Op::Write { .. } => unreachable!(
-                        "if we sent an address with a read bit, we should be in a read state (was Write)"
-                    ),
-                }
-            }
-            State::WaitForData if status == RX_DATA_ACKED => {
-                match &mut self.op {
-                    Op::Read { buf, amt, read } => {
-                        let data = twi.twi_data.read().data().bits();
-                        buf.copy_from_slice(&[data]);
-                        *read += 1;
-                        if read < amt {
-                            State::WaitForData
-                        } else {
-                            twi.twi_cntr.modify(|_r, w| w.int_en().low());
-                            waiter.wake();
-                            // twi.twi_cntr.modify(|_r, w| w.m_stp().variant(true));
-                            // TODO(eliza): do we disable the IRQ until the
-                            // waiter has advanced our state, in case it wants
-                            // to read data...?
-                            State::Idle
+                    if status == START_TRANSMITTED || status == REPEATED_START_TRANSMITTED =>
+                {
+                    let bits = {
+                        // lowest bit is 1 if reading, 0 if writing.
+                        let dir = match self.op {
+                            Op::Read { .. } => 0b1,
+                            _ => 0b0,
+                        };
+                        match addr {
+                            Addr::SevenBit(addr) => ((addr & 0x7f) << 1) | dir,
+                            Addr::TenBit(_) => todo!("eliza: implement ten bit addrs"),
                         }
-                    }
-                    _ => unimplemented!(),
-                }
-            }
-            State::WaitForAck if status == TX_DATA_ACKED => {
-                match &mut self.op {
-                    Op::Write { buf, pos } => {
-                        if *pos < buf.as_slice().len() {
-                            // send the next byte of data
-                            twi.twi_data
-                                .write(|w| w.data().variant(buf.as_slice()[*pos]));
-                            *pos += 1;
-                            State::WaitForAck
-                        } else {
-                            twi.twi_cntr.modify(|_r, w| w.int_en().low());
-                            waiter.wake();
-                            // twi.twi_cntr.modify(|_r, w| w.m_stp().variant(true));
-                            // TODO(eliza): do we disable the IRQ until the
-                            // waiter has advanced our state, in case it wants
-                            // to read data...?
+                    };
+                    // send the address
+                    twi.twi_data.write(|w| w.data().variant(bits));
+                    // for _ in 0..5 * 1000 {
+                    //     core::hint::spin_loop();
+                    // }
 
-                            State::Idle
-                        }
-                    }
-                    _ => unimplemented!(),
+                    // // The data sheet specifically says that we don't have to do
+                    // // this, but it seems to be lying...
+                    // cntr_w.m_sta().clear_bit());
+                    State::WaitForAddr1Ack(addr)
                 }
-            }
-            _ => {
-                let err = status::error(status);
-                panic!("TWI0 error: {err:?}, {status:#x}, {:?}", self.state);
-                // kernel::trace::warn!(?err, ?status, state = ?self.state, "TWI0 error");
-                self.err = Some(err);
-                twi.twi_cntr.modify(|_r, w| {
-                    w.int_en().low();
-                    w.m_stp().variant(true);
-                    w
-                });
-                waiter.wake();
-                State::Idle
-            }
-        };
-        twi.twi_cntr.modify(|_r, w| w.int_flag().clear_bit());
+                State::WaitForStart(addr) => {
+                    twi.twi_cntr
+                        .modify(|_r, w: &mut twi::twi_cntr::W| w.m_sta().variant(true));
+
+                    State::WaitForStart(addr)
+                }
+                // Sometimes we get the interrupt with this bit set multiple times.
+                State::WaitForAddr1Ack(addr) if status == REPEATED_START_TRANSMITTED => {
+                    State::WaitForAddr1Ack(addr)
+                }
+                State::WaitForAddr1Ack(Addr::SevenBit(_)) if status == ADDR1_WRITE_ACKED =>
+                // TODO(eliza): handle 10 bit addr...
+                {
+                    if let Op::Write { buf, ref mut pos } = &mut self.op {
+                        // send the first byte of data
+                        twi.twi_data.write(|w| w.data().variant(buf.as_slice()[0]));
+                        *pos += 1;
+                        State::WaitForAck
+                    } else {
+                        unreachable!(
+                            "if we sent an address with a write bit, we should be in a write state"
+                        )
+                    }
+                }
+                State::WaitForAddr1Ack(Addr::SevenBit(_)) if status == ADDR1_READ_ACKED =>
+                // TODO(eliza): handle 10 bit addr...
+                {
+                    match self.op {
+                        Op::Read { .. } => State::WaitForData,
+                        Op::None =>                     unreachable!(
+                            "if we sent an address with a read bit, we should be in a read state (was None)"
+                        ),
+                        Op::Write { .. } => unreachable!(
+                            "if we sent an address with a read bit, we should be in a read state (was Write)"
+                        ),
+                    }
+                }
+                State::WaitForData if status == RX_DATA_ACKED => {
+                    match &mut self.op {
+                        Op::Read { buf, amt, read } => {
+                            let data = twi.twi_data.read().data().bits();
+                            buf.copy_from_slice(&[data]);
+                            *read += 1;
+                            if read < amt {
+                                State::WaitForData
+                            } else {
+                                cntr_w.int_en().low();
+                                waiter.wake();
+                                // twi.twi_cntr.modify(|_r, w| w.m_stp().variant(true));
+                                // TODO(eliza): do we disable the IRQ until the
+                                // waiter has advanced our state, in case it wants
+                                // to read data...?
+                                State::Idle
+                            }
+                        }
+                        _ => unimplemented!(),
+                    }
+                }
+                // State::WaitForAck if status == ADDR1_WRITE_ACKED => State::WaitForAck,
+                State::WaitForAck if status == TX_DATA_ACKED => {
+                    match &mut self.op {
+                        Op::Write { buf, pos } => {
+                            if *pos < buf.as_slice().len() {
+                                // send the next byte of data
+                                let byte = buf.as_slice()[*pos];
+
+                                tracing::info!("data acked; next byte = {:02x}", byte);
+                                twi.twi_data.write(|w| w.data().variant(byte));
+
+                                *pos += 1;
+                                State::WaitForAck
+                            } else {
+                                cntr_w.int_en().low();
+                                waiter.wake();
+                                // twi.twi_cntr.modify(|_r, w| w.m_stp().variant(true));
+                                // TODO(eliza): do we disable the IRQ until the
+                                // waiter has advanced our state, in case it wants
+                                // to read data...?
+
+                                State::Idle
+                            }
+                        }
+                        _ => unimplemented!(),
+                    }
+                }
+                _ => {
+                    let err = status::error(status);
+                    // panic!("TWI0 error: {err:?}, {status:#x}, {:?}", self.state);
+                    kernel::trace::warn!(?err, status = ?format_args!("{status:#x}"), state = ?self.state, "TWI0 error");
+                    self.err = Some(err);
+                        cntr_w.int_en().low();
+                        cntr_w.m_stp().variant(true);
+                    waiter.wake();
+                    State::Idle
+                }
+            };
+            cntr_w
+        });
     }
 }
 

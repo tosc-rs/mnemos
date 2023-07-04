@@ -500,6 +500,7 @@ dependencies = [
 name = "mnemos-d1-core"
 version = "0.1.0"
 dependencies = [
+ "critical-section",
  "d1-pac",
  "embedded-graphics",
  "futures",
