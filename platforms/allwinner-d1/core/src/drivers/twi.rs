@@ -23,8 +23,6 @@ pub struct Twi0Engine {
     twi: TWI0,
 }
 
-static TWI0_ENG_IRQ: WaitCell = WaitCell::new();
-
 /// Data used by a TWI interrupt.
 struct Twi {
     data: UnsafeCell<TwiData>,
@@ -328,14 +326,9 @@ impl DerefMut for TwiDataGuard<'_> {
 impl TwiData {
     fn advance_isr(&mut self, twi: &twi::RegisterBlock, waiter: &WaitCell) {
         use status::*;
-        // for _ in 0..200 {
+
+        // for _ in 0..10_000 {
         //     core::hint::spin_loop();
-        // }
-        // if let State::WaitForStart(_) = self.state {
-        //     // hopefully this is basically the same as udelay(5)
-        for _ in 0..5 * 1_000 {
-            core::hint::spin_loop();
-        }
         // }
         let status: u8 = twi.twi_stat.read().sta().bits();
 
@@ -367,9 +360,9 @@ impl TwiData {
                 //     core::hint::spin_loop();
                 // }
 
-                // // The data sheet specifically says that we don't have to do
-                // // this, but it seems to be lying...
-                // twi.twi_cntr.modify(|_r, w| w.m_sta().clear_bit());
+                // The data sheet specifically says that we don't have to do
+                // this, but it seems to be lying...
+                twi.twi_cntr.modify(|_r, w| w.m_sta().clear_bit());
                 State::WaitForAddr1Ack(addr)
             }
             State::WaitForStart(addr) => {
@@ -409,12 +402,7 @@ impl TwiData {
                     ),
                 }
             }
-            State::WaitForData
-                if status == RX_DATA_ACKED ||
-
-            // XXX(eliza): is this an error? why would we not ack?
-                status == RX_DATA_NACKED =>
-            {
+            State::WaitForData if status == RX_DATA_ACKED => {
                 match &mut self.op {
                     Op::Read { buf, amt, read } => {
                         let data = twi.twi_data.read().data().bits();
@@ -460,6 +448,8 @@ impl TwiData {
             }
             _ => {
                 let err = status::error(status);
+                panic!("TWI0 error: {err:?}, {status:#x}, {:?}", self.state);
+                // kernel::trace::warn!(?err, ?status, state = ?self.state, "TWI0 error");
                 self.err = Some(err);
                 twi.twi_cntr.modify(|_r, w| {
                     w.int_en().low();

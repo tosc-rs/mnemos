@@ -285,14 +285,6 @@ impl D1 {
                 spim::SPI1_TX_DONE.wake();
             }
 
-            if r.dma2_queue_irq_pend().bit_is_set() {
-                twi::TWI0_DRV_TX_DONE.wake();
-            }
-
-            if r.dma3_queue_irq_pend().bit_is_set() {
-                twi::TWI0_DRV_RX_DONE.wake();
-            }
-
             // Will write-back and high bits
             w
         });
