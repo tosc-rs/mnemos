@@ -171,13 +171,13 @@ impl<'a> PortChunk<'a> {
 /// Like [PortChunk], but owns the storage instead
 ///
 /// Only available with the `use-std` feature active
-#[cfg(feature = "use-std")]
+#[cfg(any(feature = "use-std", test))]
 pub struct OwnedPortChunk {
     pub port: u16,
     pub chunk: Vec<u8>,
 }
 
-#[cfg(feature = "use-std")]
+#[cfg(any(feature = "use-std", test))]
 impl OwnedPortChunk {
     /// Create a new OwnedPortChunk from the given port and data
     #[inline]
@@ -254,6 +254,21 @@ mod test {
         let enc = pc.encode_to(&mut buf).unwrap();
 
         let dec = PortChunk::decode_from(enc).unwrap();
+        assert_eq!(dec.port, 1234);
+        assert_eq!(dec.chunk, &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn owned_round_trip() {
+        let pc = PortChunk {
+            port: 1234,
+            chunk: &[1, 2, 3, 4],
+        };
+        assert_eq!(pc.buffer_required(), 8);
+        let mut buf = [0u8; 8];
+        let enc = pc.encode_to(&mut buf).unwrap();
+
+        let dec = OwnedPortChunk::decode(enc).unwrap();
         assert_eq!(dec.port, 1234);
         assert_eq!(dec.chunk, &[1, 2, 3, 4]);
     }
