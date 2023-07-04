@@ -224,6 +224,8 @@ impl OwnedPortChunk {
 #[cfg(test)]
 mod test {
     use super::*;
+    use proptest::{arbitrary::any, collection::vec, prop_assert_eq, proptest};
+
     #[test]
     fn len_calc_right() {
         let data = [1, 2, 3, 4];
@@ -241,36 +243,6 @@ mod test {
         let mut buf = [0u8; 261];
         let res = pc.encode_to(&mut buf).unwrap();
         assert_eq!(res.len(), 261);
-    }
-
-    #[test]
-    fn round_trip() {
-        let pc = PortChunk {
-            port: 1234,
-            chunk: &[1, 2, 3, 4],
-        };
-        assert_eq!(pc.buffer_required(), 8);
-        let mut buf = [0u8; 8];
-        let enc = pc.encode_to(&mut buf).unwrap();
-
-        let dec = PortChunk::decode_from(enc).unwrap();
-        assert_eq!(dec.port, 1234);
-        assert_eq!(dec.chunk, &[1, 2, 3, 4]);
-    }
-
-    #[test]
-    fn owned_round_trip() {
-        let pc = PortChunk {
-            port: 1234,
-            chunk: &[1, 2, 3, 4],
-        };
-        assert_eq!(pc.buffer_required(), 8);
-        let mut buf = [0u8; 8];
-        let enc = pc.encode_to(&mut buf).unwrap();
-
-        let dec = OwnedPortChunk::decode(enc).unwrap();
-        assert_eq!(dec.port, 1234);
-        assert_eq!(dec.chunk, &[1, 2, 3, 4]);
     }
 
     #[test]
@@ -323,5 +295,35 @@ mod test {
             PortChunk::decode_from(&mut data),
             Err(DecodeError::CobsDecodeFailed)
         );
+    }
+
+    proptest! {
+        #[test]
+        fn round_trip(port in any::<u16>(), ref chunk in vec(any::<u8>(), 1..256)) {
+            let pc = PortChunk {
+                port,
+                chunk,
+            };
+            let mut buf = (0..pc.buffer_required()).map(|_| 0u8).collect::<Vec<_>>();
+            let enc = pc.encode_to(&mut buf).unwrap();
+
+            let dec = PortChunk::decode_from(enc).unwrap();
+            prop_assert_eq!(dec.port, port);
+            prop_assert_eq!(&dec.chunk, chunk);
+        }
+
+        #[test]
+        fn owned_round_trip(port in any::<u16>(), ref chunk in vec(any::<u8>(), 1..256)) {
+            let pc = PortChunk {
+                port,
+                chunk,
+            };
+            let mut buf = (0..pc.buffer_required()).map(|_| 0u8).collect::<Vec<_>>();
+            let enc = pc.encode_to(&mut buf).unwrap();
+
+            let dec = OwnedPortChunk::decode(enc).unwrap();
+            prop_assert_eq!(dec.port, port);
+            prop_assert_eq!(&dec.chunk, chunk);
+        }
     }
 }
