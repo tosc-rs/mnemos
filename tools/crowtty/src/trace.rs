@@ -296,6 +296,9 @@ impl TraceWorker {
                     self.textbuf.clear();
                 }
             }
+            dropped @ TraceEvent::Discarded { .. } => {
+                println!("{} {dropped:?}", self.tag);
+            }
         }
     }
 }

@@ -5,7 +5,7 @@ use tracing_serde_structured::{
     SerializeId, SerializeLevel, SerializeMetadata, SerializeRecordFields, SerializeSpanFields,
 };
 
-#[derive(serde::Serialize, serde::Deserialize)]
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
 pub enum TraceEvent<'a> {
     /// Sent by the target periodically when not actively tracing, to indicate
     /// liveness, or to ack a [`HostRequest::SetMaxLevel`].
@@ -37,6 +37,15 @@ pub enum TraceEvent<'a> {
     Exit(SerializeId),
     CloneSpan(SerializeId),
     DropSpan(SerializeId),
+
+    /// The target put some data on the ground. Probably because a buffer was
+    /// full.
+    Discarded {
+        new_spans: usize,
+        span_activity: usize,
+        events: usize,
+        metas: usize,
+    },
 }
 
 /// Requests sent from a host to a trace target.
