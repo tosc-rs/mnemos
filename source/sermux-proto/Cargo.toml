@@ -13,3 +13,6 @@ default-features = false
 
 [features]
 use-std = []
+
+[dev-dependencies.proptest]
+version = "1.2"

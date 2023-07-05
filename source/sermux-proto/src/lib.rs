@@ -171,13 +171,13 @@ impl<'a> PortChunk<'a> {
 /// Like [PortChunk], but owns the storage instead
 ///
 /// Only available with the `use-std` feature active
-#[cfg(feature = "use-std")]
+#[cfg(any(feature = "use-std", test))]
 pub struct OwnedPortChunk {
     pub port: u16,
     pub chunk: Vec<u8>,
 }
 
-#[cfg(feature = "use-std")]
+#[cfg(any(feature = "use-std", test))]
 impl OwnedPortChunk {
     /// Create a new OwnedPortChunk from the given port and data
     #[inline]
@@ -207,9 +207,10 @@ impl OwnedPortChunk {
         let mut data = data.to_vec();
         let pc = PortChunk::decode_from(&mut data)?;
         let port = pc.port;
-        let len = pc.chunk.len();
-        data.shrink_to(len);
-        Ok(OwnedPortChunk { port, chunk: data })
+        Ok(OwnedPortChunk {
+            port,
+            chunk: pc.chunk.to_vec(),
+        })
     }
 
     /// Borrows self as a [PortChunk]
@@ -224,6 +225,8 @@ impl OwnedPortChunk {
 #[cfg(test)]
 mod test {
     use super::*;
+    use proptest::{arbitrary::any, collection::vec, prop_assert_eq, proptest};
+
     #[test]
     fn len_calc_right() {
         let data = [1, 2, 3, 4];
@@ -241,21 +244,6 @@ mod test {
         let mut buf = [0u8; 261];
         let res = pc.encode_to(&mut buf).unwrap();
         assert_eq!(res.len(), 261);
-    }
-
-    #[test]
-    fn round_trip() {
-        let pc = PortChunk {
-            port: 1234,
-            chunk: &[1, 2, 3, 4],
-        };
-        assert_eq!(pc.buffer_required(), 8);
-        let mut buf = [0u8; 8];
-        let enc = pc.encode_to(&mut buf).unwrap();
-
-        let dec = PortChunk::decode_from(enc).unwrap();
-        assert_eq!(dec.port, 1234);
-        assert_eq!(dec.chunk, &[1, 2, 3, 4]);
     }
 
     #[test]
@@ -308,5 +296,35 @@ mod test {
             PortChunk::decode_from(&mut data),
             Err(DecodeError::CobsDecodeFailed)
         );
+    }
+
+    proptest! {
+        #[test]
+        fn round_trip(port in any::<u16>(), ref chunk in vec(any::<u8>(), 1..256)) {
+            let pc = PortChunk {
+                port,
+                chunk,
+            };
+            let mut buf = (0..pc.buffer_required()).map(|_| 0u8).collect::<Vec<_>>();
+            let enc = pc.encode_to(&mut buf).unwrap();
+
+            let dec = PortChunk::decode_from(enc).unwrap();
+            prop_assert_eq!(dec.port, port);
+            prop_assert_eq!(&dec.chunk, chunk);
+        }
+
+        #[test]
+        fn owned_round_trip(port in any::<u16>(), ref chunk in vec(any::<u8>(), 1..256)) {
+            let pc = PortChunk {
+                port,
+                chunk,
+            };
+            let mut buf = (0..pc.buffer_required()).map(|_| 0u8).collect::<Vec<_>>();
+            let enc = pc.encode_to(&mut buf).unwrap();
+
+            let dec = OwnedPortChunk::decode(enc).unwrap();
+            prop_assert_eq!(dec.port, port);
+            prop_assert_eq!(&dec.chunk, chunk);
+        }
     }
 }
