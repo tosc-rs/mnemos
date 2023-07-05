@@ -57,8 +57,8 @@ default-features = false
 optional = true
 
 [dependencies.tracing-serde-structured]
-git = "https://github.com/hawkw/tracing-serde-structured"
-branch = "eliza/tracing-02"
+git = "https://github.com/jamesmunns/tracing-serde-structured"
+branch = "james/2trace2furious"
 default-features = false
 optional = true
 
