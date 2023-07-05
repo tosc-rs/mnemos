@@ -8,6 +8,7 @@
 use core::{
     cell::UnsafeCell,
     ops::{Deref, DerefMut},
+    task::{Context, Poll, Waker},
 };
 use d1_pac::{twi, CCU, GPIO, TWI0};
 use kernel::{
@@ -42,6 +43,7 @@ struct TwiData {
     state: State,
     op: TwiOp,
     err: Option<ErrorKind>,
+    waker: Option<Waker>,
 }
 
 static TWI0_ISR: Twi = Twi {
@@ -49,6 +51,7 @@ static TWI0_ISR: Twi = Twi {
         state: State::Idle,
         op: TwiOp::None,
         err: None,
+        waker: None,
     }),
     waiter: WaitQueue::new(),
 };
@@ -150,7 +153,7 @@ impl Twi0Engine {
             w.a_ack().variant(true);
             w.m_stp().variant(true);
             // enable interrupts
-            // w.int_en().high();
+            // w.int_en().low();
             w
         });
 
@@ -210,22 +213,10 @@ impl Twi0Engine {
                     // setup read op
                     tracing::debug!("reading {len} bytes");
                     guard.data.op = TwiOp::Read { buf, len, read: 0 };
-                    let wait = TWI0_ISR.waiter.wait();
-                    futures::pin_mut!(wait);
-                    let poll = wait.as_mut().subscribe();
-                    tracing::debug!(?poll, "wait for twi read");
-                    drop(guard);
-                    // self.twi.twi_cntr.modify(|_r, w| w.int_en().high());
-                    // unsafe { riscv::interrupt::enable() };
 
-                    // wait for read to complete
-                    // TWI0_ISR.waiter.wait().await.expect("shouldn't be
-                    // closed");
-
-                    wait.await.expect("shouldn't be closed");
+                    guard.wait_for_irq().await;
 
                     tracing::debug!("twi read woken");
-                    guard = TWI0_ISR.lock(&self.twi);
                     if let Some(error) = guard.data.err.take() {
                         tracing::info!(?error, "TWI error in read");
                         tx.send(Err(error))
@@ -240,19 +231,10 @@ impl Twi0Engine {
                     // setup write op
                     tracing::debug!("writing {len} bytes");
                     guard.data.op = TwiOp::Write { buf, pos: 0, len };
-                    let wait = TWI0_ISR.waiter.wait();
-                    futures::pin_mut!(wait);
-                    let poll = wait.as_mut().subscribe();
-                    tracing::debug!(?poll, "wait for twi write");
 
-                    drop(guard);
+                    guard.wait_for_irq().await;
 
-                    // TWI0_ISR.waiter.wait().await.expect("shouldn't be closed");
-
-                    // wait for read to complete
-                    wait.await.expect("shouldn't be closed");
                     tracing::debug!("twi write woken");
-                    guard = TWI0_ISR.lock(&self.twi);
                     if let Some(error) = guard.data.err.take() {
                         tracing::debug!(?error, "TWI error in write");
                         tx.send(Err(error))
@@ -300,6 +282,27 @@ impl Drop for TwiDataGuard<'_> {
     }
 }
 
+impl TwiDataGuard<'_> {
+    async fn wait_for_irq(&mut self) {
+        let mut waiting = false;
+        futures::future::poll_fn(|cx| {
+            if waiting {
+                self.twi.twi_cntr.modify(|_r, w| w.int_en().low());
+                return Poll::Ready(());
+            }
+
+            unsafe { riscv::interrupt::disable() };
+            self.data.waker = Some(cx.waker().clone());
+            waiting = true;
+            self.twi.twi_cntr.modify(|_r, w| w.int_en().high());
+
+            unsafe { riscv::interrupt::enable() };
+            Poll::Pending
+        })
+        .await;
+    }
+}
+
 impl Deref for TwiDataGuard<'_> {
     type Target = TwiData;
 
@@ -322,6 +325,9 @@ impl TwiData {
         // for _ in 0..100_000 {
         //     core::hint::spin_loop();
         // }
+        for _ in 0..5 * 1000 {
+            core::hint::spin_loop();
+        }
         let status: u8 = twi.twi_stat.read().sta().bits();
         let mut needs_wake = false;
         tracing::info!(status = ?format_args!("{status:#x}"), state = ?self.state, "TWI interrupt");
@@ -401,8 +407,7 @@ impl TwiData {
                     match &mut self.op {
                         TwiOp::Read { buf, len, read } => {
                             let data = twi.twi_data.read().data().bits();
-
-                            buf.try_push(data).expect("read buf should have space for data");
+                            buf.try_push(data as u8).expect("read buf should have space for data");
                             if buf.as_slice().len() < *len {
                                 State::WaitForData
                             } else {
@@ -430,7 +435,7 @@ impl TwiData {
                                 // send the next byte of data
                                 let byte = buf.as_slice()[*pos];
 
-                                tracing::info!("data acked; next byte = {:02x}", byte);
+                                // tracing::info!("data acked; next byte = {:02x}", byte);
                                 twi.twi_data.write(|w| w.data().variant(byte));
 
                                 *pos += 1;
@@ -443,7 +448,7 @@ impl TwiData {
                 _ => {
                     let err = status::error(status);
                     // panic!("TWI ERROR {err:?}, {status:#x}, {:?}", self.state);
-                    kernel::trace::warn!(?err, status = ?format_args!("{status:#x}"), state = ?self.state, "TWI0 error");
+                    // kernel::trace::warn!(?err, status = ?format_args!("{status:#x}"), state = ?self.state, "TWI0 error");
                     self.err = Some(err);
                     cntr_w.m_stp().variant(true);
                     needs_wake = true;
@@ -452,8 +457,10 @@ impl TwiData {
             };
 
             if needs_wake {
-                cntr_w.int_en().low();
-                waiter.wake();
+                if let Some(waker) = self.waker.take() {
+                    waker.wake();
+                    cntr_w.int_en().low();
+                }
             }
 
             // writing back to the TWI_CNTR register *with the INT_FLAG bit
