@@ -123,10 +123,24 @@ impl D1 {
         .unwrap();
 
         // initialize tracing
-        k.initialize(async move {
-            COLLECTOR.start(k).await;
-        })
-        .unwrap();
+        let trace_on = k
+            .initialize(async move {
+                COLLECTOR.start(k).await;
+            })
+            .unwrap();
+
+        // Initialize the TWI
+        let twi_up = k
+            .initialize({
+                async {
+                    k.sleep(Duration::from_secs(2)).await;
+                    tracing::debug!("initializing TWI...");
+                    twi0.register(k, 4).await.unwrap();
+                    tracing::info!("TWI initialized!");
+                }
+                .instrument(tracing::info_span!("TWI0",))
+            })
+            .unwrap();
 
         // Spawn a loopback port
         let loopback_settings = LoopbackSettings::default();
@@ -140,28 +154,32 @@ impl D1 {
             use kernel::services::i2c;
 
             trace::info!("waiting to try TWI0 tx...");
-            k.sleep(Duration::from_secs(4)).await;
+            twi_up.await;
+            k.sleep(Duration::from_secs(2)).await;
+            let mut i2c = i2c::I2cClient::from_registry(k).await;
+            trace::info!("got i2c client");
+            let mut txn = i2c.transaction(i2c::Addr::SevenBit(0x53)).await;
             trace::info!("trying TWI0 tx...");
             // try to read the part ID from the ENS160...
-            let mut buf = FixedVec::<u8>::new(1).await;
+            let mut buf = FixedVec::<u8>::new(8).await;
             buf.try_push(0x00).unwrap();
-            let res = twi0.write(i2c::Addr::SevenBit(0x53), buf).await.map(|_| ());
-            trace::info!("TWI0 send to 0x53: {res:?}");
-
-            k.sleep(Duration::from_secs(2)).await;
-            kernel::maitake::future::yield_now().await;
-            let buf = OwnedReadBuf::new(2).await;
-            trace::info!("trying TWI0 rx...");
-            let res = twi0.read(i2c::Addr::SevenBit(0x53), buf, 2).await;
-
-            k.sleep(Duration::from_secs(5)).await;
+            let res = txn.write(buf, 1).await;
+            trace::info!("TWI0 send to 0x53 done!");
             match res {
-                Ok(buf) => {
-                    let lo = buf.initialized()[0];
-                    let hi = buf.initialized()[1];
-                    trace::info!("TWI0 read 2 bytes from 0x53: [{lo:#x}, {hi:#x}]");
+                Ok(mut buf) => {
+                    trace::info!("trying TWI0 rx...");
+                    buf.clear();
+                    let res = txn.read(buf, 2).await;
+
+                    trace::info!("TWI0 read from 0x53: done!");
+                    match res {
+                        Ok(buf) => {
+                            trace::info!("TWI0 read from 0x53: {:?}", buf.as_slice());
+                        }
+                        Err(error) => trace::error!("TWI0 recv from 0x53: {error:?}"),
+                    }
                 }
-                Err(error) => trace::error!("TWI0 read from 0x53: {error:?}"),
+                Err(error) => trace::error!("TWI0 send to 0x53: {error:?}"),
             }
         })
         .unwrap();

@@ -85,6 +85,8 @@ static OOM_WAITER: WaitQueue = WaitQueue::new();
 /// that *could* potentially succeed
 static INHIBIT_ALLOC: AtomicBool = AtomicBool::new(false);
 
+pub static OOM_PANIC: AtomicBool = AtomicBool::new(false);
+
 /// Asynchronously allocate with the given [Layout].
 ///
 /// Analogous to [alloc::alloc::alloc()], but will never return a null pointer,
@@ -96,6 +98,10 @@ pub async fn alloc(layout: Layout) -> NonNull<u8> {
             match NonNull::new(alloc::alloc::alloc(layout.clone())) {
                 Some(nn) => return nn,
                 None => {
+                    assert!(
+                        !OOM_PANIC.load(Ordering::Acquire),
+                        "OOM trying to allocate {layout:?}"
+                    );
                     let _ = OOM_WAITER.wait().await;
                     continue;
                 }

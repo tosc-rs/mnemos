@@ -173,7 +173,7 @@ impl SerialCollector {
                 port.send(heartbeat).await;
                 if let Ok(rgr) = k
                     .timer()
-                    .timeout(time::Duration::from_secs(2), port.consumer().read_grant())
+                    .timeout(time::Duration::from_secs(1), port.consumer().read_grant())
                     .await
                 {
                     read_level(rgr);

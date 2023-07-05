@@ -44,9 +44,9 @@ fn main() -> ! {
         w
     });
 
-    d1.kernel
-        .initialize(SharpDisplay::register(d1.kernel, 4))
-        .unwrap();
+    // d1.kernel
+    //     .initialize(SharpDisplay::register(d1.kernel, 4))
+    //     .unwrap();
 
     // Initialize LED loop
     d1.kernel
