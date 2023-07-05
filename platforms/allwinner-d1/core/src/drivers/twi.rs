@@ -336,7 +336,7 @@ impl TwiData {
         //     core::hint::spin_loop();
         // }
         let status: u8 = twi.twi_stat.read().sta().bits();
-
+        let mut needs_wake = false;
         tracing::info!(status = ?format_args!("{status:#x}"), state = ?self.state, "TWI interrupt");
         twi.twi_cntr.modify(|cntr_r, cntr_w| {
 
@@ -399,7 +399,7 @@ impl TwiData {
                 {
                     match self.op {
                         Op::Read { .. } => State::WaitForData,
-                        Op::None =>                     unreachable!(
+                        Op::None => unreachable!(
                             "if we sent an address with a read bit, we should be in a read state (was None)"
                         ),
                         Op::Write { .. } => unreachable!(
@@ -416,12 +416,11 @@ impl TwiData {
                             if read < amt {
                                 State::WaitForData
                             } else {
-                                cntr_w.int_en().low();
-                                waiter.wake();
-                                // twi.twi_cntr.modify(|_r, w| w.m_stp().variant(true));
                                 // TODO(eliza): do we disable the IRQ until the
                                 // waiter has advanced our state, in case it wants
                                 // to read data...?
+                                cntr_w.int_en().low();
+                                needs_wake = true;
                                 State::Idle
                             }
                         }
@@ -442,13 +441,11 @@ impl TwiData {
                                 *pos += 1;
                                 State::WaitForAck
                             } else {
-                                cntr_w.int_en().low();
-                                waiter.wake();
-                                // twi.twi_cntr.modify(|_r, w| w.m_stp().variant(true));
                                 // TODO(eliza): do we disable the IRQ until the
                                 // waiter has advanced our state, in case it wants
                                 // to read data...?
-
+                                cntr_w.int_en().low();
+                                needs_wake = true;
                                 State::Idle
                             }
                         }
@@ -457,17 +454,27 @@ impl TwiData {
                 }
                 _ => {
                     let err = status::error(status);
-                    // panic!("TWI0 error: {err:?}, {status:#x}, {:?}", self.state);
                     kernel::trace::warn!(?err, status = ?format_args!("{status:#x}"), state = ?self.state, "TWI0 error");
                     self.err = Some(err);
                         cntr_w.int_en().low();
                         cntr_w.m_stp().variant(true);
-                    waiter.wake();
+                    needs_wake = true;
                     State::Idle
                 }
             };
+
+            // writing back to the TWI_CNTR register *with the INT_FLAG bit
+            // high* clears the interrupt. the D1 user manual never explains
+            // this, but it's the same behavior as the DMAC interrupts, and the
+            // Linux driver for the Marvell family mv64xxx has a special flag
+            // which changes it to write back to TWI_CNTR with INT_FLAG set on
+            // Allwinner hardware.
             cntr_w
         });
+
+        if needs_wake {
+            waiter.wake();
+        }
     }
 }
 
