@@ -56,6 +56,7 @@ impl D1Uart {
     }
 
     pub fn handle_uart0_int() {
+        let _isr = kernel::isr::Isr::enter();
         let uart0 = unsafe { &*UART0::PTR };
         let prod = UART_RX.load(Ordering::Acquire);
         let mut handled_all = false;
