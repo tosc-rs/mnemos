@@ -234,7 +234,6 @@ impl D1 {
     /// At the moment, we only service the Channel 0 interrupt,
     /// which indicates that the serial transmission is complete.
     fn handle_dmac() {
-        let _isr = kernel::isr::Isr::enter();
         let dmac = unsafe { &*DMAC::PTR };
         dmac.dmac_irq_pend0.modify(|r, w| {
             tracing::trace!(dmac_irq_pend0 = ?format_args!("{:#b}", r.bits()), "DMAC interrupt");
@@ -256,7 +255,6 @@ impl D1 {
     /// We don't actually do anything in the TIMER1 interrupt. It is only here to
     /// knock us out of WFI. Just disable the IRQ to prevent refires
     fn timer1_int() {
-        let _isr = kernel::isr::Isr::enter();
         let timer = unsafe { &*TIMER::PTR };
         timer
             .tmr_irq_sta
