@@ -200,6 +200,12 @@ impl Twi0Engine {
             // Step 1: Clear TWI_EFR register, and set TWI_CNTR[A_ACK] to 1, and
             // configure TWI_CNTR[M_STA] to 1 to transmit the START signal.
             guard.data.state = State::WaitForStart(addr);
+            guard.twi.twi_cntr.modify(|_r, w| {
+                w.m_sta().set_bit();
+                w.a_ack().set_bit();
+                // w.bus_en().respond();
+                w
+            });
             match op {
                 Op::Read(ReadOp { buf, len }, tx) => {
                     // setup read op
@@ -287,10 +293,8 @@ impl TwiDataGuard<'_> {
             self.data.waker = Some(cx.waker().clone());
             waiting = true;
             self.twi.twi_cntr.modify(|_r, w| {
-                w.m_sta().set_bit();
-                w.a_ack().set_bit();
-                w.bus_en().respond();
-                w.int_en().high()
+                w.int_en().high();
+                w.bus_en().respond()
             });
 
             unsafe { riscv::interrupt::enable() };
@@ -432,6 +436,7 @@ impl TwiData {
                                 // waiter has advanced our state, in case it wants
                                 // to read data...?
                                 needs_wake = true;
+                                cntr_w.m_sta().set_bit();
                                 State::Idle
                             } else {
                                 // send the next byte of data
@@ -465,6 +470,7 @@ impl TwiData {
                 if let Some(waker) = self.waker.take() {
                     waker.wake();
                     cntr_w.int_en().low();
+                    cntr_w.int_flag().clear_bit();
                 }
             }
 

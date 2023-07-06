@@ -177,7 +177,8 @@ impl D1 {
                     trace::info!("TWI0 read from 0x53: done!");
                     match res {
                         Ok(buf) => {
-                            trace::info!("TWI0 read from 0x53: {:?}", buf.as_slice());
+                            let buf = buf.as_slice();
+                            trace::info!("TWI0 read from 0x53: [{:#x}, {:#x}]", buf[0], buf[1]);
                         }
                         Err(error) => trace::error!("TWI0 recv from 0x53: {error:?}"),
                     }
