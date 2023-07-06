@@ -266,7 +266,7 @@ impl Twi {
         twi.twi_cntr.modify(|_r, w| w.int_en().low());
         // unsafe { riscv::interrupt::disable() };
 
-        kernel::trace::info!("twi locked");
+        // kernel::trace::info!("twi locked");
         let data = unsafe { &mut *(self.data.get()) };
         TwiDataGuard { data, twi }
     }
@@ -277,7 +277,7 @@ impl Drop for TwiDataGuard<'_> {
         // now that we're done accessing the TWI data, we can re-enable the
         // interrupt.
         self.twi.twi_cntr.modify(|_r, w| w.int_en().high());
-        kernel::trace::info!("twi unlocked");
+        // kernel::trace::info!("twi unlocked");
         // unsafe { riscv::interrupt::enable() };
     }
 }
@@ -408,7 +408,12 @@ impl TwiData {
                         TwiOp::Read { buf, len, read } => {
                             let data = twi.twi_data.read().data().bits();
                             buf.try_push(data as u8).expect("read buf should have space for data");
-                            if buf.as_slice().len() < *len {
+                            *read += 1;
+                            let remaining = *len - *read;
+                            if remaining == 1 {
+                                cntr_w.a_ack().clear_bit();
+                            }
+                            if remaining > 0 {
                                 State::WaitForData
                             } else {
                                 // TODO(eliza): do we disable the IRQ until the
@@ -448,7 +453,7 @@ impl TwiData {
                 _ => {
                     let err = status::error(status);
                     // panic!("TWI ERROR {err:?}, {status:#x}, {:?}", self.state);
-                    // kernel::trace::warn!(?err, status = ?format_args!("{status:#x}"), state = ?self.state, "TWI0 error");
+                    kernel::trace::warn!(?err, status = ?format_args!("{status:#x}"), state = ?self.state, "TWI0 error");
                     self.err = Some(err);
                     cntr_w.m_stp().variant(true);
                     needs_wake = true;
