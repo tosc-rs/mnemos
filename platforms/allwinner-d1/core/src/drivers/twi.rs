@@ -135,6 +135,9 @@ impl Twi0Engine {
             w
         });
 
+        // soft reset bit
+        twi.twi_srst.write(|w| w.soft_rst().set_bit());
+
         twi.twi_ccr.modify(|_r, w| {
             // according to the data sheet, setting CLK_M = 11, CLK_N = 1
             // means 100kHz.
@@ -149,19 +152,11 @@ impl Twi0Engine {
         // TWI_XADDR registers to finish TWI initialization configuration
         twi.twi_cntr.write(|w| {
             // enable bus responses.
-            w.bus_en().respond();
-            // enable auto-acknowledgement
-            w.a_ack().variant(true);
-            w.m_stp().variant(true);
-            // enable interrupts
-            // w.int_en().low();
+            // w.bus_en().respond();
+            // w.m_stp().set_bit();
             w
         });
-
-        // hopefully this is basically the same as udelay(5)
-        for _ in 0..5 * 1000 {
-            core::hint::spin_loop();
-        }
+        twi.twi_data.reset();
 
         // // we only want to be the bus controller, so zero our address
         // twi.twi_addr.write(|w| w.sla().variant(0));
@@ -184,6 +179,7 @@ impl Twi0Engine {
 
     #[tracing::instrument(name = "TWI", level = tracing::Level::INFO, skip(self, rx))]
     async fn run(self, rx: KConsumer<registry::Message<I2cService>>) {
+        tracing::debug!("starting TWI driver task");
         while let Ok(registry::Message { msg, reply }) = rx.dequeue_async().await {
             let addr = msg.body.addr;
             let (txn, rx) = Transaction::new(msg.body).await;
@@ -197,17 +193,12 @@ impl Twi0Engine {
         tracing::debug!("starting I2C transaction");
         let mut started = false;
         let mut guard = TWI0_ISR.lock(&self.twi);
+
+        guard.twi.twi_srst.write(|w| w.soft_rst().set_bit());
         while let Ok(op) = txn.dequeue_async().await {
             // setup twi for next op
             // Step 1: Clear TWI_EFR register, and set TWI_CNTR[A_ACK] to 1, and
             // configure TWI_CNTR[M_STA] to 1 to transmit the START signal.
-            guard.twi.twi_efr.reset();
-            guard.twi.twi_cntr.modify(|_r, w| {
-                w.a_ack().variant(true);
-                w.m_sta().variant(true);
-                w
-            });
-            tracing::info!("M_STA=true");
             guard.data.state = State::WaitForStart(addr);
             match op {
                 Op::Read(ReadOp { buf, len }, tx) => {
@@ -295,7 +286,12 @@ impl TwiDataGuard<'_> {
             unsafe { riscv::interrupt::disable() };
             self.data.waker = Some(cx.waker().clone());
             waiting = true;
-            self.twi.twi_cntr.modify(|_r, w| w.int_en().high());
+            self.twi.twi_cntr.modify(|_r, w| {
+                w.m_sta().set_bit();
+                w.a_ack().set_bit();
+                w.bus_en().respond();
+                w.int_en().high()
+            });
 
             unsafe { riscv::interrupt::enable() };
             Poll::Pending
@@ -332,13 +328,14 @@ impl TwiData {
         let status: u8 = twi.twi_stat.read().sta().bits();
         let mut needs_wake = false;
         tracing::info!(status = ?format_args!("{status:#x}"), state = ?self.state, "TWI interrupt");
-        twi.twi_cntr.modify(|cntr_r, cntr_w| {
+        twi.twi_cntr.modify(|_cntr_r, cntr_w| {
 
             self.state = match self.state {
-                // State::Idle => {
-                //     // TODO: send a STOP?
-                //     State::Idle
-                // }
+                State::Idle => {
+                    // TODO: send a STOP?
+                    cntr_w.m_stp().set_bit();
+                    State::Idle
+                }
                 State::WaitForStart(addr) | State::WaitForRestart(addr)
                     if status == START_TRANSMITTED || status == REPEATED_START_TRANSMITTED =>
                 {
@@ -355,17 +352,13 @@ impl TwiData {
                     };
                     // send the address
                     twi.twi_data.write(|w| w.data().variant(bits));
-                    // for _ in 0..5 * 1000 {
-                    //     core::hint::spin_loop();
-                    // }
-
                     // // The data sheet specifically says that we don't have to do
                     // // this, but it seems to be lying...
                     // cntr_w.m_sta().clear_bit());
                     State::WaitForAddr1Ack(addr)
                 }
-                State::WaitForStart(addr) => {
-                    cntr_w.m_sta().set_bit();
+                State::WaitForStart(addr) if status == status::ADDR1_WRITE_NACKED => {
+                    twi.twi_cntr.modify(|_r, w| w.m_sta().set_bit());
 
                     State::WaitForStart(addr)
                 }
@@ -379,7 +372,9 @@ impl TwiData {
                     match &mut self.op {
                         TwiOp::Write { buf, ref mut pos, len } => {
                             // send the first byte of data
-                            twi.twi_data.write(|w| w.data().variant(buf.as_slice()[0]));
+                            let byte = buf.as_slice()[0];
+                            tracing::debug!("TWI write data: {byte:#x}");
+                            twi.twi_data.write(|w| w.data().variant(byte));
                             *pos += 1;
                             State::WaitForAck
                         },
@@ -404,11 +399,12 @@ impl TwiData {
                         ),
                     }
                 }
-                State::WaitForData if status == RX_DATA_ACKED => {
+                State::WaitForData if status == RX_DATA_ACKED || status == RX_DATA_NACKED => {
                     match &mut self.op {
                         TwiOp::Read { buf, len, read } => {
                             let data = twi.twi_data.read().data().bits();
-                            buf.try_push(data as u8).expect("read buf should have space for data");
+                            tracing::debug!("TWI read data: {data:#x}");
+                            buf.try_push(data).expect("read buf should have space for data");
                             *read += 1;
                             let remaining = *len - *read;
                             if remaining == 1 {
@@ -439,10 +435,13 @@ impl TwiData {
                                 State::Idle
                             } else {
                                 // send the next byte of data
+
                                 let byte = buf.as_slice()[*pos];
+                                tracing::debug!("TWI write data: {byte:#x}");
 
                                 // tracing::info!("data acked; next byte = {:02x}", byte);
                                 twi.twi_data.write(|w| w.data().variant(byte));
+
 
                                 *pos += 1;
                                 State::WaitForAck
