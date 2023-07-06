@@ -8,18 +8,16 @@
 use core::{
     cell::UnsafeCell,
     ops::{Deref, DerefMut},
-    task::{Context, Poll, Waker},
+    task::{Poll, Waker},
 };
 use d1_pac::{twi, CCU, GPIO, TWI0};
 use kernel::{
-    buf::OwnedReadBuf,
     comms::kchannel::{KChannel, KConsumer},
     embedded_hal_async::i2c::{ErrorKind, NoAcknowledgeSource},
-    maitake::sync::WaitQueue,
     mnemos_alloc::containers::FixedVec,
     registry,
-    services::i2c::{Addr, I2cService, Op, ReadOp, StartTransaction, Transaction, WriteOp},
-    trace::{self, Instrument},
+    services::i2c::{Addr, I2cService, Op, ReadOp, Transaction, WriteOp},
+    trace::{self},
     Kernel,
 };
 
@@ -31,7 +29,6 @@ pub struct Twi0Engine {
 /// Data used by a TWI interrupt.
 struct Twi {
     data: UnsafeCell<TwiData>,
-    waiter: WaitQueue,
 }
 
 struct TwiDataGuard<'a> {
@@ -53,7 +50,6 @@ static TWI0_ISR: Twi = Twi {
         err: None,
         waker: None,
     }),
-    waiter: WaitQueue::new(),
 };
 
 enum TwiOp {
@@ -114,7 +110,7 @@ impl Twi0Engine {
             &mut (*TWI0_ISR.data.get())
         };
 
-        data.advance_isr(twi, &TWI0_ISR.waiter);
+        data.advance_isr(twi);
     }
 
     /// This assumes the GPIO pin mappings are already configured.
@@ -152,8 +148,8 @@ impl Twi0Engine {
         // TWI_XADDR registers to finish TWI initialization configuration
         twi.twi_cntr.write(|w| {
             // enable bus responses.
-            // w.bus_en().respond();
-            // w.m_stp().set_bit();
+            w.bus_en().respond();
+            w.m_stp().set_bit();
             w
         });
         twi.twi_data.reset();
@@ -203,7 +199,6 @@ impl Twi0Engine {
             guard.twi.twi_cntr.modify(|_r, w| {
                 w.m_sta().set_bit();
                 w.a_ack().set_bit();
-                // w.bus_en().respond();
                 w
             });
             match op {
@@ -292,10 +287,7 @@ impl TwiDataGuard<'_> {
             unsafe { riscv::interrupt::disable() };
             self.data.waker = Some(cx.waker().clone());
             waiting = true;
-            self.twi.twi_cntr.modify(|_r, w| {
-                w.int_en().high();
-                w.bus_en().respond()
-            });
+            self.twi.twi_cntr.modify(|_r, w| w.int_en().high());
 
             unsafe { riscv::interrupt::enable() };
             Poll::Pending
@@ -319,13 +311,9 @@ impl DerefMut for TwiDataGuard<'_> {
 }
 
 impl TwiData {
-    fn advance_isr(&mut self, twi: &twi::RegisterBlock, waiter: &WaitQueue) {
+    fn advance_isr(&mut self, twi: &twi::RegisterBlock) {
         use status::*;
 
-        // delay before reading the status register
-        // for _ in 0..100_000 {
-        //     core::hint::spin_loop();
-        // }
         for _ in 0..5 * 1000 {
             core::hint::spin_loop();
         }
@@ -417,9 +405,6 @@ impl TwiData {
                             if remaining > 0 {
                                 State::WaitForData
                             } else {
-                                // TODO(eliza): do we disable the IRQ until the
-                                // waiter has advanced our state, in case it wants
-                                // to read data...?
                                 needs_wake = true;
                                 State::Idle
                             }
@@ -432,21 +417,23 @@ impl TwiData {
                     match &mut self.op {
                         TwiOp::Write { buf, pos, len } => {
                             if pos == len {
-                                // TODO(eliza): do we disable the IRQ until the
-                                // waiter has advanced our state, in case it wants
-                                // to read data...?
                                 needs_wake = true;
+                                // Send a repeated START for the read portion of
+                                // the transaction.
+                                // TODO(eliza): redesign the driver interface so
+                                // that we know ahead of time whether we will be
+                                // doing a read after the write --- I don't know
+                                // if it's correct to always send the repeated
+                                // START and then immediately send a STOP if
+                                // we're done with the transaction?
                                 cntr_w.m_sta().set_bit();
                                 State::Idle
                             } else {
-                                // send the next byte of data
-
+                                // Send the next byte of data
                                 let byte = buf.as_slice()[*pos];
                                 tracing::debug!("TWI write data: {byte:#x}");
 
-                                // tracing::info!("data acked; next byte = {:02x}", byte);
                                 twi.twi_data.write(|w| w.data().variant(byte));
-
 
                                 *pos += 1;
                                 State::WaitForAck
@@ -457,7 +444,6 @@ impl TwiData {
                 }
                 _ => {
                     let err = status::error(status);
-                    // panic!("TWI ERROR {err:?}, {status:#x}, {:?}", self.state);
                     kernel::trace::warn!(?err, status = ?format_args!("{status:#x}"), state = ?self.state, "TWI0 error");
                     self.err = Some(err);
                     cntr_w.m_stp().variant(true);
@@ -466,15 +452,16 @@ impl TwiData {
                 }
             };
 
+            // If we are waking the driver task, we need to disable interrupts
+            // until the driver can prepare the next phase of the transaction.
             if needs_wake {
                 if let Some(waker) = self.waker.take() {
                     waker.wake();
                     cntr_w.int_en().low();
-                    cntr_w.int_flag().clear_bit();
                 }
             }
 
-            // writing back to the TWI_CNTR register *with the INT_FLAG bit
+            // Writing back to the TWI_CNTR register *with the INT_FLAG bit
             // high* clears the interrupt. the D1 user manual never explains
             // this, but it's the same behavior as the DMAC interrupts, and the
             // Linux driver for the Marvell family mv64xxx has a special flag
