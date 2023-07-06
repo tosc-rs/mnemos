@@ -105,6 +105,7 @@ impl Twi0Engine {
 
     /// Handle a TWI 0 interrupt
     pub fn handle_interrupt() {
+        let _isr = kernel::isr::Isr::enter();
         // tracing::info!("TWI 0 interrupt");
         let twi = unsafe { &*TWI0::PTR };
         let data = unsafe {

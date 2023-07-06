@@ -78,6 +78,7 @@ pub mod comms;
 pub mod daemons;
 pub(crate) mod fmt;
 pub mod forth;
+pub mod isr;
 pub mod registry;
 pub mod services;
 #[cfg(feature = "tracing-02")]
