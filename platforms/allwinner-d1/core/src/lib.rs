@@ -236,6 +236,7 @@ impl D1 {
     fn handle_dmac() {
         let dmac = unsafe { &*DMAC::PTR };
         dmac.dmac_irq_pend0.modify(|r, w| {
+            tracing::trace!(dmac_irq_pend0 = ?format_args!("{:#b}", r.bits()), "DMAC interrupt");
             if r.dma0_queue_irq_pend().bit_is_set() {
                 D1Uart::tx_done_waker().wake();
             }

@@ -11,6 +11,7 @@ use tracing_serde_structured::{AsSerde, SerializeRecordFields, SerializeSpanFiel
 
 pub struct SerialCollector {
     tx: InitOnce<bbq::SpscProducer>,
+    isr_tx: InitOnce<bbq::SpscProducer>,
 
     /// ID of the current span.
     ///
@@ -56,6 +57,7 @@ impl SerialCollector {
     pub const fn with_max_level(max_level: LevelFilter) -> Self {
         Self {
             tx: InitOnce::uninitialized(),
+            isr_tx: InitOnce::uninitialized(),
             current_span: AtomicU64::new(0),
             current_meta: AtomicPtr::new(core::ptr::null_mut()),
             next_id: AtomicU64::new(1),
@@ -75,7 +77,9 @@ impl SerialCollector {
             .expect("cannot initialize serial tracing, cannot open port 3!");
 
         let (tx, rx) = bbq::new_spsc_channel(Self::CAPACITY).await;
+        let (isr_tx, isr_rx) = bbq::new_spsc_channel(Self::CAPACITY).await;
         self.tx.init(tx);
+        self.isr_tx.init(isr_tx);
 
         // set the default tracing collector
         let dispatch = tracing_02::Dispatch::from_static(self);
@@ -83,13 +87,18 @@ impl SerialCollector {
             .expect("cannot set global default tracing dispatcher");
 
         // spawn a worker to read from the channel and write to the serial port.
-        k.spawn(Self::worker(self, rx, port, k)).await;
+        k.spawn(Self::worker(self, rx, isr_rx, port, k)).await;
     }
 
     /// Serialize a `TraceEvent`, returning `true` if the event was correctly serialized.
     fn send_event<'a>(&self, sz: usize, event: impl FnOnce() -> TraceEvent<'a>) -> bool {
         self.in_send.store(true, Ordering::Release);
-        let Some(mut wgr) = self.tx.get().send_grant_exact_sync(sz) else {
+        let tx = if crate::isr::Isr::is_in_isr() {
+            self.isr_tx.get()
+        } else {
+            self.tx.get()
+        };
+        let Some(mut wgr) = tx.send_grant_exact_sync(sz) else {
             return false;
         };
 
@@ -113,6 +122,7 @@ impl SerialCollector {
     async fn worker(
         &'static self,
         rx: bbq::Consumer,
+        isr_rx: bbq::Consumer,
         port: serial_mux::PortHandle,
         k: &'static crate::Kernel,
     ) {
@@ -199,6 +209,11 @@ impl SerialCollector {
             loop {
                 futures::select_biased! {
                     // something to send to the serial port!
+                    rgr = isr_rx.read_grant().fuse() => {
+                        let len = rgr.len();
+                        port.send(&rgr[..]).await;
+                        rgr.release(len);
+                    },
                     rgr = rx.read_grant().fuse() => {
                         let len = rgr.len();
                         port.send(&rgr[..]).await;
