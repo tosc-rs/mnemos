@@ -147,8 +147,7 @@ impl Twi0Engine {
         // TWI_CNTR[INT_EN] to 1, and register the system interrupt. In slave mode, configure TWI_ADDR and
         // TWI_XADDR registers to finish TWI initialization configuration
         twi.twi_cntr.write(|w| {
-            // enable bus responses.
-            w.bus_en().respond();
+            w.bus_en().ignored();
             w.m_stp().set_bit();
             w
         });
@@ -199,6 +198,7 @@ impl Twi0Engine {
             guard.twi.twi_cntr.modify(|_r, w| {
                 w.m_sta().set_bit();
                 w.a_ack().set_bit();
+                w.bus_en().respond();
                 w
             });
             match op {
@@ -452,11 +452,11 @@ impl TwiData {
                 }
             };
 
-            // If we are waking the driver task, we need to disable interrupts
-            // until the driver can prepare the next phase of the transaction.
             if needs_wake {
                 if let Some(waker) = self.waker.take() {
                     waker.wake();
+                    // If we are waking the driver task, we need to disable interrupts
+                    // until the driver can prepare the next phase of the transaction.
                     cntr_w.int_en().low();
                 }
             }
