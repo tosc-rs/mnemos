@@ -24,9 +24,9 @@ pub enum WellKnown {
     /// such as a forth console, when there is no hardware keyboard available.
     ///
     /// Unlike the ForthShell ports, which serve as ssh/telnet like bidirectional
-    /// items, PsuedoKeyboard is only used to receive the input, as the output is
+    /// items, PseudoKeyboard is only used to receive the input, as the output is
     /// shown on a graphical terminal
-    PsuedoKeyboard = 2,
+    PseudoKeyboard = 2,
     /// A bidirectional for binary encoded tracing messages
     BinaryTracing = 3,
 

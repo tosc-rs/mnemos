@@ -20,7 +20,6 @@ pub(crate) struct TraceWorker {
     tx: mpsc::Sender<Vec<u8>>,
     rx: mpsc::Receiver<Vec<u8>>,
     tag: LogTag,
-    verbose: bool,
     spans: HashMap<NonZeroU64, Span>,
     metas: HashMap<MetaId, SerializeMetadata<'static>>,
     stack: Vec<NonZeroU64>,
@@ -35,7 +34,6 @@ impl TraceWorker {
         tx: mpsc::Sender<Vec<u8>>,
         rx: mpsc::Receiver<Vec<u8>>,
         tag: LogTag,
-        verbose: bool,
     ) -> Self {
         let ser_max_level = match max_level {
             LevelFilter::OFF => None,
@@ -49,7 +47,6 @@ impl TraceWorker {
             tx,
             rx,
             tag,
-            verbose,
             spans: HashMap::new(),
             metas: HashMap::new(),
             stack: Vec::new(),
@@ -95,7 +92,7 @@ impl TraceWorker {
     fn event(&mut self, ev: TraceEvent<'_>) {
         match ev {
             TraceEvent::Heartbeat(level) => {
-                if self.verbose {
+                if self.tag.verbose {
                     println!(
                         "{} {} Found a heartbeat (level: {:?}; desired: {:?})",
                         self.tag,
@@ -106,7 +103,7 @@ impl TraceWorker {
                 }
 
                 if level == self.ser_max_level {
-                    if !self.has_set_max_level || self.verbose {
+                    if !self.has_set_max_level || self.tag.verbose {
                         println!(
                             "{} {} Max level set to {:?}",
                             self.tag,
@@ -124,7 +121,7 @@ impl TraceWorker {
                 let req = postcard::to_allocvec_cobs(&HostRequest::SetMaxLevel(self.ser_max_level))
                     .expect("failed to serialize max level request");
                 self.tx.send(req).expect("failed to send host request");
-                if self.verbose {
+                if self.tag.verbose {
                     println!(
                         "{} {} Sent request for {:?}",
                         self.tag,
@@ -134,7 +131,7 @@ impl TraceWorker {
                 }
             }
             TraceEvent::RegisterMeta { id, meta } => {
-                if self.verbose {
+                if self.tag.verbose {
                     write!(
                         &mut self.textbuf,
                         "{} {} {} {}{}{id:?}: {} {} [{}:{}]",

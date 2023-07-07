@@ -40,6 +40,7 @@ pub(crate) struct LogTag {
     start: Instant,
     port: Option<u16>,
     tcp: bool,
+    verbose: bool,
 }
 
 enum Connect {
@@ -47,6 +48,7 @@ enum Connect {
     Tcp(TcpStream),
 }
 
+mod keyboard;
 mod trace;
 
 use clap::{Parser, Subcommand};
@@ -64,6 +66,23 @@ struct Args {
     /// maximum `tracing` level to request from the target.
     #[arg(short, long, global = true, default_value_t = LevelFilter::INFO)]
     trace_level: LevelFilter,
+
+    /// SerMux port for a pseudo-keyboard for the graphical Forth shell on the target.
+    #[arg(short, long, global = true, default_value_t = sermux_proto::WellKnown::PseudoKeyboard as u16)]
+    keyboard_port: u16,
+
+    /// disables STDIN as the pseudo-keyboard.
+    ///
+    /// if this is set, the pseudo-keyboard port can be written to as a standard
+    /// TCP port on the host, instead of reading from crowtty's STDIN.
+    #[arg(long, global = true)]
+    no_keyboard: bool,
+
+    /// offset for host TCP ports.
+    ///
+    /// SerMux port `n` will be mapped to TCP port `n + tcp-port-base` on localhost.
+    #[arg(long, global = true, default_value_t = 10_000)]
+    tcp_port_base: u16,
 }
 
 #[derive(Subcommand)]
@@ -128,15 +147,22 @@ impl Connect {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
-    let verbose = args.verbose;
-    let (mut port, tag) = match args.command {
+    let Args {
+        command,
+        tcp_port_base,
+        no_keyboard,
+        keyboard_port,
+        verbose,
+        trace_level,
+    } = Args::parse();
+    let (mut port, mut tag) = match command {
         Command::Tcp { port } => (Connect::new_from_tcp(port), LogTag::new(true)),
         Command::Serial { path, baud } => (
             Connect::new_from_serial(path.to_str().unwrap(), baud),
             LogTag::new(false),
         ),
     };
+    tag.verbose = verbose;
 
     let mut carry = Vec::new();
 
@@ -144,23 +170,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         workers: HashMap::new(),
     };
 
+    let mut host_ports = vec![WellKnown::Loopback.into(), WellKnown::HelloWorld.into()];
+
+    if no_keyboard {
+        // if the virtual keyboard is disabled, just treat the keyboard port
+        // normally.
+        let tag = tag.port(keyboard_port);
+        println!(
+            "{tag} {} pseudo-keyboard (SerMux port :{keyboard_port}) on localhost:{}",
+            "KEYB".if_supports_color(Stream::Stdout, |x| x.bright_yellow()),
+            keyboard_port + tcp_port_base,
+        );
+    } else {
+        // otherwise, read from STDIN and send it to the keyboard port.
+        host_ports.push(keyboard_port);
+        let tag = tag.port(keyboard_port);
+        println!(
+            "{tag} {} pseudo-keyboard (SerMux port :{keyboard_port}) reading from STDIN",
+            "KEYB".if_supports_color(Stream::Stdout, |x| x.bright_yellow()),
+        );
+        let handle = keyboard::KeyboardWorker::spawn(tag);
+        manager.workers.insert(keyboard_port, handle);
+    };
+
     // NOTE: You can connect to these ports using the following ncat/netcat/nc commands:
     // ```
     // # connect to port N - stdio
     // stty -icanon -echo && ncat 127.0.0.1 $PORT
     // ```
-    for i in [
-        WellKnown::Loopback,
-        WellKnown::HelloWorld,
-        WellKnown::PsuedoKeyboard,
-    ]
-    .into_iter()
-    .map(Into::into)
-    {
+    for i in [WellKnown::Loopback.into(), WellKnown::HelloWorld.into()].into_iter() {
         let (inp_send, inp_recv) = channel();
         let (out_send, out_recv) = channel();
 
-        let socket = std::net::TcpListener::bind(format!("127.0.0.1:{}", 10_000 + i)).unwrap();
+        let socket =
+            std::net::TcpListener::bind(format!("127.0.0.1:{}", tcp_port_base + i)).unwrap();
 
         let work = TcpWorker {
             out: out_recv,
@@ -184,7 +227,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 println!(
                     "{tag} CONN host connected to port {} (:{})",
-                    10_000 + work.port,
+                    tcp_port_base + work.port,
                     work.port
                 );
 
@@ -224,9 +267,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             break 'inner;
                         }
                         Ok(n) => {
-                            if verbose {
-                                println!("{tag} {mux} {n}B <- :{}", work.port);
-                            }
+                            tag.if_verbose(format_args!("{mux} {n}B <- :{}", work.port));
                             work.inp.send(buf[..n].to_vec()).ok();
                         }
                     }
@@ -247,10 +288,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let trace_handle = {
         let (inp_send, inp_recv) = channel();
         let (out_send, out_recv) = channel::<Vec<u8>>();
-        let max_level = args.trace_level;
         let thread_hdl = spawn(move || {
-            trace::TraceWorker::new(max_level, inp_send, out_recv, tag.port(trace_port), verbose)
-                .run()
+            trace::TraceWorker::new(trace_level, inp_send, out_recv, tag.port(trace_port)).run()
         });
         WorkerHandle {
             out: out_send,
@@ -275,13 +314,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 nmsg.extend_from_slice(&msg);
                 let mut enc_msg = cobs::encode_vec(&nmsg);
                 enc_msg.push(0);
-                if verbose {
-                    println!(
-                        "{} {mux} {}B <- :{port_idx}",
-                        tag.port(*port_idx),
-                        enc_msg.len()
-                    );
-                }
+                tag.port(*port_idx)
+                    .if_verbose(format_args!("{mux} {}B <- :{port_idx}", enc_msg.len()));
                 port.write_all(&enc_msg)?;
             }
         }
@@ -293,9 +327,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(used) => used,
             Err(e) => panic!("{:?}", e),
         };
-        if verbose {
-            println!("{tag} {mux} -> {used}B");
-        }
+        tag.if_verbose(format_args!("{mux} -> {used}B"));
         carry.extend_from_slice(&buf[..used]);
 
         // TODO: We probably want some kind of timeout here to force a flush
@@ -312,9 +344,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok(OwnedPortChunk { port, chunk }) => {
                     success = true;
                     if let Some(hdl) = manager.workers.get_mut(&port) {
-                        if verbose {
-                            println!("{} {dmux} {}B -> :{port}", tag.port(port), chunk.len());
-                        }
+                        tag.port(port)
+                            .if_verbose(format_args!("{dmux} {}B -> :{port}", chunk.len()));
                         hdl.out.send(chunk.to_vec()).ok();
                     }
                 }
@@ -371,6 +402,13 @@ impl LogTag {
             start: Instant::now(),
             port: None,
             tcp,
+            verbose: false,
+        }
+    }
+
+    pub fn if_verbose(&self, f: impl fmt::Display) {
+        if self.verbose {
+            println!("{self} {f}")
         }
     }
 
