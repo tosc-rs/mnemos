@@ -75,6 +75,9 @@ mod commands {
 pub struct SharpDisplay;
 
 impl SharpDisplay {
+    pub const WIDTH: usize = WIDTH;
+    pub const HEIGHT: usize = HEIGHT;
+
     /// Register the driver instance
     ///
     /// Registration will also start the simulated display, meaning that the display

@@ -1032,8 +1032,8 @@ dependencies = [
 
 [[package]]
 name = "tracing-serde-structured"
-version = "0.1.0"
-source = "git+https://github.com/hawkw/tracing-serde-structured?branch=eliza/tracing-02#2533f8a82155588473f8701366f36c60f1efe984"
+version = "0.2.0"
+source = "git+https://github.com/jamesmunns/tracing-serde-structured?branch=james/2trace2furious#44571d9c946ada78acddb0783317a659f836ddd7"
 dependencies = [
  "hash32 0.2.1",
  "heapless",

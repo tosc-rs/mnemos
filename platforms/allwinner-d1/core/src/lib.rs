@@ -19,7 +19,7 @@ use kernel::{
     buf::OwnedReadBuf,
     daemons::sermux::{hello, loopback, HelloSettings, LoopbackSettings},
     mnemos_alloc::containers::{Box, FixedVec},
-    services::serial_mux::SerialMuxServer,
+    services::{forth_spawnulator::SpawnulatorServer, serial_mux::SerialMuxServer},
     trace::{self, Instrument},
     Kernel, KernelSettings,
 };
@@ -188,6 +188,9 @@ impl D1 {
         })
         .unwrap();
 
+        // Spawn the spawnulator
+        k.initialize(SpawnulatorServer::register(k, 16)).unwrap();
+
         Ok(Self {
             kernel: k,
             _uart: uart,
@@ -195,6 +198,50 @@ impl D1 {
             timers,
             plic,
         })
+    }
+
+    /// Spawns a SHARP Memory Display driver and a graphical Forth REPL on the Sharp
+    /// Memory Display.
+    ///
+    /// This function requires a SHARP memory display to be connected to the D1's
+    /// SPI_DBI pins (SPI1).
+    ///
+    /// # Panics
+    ///
+    /// If the SHARP Memory Display driver or the graphical Forth REPL tasks
+    /// could not be spawned.
+    pub fn initialize_sharp_display(&self) {
+        use drivers::sharp_display::SharpDisplay;
+        use kernel::daemons::shells;
+
+        const MAX_FRAMES: usize = 4;
+
+        // the `'static` kernel reference is the only thing from `self` that
+        // must be moved into the spawned tasks.
+        let k = self.kernel;
+
+        let sharp_display = self
+            .kernel
+            .initialize(SharpDisplay::register(k, MAX_FRAMES))
+            .expect("failed to spawn SHARP display driver");
+
+        // spawn Forth shell
+        self.kernel
+            .initialize(async move {
+                trace::debug!("waiting for SHARP display driver...");
+                sharp_display
+                    .await
+                    .expect("display driver task isn't cancelled")
+                    .expect("display driver must come up");
+                trace::debug!("display driver ready!");
+                let settings = shells::GraphicalShellSettings::with_display_size(
+                    SharpDisplay::WIDTH as u32,
+                    SharpDisplay::HEIGHT as u32,
+                );
+                k.spawn(shells::graphical_shell_mono(k, settings)).await;
+                trace::info!("graphical shell running.");
+            })
+            .expect("failed to spawn graphical forth shell");
     }
 
     pub fn run(self) -> ! {

@@ -268,6 +268,10 @@ static INTERRUPT_ARRAY: [Vectored; INTERRUPT_LIST.len()] = lister();
 // do at a hardware level. For now, it's probably fine
 #[export_name = "MachineExternal"]
 fn im_an_interrupt() {
+    // tell the kernel that we are inside an ISR. currently, this just results
+    // in switching tracing buffers to use a special ISR tracebuf, in case the
+    // interrupt fired while someone was holding a tracebuf WGR.
+    let _in_isr = kernel::isr::Isr::enter();
     let plic = unsafe { Plic::summon() };
     let claim = plic.claim();
     let claim_u16 = claim as u16;

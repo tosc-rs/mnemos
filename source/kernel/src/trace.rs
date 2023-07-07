@@ -46,7 +46,10 @@ pub struct SerialCollector {
 
 impl SerialCollector {
     pub const PORT: u16 = 3;
-    const CAPACITY: usize = 1024 * 4;
+
+    // 64k ought to be big enough for anyone
+    const CAPACITY: usize = 1024 * 64;
+
     pub const fn new() -> Self {
         Self::with_max_level(LevelFilter::OFF)
     }
