@@ -1,4 +1,4 @@
-# MnemOS
+<img src = "./assets/logo-mnemos-1280px.png" width = "600" alt="MnemOS" />
 
 This repository is for the MnemOS Operating System.
 
