@@ -108,9 +108,9 @@ pub async fn sermux_shell(k: &'static Kernel, settings: SermuxShellSettings) {
 /// ```
 #[derive(Debug)]
 pub struct GraphicalShellSettings {
-    /// Sermux port to use as a PsuedoKeyboard.
+    /// Sermux port to use as a PseudoKeyboard.
     ///
-    /// Defaults to [WellKnown::PsuedoKeyboard]
+    /// Defaults to [WellKnown::PseudoKeyboard]
     pub port: u16,
     /// Number of bytes used for the sermux buffer
     ///
@@ -135,7 +135,7 @@ pub struct GraphicalShellSettings {
 impl GraphicalShellSettings {
     pub fn with_display_size(width_px: u32, height_px: u32) -> Self {
         Self {
-            port: WellKnown::PsuedoKeyboard.into(),
+            port: WellKnown::PseudoKeyboard.into(),
             capacity: 256,
             forth_settings: Default::default(),
             disp_width_px: width_px,
