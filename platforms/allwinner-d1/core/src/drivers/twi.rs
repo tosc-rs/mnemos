@@ -303,6 +303,11 @@ impl TwiDataGuard<'_> {
             self.data.waker = Some(cx.waker().clone());
             waiting = true;
             self.twi.twi_cntr.modify(|_r, w| {
+                // we have to set M_STA and A_ACK as part of the same write that
+                // sets the INT_EN bit, or else we will potentially do something
+                // weird if we do two separate TWI_CNTR writes. setting all of
+                // these now, atomically, avoids weird cases where we send a
+                // START for some random address, as far as i can tell.
                 w.m_sta().set_bit();
                 w.a_ack().set_bit();
                 w.int_en().high();
