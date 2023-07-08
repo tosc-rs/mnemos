@@ -330,7 +330,7 @@ impl Deref for TwiDataGuard<'_> {
 
 impl DerefMut for TwiDataGuard<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.data
+        self.data
     }
 }
 
@@ -369,38 +369,6 @@ impl TwiData {
                     twi.twi_data.write(|w| w.data().variant(bits));
                     State::WaitForAddr1Ack(addr)
                 }
-                // TODO(eliza): i think we can get rid of this code, make sure
-                // this is the case!
-                /*
-                State::WaitForStart(addr)
-                    // Sometimes when the TWI comes up, we will spuriously see this
-                    // status, but it seems fine if we just ignore it once and then
-                    // set the START bit again.
-                    if status == status::ADDR1_WRITE_NACKED
-                    // When connected to the Beepberry, we may sometimes come up
-                    // in the ADDR1_WRITE_ACKED state. I don't know why this
-                    // happens, possibly it's i2c-puppet's fault?
-                    // TODO(eliza): figure that out...
-                    || status == status::ADDR1_WRITE_ACKED
-                => {
-                    cntr_w.m_stp().set_bit();
-                    cntr_w.m_sta().set_bit();
-                    State::WaitForStart(addr)
-                },
-                // Same as above but we are waitig for a restart.
-                State::WaitForRestart(addr)
-                    if status == status::ADDR1_WRITE_NACKED
-                    || status == status::ADDR1_WRITE_ACKED
-                => {
-                    cntr_w.m_sta().set_bit();
-                    State::WaitForRestart(addr)
-                }
-
-                // Sometimes we get the interrupt with this bit set multiple times.
-                State::WaitForAddr1Ack(addr) if status == REPEATED_START_TRANSMITTED => {
-                    State::WaitForAddr1Ack(addr)
-                }
-                */
                 State::WaitForAddr1Ack(Addr::SevenBit(addr)) if status == ADDR1_WRITE_ACKED =>
                 // TODO(eliza): handle 10 bit addr...
                 {
@@ -541,6 +509,7 @@ fn pinmap_twi0_mq_pro(gpio: &mut GPIO) {
     });
 }
 
+// TODO(eliza): turn me into an enum
 mod status {
     use super::*;
     pub(super) fn error(status: u8) -> ErrorKind {
