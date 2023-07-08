@@ -44,21 +44,29 @@ pub struct StartTransaction {
 
 pub struct Transaction {
     addr: Addr,
-    tx: KProducer<Op>,
-    write_rx: Reusable<Result<WriteOp, i2c::ErrorKind>>,
-    read_rx: Reusable<Result<ReadOp, i2c::ErrorKind>>,
+    tx: KProducer<Transfer>,
+    rsp_rx: Reusable<Result<FixedVec<u8>, i2c::ErrorKind>>,
 }
 
 #[derive(Debug)]
 pub struct I2cError {
     addr: Addr,
     kind: ErrorKind,
-    read: bool,
+    dir: Direction,
 }
 
-pub enum Op {
-    Read(ReadOp, oneshot::Sender<Result<ReadOp, i2c::ErrorKind>>),
-    Write(WriteOp, oneshot::Sender<Result<WriteOp, i2c::ErrorKind>>),
+pub struct Transfer {
+    pub buf: FixedVec<u8>,
+    pub len: usize,
+    pub end: bool,
+    pub dir: Direction,
+    pub rsp: oneshot::Sender<Result<FixedVec<u8>, i2c::ErrorKind>>,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub enum Direction {
+    Read,
+    Write,
 }
 
 pub struct ReadOp {
@@ -76,7 +84,6 @@ pub struct WriteOp {
 #[derive(Debug)]
 enum ErrorKind {
     I2c(i2c::ErrorKind),
-    Req(OneshotRequestError),
     NoDriver,
 }
 
@@ -132,16 +139,10 @@ impl I2cClient {
 impl Transaction {
     pub async fn new(
         StartTransaction { addr, capacity }: StartTransaction,
-    ) -> (Self, KConsumer<Op>) {
+    ) -> (Self, KConsumer<Transfer>) {
         let (tx, rx) = KChannel::new_async(capacity).await.split();
-        let read_rx = Reusable::new_async().await;
-        let write_rx = Reusable::new_async().await;
-        let txn = Transaction {
-            addr,
-            read_rx,
-            write_rx,
-            tx,
-        };
+        let rsp_rx = Reusable::new_async().await;
+        let txn = Transaction { addr, rsp_rx, tx };
         (txn, rx)
     }
 
@@ -172,27 +173,12 @@ impl Transaction {
         len: usize,
         end: bool,
     ) -> Result<FixedVec<u8>, I2cError> {
-        let tx = self
-            .read_rx
-            .sender()
-            .await
-            .expect("read sender should not be in use");
         assert!(
             len <= buf.capacity() - buf.len(),
-            "read length ({len) exceeds remaining buffer capacity ({})",
+            "read length ({len}) exceeds remaining buffer capacity ({})",
             buf.capacity() - buf.len()
         );
-        let op = ReadOp { buf, len, end };
-        self.tx
-            .enqueue_async(Op::Read(op, tx))
-            .await
-            .map_err(I2cError::mk_no_driver(self.addr, true))?;
-        self.read_rx
-            .receive()
-            .await
-            .map_err(I2cError::mk_no_driver(self.addr, true))?
-            .map(|ReadOp { buf, .. }| buf)
-            .map_err(I2cError::mk(self.addr, true))
+        self.xfer(buf, len, end, Direction::Read).await
     }
 
     pub async fn write(
@@ -201,22 +187,37 @@ impl Transaction {
         len: usize,
         end: bool,
     ) -> Result<FixedVec<u8>, I2cError> {
-        let tx = self
-            .write_rx
+        self.xfer(buf, len, end, Direction::Write).await
+    }
+
+    async fn xfer(
+        &mut self,
+        buf: FixedVec<u8>,
+        len: usize,
+        end: bool,
+        dir: Direction,
+    ) -> Result<FixedVec<u8>, I2cError> {
+        let rsp = self
+            .rsp_rx
             .sender()
             .await
-            .expect("write sender should not be in use");
-        let op = WriteOp { buf, len, end };
+            .expect("sender should not be in use");
+        let xfer = Transfer {
+            buf,
+            len,
+            end,
+            rsp,
+            dir,
+        };
         self.tx
-            .enqueue_async(Op::Write(op, tx))
+            .enqueue_async(xfer)
             .await
-            .map_err(I2cError::mk_no_driver(self.addr, false))?;
-        self.write_rx
+            .map_err(I2cError::mk_no_driver(self.addr, dir))?;
+        self.rsp_rx
             .receive()
             .await
-            .map_err(I2cError::mk_no_driver(self.addr, false))?
-            .map(|WriteOp { buf, .. }| buf)
-            .map_err(I2cError::mk(self.addr, false))
+            .map_err(I2cError::mk_no_driver(self.addr, dir))?
+            .map_err(I2cError::mk(self.addr, dir))
     }
 }
 
@@ -245,38 +246,32 @@ impl Addr {
 // === impl I2cError ===
 
 impl I2cError {
-    pub fn is_read(&self) -> bool {
-        self.read
-    }
-
-    pub fn new(addr: Addr, kind: i2c::ErrorKind, read: bool) -> Self {
+    pub fn new(addr: Addr, kind: i2c::ErrorKind, dir: Direction) -> Self {
         Self {
             addr,
             kind: ErrorKind::I2c(kind),
-            read,
+            dir,
         }
     }
 
-    fn mk(addr: Addr, read: bool) -> impl Fn(i2c::ErrorKind) -> Self {
+    #[inline]
+    #[must_use]
+    pub fn direction(&self) -> Direction {
+        self.dir
+    }
+
+    fn mk(addr: Addr, dir: Direction) -> impl Fn(i2c::ErrorKind) -> Self {
         move |kind| Self {
             addr,
             kind: ErrorKind::I2c(kind),
-            read,
+            dir,
         }
     }
 
-    fn mk_client(addr: Addr, read: bool) -> impl Fn(OneshotRequestError) -> Self {
-        move |e| Self {
-            addr,
-            kind: ErrorKind::Req(e),
-            read,
-        }
-    }
-
-    fn mk_no_driver<E>(addr: Addr, read: bool) -> impl Fn(E) -> Self {
+    fn mk_no_driver<E>(addr: Addr, dir: Direction) -> impl Fn(E) -> Self {
         move |_| Self {
             addr,
-            read,
+            dir,
             kind: ErrorKind::NoDriver,
         }
     }
@@ -284,16 +279,15 @@ impl I2cError {
 
 impl fmt::Display for I2cError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { addr, kind, read } = self;
-        let verb = match read {
-            true => "reading from",
-            false => "writing to",
+        let Self { addr, kind, dir } = self;
+        let verb = match dir {
+            Direction::Read => "reading from",
+            Direction::Write => "writing to",
         };
         write!(f, "I2C error {verb} {addr:?}: ")?;
 
         match kind {
             ErrorKind::I2c(kind) => kind.fmt(f),
-            ErrorKind::Req(kind) => write!(f, "client error: {kind:?}"),
             ErrorKind::NoDriver => "no driver task running".fmt(f),
         }
     }
@@ -303,7 +297,6 @@ impl i2c::Error for I2cError {
     fn kind(&self) -> i2c::ErrorKind {
         match self.kind {
             ErrorKind::I2c(kind) => kind,
-            ErrorKind::Req(_) => i2c::ErrorKind::Other,
             ErrorKind::NoDriver => i2c::ErrorKind::Other,
         }
     }

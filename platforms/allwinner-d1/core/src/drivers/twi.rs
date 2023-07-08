@@ -16,7 +16,7 @@ use kernel::{
     embedded_hal_async::i2c::{ErrorKind, NoAcknowledgeSource},
     mnemos_alloc::containers::FixedVec,
     registry,
-    services::i2c::{Addr, I2cService, Op, ReadOp, Transaction, WriteOp},
+    services::i2c::{Addr, Direction, I2cService, Transaction, Transfer},
     trace::{self},
     Kernel,
 };
@@ -57,11 +57,13 @@ enum TwiOp {
         buf: FixedVec<u8>,
         pos: usize,
         len: usize,
+        end: bool,
     },
     Read {
         buf: FixedVec<u8>,
         len: usize,
         read: usize,
+        end: bool,
     },
     None,
 }
@@ -80,9 +82,9 @@ enum State {
     /// Waiting for the target device to `ACK` the second half of a 10-bit addr.
     WaitForAddr2Ack(Addr),
     /// Waiting for the target device to `ACK` a data byte.
-    WaitForAck,
+    WaitForAck(Addr),
     /// Waiting for the target device to send a data byte.
-    WaitForData,
+    WaitForData(Addr),
 }
 
 // === impl Twi0Engine ===
@@ -138,7 +140,7 @@ impl Twi0Engine {
             // according to the data sheet, setting CLK_M = 11, CLK_N = 1
             // means 100kHz.
             // setting CLK_M to 2 instead would get us 400kHz.
-            w.clk_m().variant(11);
+            w.clk_m().variant(2);
             w.clk_n().variant(1);
             w
         });
@@ -147,11 +149,10 @@ impl Twi0Engine {
         // TWI_CNTR[INT_EN] to 1, and register the system interrupt. In slave mode, configure TWI_ADDR and
         // TWI_XADDR registers to finish TWI initialization configuration
         twi.twi_cntr.write(|w| {
-            w.bus_en().ignored();
+            w.bus_en().respond();
             w.m_stp().set_bit();
             w
         });
-        twi.twi_data.reset();
 
         // // we only want to be the bus controller, so zero our address
         // twi.twi_addr.write(|w| w.sla().variant(0));
@@ -184,61 +185,73 @@ impl Twi0Engine {
     }
 
     #[tracing::instrument(level = tracing::Level::DEBUG, skip(self, txn))]
-    async fn transaction(&self, addr: Addr, txn: KConsumer<Op>) {
+    async fn transaction(&self, addr: Addr, txn: KConsumer<Transfer>) {
         tracing::debug!("starting I2C transaction");
-        let mut started = false;
         let mut guard = TWI0_ISR.lock(&self.twi);
 
         guard.twi.twi_srst.write(|w| w.soft_rst().set_bit());
-        while let Ok(op) = txn.dequeue_async().await {
-            // setup twi for next op
-            // Step 1: Clear TWI_EFR register, and set TWI_CNTR[A_ACK] to 1, and
-            // configure TWI_CNTR[M_STA] to 1 to transmit the START signal.
-            guard.data.state = State::WaitForStart(addr);
-            guard.twi.twi_cntr.modify(|_r, w| {
-                w.m_sta().set_bit();
-                w.a_ack().set_bit();
-                w.bus_en().respond();
-                w
-            });
-            match op {
-                Op::Read(ReadOp { buf, len }, tx) => {
+        let mut started = false;
+        while let Ok(Transfer {
+            buf,
+            len,
+            end,
+            dir,
+            rsp,
+        }) = txn.dequeue_async().await
+        {
+            if !started {
+                // setup twi for next op
+                // Step 1: Clear TWI_EFR register, and set TWI_CNTR[A_ACK] to 1, and
+                // configure TWI_CNTR[M_STA] to 1 to transmit the START signal.
+                guard.data.state = State::WaitForStart(addr);
+                guard.twi.twi_cntr.modify(|_r, w| {
+                    w.m_sta().set_bit();
+                    w.a_ack().set_bit();
+                    w
+                });
+                started = true;
+            }
+            guard.data.op = match dir {
+                Direction::Read => {
                     // setup read op
                     tracing::debug!("reading {len} bytes");
-                    guard.data.op = TwiOp::Read { buf, len, read: 0 };
-
-                    guard.wait_for_irq().await;
-
-                    tracing::debug!("twi read woken");
-                    if let Some(error) = guard.data.err.take() {
-                        tracing::info!(?error, "TWI error in read");
-                        tx.send(Err(error))
-                    } else {
-                        match core::mem::replace(&mut guard.data.op, TwiOp::None) {
-                            TwiOp::Read { buf, .. } => tx.send(Ok(ReadOp { buf, len })),
-                            _ => unreachable!(),
-                        }
+                    TwiOp::Read {
+                        buf,
+                        len,
+                        read: 0,
+                        end,
                     }
                 }
-                Op::Write(WriteOp { buf, len }, tx) => {
+                Direction::Write => {
                     // setup write op
                     tracing::debug!("writing {len} bytes");
-                    guard.data.op = TwiOp::Write { buf, pos: 0, len };
-
-                    guard.wait_for_irq().await;
-
-                    tracing::debug!("twi write woken");
-                    if let Some(error) = guard.data.err.take() {
-                        tracing::debug!(?error, "TWI error in write");
-                        tx.send(Err(error))
-                    } else {
-                        match core::mem::replace(&mut guard.data.op, TwiOp::None) {
-                            TwiOp::Write { buf, .. } => tx.send(Ok(WriteOp { buf, len })),
-                            _ => unreachable!(),
-                        }
+                    TwiOp::Write {
+                        buf,
+                        pos: 0,
+                        len,
+                        end,
                     }
                 }
             };
+
+            guard.wait_for_irq().await;
+            tracing::debug!(?dir, "TWI operation completed");
+            rsp.send(if let Some(error) = guard.data.err.take() {
+                tracing::warn!(?error, ?dir, "TWI error");
+                Err(error)
+            } else {
+                match core::mem::replace(&mut guard.data.op, TwiOp::None) {
+                    TwiOp::Read { buf, .. } => {
+                        debug_assert_eq!(dir, Direction::Read);
+                        Ok(buf)
+                    }
+                    TwiOp::Write { buf, .. } => {
+                        debug_assert_eq!(dir, Direction::Write);
+                        Ok(buf)
+                    }
+                    _ => unreachable!(),
+                }
+            });
         }
         // transaction ended!
         tracing::debug!("I2C transaction ended");
@@ -321,7 +334,6 @@ impl TwiData {
         let mut needs_wake = false;
         tracing::info!(status = ?format_args!("{status:#x}"), state = ?self.state, "TWI interrupt");
         twi.twi_cntr.modify(|_cntr_r, cntr_w| {
-
             self.state = match self.state {
                 State::Idle => {
                     // TODO: send a STOP?
@@ -358,17 +370,17 @@ impl TwiData {
                 State::WaitForAddr1Ack(addr) if status == REPEATED_START_TRANSMITTED => {
                     State::WaitForAddr1Ack(addr)
                 }
-                State::WaitForAddr1Ack(Addr::SevenBit(_)) if status == ADDR1_WRITE_ACKED =>
+                State::WaitForAddr1Ack(Addr::SevenBit(addr)) if status == ADDR1_WRITE_ACKED =>
                 // TODO(eliza): handle 10 bit addr...
                 {
                     match &mut self.op {
-                        TwiOp::Write { buf, ref mut pos, len } => {
+                        TwiOp::Write { buf, ref mut pos, len, .. } => {
                             // send the first byte of data
                             let byte = buf.as_slice()[0];
                             tracing::debug!("TWI write data: {byte:#x}");
                             twi.twi_data.write(|w| w.data().variant(byte));
                             *pos += 1;
-                            State::WaitForAck
+                            State::WaitForAck(Addr::SevenBit(addr))
                         },
                         TwiOp::Read { .. } => unreachable!(
                             "if we sent an address with a write bit, we should be in a write state (was Read)"
@@ -378,11 +390,11 @@ impl TwiData {
                         ),
                     }
                 }
-                State::WaitForAddr1Ack(Addr::SevenBit(_)) if status == ADDR1_READ_ACKED =>
+                State::WaitForAddr1Ack(Addr::SevenBit(addr)) if status == ADDR1_READ_ACKED =>
                 // TODO(eliza): handle 10 bit addr...
                 {
                     match self.op {
-                        TwiOp::Read { .. } => State::WaitForData,
+                        TwiOp::Read { .. } => State::WaitForData(Addr::SevenBit(addr)),
                         TwiOp::None => unreachable!(
                             "if we sent an address with a read bit, we should be in a read state (was None)"
                         ),
@@ -391,43 +403,54 @@ impl TwiData {
                         ),
                     }
                 }
-                State::WaitForData if status == RX_DATA_ACKED || status == RX_DATA_NACKED => {
+                State::WaitForData(addr) if status == RX_DATA_ACKED || status == RX_DATA_NACKED => {
                     match &mut self.op {
-                        TwiOp::Read { buf, len, read } => {
+                        &mut TwiOp::Read { ref mut buf, len, ref mut read, end } => {
                             let data = twi.twi_data.read().data().bits();
                             tracing::debug!("TWI read data: {data:#x}");
                             buf.try_push(data).expect("read buf should have space for data");
                             *read += 1;
-                            let remaining = *len - *read;
+                            let remaining = len - *read;
                             if remaining == 1 {
                                 cntr_w.a_ack().clear_bit();
                             }
                             if remaining > 0 {
-                                State::WaitForData
+                                State::WaitForData(addr)
                             } else {
                                 needs_wake = true;
-                                State::Idle
+                                // if this is the last operation in the
+                                // transaction, send a STOP.
+                                if end {
+                                    cntr_w.m_stp().set_bit();
+                                    State::Idle
+                                } else {
+                                    // otherwise, send a repeated START for the
+                                    // next operation.
+                                    cntr_w.m_sta().set_bit();
+                                    State::WaitForRestart(addr)
+                                }
                             }
                         }
                         _ => unreachable!(),
                     }
                 }
                 // State::WaitForAck if status == ADDR1_WRITE_ACKED => State::WaitForAck,
-                State::WaitForAck if status == TX_DATA_ACKED => {
+                State::WaitForAck(addr) if status == TX_DATA_ACKED => {
                     match &mut self.op {
-                        TwiOp::Write { buf, pos, len } => {
-                            if pos == len {
+                        &mut TwiOp::Write { ref mut buf, ref mut pos, len, end } => {
+                            if *pos == len {
                                 needs_wake = true;
                                 // Send a repeated START for the read portion of
                                 // the transaction.
-                                // TODO(eliza): redesign the driver interface so
-                                // that we know ahead of time whether we will be
-                                // doing a read after the write --- I don't know
-                                // if it's correct to always send the repeated
-                                // START and then immediately send a STOP if
-                                // we're done with the transaction?
-                                cntr_w.m_sta().set_bit();
-                                State::Idle
+                                if end {
+                                    cntr_w.m_stp().set_bit();
+                                    State::Idle
+                                } else {
+                                    // otherwise, send a repeated START for the
+                                    // next operation.
+                                    cntr_w.m_sta().set_bit();
+                                    State::WaitForRestart(addr)
+                                }
                             } else {
                                 // Send the next byte of data
                                 let byte = buf.as_slice()[*pos];
@@ -436,7 +459,7 @@ impl TwiData {
                                 twi.twi_data.write(|w| w.data().variant(byte));
 
                                 *pos += 1;
-                                State::WaitForAck
+                                State::WaitForAck(addr)
                             }
                         }
                         _ => unimplemented!(),

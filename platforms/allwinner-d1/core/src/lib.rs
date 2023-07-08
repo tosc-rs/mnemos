@@ -164,7 +164,7 @@ impl D1 {
             let mut buf = FixedVec::<u8>::new(8).await;
             buf.try_push(0x00).unwrap();
             // buf.try_push(0x00).unwrap();
-            let res = txn.write(buf, 1).await;
+            let res = txn.write(buf, 1, false).await;
             trace::info!("TWI0 send to 0x53 done!");
             match res {
                 Ok(mut buf) => {
@@ -172,7 +172,7 @@ impl D1 {
                     // buf.clear();
 
                     let mut buf = FixedVec::<u8>::new(8).await;
-                    let res = txn.read(buf, 2).await;
+                    let res = txn.read(buf, 2, false).await;
 
                     trace::info!("TWI0 read from 0x53: done!");
                     match res {

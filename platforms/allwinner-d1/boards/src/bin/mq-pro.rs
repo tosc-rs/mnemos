@@ -6,7 +6,7 @@ extern crate alloc;
 use core::time::Duration;
 use mnemos_d1_core::{
     dmac::Dmac,
-    drivers::{spim::kernel_spim1, uart::kernel_uart},
+    drivers::{spim::kernel_spim1, twi, uart::kernel_uart},
     plic::Plic,
     timer::Timers,
     Ram, D1,
@@ -44,7 +44,7 @@ fn main() -> ! {
         w
     });
 
-    d1.initialize_sharp_display();
+    // d1.initialize_sharp_display();
 
     // Initialize LED loop
     d1.kernel
