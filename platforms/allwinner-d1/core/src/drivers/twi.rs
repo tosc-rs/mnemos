@@ -71,7 +71,6 @@ enum TwiOp {
 /// TWI state machine
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum State {
-    Invalid,
     Idle,
     /// Waiting for a `START` condition to be sent
     WaitForStart(Addr),
@@ -211,10 +210,7 @@ impl Twi0Engine {
             rsp,
         }) = txn.dequeue_async().await
         {
-            // setup TWI engine for next op
-            // Step 1: Clear TWI_EFR register, and set TWI_CNTR[A_ACK] to 1, and
-            // configure TWI_CNTR[M_STA] to 1 to transmit the START signal.
-
+            // setup TWI driver state for next op
             guard.data.state = if started {
                 State::WaitForRestart(addr)
             } else {
@@ -366,11 +362,11 @@ impl TwiData {
                     };
                     // send the address
                     twi.twi_data.write(|w| w.data().variant(bits));
-                    // // The data sheet specifically says that we don't have to do
-                    // // this, but it seems to be lying...
-                    // cntr_w.m_sta().clear_bit());
                     State::WaitForAddr1Ack(addr)
                 }
+                // TODO(eliza): i think we can get rid of this code, make sure
+                // this is the case!
+                /*
                 State::WaitForStart(addr)
                     // Sometimes when the TWI comes up, we will spuriously see this
                     // status, but it seems fine if we just ignore it once and then
@@ -399,11 +395,12 @@ impl TwiData {
                 State::WaitForAddr1Ack(addr) if status == REPEATED_START_TRANSMITTED => {
                     State::WaitForAddr1Ack(addr)
                 }
+                */
                 State::WaitForAddr1Ack(Addr::SevenBit(addr)) if status == ADDR1_WRITE_ACKED =>
                 // TODO(eliza): handle 10 bit addr...
                 {
                     match &mut self.op {
-                        TwiOp::Write { buf, ref mut pos, len, .. } => {
+                        TwiOp::Write { buf, ref mut pos, .. } => {
                             // send the first byte of data
                             let byte = buf.as_slice()[0];
                             tracing::debug!("TWI write data: {byte:#x}");
