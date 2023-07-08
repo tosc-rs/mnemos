@@ -199,18 +199,21 @@ impl Twi0Engine {
             rsp,
         }) = txn.dequeue_async().await
         {
-            if !started {
-                // setup twi for next op
-                // Step 1: Clear TWI_EFR register, and set TWI_CNTR[A_ACK] to 1, and
-                // configure TWI_CNTR[M_STA] to 1 to transmit the START signal.
-                guard.data.state = State::WaitForStart(addr);
-                guard.twi.twi_cntr.modify(|_r, w| {
-                    w.m_sta().set_bit();
-                    w.a_ack().set_bit();
-                    w
-                });
+            // setup twi for next op
+            // Step 1: Clear TWI_EFR register, and set TWI_CNTR[A_ACK] to 1, and
+            // configure TWI_CNTR[M_STA] to 1 to transmit the START signal.
+            guard.twi.twi_cntr.modify(|_r, w| {
+                w.m_sta().set_bit();
+                w.a_ack().set_bit();
+                w
+            });
+
+            guard.data.state = if started {
+                State::WaitForRestart(addr)
+            } else {
                 started = true;
-            }
+                State::WaitForStart(addr)
+            };
             guard.data.op = match dir {
                 Direction::Read => {
                     // setup read op
@@ -361,11 +364,11 @@ impl TwiData {
                     // cntr_w.m_sta().clear_bit());
                     State::WaitForAddr1Ack(addr)
                 }
-                State::WaitForStart(addr) if status == status::ADDR1_WRITE_NACKED => {
+                state @ State::WaitForStart(_) | state @ State::WaitForRestart(_) if status == status::ADDR1_WRITE_NACKED => {
                     twi.twi_cntr.modify(|_r, w| w.m_sta().set_bit());
-
-                    State::WaitForStart(addr)
+                    state
                 }
+
                 // Sometimes we get the interrupt with this bit set multiple times.
                 State::WaitForAddr1Ack(addr) if status == REPEATED_START_TRANSMITTED => {
                     State::WaitForAddr1Ack(addr)
@@ -449,6 +452,7 @@ impl TwiData {
                                     // otherwise, send a repeated START for the
                                     // next operation.
                                     cntr_w.m_sta().set_bit();
+                                    tracing::debug!("TWI send restart");
                                     State::WaitForRestart(addr)
                                 }
                             } else {
