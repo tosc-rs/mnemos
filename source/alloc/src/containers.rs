@@ -404,4 +404,26 @@ impl<T> FixedVec<T> {
     pub fn is_full(&self) -> bool {
         self.inner.len() == self.inner.capacity()
     }
+
+    /// Returns `true` if this `FixedVec` is empty (its [`len`](Self::len) is
+    /// 0).
+    #[inline]
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.inner.is_empty()
+    }
+
+    /// Returns the length of the `FixedVec`.
+    #[inline]
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.inner.len()
+    }
+
+    /// Returns the total capacity in this `FixedVec`.
+    #[inline]
+    #[must_use]
+    pub fn capacity(&self) -> usize {
+        self.inner.capacity()
+    }
 }

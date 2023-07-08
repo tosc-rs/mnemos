@@ -64,11 +64,13 @@ pub enum Op {
 pub struct ReadOp {
     pub buf: FixedVec<u8>,
     pub len: usize,
+    pub end: bool,
 }
 
 pub struct WriteOp {
     pub buf: FixedVec<u8>,
     pub len: usize,
+    pub end: bool,
 }
 
 #[derive(Debug)]
@@ -143,13 +145,44 @@ impl Transaction {
         (txn, rx)
     }
 
-    pub async fn read(&mut self, buf: FixedVec<u8>, len: usize) -> Result<FixedVec<u8>, I2cError> {
+    /// Read `len` bytes from the I<sup>2</sup>C bus into `buf`.
+    ///
+    /// Note that, rather than always filling the entire buffer, this method
+    /// takes a `len` argument which specifies the number of bytes to read. This
+    /// is intended to allow callers to reuse the same [`FixedVec`] for multiple
+    /// `read` and [`write`] operations.
+    ///
+    /// # Arguments
+    ///
+    /// - `buf`: a [`FixedVec`] buffer into which bytes read from the
+    ///   I<sup>2</sup>C bus will be written
+    /// - `len`: the number of bytes to read. This must be less than or equal to
+    ///   `buf.len()`.
+    /// - `end`: whether or not to end the transaction. If this is `true`, a
+    ///   `STOP` condition will be sent on the bus once `len` bytes have been
+    ///   read. If this is `false`, a repeated `START` condition will be sent on
+    ///   the bus once `len` bytes have been read.
+    ///
+    /// # Panics
+    ///
+    /// - If `len` is greater `buf.capacity() - `buf.len()`.
+    pub async fn read(
+        &mut self,
+        buf: FixedVec<u8>,
+        len: usize,
+        end: bool,
+    ) -> Result<FixedVec<u8>, I2cError> {
         let tx = self
             .read_rx
             .sender()
             .await
             .expect("read sender should not be in use");
-        let op = ReadOp { buf, len };
+        assert!(
+            len <= buf.capacity() - buf.len(),
+            "read length ({len) exceeds remaining buffer capacity ({})",
+            buf.capacity() - buf.len()
+        );
+        let op = ReadOp { buf, len, end };
         self.tx
             .enqueue_async(Op::Read(op, tx))
             .await
@@ -162,13 +195,18 @@ impl Transaction {
             .map_err(I2cError::mk(self.addr, true))
     }
 
-    pub async fn write(&mut self, buf: FixedVec<u8>, len: usize) -> Result<FixedVec<u8>, I2cError> {
+    pub async fn write(
+        &mut self,
+        buf: FixedVec<u8>,
+        len: usize,
+        end: bool,
+    ) -> Result<FixedVec<u8>, I2cError> {
         let tx = self
             .write_rx
             .sender()
             .await
             .expect("write sender should not be in use");
-        let op = WriteOp { buf, len };
+        let op = WriteOp { buf, len, end };
         self.tx
             .enqueue_async(Op::Write(op, tx))
             .await
