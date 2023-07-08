@@ -189,7 +189,10 @@ impl Twi0Engine {
         tracing::debug!("starting I2C transaction");
         let mut guard = TWI0_ISR.lock(&self.twi);
 
+        // reset the TWI engine.
         guard.twi.twi_srst.write(|w| w.soft_rst().set_bit());
+        guard.twi.twi_efr.reset();
+
         let mut started = false;
         while let Ok(Transfer {
             buf,
@@ -199,7 +202,7 @@ impl Twi0Engine {
             rsp,
         }) = txn.dequeue_async().await
         {
-            // setup twi for next op
+            // setup TWI engine for next op
             // Step 1: Clear TWI_EFR register, and set TWI_CNTR[A_ACK] to 1, and
             // configure TWI_CNTR[M_STA] to 1 to transmit the START signal.
             guard.twi.twi_cntr.modify(|_r, w| {
@@ -239,7 +242,7 @@ impl Twi0Engine {
 
             guard.wait_for_irq().await;
             tracing::debug!(?dir, "TWI operation completed");
-            rsp.send(if let Some(error) = guard.data.err.take() {
+            let res = if let Some(error) = guard.data.err.take() {
                 tracing::warn!(?error, ?dir, "TWI error");
                 Err(error)
             } else {
@@ -254,7 +257,11 @@ impl Twi0Engine {
                     }
                     _ => unreachable!(),
                 }
-            });
+            };
+            if rsp.send(res).is_err() {
+                tracing::debug!("I2C transaction handle dropped");
+                break;
+            }
         }
         // transaction ended!
         tracing::debug!("I2C transaction ended");
