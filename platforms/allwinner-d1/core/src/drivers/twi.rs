@@ -150,13 +150,14 @@ impl Twi0Engine {
         // TWI_XADDR registers to finish TWI initialization configuration
         twi.twi_cntr.write(|w| {
             w.bus_en().respond();
+            w.a_ack().set_bit();
             w.m_stp().set_bit();
             w
         });
 
-        // // we only want to be the bus controller, so zero our address
-        // twi.twi_addr.write(|w| w.sla().variant(0));
-        // twi.twi_xaddr.write(|w| w.slax().variant(0));
+        // we only want to be the bus controller, so zero our address
+        twi.twi_addr.write(|w| w.sla().variant(0));
+        twi.twi_xaddr.write(|w| w.slax().variant(0));
 
         Self { twi }
     }
@@ -179,7 +180,9 @@ impl Twi0Engine {
         while let Ok(registry::Message { msg, reply }) = rx.dequeue_async().await {
             let addr = msg.body.addr;
             let (txn, rx) = Transaction::new(msg.body).await;
-            reply.reply_konly(msg.reply_with_body(|_| Ok(txn))).await;
+            if let Err(error) = reply.reply_konly(msg.reply_with_body(|_| Ok(txn))).await {
+                tracing::warn!(?error, "client hung up...");
+            }
             self.transaction(addr, rx).await;
         }
     }
@@ -192,6 +195,12 @@ impl Twi0Engine {
         // reset the TWI engine.
         guard.twi.twi_srst.write(|w| w.soft_rst().set_bit());
         guard.twi.twi_efr.reset();
+        guard.twi.twi_data.reset();
+        guard.twi.twi_cntr.modify(|_r, w| {
+            w.bus_en().respond();
+            w.m_stp().set_bit();
+            w
+        });
 
         let mut started = false;
         while let Ok(Transfer {
@@ -205,11 +214,6 @@ impl Twi0Engine {
             // setup TWI engine for next op
             // Step 1: Clear TWI_EFR register, and set TWI_CNTR[A_ACK] to 1, and
             // configure TWI_CNTR[M_STA] to 1 to transmit the START signal.
-            guard.twi.twi_cntr.modify(|_r, w| {
-                w.m_sta().set_bit();
-                w.a_ack().set_bit();
-                w
-            });
 
             guard.data.state = if started {
                 State::WaitForRestart(addr)
@@ -280,9 +284,6 @@ impl Twi {
     fn lock<'a>(&'a self, twi: &'a twi::RegisterBlock) -> TwiDataGuard<'a> {
         // disable TWI interrupts while holding the guard.
         twi.twi_cntr.modify(|_r, w| w.int_en().low());
-        // unsafe { riscv::interrupt::disable() };
-
-        // kernel::trace::info!("twi locked");
         let data = unsafe { &mut *(self.data.get()) };
         TwiDataGuard { data, twi }
     }
@@ -290,11 +291,7 @@ impl Twi {
 
 impl Drop for TwiDataGuard<'_> {
     fn drop(&mut self) {
-        // now that we're done accessing the TWI data, we can re-enable the
-        // interrupt.
         self.twi.twi_cntr.modify(|_r, w| w.int_en().high());
-        // kernel::trace::info!("twi unlocked");
-        // unsafe { riscv::interrupt::enable() };
     }
 }
 
@@ -307,12 +304,15 @@ impl TwiDataGuard<'_> {
                 return Poll::Ready(());
             }
 
-            unsafe { riscv::interrupt::disable() };
             self.data.waker = Some(cx.waker().clone());
             waiting = true;
-            self.twi.twi_cntr.modify(|_r, w| w.int_en().high());
+            self.twi.twi_cntr.modify(|_r, w| {
+                w.m_sta().set_bit();
+                w.a_ack().set_bit();
+                w.int_en().high();
+                w
+            });
 
-            unsafe { riscv::interrupt::enable() };
             Poll::Pending
         })
         .await;
@@ -371,9 +371,28 @@ impl TwiData {
                     // cntr_w.m_sta().clear_bit());
                     State::WaitForAddr1Ack(addr)
                 }
-                state @ State::WaitForStart(_) | state @ State::WaitForRestart(_) if status == status::ADDR1_WRITE_NACKED => {
-                    twi.twi_cntr.modify(|_r, w| w.m_sta().set_bit());
-                    state
+                State::WaitForStart(addr)
+                    // Sometimes when the TWI comes up, we will spuriously see this
+                    // status, but it seems fine if we just ignore it once and then
+                    // set the START bit again.
+                    if status == status::ADDR1_WRITE_NACKED
+                    // When connected to the Beepberry, we may sometimes come up
+                    // in the ADDR1_WRITE_ACKED state. I don't know why this
+                    // happens, possibly it's i2c-puppet's fault?
+                    // TODO(eliza): figure that out...
+                    || status == status::ADDR1_WRITE_ACKED
+                => {
+                    cntr_w.m_stp().set_bit();
+                    cntr_w.m_sta().set_bit();
+                    State::WaitForStart(addr)
+                },
+                // Same as above but we are waitig for a restart.
+                State::WaitForRestart(addr)
+                    if status == status::ADDR1_WRITE_NACKED
+                    || status == status::ADDR1_WRITE_ACKED
+                => {
+                    cntr_w.m_sta().set_bit();
+                    State::WaitForRestart(addr)
                 }
 
                 // Sometimes we get the interrupt with this bit set multiple times.
@@ -501,6 +520,7 @@ impl TwiData {
             // Linux driver for the Marvell family mv64xxx has a special flag
             // which changes it to write back to TWI_CNTR with INT_FLAG set on
             // Allwinner hardware.
+            cntr_w.int_flag().set_bit();
             cntr_w
         });
     }
