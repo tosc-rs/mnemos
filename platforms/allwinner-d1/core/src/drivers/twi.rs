@@ -355,15 +355,12 @@ impl DerefMut for TwiDataGuard<'_> {
 
 impl TwiData {
     fn advance_isr(&mut self, twi: &twi::RegisterBlock) {
-        for _ in 0..5 * 1000 {
-            core::hint::spin_loop();
-        }
         let status = {
             let byte = twi.twi_stat.read().sta().bits();
             match Status::try_from(byte) {
                 Ok(status) => status,
                 Err(error) => {
-                    tracing::warn!(status = ?format_args!("{byte:#x}"), %error, "invalid TWI status");
+                    tracing::error!(status = ?format_args!("{byte:#x}"), %error, "invalid TWI status");
                     return;
                 }
             }
