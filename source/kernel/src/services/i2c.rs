@@ -3,9 +3,8 @@ use crate::{
         kchannel::{KChannel, KConsumer, KProducer},
         oneshot::{self, Reusable},
     },
-    // buf::{ArrayBuf, OwnedReadBuf},
     mnemos_alloc::containers::FixedVec,
-    registry::{known_uuids, Envelope, KernelHandle, OneshotRequestError, RegisteredDriver},
+    registry::{known_uuids, Envelope, KernelHandle, RegisteredDriver},
     Kernel,
 };
 use core::{convert::Infallible, fmt, time::Duration};

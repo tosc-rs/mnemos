@@ -61,7 +61,7 @@ impl D1 {
         spim: spim::Spim1,
         dmac: Dmac,
         plic: Plic,
-        mut twi0: twi::Twi0Engine,
+        mut twi0: twi::TwiEngine,
     ) -> Result<Self, ()> {
         let k_settings = KernelSettings {
             max_drivers: 16,
@@ -284,7 +284,7 @@ impl D1 {
             plic.register(Interrupt::TIMER1, Self::timer1_int);
             plic.register(Interrupt::DMAC_NS, Self::handle_dmac);
             plic.register(Interrupt::UART0, D1Uart::handle_uart0_int);
-            plic.register(Interrupt::TWI0, twi::Twi0Engine::handle_interrupt);
+            plic.register(Interrupt::TWI0, twi::TwiEngine::handle_twi0_interrupt);
 
             plic.activate(Interrupt::DMAC_NS, Priority::P1).unwrap();
             plic.activate(Interrupt::UART0, Priority::P1).unwrap();

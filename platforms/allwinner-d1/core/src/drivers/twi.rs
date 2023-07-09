@@ -21,13 +21,14 @@ use kernel::{
     Kernel,
 };
 
-/// TWI 0 configured in TWI engine mode.
-pub struct Twi0Engine {
-    twi: TWI0,
+/// A TWI configured in TWI engine mode.
+pub struct TwiEngine {
+    isr: &'static IsrData,
+    twi: &'static twi::RegisterBlock,
 }
 
 /// Data used by a TWI interrupt.
-struct Twi {
+struct IsrData {
     data: UnsafeCell<TwiData>,
 }
 
@@ -43,7 +44,7 @@ struct TwiData {
     waker: Option<Waker>,
 }
 
-static TWI0_ISR: Twi = Twi {
+static TWI0_ISR: IsrData = IsrData {
     data: UnsafeCell::new(TwiData {
         state: State::Idle,
         op: TwiOp::None,
@@ -70,6 +71,7 @@ enum TwiOp {
 
 /// TWI state machine
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[allow(dead_code)] // TODO(eliza): implement 10-bit addresses
 enum State {
     Idle,
     /// Waiting for a `START` condition to be sent
@@ -86,24 +88,38 @@ enum State {
     WaitForData(Addr),
 }
 
-// === impl Twi0Engine ===
+// === impl TwiEngine ===
 
-impl Twi0Engine {
-    /// Initialize TWI0 in TWI engine mode, with the MangoPi MQ Pro pin mappings.
-    pub unsafe fn mq_pro(twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
+impl TwiEngine {
+    /// Initialize TWI0 in TWI engine mode, with the MangoPi MQ Pro pin
+    /// mappings.
+    ///
+    /// # Safety
+    ///
+    /// - The TWI register block must not be concurrently written to.
+    /// - This function should be called only while running on a MangoPi MQ Pro
+    ///   board.
+    pub unsafe fn twi0_mq_pro(twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
         pinmap_twi0_mq_pro(gpio);
-        Self::init(twi, ccu)
+        Self::init_twi0(twi, ccu)
     }
 
-    /// Initialize TWI0 with the Lichee RV Dock pin mappings.
-    pub unsafe fn lichee_rv(twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
+    /// Initialize TWI0 in TWI engine mode, with the Lichee RV pin
+    /// mappings.
+    ///
+    /// # Safety
+    ///
+    /// - The TWI register block must not be concurrently written to.
+    /// - This function should be called only while running on a Lichee RV
+    ///   board.
+    pub unsafe fn twi0_lichee_rv(twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
+        let _ = (twi, ccu, gpio);
         todo!("eliza: Lichee RV pin mappings")
     }
 
     /// Handle a TWI 0 interrupt
-    pub fn handle_interrupt() {
+    pub fn handle_twi0_interrupt() {
         let _isr = kernel::isr::Isr::enter();
-        // tracing::info!("TWI 0 interrupt");
         let twi = unsafe { &*TWI0::PTR };
         let data = unsafe {
             // safety: it's okay to do this because this function can only be
@@ -115,7 +131,7 @@ impl Twi0Engine {
     }
 
     /// This assumes the GPIO pin mappings are already configured.
-    unsafe fn init(twi: TWI0, ccu: &mut CCU) -> Self {
+    unsafe fn init_twi0(twi: TWI0, ccu: &mut CCU) -> Self {
         ccu.twi_bgr.modify(|_r, w| {
             // Step 2: Set TWI_BGR_REG[TWI(n)_GATING] to 0 to close TWI(n) clock.
             w.twi0_gating().mask();
@@ -158,7 +174,10 @@ impl Twi0Engine {
         twi.twi_addr.write(|w| w.sla().variant(0));
         twi.twi_xaddr.write(|w| w.slax().variant(0));
 
-        Self { twi }
+        Self {
+            twi: unsafe { &*TWI0::PTR },
+            isr: &TWI0_ISR,
+        }
     }
 
     pub async fn register(self, kernel: &'static Kernel, queued: usize) -> Result<(), ()> {
@@ -189,7 +208,7 @@ impl Twi0Engine {
     #[tracing::instrument(level = tracing::Level::DEBUG, skip(self, txn))]
     async fn transaction(&self, addr: Addr, txn: KConsumer<Transfer>) {
         tracing::debug!("starting I2C transaction");
-        let mut guard = TWI0_ISR.lock(&self.twi);
+        let mut guard = self.isr.lock(self.twi);
 
         // reset the TWI engine.
         guard.twi.twi_srst.write(|w| w.soft_rst().set_bit());
@@ -266,7 +285,7 @@ impl Twi0Engine {
         // transaction ended!
         tracing::debug!("I2C transaction ended");
 
-        let guard = TWI0_ISR.lock(&self.twi);
+        let guard = self.isr.lock(self.twi);
         guard.twi.twi_cntr.modify(|_r, w| {
             w.m_stp().variant(true);
             w.a_ack().variant(false);
@@ -275,7 +294,7 @@ impl Twi0Engine {
     }
 }
 
-impl Twi {
+impl IsrData {
     #[must_use]
     fn lock<'a>(&'a self, twi: &'a twi::RegisterBlock) -> TwiDataGuard<'a> {
         // disable TWI interrupts while holding the guard.
@@ -501,7 +520,7 @@ impl TwiData {
     }
 }
 
-unsafe impl Sync for Twi {}
+unsafe impl Sync for IsrData {}
 
 fn pinmap_twi0_mq_pro(gpio: &mut GPIO) {
     gpio.pg_cfg1.modify(|_r, w| {
