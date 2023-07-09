@@ -336,23 +336,29 @@ impl DerefMut for TwiDataGuard<'_> {
 
 impl TwiData {
     fn advance_isr(&mut self, twi: &twi::RegisterBlock) {
-        use status::*;
-
         for _ in 0..5 * 1000 {
             core::hint::spin_loop();
         }
-        let status: u8 = twi.twi_stat.read().sta().bits();
+        let status = {
+            let byte = twi.twi_stat.read().sta().bits();
+            match Status::try_from(byte) {
+                Ok(status) => status,
+                Err(error) => {
+                    tracing::warn!(status = ?format_args!("{byte:#x}"), %error, "invalid TWI status");
+                    return;
+                }
+            }
+        };
         let mut needs_wake = false;
-        tracing::info!(status = ?format_args!("{status:#x}"), state = ?self.state, "TWI interrupt");
+        tracing::info!(?status, state = ?self.state, "TWI interrupt");
         twi.twi_cntr.modify(|_cntr_r, cntr_w| {
-            self.state = match self.state {
-                State::Idle => {
+            self.state = match (self.state, status)  {
+                (State::Idle, _) => {
                     // TODO: send a STOP?
                     cntr_w.m_stp().set_bit();
                     State::Idle
                 }
-                State::WaitForStart(addr) | State::WaitForRestart(addr)
-                    if status == START_TRANSMITTED || status == REPEATED_START_TRANSMITTED =>
+                (State::WaitForStart(addr), Status::StartTransmitted) | (State::WaitForRestart(addr), Status::RepeatedStartTransmitted) =>
                 {
                     let bits = {
                         // lowest bit is 1 if reading, 0 if writing.
@@ -369,7 +375,7 @@ impl TwiData {
                     twi.twi_data.write(|w| w.data().variant(bits));
                     State::WaitForAddr1Ack(addr)
                 }
-                State::WaitForAddr1Ack(Addr::SevenBit(addr)) if status == ADDR1_WRITE_ACKED =>
+                (State::WaitForAddr1Ack(Addr::SevenBit(addr)), Status::Addr1WriteAcked) =>
                 // TODO(eliza): handle 10 bit addr...
                 {
                     match &mut self.op {
@@ -389,7 +395,7 @@ impl TwiData {
                         ),
                     }
                 }
-                State::WaitForAddr1Ack(Addr::SevenBit(addr)) if status == ADDR1_READ_ACKED =>
+                (State::WaitForAddr1Ack(Addr::SevenBit(addr)), Status::Addr1ReadAcked) =>
                 // TODO(eliza): handle 10 bit addr...
                 {
                     match self.op {
@@ -402,7 +408,7 @@ impl TwiData {
                         ),
                     }
                 }
-                State::WaitForData(addr) if status == RX_DATA_ACKED || status == RX_DATA_NACKED => {
+                (State::WaitForData(addr), Status::RxDataAcked) | (State::WaitForData(addr), Status::RxDataNacked) => {
                     match &mut self.op {
                         &mut TwiOp::Read { ref mut buf, len, ref mut read, end } => {
                             let data = twi.twi_data.read().data().bits();
@@ -433,8 +439,7 @@ impl TwiData {
                         _ => unreachable!(),
                     }
                 }
-                // State::WaitForAck if status == ADDR1_WRITE_ACKED => State::WaitForAck,
-                State::WaitForAck(addr) if status == TX_DATA_ACKED => {
+                (State::WaitForAck(addr), Status::TxDataAcked) => {
                     match &mut self.op {
                         &mut TwiOp::Write { ref mut buf, ref mut pos, len, end } => {
                             if *pos == len {
@@ -465,10 +470,10 @@ impl TwiData {
                         _ => unimplemented!(),
                     }
                 }
-                _ => {
-                    let err = status::error(status);
-                    kernel::trace::warn!(?err, status = ?format_args!("{status:#x}"), state = ?self.state, "TWI0 error");
-                    self.err = Some(err);
+                (_, status) => {
+                    let error: ErrorKind = status.into_error();
+                    kernel::trace::warn!(?error, ?status, state = ?self.state, "TWI error");
+                    self.err = Some(error);
                     cntr_w.m_stp().variant(true);
                     needs_wake = true;
                     State::Idle
@@ -509,40 +514,136 @@ fn pinmap_twi0_mq_pro(gpio: &mut GPIO) {
     });
 }
 
-// TODO(eliza): turn me into an enum
-mod status {
-    use super::*;
-    pub(super) fn error(status: u8) -> ErrorKind {
-        match status {
-            ADDR1_WRITE_NACKED => ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address),
-            TX_DATA_NACKED => ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data),
-            ADDR1_READ_NACKED => ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address),
+// TODO(eliza): this ought to go in `mycelium-bitfield` eventually
+macro_rules! enum_try_from {
+    (
+        $(#[$meta:meta])* $vis:vis enum $name:ident<$repr:ty> {
+            $(
+                $(#[$var_meta:meta])*
+                $variant:ident = $value:expr
+            ),* $(,)?
+        }
+    ) => {
+        $(#[$meta])*
+        #[repr($repr)]
+        $vis enum $name {
+            $(
+                $(#[$var_meta])*
+                $variant = $value
+            ),*
+        }
+
+
+        impl core::convert::TryFrom<$repr> for $name {
+            type Error = &'static str;
+
+            fn try_from(value: $repr) -> Result<Self, Self::Error> {
+                match value {
+                    $(
+                        $value => Ok(Self::$variant),
+                    )*
+                    _ => Err(concat!(
+                        "invalid value for ",
+                        stringify!($name),
+                        ": expected one of [",
+                        $(
+                            stringify!($value),
+                            ", ",
+                        )* "]")
+                    ),
+                }
+            }
+        }
+    };
+}
+
+enum_try_from! {
+    /// Values of the `TWI_STAT` register.
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    enum Status<u8> {
+        /// 0x00: Bus error
+        BusError = 0x00,
+        /// 0x08: START condition transmitted
+        StartTransmitted = 0x08,
+        /// Ox10: Repeated START condition transmitted
+        RepeatedStartTransmitted = 0x10,
+        /// 0x18: Address + Write bit transmitted, ACK received
+        Addr1WriteAcked = 0x18,
+        /// 0x20: Address + Write bit transmitted, NACK received
+        Addr1WriteNacked = 0x20,
+        /// 0x28: Data byte transmitted in controller mode, ACK received
+        TxDataAcked = 0x28,
+        /// 0x30: Data byte transmitted in controller mode, ACK not received
+        TxDataNacked = 0x30,
+        /// 0x38: Arbitration lost in address or data byte
+        ArbitrationLost = 0x38,
+        /// 0x40: Address + Read bit transmitted, ACK received
+        Addr1ReadAcked = 0x40,
+        /// 0x48: Address + Read bit transmitted, ACK not received
+        Addr1ReadNacked = 0x48,
+        /// 0x50: Data byte received in controller mode, ACK transmitted
+        RxDataAcked = 0x50,
+        /// 0x58: Data byte received in controller mode, no ACK transmitted
+        RxDataNacked = 0x58,
+        /// 0x60: Target address and write bit received, ACK transmitted
+        TargetAddrWriteAcked = 0x60,
+        /// 0x68: Arbitration lost in the address as controller, target address
+        /// + Write bit recieved, ACK transmitted
+        ArbitrationLostTargetWrite = 0x68,
+        /// 0x70: General call address received, ACK transmitted
+        GeneralCall = 0x70,
+        /// 0x78: Arbitration lost in the address as controller, General Call
+        /// address transmitted, ACK received
+        ArbitrationLostGeneralCall = 0x78,
+        /// 0x80: Data byte recieved after target address received, ACK
+        /// transmitted.
+        TargetRxDataAcked = 0x80,
+        /// 0x80: Data byte recieved after target address received, no ACK
+        /// transmitted.
+        TargetRxDataNacked = 0x88,
+        /// 0x90: Data byte received after General Call received, ACK
+        /// transmitted.
+        GeneralCallRxDataAcked = 0x90,
+        /// 0x98: Data byte received after General Call received, no ACK
+        /// transmitted
+        GeneralCallRxDataNacked = 0x98,
+        /// 0xA0: STOP or repeated START condition received in target mode
+        TargetStopOrRepeatedStart = 0xA0,
+        /// 0xA8: Target address + Read bit received, ACK transmitted
+        TargetAddrReadAcked = 0xA8,
+        /// 0xB0: Arbitration lost in address as controller, target address +
+        /// Read bit received, ACK transmitted
+        ArbitrationLostTargetRead = 0xB0,
+        /// 0xB8: Data byte transmitted in target mode, ACK received
+        TargetTxDataAcked = 0xB8,
+        /// 0xC0: Data byte transmitted in target mode, ACK not received
+        TargetTxDataNacked = 0xC0,
+        /// 0xC8: Last data byte transmitted in target mode, ACK received
+        TargetTxLastDataAcked = 0xC8,
+        /// 0xD0: Second Address byte + Write bit transmitted, ACK received
+        Addr2WriteAcked = 0xD0,
+        /// 0xD8: Second Address byte + Write bit transmitted, ACK not received
+        Addr2WriteNacked = 0xD8,
+        /// 0xF8: No relevant status information, `INT_FLAG` = 0
+        None = 0xF8,
+    }
+}
+
+impl Status {
+    fn into_error(self) -> ErrorKind {
+        match self {
+            Self::ArbitrationLost
+            | Self::ArbitrationLostGeneralCall
+            | Self::ArbitrationLostTargetRead
+            | Self::ArbitrationLostTargetWrite => ErrorKind::ArbitrationLoss,
+            Self::BusError => ErrorKind::Bus,
+            Self::Addr1WriteNacked | Self::Addr1ReadNacked | Self::Addr2WriteNacked => {
+                ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address)
+            }
+            Self::TxDataNacked | Self::TargetTxDataNacked => {
+                ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data)
+            }
             _ => ErrorKind::Other,
         }
     }
-
-    /// 0x08: START condition transmitted
-    pub const START_TRANSMITTED: u8 = 0x08;
-
-    /// 0x10: Repeated START condition transmitted
-    pub const REPEATED_START_TRANSMITTED: u8 = 0x10;
-    /// 0x18: Address + Write bit transmitted, ACK received
-    pub const ADDR1_WRITE_ACKED: u8 = 0x18;
-
-    /// 0x20: Address + Write bit transmitted, ACK not received
-    pub const ADDR1_WRITE_NACKED: u8 = 0x20;
-
-    /// 0x28: Data byte transmitted in master mode, ACK received
-    pub const TX_DATA_ACKED: u8 = 0x28;
-    /// 0x30: Data byte transmitted in master mode, ACK not received
-    pub const TX_DATA_NACKED: u8 = 0x30;
-
-    pub const ADDR1_READ_ACKED: u8 = 0x40;
-    pub const ADDR1_READ_NACKED: u8 = 0x48;
-
-    /// 0x50: Data byte received in master mode, ACK transmitted
-    pub const RX_DATA_ACKED: u8 = 0x50;
-
-    /// 0x58: Data byte received in master mode, no ACK transmitted
-    pub const RX_DATA_NACKED: u8 = 0x58;
 }
