@@ -31,7 +31,7 @@ fn main() -> ! {
     let timers = Timers::new(p.TIMER);
     let dmac = Dmac::new(p.DMAC, &mut p.CCU);
     let plic = Plic::new(p.PLIC);
-    let twi0 = unsafe { twi::Twi0Engine::mq_pro(p.TWI0, &mut p.CCU, &mut p.GPIO) };
+    let twi0 = unsafe { twi::TwiEngine::twi0_mq_pro(p.TWI0, &mut p.CCU, &mut p.GPIO) };
 
     let d1 = D1::initialize(timers, uart, spim, dmac, plic, twi0).unwrap();
 
