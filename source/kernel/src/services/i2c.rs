@@ -178,6 +178,7 @@ impl i2c::I2c<i2c::SevenBitAddress> for I2cClient {
                 }
             }
         }
+        // TODO(eliza): save the buffer so that we can use it for future transactions?
         Ok(())
     }
 }
