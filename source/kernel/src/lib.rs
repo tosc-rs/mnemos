@@ -70,6 +70,7 @@
 #![no_std]
 #![allow(clippy::missing_safety_doc)]
 #![feature(impl_trait_in_assoc_type)]
+#![feature(async_fn_in_trait)] // needed for `embedded-hal-async`
 
 extern crate alloc;
 

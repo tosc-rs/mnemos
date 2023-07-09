@@ -125,7 +125,7 @@ impl I2cClient {
         })
     }
 
-    pub async fn transaction(&mut self, addr: Addr) -> Transaction {
+    pub async fn start_transaction(&mut self, addr: Addr) -> Transaction {
         let resp = self
             .handle
             .request_oneshot(StartTransaction { addr, capacity: 2 }, &self.reply)
@@ -134,6 +134,55 @@ impl I2cClient {
         resp.body.expect("transaction should be created")
     }
 }
+
+impl i2c::ErrorType for I2cClient {
+    type Error = I2cError;
+}
+
+impl i2c::I2c<i2c::SevenBitAddress> for I2cClient {
+    async fn transaction(
+        &mut self,
+        address: i2c::SevenBitAddress,
+        operations: &mut [i2c::Operation<'_>],
+    ) -> Result<(), Self::Error> {
+        let mut buf = {
+            // determine the maximum size operation to allocate a buffer for the
+            // transaction.
+            let len = operations
+                .iter()
+                .map(|op| match op {
+                    i2c::Operation::Read(buf) => buf.len(),
+                    i2c::Operation::Write(buf) => buf.len(),
+                })
+                .max();
+            FixedVec::new(len.unwrap_or(0)).await
+        };
+        let mut txn = self.start_transaction(Addr::SevenBit(address)).await;
+        let n_ops = operations.len();
+        for (n, op) in operations.iter_mut().enumerate() {
+            buf.clear();
+            let end = n == n_ops - 1;
+            match op {
+                i2c::Operation::Read(dest) => {
+                    let len = dest.len();
+                    let read = txn.read(buf, len, end).await?;
+                    dest.copy_from_slice(read.as_slice());
+                    buf = read;
+                }
+                i2c::Operation::Write(src) => {
+                    let len = src.len();
+                    buf.try_extend_from_slice(src)
+                        .expect("we should have pre-allocated a large enough buffer!");
+                    let write = txn.write(buf, len, end).await?;
+                    buf = write;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+// === impl Transaction ===
 
 impl Transaction {
     pub async fn new(

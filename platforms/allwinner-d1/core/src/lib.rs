@@ -151,39 +151,32 @@ impl D1 {
         k.initialize(hello(k, hello_settings)).unwrap();
 
         k.initialize(async move {
-            use kernel::services::i2c;
-
-            trace::info!("waiting to try TWI0 tx...");
-            twi_up.await;
+            use kernel::{
+                embedded_hal_async::i2c::{self, I2c},
+                services::i2c::I2cClient,
+            };
+            twi_up.await.expect("TWI should work");
             k.sleep(Duration::from_secs(2)).await;
-            let mut i2c = i2c::I2cClient::from_registry(k).await;
-            trace::info!("got i2c client");
-            let mut txn = i2c.transaction(i2c::Addr::SevenBit(0x53)).await;
-            trace::info!("trying TWI0 tx...");
-            // try to read the part ID from the ENS160...
-            let mut buf = FixedVec::<u8>::new(8).await;
-            buf.try_push(0x00).unwrap();
-            // buf.try_push(0x00).unwrap();
-            let res = txn.write(buf, 1, false).await;
-            trace::info!("TWI0 send to 0x53 done!");
-            match res {
-                Ok(mut buf) => {
-                    trace::info!("trying TWI0 rx...");
-                    // buf.clear();
-
-                    let mut buf = FixedVec::<u8>::new(8).await;
-                    let res = txn.read(buf, 2, false).await;
-
-                    trace::info!("TWI0 read from 0x53: done!");
-                    match res {
-                        Ok(buf) => {
-                            let buf = buf.as_slice();
-                            trace::info!("TWI0 read from 0x53: [{:#x}, {:#x}]", buf[0], buf[1]);
-                        }
-                        Err(error) => trace::error!("TWI0 recv from 0x53: {error:?}"),
-                    }
+            let mut i2c = I2cClient::from_registry(k).await;
+            trace::info!("got I2C client");
+            let mut rdbuf = [0u8; 2];
+            match i2c
+                .transaction(
+                    0x53,
+                    &mut [
+                        i2c::Operation::Write(&[0x00]),
+                        i2c::Operation::Read(&mut rdbuf[..]),
+                    ],
+                )
+                .await
+            {
+                Ok(_) => {
+                    trace::info!("got response from ENS160");
+                    trace::info!("part ID: [{:#x}, {:#x}]", rdbuf[0], rdbuf[1]);
                 }
-                Err(error) => trace::error!("TWI0 send to 0x53: {error:?}"),
+                Err(error) => {
+                    trace::error!(%error, "error reading from ENS160");
+                }
             }
         })
         .unwrap();
