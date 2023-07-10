@@ -129,6 +129,11 @@ impl<T> KProducer<T> {
             cloner: ErasedKProducer::clone_erased::<T>,
         }
     }
+
+    // TODO(eliza): replace this with "close on drop" behavior...
+    pub(crate) fn close(&mut self) {
+        self.q.close()
+    }
 }
 
 // KConsumer

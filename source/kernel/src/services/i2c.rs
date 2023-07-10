@@ -287,6 +287,14 @@ impl Transaction {
     }
 }
 
+// TODO(eliza): if we properly implement close-on-drop behavior for KProducers,
+// we can remove this...
+impl Drop for Transaction {
+    fn drop(&mut self) {
+        self.tx.close();
+    }
+}
+
 // === impl Addr ===
 
 impl fmt::Debug for Addr {
