@@ -1,3 +1,20 @@
+//! I<sup>2</sup>C Driver Service
+//!
+//! This module contains a service definition for drivers for the I<sup>2</sup>C
+//! bus.
+//!
+//! ## About I<sup>2</sup>C
+//!
+//! I<sup>2</sup>C, according to the [RP2040 datasheet], is "an ubiquitous
+//! serial bus first described in the Dead Sea Scrolls, and later used by
+//! Philips Semiconductor". It's a two-wire, multi-drop bus, allowing multiple
+//! devices to be connected to a single clock and data line.
+//!
+//! Unlike SPI, this is a "real protocol", and not just a sort of shared
+//! hallucination about the meanings of certain wires. That means it has
+//! _rules_.
+//!
+//! [RP2040 datasheet]: https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf
 use crate::{
     comms::{
         kchannel::{KChannel, KConsumer, KProducer},
