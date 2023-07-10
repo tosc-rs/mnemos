@@ -89,8 +89,6 @@ async fn process_stream(
     // the BBQueue has data to write.
     let in_stream = pin!(in_stream);
     let mut in_stream = in_stream.fuse();
-    // let out_fut = pin!(handle.consumer().read_grant());
-    // let mut out_fut = out_fut.fuse();
     loop {
         select! {
             // The kernel wants to write something.
