@@ -28,10 +28,10 @@ features = ["serde"]
 
 [dependencies.mnemos-kernel]
 package = "mnemos"
-path = "../kernel"
+path = "../../source/kernel"
 
 [dependencies.mnemos-alloc]
-path = "../alloc"
+path = "../../source/alloc"
 features = ["use-std"]
 
 # Melpomelo does not use any APIs from `maitake` directly. This dependency is
@@ -43,7 +43,7 @@ version = "0.1.0"
 features = ["tracing-01"]
 
 [dependencies.forth3]
-path = "../forth3"
+path = "../../source/forth3"
 features = ["async"]
 
 [dependencies.futures]
