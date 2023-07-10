@@ -28,12 +28,12 @@ fn main() -> ! {
     let mut p = unsafe { d1_pac::Peripherals::steal() };
     let uart = unsafe { kernel_uart(&mut p.CCU, &mut p.GPIO, p.UART0) };
     let spim = unsafe { kernel_spim1(p.SPI_DBI, &mut p.CCU, &mut p.GPIO) };
+    let i2c0 = unsafe { twi::TwiI2c0::mq_pro(p.TWI0, &mut p.CCU, &mut p.GPIO) };
     let timers = Timers::new(p.TIMER);
     let dmac = Dmac::new(p.DMAC, &mut p.CCU);
     let plic = Plic::new(p.PLIC);
-    let twi0 = unsafe { twi::TwiEngine::twi0_mq_pro(p.TWI0, &mut p.CCU, &mut p.GPIO) };
 
-    let d1 = D1::initialize(timers, uart, spim, dmac, plic, twi0).unwrap();
+    let d1 = D1::initialize(timers, uart, spim, dmac, plic, i2c0).unwrap();
 
     p.GPIO.pd_cfg2.modify(|_r, w| {
         w.pd18_select().output();
@@ -44,7 +44,7 @@ fn main() -> ! {
         w
     });
 
-    // d1.initialize_sharp_display();
+    d1.initialize_sharp_display();
 
     // Initialize LED loop
     d1.kernel

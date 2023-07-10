@@ -16,9 +16,8 @@ use core::{
 };
 use d1_pac::{Interrupt, DMAC, TIMER};
 use kernel::{
-    buf::OwnedReadBuf,
     daemons::sermux::{hello, loopback, HelloSettings, LoopbackSettings},
-    mnemos_alloc::containers::{Box, FixedVec},
+    mnemos_alloc::containers::Box,
     services::{forth_spawnulator::SpawnulatorServer, serial_mux::SerialMuxServer},
     trace::{self, Instrument},
     Kernel, KernelSettings,
@@ -42,6 +41,7 @@ pub struct D1 {
     pub plic: Plic,
     _uart: Uart,
     _spim: spim::Spim1,
+    i2c0_int: (Interrupt, fn()),
 }
 
 static COLLECTOR: trace::SerialCollector = trace::SerialCollector::new();
@@ -61,7 +61,7 @@ impl D1 {
         spim: spim::Spim1,
         dmac: Dmac,
         plic: Plic,
-        mut twi0: twi::TwiEngine,
+        i2c0: twi::TwiI2c0,
     ) -> Result<Self, ()> {
         let k_settings = KernelSettings {
             max_drivers: 16,
@@ -75,16 +75,12 @@ impl D1 {
                 .unwrap()
         };
 
-        let [ch0, _, ch2, ch3, ..] = dmac.channels;
+        let [ch0, _, ..] = dmac.channels;
         dmac.dmac.dmac_irq_en0.modify(|_r, w| {
             // used for UART0 DMA sending
             w.dma0_queue_irq_en().enabled();
             // used for SPI1 DMA sending
             w.dma1_queue_irq_en().enabled();
-            // // used for TWI0 driver DMA sending
-            // w.dma2_queue_irq_en().enabled();
-            // // used for TWI0 driver DMA recv
-            // w.dma3_queue_irq_en().enabled();
             w
         });
 
@@ -123,24 +119,22 @@ impl D1 {
         .unwrap();
 
         // initialize tracing
-        let trace_on = k
-            .initialize(async move {
-                COLLECTOR.start(k).await;
-            })
-            .unwrap();
+        k.initialize(async move {
+            COLLECTOR.start(k).await;
+        })
+        .unwrap();
 
-        // Initialize the TWI
-        let twi_up = k
-            .initialize({
-                async {
-                    k.sleep(Duration::from_secs(2)).await;
-                    tracing::debug!("initializing TWI...");
-                    twi0.register(k, 4).await.unwrap();
-                    tracing::info!("TWI initialized!");
-                }
-                .instrument(tracing::info_span!("TWI0",))
-            })
-            .unwrap();
+        // Initialize the I2C0 TWI
+        let i2c0_int = i2c0.interrupt();
+        k.initialize(
+            async {
+                tracing::debug!("initializing I2C0 TWI...");
+                i2c0.register(k, 4).await.unwrap();
+                tracing::info!("I2C0 TWI initialized!");
+            }
+            .instrument(tracing::info_span!("I2C0"))
+        )
+        .unwrap();
 
         // Spawn a loopback port
         let loopback_settings = LoopbackSettings::default();
@@ -155,7 +149,6 @@ impl D1 {
                 embedded_hal_async::i2c::{self, I2c},
                 services::i2c::I2cClient,
             };
-            twi_up.await.expect("TWI should work");
             k.sleep(Duration::from_secs(2)).await;
             let mut i2c = I2cClient::from_registry(k).await;
             trace::info!("got I2C client");
@@ -190,6 +183,7 @@ impl D1 {
             _spim: spim,
             timers,
             plic,
+            i2c0_int,
         })
     }
 
@@ -244,6 +238,7 @@ impl D1 {
             plic,
             _uart,
             _spim,
+            i2c0_int: (i2c0_int, i2c0_isr),
         } = self;
 
         // Timer0 is used as a freewheeling rolling timer.
@@ -277,11 +272,11 @@ impl D1 {
             plic.register(Interrupt::TIMER1, Self::timer1_int);
             plic.register(Interrupt::DMAC_NS, Self::handle_dmac);
             plic.register(Interrupt::UART0, D1Uart::handle_uart0_int);
-            plic.register(Interrupt::TWI0, twi::TwiEngine::handle_twi0_interrupt);
+            plic.register(i2c0_int, i2c0_isr);
 
             plic.activate(Interrupt::DMAC_NS, Priority::P1).unwrap();
             plic.activate(Interrupt::UART0, Priority::P1).unwrap();
-            plic.activate(Interrupt::TWI0, Priority::P1).unwrap();
+            plic.activate(i2c0_int, Priority::P1).unwrap();
         }
 
         timer0.start_counter(0xFFFF_FFFF);

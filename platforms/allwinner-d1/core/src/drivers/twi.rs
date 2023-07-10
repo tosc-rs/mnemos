@@ -10,7 +10,7 @@ use core::{
     ops::{Deref, DerefMut},
     task::{Poll, Waker},
 };
-use d1_pac::{twi, CCU, GPIO, TWI0};
+use d1_pac::{twi, CCU, GPIO, TWI0, TWI1, TWI2, TWI3, Interrupt};
 use kernel::{
     comms::kchannel::{KChannel, KConsumer},
     embedded_hal_async::i2c::{ErrorKind, NoAcknowledgeSource},
@@ -21,10 +21,12 @@ use kernel::{
     Kernel,
 };
 
-/// A TWI configured in TWI engine mode.
-pub struct TwiEngine {
+/// A TWI mapped to the Raspberry Pi header's I<sup>2</sup>C0 pins.
+pub struct TwiI2c0 {
     isr: &'static IsrData,
     twi: &'static twi::RegisterBlock,
+    /// Which TWI does this TWI Engine use?
+    int: (Interrupt, fn()),
 }
 
 /// Data used by a TWI interrupt.
@@ -44,7 +46,7 @@ struct TwiData {
     waker: Option<Waker>,
 }
 
-static TWI0_ISR: IsrData = IsrData {
+static I2C0_ISR: IsrData = IsrData {
     data: UnsafeCell::new(TwiData {
         state: State::Idle,
         op: TwiOp::None,
@@ -88,10 +90,11 @@ enum State {
     WaitForData(Addr),
 }
 
-// === impl TwiEngine ===
+// === impl TwiI2c0 ===
 
-impl TwiEngine {
-    /// Initialize TWI0 in TWI engine mode, with the MangoPi MQ Pro pin
+impl TwiI2c0 {
+    /// Initialize a TWI for the MangoPi MQ Pro's Pi header I<sup>2</sup>C0
+    /// pins. This configures TWI0 in TWI engine mode, with the MangoPi MQ Pro pin
     /// mappings.
     ///
     /// # Safety
@@ -99,39 +102,17 @@ impl TwiEngine {
     /// - The TWI register block must not be concurrently written to.
     /// - This function should be called only while running on a MangoPi MQ Pro
     ///   board.
-    pub unsafe fn twi0_mq_pro(twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
-        pinmap_twi0_mq_pro(gpio);
-        Self::init_twi0(twi, ccu)
-    }
+    pub unsafe fn mq_pro(_twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
+        // Step 1: Configure GPIO pin mappings.
+        gpio.pg_cfg1.modify(|_r, w| {
+            // on the Mango Pi MQ Pro, the pi header's I2C0 pins are mapped to
+            // TWI0 on PG12 and PG13:
+            // https://mangopi.org/_media/mq-pro-sch-v12.pdf
+            w.pg12_select().twi0_sck();
+            w.pg13_select().twi0_sda();
+            w
+        });
 
-    /// Initialize TWI0 in TWI engine mode, with the Lichee RV pin
-    /// mappings.
-    ///
-    /// # Safety
-    ///
-    /// - The TWI register block must not be concurrently written to.
-    /// - This function should be called only while running on a Lichee RV
-    ///   board.
-    pub unsafe fn twi0_lichee_rv(twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
-        let _ = (twi, ccu, gpio);
-        todo!("eliza: Lichee RV pin mappings")
-    }
-
-    /// Handle a TWI 0 interrupt
-    pub fn handle_twi0_interrupt() {
-        let _isr = kernel::isr::Isr::enter();
-        let twi = unsafe { &*TWI0::PTR };
-        let data = unsafe {
-            // safety: it's okay to do this because this function can only be
-            // called from inside the ISR.
-            &mut (*TWI0_ISR.data.get())
-        };
-
-        data.advance_isr(twi);
-    }
-
-    /// This assumes the GPIO pin mappings are already configured.
-    unsafe fn init_twi0(twi: TWI0, ccu: &mut CCU) -> Self {
         ccu.twi_bgr.modify(|_r, w| {
             // Step 2: Set TWI_BGR_REG[TWI(n)_GATING] to 0 to close TWI(n) clock.
             w.twi0_gating().mask();
@@ -148,6 +129,110 @@ impl TwiEngine {
             w
         });
 
+        Self::init(unsafe { &*TWI0::ptr() }, Interrupt::TWI0, Self::handle_twi0_interrupt)
+    }
+
+    /// Initialize a TWI for the Lichee RV Dock's Pi header I<sup>2</sup>C0
+    /// pins. This configures TWI2 in TWI engine mode, with the Lichee RV pin
+    /// mappings.
+    ///
+    /// # Safety
+    ///
+    /// - The TWI register block must not be concurrently written to.
+    /// - This function should be called only while running on a Lichee RV
+    ///   board.
+    pub unsafe fn lichee_rv_dock(_twi: TWI2, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
+        // Step 1: Configure GPIO pin mappings.
+        gpio.pb_cfg0.modify(|_r, w| {
+            // on the Lichee RV Dock, the Pi header's I2C0 corresponds to TWI2, not
+            // TWI0 as on the MQ Pro.
+            // I2C0 SDA is mapped to TWI2 PB1, and I2C0 SCL is mapped to TWI2 PB0:
+            // https://dl.sipeed.com/fileList/LICHEE/D1/Lichee_RV-Dock/2_Schematic/Lichee_RV_DOCK_3516(Schematic).pdf
+            w.pb0_select().twi2_sck();
+            w.pb1_select().twi2_sda();
+            w
+        });
+
+        ccu.twi_bgr.modify(|_r, w| {
+            // Step 2: Set TWI_BGR_REG[TWI(n)_GATING] to 0 to close TWI(n) clock.
+            w.twi2_gating().mask();
+            // Step 3: Set TWI_BGR_REG[TWI(n)_RST] to 0 to reset TWI(n) module.
+            w.twi2_rst().assert();
+            w
+        });
+
+        ccu.twi_bgr.modify(|_r, w| {
+            // Step 3: Set TWI_BGR_REG[TWI(n)_RST] to 1 to reset TWI(n).
+            w.twi2_rst().deassert();
+            // Step 4: Set TWI_BGR_REG[TWI(n)_GATING] to 1 to open TWI(n) clock.
+            w.twi2_gating().pass();
+            w
+        });
+
+        Self::init(unsafe { &*TWI2::ptr() }, Interrupt::TWI2, Self::handle_twi2_interrupt)
+    }
+
+    /// Returns the interrupt and ISR for this TWI.
+    pub fn interrupt(&self) -> (Interrupt, fn()) {
+        self.int
+    }
+
+    /// Handle a TWI 0 interrupt on the I2C0 pins.
+    fn handle_twi0_interrupt() {
+        let _isr = kernel::isr::Isr::enter();
+        let twi = unsafe { &*TWI0::PTR };
+        let data = unsafe {
+            // safety: it's okay to do this because this function can only be
+            // called from inside the ISR.
+            &mut (*I2C0_ISR.data.get())
+        };
+
+        data.advance_isr::<0>(twi);
+    }
+
+    /// Handle a TWI 1 interrupt on the I2C0 pins.
+    #[allow(dead_code)] // may be used if we ever have a board that maps TWI1 to I2C0...
+    fn handle_twi1_interrupt() {
+        let _isr = kernel::isr::Isr::enter();
+        let twi = unsafe { &*TWI1::PTR };
+        let data = unsafe {
+            // safety: it's okay to do this because this function can only be
+            // called from inside the ISR.
+            &mut (*I2C0_ISR.data.get())
+        };
+
+        data.advance_isr::<1>(twi);
+    }
+
+    /// Handle a TWI 2 interrupt on the I2C0 pins.
+    fn handle_twi2_interrupt() {
+        let _isr = kernel::isr::Isr::enter();
+        let twi = unsafe { &*TWI2::PTR };
+        let data = unsafe {
+            // safety: it's okay to do this because this function can only be
+            // called from inside the ISR.
+            &mut (*I2C0_ISR.data.get())
+        };
+
+        data.advance_isr::<2>(twi);
+    }
+
+    /// Handle a TWI 3 interrupt on the I2C0 pins.
+    #[allow(dead_code)] // may be used if we ever have a board that maps TWI1 to I2C0...
+    fn handle_twi3_interrupt() {
+        let _isr = kernel::isr::Isr::enter();
+        let twi = unsafe { &*TWI3::PTR };
+        let data = unsafe {
+            // safety: it's okay to do this because this function can only be
+            // called from inside the ISR.
+            &mut (*I2C0_ISR.data.get())
+        };
+
+        data.advance_isr::<3>(twi);
+    }
+
+    /// This assumes the GPIO pin mappings are already configured.
+    unsafe fn init(twi: &'static twi::RegisterBlock, int: Interrupt, isr: fn()) -> Self {
         // soft reset bit
         twi.twi_srst.write(|w| w.soft_rst().set_bit());
 
@@ -175,8 +260,9 @@ impl TwiEngine {
         twi.twi_xaddr.write(|w| w.slax().variant(0));
 
         Self {
-            twi: unsafe { &*TWI0::PTR },
-            isr: &TWI0_ISR,
+            twi,
+            isr: &I2C0_ISR,
+            int: (int, isr),
         }
     }
 
@@ -354,19 +440,19 @@ impl DerefMut for TwiDataGuard<'_> {
 }
 
 impl TwiData {
-    fn advance_isr(&mut self, twi: &twi::RegisterBlock) {
+    fn advance_isr<const NUM: u8>(&mut self, twi: &twi::RegisterBlock) {
         let status = {
             let byte = twi.twi_stat.read().sta().bits();
             match Status::try_from(byte) {
                 Ok(status) => status,
                 Err(error) => {
-                    tracing::error!(status = ?format_args!("{byte:#x}"), %error, "invalid TWI status");
+                    tracing::error!(status = ?format_args!("{byte:#x}"), %error, twi = NUM, "TWI{NUM} status invalid");
                     return;
                 }
             }
         };
         let mut needs_wake = false;
-        tracing::info!(?status, state = ?self.state, "TWI interrupt");
+        tracing::info!(?status, state = ?self.state, twi = NUM, "TWI{NUM} interrupt");
         twi.twi_cntr.modify(|_cntr_r, cntr_w| {
             self.state = match (self.state, status)  {
                 (State::Idle, _) => {
@@ -398,7 +484,7 @@ impl TwiData {
                         TwiOp::Write { buf, ref mut pos, .. } => {
                             // send the first byte of data
                             let byte = buf.as_slice()[0];
-                            tracing::debug!("TWI write data: {byte:#x}");
+                            tracing::debug!(twi = NUM, "TWI{NUM} write data: {byte:#x}");
                             twi.twi_data.write(|w| w.data().variant(byte));
                             *pos += 1;
                             State::WaitForAck(Addr::SevenBit(addr))
@@ -428,7 +514,7 @@ impl TwiData {
                     match &mut self.op {
                         &mut TwiOp::Read { ref mut buf, len, ref mut read, end } => {
                             let data = twi.twi_data.read().data().bits();
-                            tracing::debug!("TWI read data: {data:#x}");
+                            tracing::debug!(twi = NUM, "TWI{NUM} read data: {data:#x}");
                             buf.try_push(data).expect("read buf should have space for data");
                             *read += 1;
                             let remaining = len - *read;
@@ -469,13 +555,13 @@ impl TwiData {
                                     // otherwise, send a repeated START for the
                                     // next operation.
                                     cntr_w.m_sta().set_bit();
-                                    tracing::debug!("TWI send restart");
+                                    tracing::debug!(twi = NUM, "TWI{NUM} send restart");
                                     State::WaitForRestart(addr)
                                 }
                             } else {
                                 // Send the next byte of data
                                 let byte = buf.as_slice()[*pos];
-                                tracing::debug!("TWI write data: {byte:#x}");
+                                tracing::debug!(twi = NUM, "TWI{NUM} write data: {byte:#x}");
 
                                 twi.twi_data.write(|w| w.data().variant(byte));
 
@@ -488,7 +574,7 @@ impl TwiData {
                 }
                 (_, status) => {
                     let error: ErrorKind = status.into_error();
-                    kernel::trace::warn!(?error, ?status, state = ?self.state, "TWI error");
+                    tracing::warn!(?error, ?status, state = ?self.state, twi = NUM, "TWI{NUM} error");
                     self.err = Some(error);
                     cntr_w.m_stp().variant(true);
                     needs_wake = true;
@@ -518,17 +604,6 @@ impl TwiData {
 }
 
 unsafe impl Sync for IsrData {}
-
-fn pinmap_twi0_mq_pro(gpio: &mut GPIO) {
-    gpio.pg_cfg1.modify(|_r, w| {
-        // on the Mango Pi MQ Pro, the pi header's I2C0 pins are mapped to
-        // TWI0 on PG12 and PG13:
-        // https://mangopi.org/_media/mq-pro-sch-v12.pdf
-        w.pg12_select().twi0_sck();
-        w.pg13_select().twi0_sda();
-        w
-    });
-}
 
 // TODO(eliza): this ought to go in `mycelium-bitfield` eventually
 macro_rules! enum_try_from {
