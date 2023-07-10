@@ -145,7 +145,7 @@ async fn kernel_entry() {
     // run the kernel on its own
     // TODO: remodel to a select, so we can actually advance the clock correctly
     spawn_local(async move {
-        let tick_millis = 500;
+        let tick_millis = 250;
         let tick_duration = Duration::from_millis(tick_millis);
         IntervalStream::new(tick_millis as u32)
             .for_each(move |_| {
