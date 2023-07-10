@@ -494,6 +494,7 @@ dependencies = [
  "mnemos-d1-core",
  "riscv",
  "riscv-rt",
+ "tracing 0.2.0",
 ]
 
 [[package]]

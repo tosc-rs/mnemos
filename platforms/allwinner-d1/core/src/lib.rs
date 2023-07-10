@@ -144,36 +144,6 @@ impl D1 {
         let hello_settings = HelloSettings::default();
         k.initialize(hello(k, hello_settings)).unwrap();
 
-        k.initialize(async move {
-            use kernel::{
-                embedded_hal_async::i2c::{self, I2c},
-                services::i2c::I2cClient,
-            };
-            k.sleep(Duration::from_secs(2)).await;
-            let mut i2c = I2cClient::from_registry(k).await;
-            trace::info!("got I2C client");
-            let mut rdbuf = [0u8; 2];
-            match i2c
-                .transaction(
-                    0x53,
-                    &mut [
-                        i2c::Operation::Write(&[0x00]),
-                        i2c::Operation::Read(&mut rdbuf[..]),
-                    ],
-                )
-                .await
-            {
-                Ok(_) => {
-                    trace::info!("got response from ENS160");
-                    trace::info!("part ID: [{:#x}, {:#x}]", rdbuf[0], rdbuf[1]);
-                }
-                Err(error) => {
-                    trace::error!(%error, "error reading from ENS160");
-                }
-            }
-        })
-        .unwrap();
-
         // Spawn the spawnulator
         k.initialize(SpawnulatorServer::register(k, 16)).unwrap();
 
