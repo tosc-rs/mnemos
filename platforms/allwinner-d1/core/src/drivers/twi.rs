@@ -10,7 +10,7 @@ use core::{
     ops::{Deref, DerefMut},
     task::{Poll, Waker},
 };
-use d1_pac::{twi, CCU, GPIO, TWI0, TWI1, TWI2, TWI3, Interrupt};
+use d1_pac::{twi, Interrupt, CCU, GPIO, TWI0, TWI1, TWI2, TWI3};
 use kernel::{
     comms::kchannel::{KChannel, KConsumer},
     embedded_hal_async::i2c::{ErrorKind, NoAcknowledgeSource},
@@ -129,7 +129,11 @@ impl TwiI2c0 {
             w
         });
 
-        Self::init(unsafe { &*TWI0::ptr() }, Interrupt::TWI0, Self::handle_twi0_interrupt)
+        Self::init(
+            unsafe { &*TWI0::ptr() },
+            Interrupt::TWI0,
+            Self::handle_twi0_interrupt,
+        )
     }
 
     /// Initialize a TWI for the Lichee RV Dock's Pi header I<sup>2</sup>C0
@@ -169,7 +173,11 @@ impl TwiI2c0 {
             w
         });
 
-        Self::init(unsafe { &*TWI2::ptr() }, Interrupt::TWI2, Self::handle_twi2_interrupt)
+        Self::init(
+            unsafe { &*TWI2::ptr() },
+            Interrupt::TWI2,
+            Self::handle_twi2_interrupt,
+        )
     }
 
     /// Returns the interrupt and ISR for this TWI.
@@ -300,11 +308,6 @@ impl TwiI2c0 {
         guard.twi.twi_srst.write(|w| w.soft_rst().set_bit());
         guard.twi.twi_efr.reset();
         guard.twi.twi_data.reset();
-        guard.twi.twi_cntr.modify(|_r, w| {
-            w.bus_en().respond();
-            w.m_stp().set_bit();
-            w
-        });
 
         let mut started = false;
         while let Ok(Transfer {
@@ -373,8 +376,7 @@ impl TwiI2c0 {
 
         let guard = self.isr.lock(self.twi);
         guard.twi.twi_cntr.modify(|_r, w| {
-            w.m_stp().variant(true);
-            w.a_ack().variant(false);
+            w.m_stp().set_bit();
             w
         });
     }
@@ -416,6 +418,7 @@ impl TwiDataGuard<'_> {
                 w.m_sta().set_bit();
                 w.a_ack().set_bit();
                 w.int_en().high();
+                w.bus_en().respond();
                 w
             });
 
@@ -501,7 +504,14 @@ impl TwiData {
                 // TODO(eliza): handle 10 bit addr...
                 {
                     match self.op {
-                        TwiOp::Read { .. } => State::WaitForData(Addr::SevenBit(addr)),
+                        TwiOp::Read { len, .. } => {
+                            // if we are reading a single byte, clear the A_ACK
+                            // flag so that we don't ACK the byte.
+                            if len == 1 {
+                                cntr_w.a_ack().clear_bit();
+                            }
+                            State::WaitForData(Addr::SevenBit(addr))
+                        }
                         TwiOp::None => unreachable!(
                             "if we sent an address with a read bit, we should be in a read state (was None)"
                         ),
@@ -514,11 +524,11 @@ impl TwiData {
                     match &mut self.op {
                         &mut TwiOp::Read { ref mut buf, len, ref mut read, end } => {
                             let data = twi.twi_data.read().data().bits();
-                            tracing::debug!(twi = NUM, "TWI{NUM} read data: {data:#x}");
                             buf.try_push(data).expect("read buf should have space for data");
                             *read += 1;
                             let remaining = len - *read;
-                            if remaining == 1 {
+                            tracing::debug!(twi = NUM, data = ?format_args!("{data:#x}"), end, remaining, "TWI{NUM} read data");
+                            if remaining < 1 {
                                 cntr_w.a_ack().clear_bit();
                             }
                             if remaining > 0 {
