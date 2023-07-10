@@ -94,8 +94,8 @@ async fn kernel_entry() {
                 tracing::debug!("initializing loopback UART");
                 Serial::register(
                     kernel,
-                    8,
-                    8,
+                    128,
+                    128,
                     WellKnown::Loopback.into(),
                     irq,
                     rx.into_stream(),
