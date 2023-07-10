@@ -1,0 +1,82 @@
+[package]
+name = "pomelo"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+resolver = "2"
+members = [".", "run-wasm"]
+
+[dependencies]
+embedded-graphics = "0.7"
+embedded-graphics-web-simulator = "0.3"
+humantime = "2"
+postcard = "1"
+
+[dependencies.tracing]
+version = "0.1.35"
+
+[dependencies.tracing-subscriber]
+version = "0.3.14"
+features = ["registry", "fmt", "ansi"]
+default-features = false
+
+[dependencies.uuid]
+version = "1.1.2"
+default-features = false
+features = ["serde"]
+
+[dependencies.mnemos-kernel]
+package = "mnemos"
+path = "../kernel"
+
+[dependencies.mnemos-alloc]
+path = "../alloc"
+features = ["use-std"]
+
+# Melpomelo does not use any APIs from `maitake` directly. This dependency is
+# instead required in order to enable `maitake`'s support for `tracing` 0.1.x,
+# which is needed to support the Tokio Console while running in the simulator,
+# but is not needed by actual builds of mnemOS running on real hardware.
+[dependencies.maitake]
+version = "0.1.0"
+features = ["tracing-01"]
+
+[dependencies.forth3]
+path = "../forth3"
+features = ["async"]
+
+[dependencies.futures]
+version = "0.3"
+default-features = false
+features = ["std", "async-await"]
+
+[dependencies.tracing-wasm]
+version = "0.2.1"
+
+[dependencies.gloo]
+version = "0.8.1"
+features = ["futures"]
+
+[dependencies.futures-util]
+version = "0.3.28"
+
+[dependencies.wasm-bindgen-futures]
+version = "0.4.37"
+
+#needed?
+[dependencies.async-std]
+version = "1.12.0"
+features = ["unstable"]
+
+[patch.crates-io.maitake]
+git = "https://github.com/hawkw/mycelium.git"
+rev = "cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
+
+[patch.crates-io.mycelium-util]
+git = "https://github.com/hawkw/mycelium.git"
+rev = "cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
+
+[patch.crates-io.cordyceps]
+git = "https://github.com/hawkw/mycelium.git"
+rev = "cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
