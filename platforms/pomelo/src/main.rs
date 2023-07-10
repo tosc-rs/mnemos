@@ -129,6 +129,7 @@ async fn kernel_entry() {
                 let chunk = PortChunk::new(WellKnown::Loopback, b"!!");
                 let mut buf = [0u8; 8];
                 if let Ok(ser) = chunk.encode_to(&mut buf) {
+                    tracing::debug!("sending {ser:?}");
                     for byte in ser {
                         if let Err(e) = tx.try_send(*byte) {
                             tracing::error!("could not send: {e:?}");

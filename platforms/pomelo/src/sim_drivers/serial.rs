@@ -14,6 +14,7 @@ use mnemos_kernel::{
     services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     Kernel,
 };
+use sermux_proto::PortChunk;
 use tracing::{info, info_span, trace, warn, Instrument};
 
 pub struct SerialRequest {
@@ -88,16 +89,18 @@ async fn process_stream(
     // the BBQueue has data to write.
     let in_stream = pin!(in_stream);
     let mut in_stream = in_stream.fuse();
-    let out_fut = pin!(handle.consumer().read_grant());
-    let mut out_fut = out_fut.fuse();
+    // let out_fut = pin!(handle.consumer().read_grant());
+    // let mut out_fut = out_fut.fuse();
     loop {
         select! {
             // The kernel wants to write something.
-            outmsg = out_fut => {
+            mut outmsg = handle.consumer().read_grant().fuse() => {
                 info!(len = outmsg.len(), "Got outgoing message");
                 // let wall = stream.write_all(&outmsg);
                 // wall.await.unwrap();
                 let len = outmsg.len();
+                let pc = PortChunk::decode_from(&mut outmsg);
+                tracing::debug!("decode: got {pc:?}");
                 outmsg.release(len);
             },
             inmsg = in_stream.next() => {
