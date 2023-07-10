@@ -20,7 +20,7 @@ use mnemos_kernel::{
 };
 use pomelo::sim_drivers::serial::Serial;
 use sermux_proto::PortChunk;
-use tracing::{trace, Instrument, Level};
+use tracing::{debug, info, trace, Instrument, Level};
 use tracing_wasm::WASMLayerConfigBuilder;
 use wasm_bindgen_futures::spawn_local;
 const DISPLAY_WIDTH_PX: u32 = 400;
@@ -40,9 +40,9 @@ fn main() {
 }
 
 async fn run_pomelo() {
-    tracing::info!("Kernel started.");
+    info!("Kernel started.");
     let res = kernel_entry().await;
-    tracing::info!("Kernel ended: {:?}", res);
+    info!("Kernel ended: {:?}", res);
 }
 
 #[tracing::instrument(name = "Kernel", level = "info")]
@@ -71,11 +71,11 @@ async fn kernel_entry() {
             async {
                 // * Up to 16 virtual ports max
                 // * Framed messages up to 512 bytes max each
-                tracing::debug!("initializing SerialMuxServer...");
+                debug!("initializing SerialMuxServer...");
                 SerialMuxServer::register(kernel, PORTS, FRAME_SIZE)
                     .await
                     .unwrap();
-                tracing::info!("SerialMuxServer initialized!");
+                info!("SerialMuxServer initialized!");
             }
             .instrument(tracing::info_span!(
                 "SerialMuxServer",
@@ -91,7 +91,7 @@ async fn kernel_entry() {
         .initialize({
             let irq = irq.clone();
             async move {
-                tracing::debug!("initializing loopback UART");
+                debug!("initializing loopback UART");
                 Serial::register(
                     kernel,
                     128,
@@ -102,7 +102,7 @@ async fn kernel_entry() {
                 )
                 .await
                 .unwrap();
-                tracing::info!("loopback UART initialized!");
+                info!("loopback UART initialized!");
             }
         })
         .unwrap();
@@ -129,12 +129,12 @@ async fn kernel_entry() {
                 let chunk = PortChunk::new(WellKnown::Loopback, b"!!");
                 let mut buf = [0u8; 8];
                 if let Ok(ser) = chunk.encode_to(&mut buf) {
-                    tracing::debug!("sending {ser:?}");
+                    debug!("sending {ser:?}");
                     for byte in ser {
                         if let Err(e) = tx.try_send(*byte) {
                             tracing::error!("could not send: {e:?}");
                         } else {
-                            tracing::info!("sent a byte!");
+                            info!("sent a byte!");
                         }
                     }
                 }
@@ -143,24 +143,31 @@ async fn kernel_entry() {
     });
 
     // run the kernel on its own
+    // TODO: remodel to a select, so we can actually advance the clock correctly
     spawn_local(async move {
         let tick_millis = 500;
         let tick_duration = Duration::from_millis(tick_millis);
         IntervalStream::new(tick_millis as u32)
             .for_each(move |_| {
                 let tick = kernel.tick();
-                // tracing::debug!("Tick {tick:?}");
-                // TODO add sleep logic
+                trace!("Periodic kernel tick: {tick:?}");
                 kernel.timer().force_advance(tick_duration);
             })
             .await;
     });
 
     // run the kernel on "interrupt"
+    // TODO: remodel to a select, so we can actually advance the clock correctly
     let dummy_mutex = Mutex::new(false);
     loop {
+        let then = chrono::Local::now();
         let dummy_guard = dummy_mutex.lock().await;
         irq.wait(dummy_guard).await;
-        trace!("...woken by I/O interrupt");
+        let now = chrono::Local::now();
+        let diff = now.signed_duration_since(then).to_std().unwrap();
+        // TODO
+        // kernel.timer().force_advance(diff);
+        let human_diff = humantime::Duration::from(diff);
+        trace!("woken by I/O interrupt after {human_diff}");
     }
 }

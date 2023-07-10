@@ -8,6 +8,7 @@ resolver = "2"
 members = [".", "run-wasm"]
 
 [dependencies]
+chrono = { version = "0.4.26", features = ["wasmbind"] }
 embedded-graphics = "0.7"
 embedded-graphics-web-simulator = "0.3"
 humantime = "2"
