@@ -11,7 +11,7 @@ pub async fn i2c_puppet(k: &'static Kernel) -> Result<(), I2cError> {
 
     // https://github.com/solderparty/i2c_puppet#protocol
     const ADDR: u8 = 0x1f;
-    // to write with a register, we must and the register number with this mask:
+    // to write with a register, we must OR the register number with this mask:
     // https://github.com/solderparty/i2c_puppet#protocol
     const WRITE_MASK: u8 = 0x80;
 
@@ -55,13 +55,13 @@ pub async fn i2c_puppet(k: &'static Kernel) -> Result<(), I2cError> {
     trace::info!("setting i2c_puppet RGB LED to green...");
     match i2c.transaction(ADDR, &mut [
         // set red to 0
-        i2c::Operation::Write(&[REG_LED_R & WRITE_MASK, 0]),
+        i2c::Operation::Write(&[REG_LED_R | WRITE_MASK, 0]),
         // set green to 255
-        i2c::Operation::Write(&[REG_LED_G & WRITE_MASK, 255]),
+        i2c::Operation::Write(&[REG_LED_G | WRITE_MASK, 255]),
         // set blue to 0
-        i2c::Operation::Write(&[REG_LED_B & WRITE_MASK, 0]),
+        i2c::Operation::Write(&[REG_LED_B | WRITE_MASK, 0]),
         // turn on the LED
-        i2c::Operation::Write(&[REG_LED_ON & WRITE_MASK, 255]),
+        i2c::Operation::Write(&[REG_LED_ON | WRITE_MASK, 255]),
     ]).await {
         Ok(_) => trace::info!("i2c_puppet LED should now be green!"),
         Err(error) => {
