@@ -19,6 +19,7 @@ use mnemos_kernel::{
     Kernel, KernelSettings,
 };
 use pomelo::sim_drivers::serial::Serial;
+use sermux_proto::PortChunk;
 use tracing::{trace, Instrument, Level};
 use tracing_wasm::WASMLayerConfigBuilder;
 use wasm_bindgen_futures::spawn_local;
@@ -85,7 +86,7 @@ async fn kernel_entry() {
         .unwrap();
 
     // Initialize a loopback UART
-    let (mut tx, rx) = mpsc::channel::<u8>(8);
+    let (mut tx, rx) = mpsc::channel::<u8>(16);
     kernel
         .initialize({
             let irq = irq.clone();
@@ -93,8 +94,8 @@ async fn kernel_entry() {
                 tracing::debug!("initializing loopback UART");
                 Serial::register(
                     kernel,
-                    4,
-                    4,
+                    8,
+                    8,
                     WellKnown::Loopback.into(),
                     irq,
                     rx.into_stream(),
@@ -121,13 +122,20 @@ async fn kernel_entry() {
         .initialize(SpawnulatorServer::register(kernel, 16))
         .unwrap();
 
+    // test loopback service by throwing bytes at it
     spawn_local(async move {
         IntervalStream::new(500)
             .for_each(move |_| {
-                if let Err(e) = tx.try_send(123) {
-                    tracing::error!("could not send: {e:?}");
-                } else {
-                    tracing::info!("sent a byte!");
+                let chunk = PortChunk::new(WellKnown::Loopback, b"!!");
+                let mut buf = [0u8; 8];
+                if let Ok(ser) = chunk.encode_to(&mut buf) {
+                    for byte in ser {
+                        if let Err(e) = tx.try_send(*byte) {
+                            tracing::error!("could not send: {e:?}");
+                        } else {
+                            tracing::info!("sent a byte!");
+                        }
+                    }
                 }
             })
             .await;
@@ -135,7 +143,7 @@ async fn kernel_entry() {
 
     // run the kernel on its own
     spawn_local(async move {
-        let tick_millis = 2000;
+        let tick_millis = 500;
         let tick_duration = Duration::from_millis(tick_millis);
         IntervalStream::new(tick_millis as u32)
             .for_each(move |_| {

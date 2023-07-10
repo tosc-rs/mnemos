@@ -30,6 +30,9 @@ features = ["serde"]
 package = "mnemos"
 path = "../../source/kernel"
 
+[dependencies.sermux-proto]
+path = "../../source/sermux-proto"
+
 [dependencies.mnemos-alloc]
 path = "../../source/alloc"
 features = ["use-std"]

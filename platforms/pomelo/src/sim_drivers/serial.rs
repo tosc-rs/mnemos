@@ -33,13 +33,11 @@ impl Serial {
         irq: Arc<Condvar>,
         recv: Receiver<u8>,
     ) -> Result<(), ()> {
-        trace!("register::enter");
         let (a_ring, b_ring) = new_bidi_channel(incoming_size, outgoing_size).await;
         let (prod, cons) = KChannel::<Message<SimpleSerialService>>::new_async(2)
             .await
             .split();
 
-        trace!("spawning port request");
         kernel
             .spawn(async move {
                 let handle = b_ring;
@@ -50,7 +48,7 @@ impl Serial {
                 let resp = req.msg.reply_with(Ok(Response::PortHandle { handle }));
 
                 req.reply.reply_konly(resp).await.map_err(drop).unwrap();
-
+                trace!("sent serial port handle");
                 // And deny all further requests after the first
                 loop {
                     let req = cons.dequeue_async().await.map_err(drop).unwrap();
@@ -59,6 +57,7 @@ impl Serial {
                         .msg
                         .reply_with(Err(SimpleSerialError::AlreadyAssignedPort));
                     req.reply.reply_konly(resp).await.map_err(drop).unwrap();
+                    tracing::warn!("denied serial port handle request");
                 }
             })
             .await;
@@ -89,10 +88,12 @@ async fn process_stream(
     // the BBQueue has data to write.
     let in_stream = pin!(in_stream);
     let mut in_stream = in_stream.fuse();
+    let out_fut = pin!(handle.consumer().read_grant());
+    let mut out_fut = out_fut.fuse();
     loop {
         select! {
             // The kernel wants to write something.
-            outmsg = handle.consumer().read_grant().fuse() => {
+            outmsg = out_fut => {
                 info!(len = outmsg.len(), "Got outgoing message");
                 // let wall = stream.write_all(&outmsg);
                 // wall.await.unwrap();
@@ -101,16 +102,15 @@ async fn process_stream(
             },
             inmsg = in_stream.next() => {
                 if let Some(inmsg) = inmsg {
-                // Simulate an "interrupt", waking the kernel if it's waiting
-                // an IRQ.
-                irq.notify_one();
-                // TODO we can do better than single bytes
-                let used = 1;
-                let mut in_grant = handle.producer().send_grant_max(used).await;
-                in_grant[0] = inmsg;
-                info!(len = used, "Got incoming message",);
-                in_grant.commit(used);
-                irq.notify_one();
+                    // Simulate an "interrupt", waking the kernel if it's waiting
+                    // an IRQ.
+                    irq.notify_one();
+                    // TODO we can do better than single bytes
+                    let used = 1;
+                    let mut in_grant = handle.producer().send_grant_max(used).await;
+                    in_grant[0] = inmsg;
+                    info!(len = used, "Got incoming message",);
+                    in_grant.commit(used);
                 }
 
             }
