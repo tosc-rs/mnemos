@@ -301,7 +301,7 @@ impl TwiI2c0 {
 
     #[tracing::instrument(level = tracing::Level::DEBUG, skip(self, txn))]
     async fn transaction(&self, addr: Addr, txn: KConsumer<Transfer>) {
-        tracing::debug!("starting I2C transaction");
+        tracing::trace!("starting I2C transaction");
         let mut guard = self.isr.lock(self.twi);
 
         // reset the TWI engine.
@@ -349,7 +349,7 @@ impl TwiI2c0 {
             };
 
             guard.wait_for_irq().await;
-            tracing::debug!(?dir, "TWI operation completed");
+            tracing::trace!(?dir, "TWI operation completed");
             let res = if let Some(error) = guard.data.err.take() {
                 tracing::warn!(?error, ?dir, "TWI error");
                 Err(error)
@@ -367,7 +367,7 @@ impl TwiI2c0 {
                 }
             };
             if rsp.send(res).is_err() {
-                tracing::debug!("I2C transaction handle dropped");
+                tracing::trace!("I2C transaction handle dropped");
                 break;
             }
         }
@@ -455,7 +455,7 @@ impl TwiData {
             }
         };
         let mut needs_wake = false;
-        tracing::info!(?status, state = ?self.state, twi = NUM, "TWI{NUM} interrupt");
+        tracing::debug!(?status, state = ?self.state, twi = NUM, "TWI{NUM} interrupt");
         twi.twi_cntr.modify(|_cntr_r, cntr_w| {
             self.state = match (self.state, status)  {
                 (State::Idle, _) => {
@@ -487,7 +487,7 @@ impl TwiData {
                         TwiOp::Write { buf, ref mut pos, .. } => {
                             // send the first byte of data
                             let byte = buf.as_slice()[0];
-                            tracing::debug!(twi = NUM, "TWI{NUM} write data: {byte:#x}");
+                            tracing::debug!(twi = NUM, data = ?format_args!("{byte:#x}"), "TWI{NUM} write data");
                             twi.twi_data.write(|w| w.data().variant(byte));
                             *pos += 1;
                             State::WaitForAck(Addr::SevenBit(addr))
@@ -527,7 +527,13 @@ impl TwiData {
                             buf.try_push(data).expect("read buf should have space for data");
                             *read += 1;
                             let remaining = len - *read;
-                            tracing::debug!(twi = NUM, data = ?format_args!("{data:#x}"), end, remaining, "TWI{NUM} read data");
+                            tracing::trace!(
+                                twi = NUM,
+                                data = ?format_args!("{data:#x}"),
+                                end,
+                                remaining,
+                                "TWI{NUM} read data",
+                            );
                             if remaining < 1 {
                                 cntr_w.a_ack().clear_bit();
                             }
@@ -538,11 +544,13 @@ impl TwiData {
                                 // if this is the last operation in the
                                 // transaction, send a STOP.
                                 if end {
+                                    tracing::trace!(twi = NUM, "TWI{NUM} send STOP");
                                     cntr_w.m_stp().set_bit();
                                     State::Idle
                                 } else {
                                     // otherwise, send a repeated START for the
                                     // next operation.
+                                    tracing::trace!(twi = NUM, "TWI{NUM} send repeated START");
                                     cntr_w.m_sta().set_bit();
                                     State::WaitForRestart(addr)
                                 }
@@ -559,19 +567,25 @@ impl TwiData {
                                 // Send a repeated START for the read portion of
                                 // the transaction.
                                 if end {
+                                    tracing::trace!(twi = NUM, "TWI{NUM} send STOP");
                                     cntr_w.m_stp().set_bit();
                                     State::Idle
                                 } else {
                                     // otherwise, send a repeated START for the
                                     // next operation.
                                     cntr_w.m_sta().set_bit();
-                                    tracing::debug!(twi = NUM, "TWI{NUM} send restart");
+                                    tracing::trace!(twi = NUM, "TWI{NUM} send repeated START");
                                     State::WaitForRestart(addr)
                                 }
                             } else {
                                 // Send the next byte of data
                                 let byte = buf.as_slice()[*pos];
-                                tracing::debug!(twi = NUM, "TWI{NUM} write data: {byte:#x}");
+                                tracing::trace!(
+                                    twi = NUM,
+                                    remaining = len - *pos,
+                                    data = ?format_args!("{byte:#x}"),
+                                    "TWI{NUM} write data"
+                                );
 
                                 twi.twi_data.write(|w| w.data().variant(byte));
 

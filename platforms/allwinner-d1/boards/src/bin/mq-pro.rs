@@ -44,7 +44,7 @@ fn main() -> ! {
         w
     });
 
-    d1.initialize_sharp_display();
+    // d1.initialize_sharp_display();
 
     // Initialize LED loop
     d1.kernel
