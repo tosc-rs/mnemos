@@ -143,6 +143,7 @@ pub mod messages {
 enum ErrorKind {
     I2c(i2c::ErrorKind),
     NoDriver,
+    BufTooSmall { len: usize, buf: usize },
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -272,20 +273,23 @@ impl Transaction {
     ///   read. If this is `false`, a repeated `START` condition will be sent on
     ///   the bus once `len` bytes have been read.
     ///
-    /// # Panics
+    /// # Errors
     ///
+    /// - If an error occurs performing the I<sup>2</sup>C bus transaction.
     /// - If `len` is greater `buf.capacity() - `buf.len()`.
+    /// - If there is no [`I2cService`] running.
     pub async fn read(
         &mut self,
         buf: FixedVec<u8>,
         len: usize,
         end: bool,
     ) -> Result<FixedVec<u8>, I2cError> {
-        assert!(
-            len <= buf.capacity() - buf.len(),
-            "read length ({len}) exceeds remaining buffer capacity ({})",
-            buf.capacity() - buf.len()
-        );
+        // if there's already data in the buffer, the available capacity is the
+        // total capacity minus the length of the existing data.
+        let cap = buf.capacity() - buf.len();
+        if cap < len {
+            return Err(self.buf_too_small(OpKind::Read, len, cap));
+        }
         self.xfer(buf, len, end, OpKind::Read).await
     }
 
@@ -295,6 +299,9 @@ impl Transaction {
         len: usize,
         end: bool,
     ) -> Result<FixedVec<u8>, I2cError> {
+        if buf.len() < len {
+            return Err(self.buf_too_small(OpKind::Write, len, buf.len()));
+        }
         self.xfer(buf, len, end, OpKind::Write).await
     }
 
@@ -320,12 +327,12 @@ impl Transaction {
         self.tx
             .enqueue_async(xfer)
             .await
-            .map_err(I2cError::mk_no_driver(self.addr, dir))?;
+            .map_err(self.mk_no_driver_err(dir))?;
         self.rsp_rx
             .receive()
             .await
-            .map_err(I2cError::mk_no_driver(self.addr, dir))?
-            .map_err(I2cError::mk(self.addr, dir))
+            .map_err(self.mk_no_driver_err(dir))?
+            .map_err(self.mk_err(dir))
     }
 }
 
@@ -375,17 +382,29 @@ impl I2cError {
     pub fn direction(&self) -> OpKind {
         self.dir
     }
+}
 
-    fn mk(addr: Addr, dir: OpKind) -> impl Fn(i2c::ErrorKind) -> Self {
-        move |kind| Self {
+impl Transaction {
+    fn buf_too_small(&self, dir: OpKind, len: usize, buf: usize) -> I2cError {
+        I2cError {
+            addr: self.addr,
+            kind: ErrorKind::BufTooSmall { len, buf },
+            dir,
+        }
+    }
+
+    fn mk_err(&self, dir: OpKind) -> impl Fn(i2c::ErrorKind) -> I2cError {
+        let addr = self.addr;
+        move |kind| I2cError {
             addr,
             kind: ErrorKind::I2c(kind),
             dir,
         }
     }
 
-    fn mk_no_driver<E>(addr: Addr, dir: OpKind) -> impl Fn(E) -> Self {
-        move |_| Self {
+    fn mk_no_driver_err<E>(&self, dir: OpKind) -> impl Fn(E) -> I2cError {
+        let addr = self.addr;
+        move |_| I2cError {
             addr,
             dir,
             kind: ErrorKind::NoDriver,
@@ -402,9 +421,17 @@ impl fmt::Display for I2cError {
         };
         write!(f, "I2C error {verb} {addr:?}: ")?;
 
-        match kind {
-            ErrorKind::I2c(kind) => kind.fmt(f),
-            ErrorKind::NoDriver => "no driver task running".fmt(f),
+        match (kind, dir) {
+            (ErrorKind::I2c(kind), _) => kind.fmt(f),
+            (ErrorKind::NoDriver, _) => "no driver task running".fmt(f),
+            (ErrorKind::BufTooSmall { len, buf }, OpKind::Read) => write!(
+                f,
+                "remaining buffer capacity ({buf}B) too small for desired read length ({len}B)"
+            ),
+            (ErrorKind::BufTooSmall { len, buf }, OpKind::Write) => write!(
+                f,
+                "input buffer does not contain enough bytes (found {buf}B, needed to write {len}B)",
+            ),
         }
     }
 }
@@ -413,7 +440,7 @@ impl i2c::Error for I2cError {
     fn kind(&self) -> i2c::ErrorKind {
         match self.kind {
             ErrorKind::I2c(kind) => kind,
-            ErrorKind::NoDriver => i2c::ErrorKind::Other,
+            _ => i2c::ErrorKind::Other,
         }
     }
 }
