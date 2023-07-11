@@ -44,7 +44,7 @@ fn main() -> ! {
         w
     });
 
-    // d1.initialize_sharp_display();
+    d1.initialize_sharp_display();
 
     // Initialize LED loop
     d1.kernel
@@ -64,12 +64,14 @@ fn main() -> ! {
         })
         .unwrap();
 
-    d1.kernel.initialize(async move {
-        d1.kernel.sleep(Duration::from_secs(2)).await;
-        if let Err(error) = mnemos_d1::beepy::i2c_puppet(d1.kernel).await {
-            kernel::trace::error!(?error, "i2c_puppet test failed");
-        }
-    }).unwrap();
+    d1.kernel
+        .initialize(async move {
+            d1.kernel.sleep(Duration::from_secs(2)).await;
+            if let Err(error) = mnemos_d1::beepy::i2c_puppet(d1.kernel).await {
+                kernel::trace::error!(?error, "i2c_puppet test failed");
+            }
+        })
+        .unwrap();
 
     d1.run()
 }
