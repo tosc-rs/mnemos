@@ -1,21 +1,16 @@
-use std::{alloc::System, sync::Arc, time::Duration};
+use std::{alloc::System, time::Duration};
 
-use async_std::{
-    stream::{IntoStream, StreamExt},
-    sync::{Condvar, Mutex},
-};
+use async_std::stream::IntoStream;
 use futures::{
-    channel::mpsc::{self, Sender},
+    channel::mpsc::{self},
     FutureExt,
 };
-use gloo::timers::future::IntervalStream;
+use futures_util::{select, StreamExt};
+use gloo::timers::future::TimeoutFuture;
 use gloo_utils::format::JsValueSerdeExt;
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
-    daemons::{
-        sermux::{hello, loopback, HelloSettings, LoopbackSettings},
-        shells::{graphical_shell_mono, GraphicalShellSettings},
-    },
+    daemons::sermux::{loopback, LoopbackSettings},
     forth::{self, Forth},
     services::{
         forth_spawnulator::SpawnulatorServer,
@@ -27,23 +22,18 @@ use pomelo::{
     sim_drivers::serial::Serial,
     term_iface::{init_term, to_term, Command, SERMUX_TX},
 };
-use serde::{Deserialize, Serialize};
-use sermux_proto::PortChunk;
 #[allow(unused_imports)]
 use tracing::{debug, error, info, trace, Instrument, Level};
 use tracing_wasm::WASMLayerConfigBuilder;
 use wasm_bindgen::{closure::Closure, prelude::*};
 use wasm_bindgen_futures::spawn_local;
 
-const DISPLAY_WIDTH_PX: u32 = 400;
-const DISPLAY_HEIGHT_PX: u32 = 240;
-
 #[global_allocator]
 static AHEAP: MnemosAlloc<System> = MnemosAlloc::new();
 
 fn main() {
     let tracing_config = WASMLayerConfigBuilder::new()
-        .set_max_level(Level::DEBUG)
+        .set_max_level(Level::TRACE)
         .build();
     tracing_wasm::set_as_global_default_with_config(tracing_config);
 
@@ -74,8 +64,7 @@ async fn kernel_entry() {
     };
 
     // Simulates the kernel main loop being woken by an IRQ.
-    // TODO is `Condvar` the right thing to use?
-    let irq = Arc::new(Condvar::new());
+    let (irq_tx, irq_rx) = mpsc::channel::<()>(4);
 
     // Initialize the SerialMuxServer
     kernel
@@ -105,7 +94,6 @@ async fn kernel_entry() {
 
     kernel
         .initialize({
-            let irq = irq.clone();
             async move {
                 debug!("initializing loopback UART");
                 Serial::register(
@@ -113,7 +101,7 @@ async fn kernel_entry() {
                     256,
                     256,
                     WellKnown::Loopback.into(),
-                    irq,
+                    irq_tx.clone(),
                     rx.into_stream(),
                     to_term,
                 )
@@ -134,15 +122,6 @@ async fn kernel_entry() {
     kernel
         .initialize(SpawnulatorServer::register(kernel, 16))
         .unwrap();
-
-    // test loopback service by throwing bytes at it
-    spawn_local(async move {
-        IntervalStream::new(500)
-            .for_each(move |_| {
-                //echo("mooo".to_string());
-            })
-            .await;
-    });
 
     // go forth and replduce
     spawn_local(async move {
@@ -186,32 +165,43 @@ async fn kernel_entry() {
     init_term(&eternal_cb);
     eternal_cb.forget();
 
-    // run the kernel on its own
-    // TODO: remodel to a select, so we can actually advance the clock correctly
-    spawn_local(async move {
-        let tick_millis = 250;
-        let tick_duration = Duration::from_millis(tick_millis);
-        IntervalStream::new(tick_millis as u32)
-            .for_each(move |_| {
-                let tick = kernel.tick();
-                trace!("Periodic kernel tick: {tick:?}");
-                kernel.timer().force_advance(tick_duration);
-            })
-            .await;
-    });
-
-    // run the kernel on "interrupt"
-    // TODO: remodel to a select, so we can actually advance the clock correctly
-    let dummy_mutex = Mutex::new(false);
+    let mut irq_rx = irq_rx.into_stream().fuse();
+    let timer = kernel.timer();
     loop {
-        let then = chrono::Local::now();
-        let dummy_guard = dummy_mutex.lock().await;
-        irq.wait(dummy_guard).await;
-        let now = chrono::Local::now();
-        let diff = now.signed_duration_since(then).to_std().unwrap();
-        // TODO
-        // kernel.timer().force_advance(diff);
-        let human_diff = humantime::Duration::from(diff);
-        trace!("woken by I/O interrupt after {human_diff}");
+        let mut then = chrono::Local::now();
+        let tick = kernel.tick();
+        let dt = chrono::Local::now()
+            .signed_duration_since(then)
+            .to_std()
+            .unwrap();
+        debug!("timer - before sleep: advance {dt:?}");
+        let next_turn = timer
+            .force_advance(dt)
+            .time_to_next_deadline()
+            .unwrap_or(Duration::from_secs(1));
+        debug!("timer: before sleep: next turn in {next_turn:?}");
+        let mut next_fut = TimeoutFuture::new(
+            next_turn
+                .as_millis()
+                .try_into()
+                .expect("next turn is too far in the future"),
+        )
+        .fuse();
+
+        then = chrono::Local::now();
+        let now = select! {
+            _ = irq_rx.next() => {
+                debug!("timer: WAKE: \"irq\" {tick:?}");
+                chrono::Local::now()
+            },
+            _ = next_fut => {
+                let tick = kernel.tick();
+                debug!("timer: WAKE: timer {tick:?}");
+                chrono::Local::now()
+            }
+        };
+        let dt = now.signed_duration_since(then).to_std().unwrap();
+        debug!("timer: slept for {dt:?}");
+        kernel.timer().force_advance(dt);
     }
 }

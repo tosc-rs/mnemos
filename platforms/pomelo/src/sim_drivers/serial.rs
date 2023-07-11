@@ -1,10 +1,11 @@
 use std::{net::SocketAddr, pin::pin, str::from_utf8, sync::Arc};
 
+use async_std::stream::IntoStream;
 use futures::{
-    channel::mpsc::{Receiver, Sender},
+    channel::mpsc::{self, Receiver, Sender},
     select,
 };
-use futures_util::{FutureExt, Stream, StreamExt};
+use futures_util::{FutureExt, SinkExt, Stream, StreamExt};
 use mnemos_kernel::{
     comms::{
         bbq::{new_bidi_channel, BidiHandle},
@@ -22,7 +23,7 @@ pub struct SerialRequest {
     handle: BidiHandle,
 }
 
-use async_std::{sync::Condvar, task::spawn_local};
+use async_std::task::spawn_local;
 
 use super::io;
 use crate::term_iface::SERMUX_TX;
@@ -34,8 +35,8 @@ impl Serial {
         incoming_size: usize,
         outgoing_size: usize,
         port: u16,
-        irq: Arc<Condvar>,
-        recv: Receiver<u8>,
+        irq_tx: mpsc::Sender<()>,
+        recv: mpsc::Receiver<u8>,
         recv_callback: fn(String),
     ) -> Result<(), ()> {
         let (a_ring, b_ring) = new_bidi_channel(incoming_size, outgoing_size).await;
@@ -70,7 +71,7 @@ impl Serial {
         spawn_local(
             async move {
                 let mut handle = a_ring;
-                process_stream(&mut handle, recv, irq.clone(), recv_callback)
+                process_stream(&mut handle, recv, irq_tx, recv_callback)
                     .instrument(info_span!("process_stream", ?port))
                     .await
             }
@@ -86,7 +87,7 @@ impl Serial {
 async fn process_stream(
     handle: &mut BidiHandle,
     mut in_stream: impl Stream<Item = u8>,
-    irq: Arc<Condvar>,
+    mut irq: mpsc::Sender<()>,
     recv_callback: fn(String),
 ) {
     info!("processing serial stream");
@@ -118,9 +119,11 @@ async fn process_stream(
                 if let Some(inmsg) = inmsg {
                     // Simulate an "interrupt", waking the kernel if it's waiting
                     // an IRQ.
-                    irq.notify_one();
+                    debug!("IRQ");
+                    irq.send(()).await.expect("FATAL: pseudo irq failed");
+                    debug!("/IRQ");
                     // TODO we can do better than single bytes
-                    // TODO aka: use Sink trait somehow
+                    // TODO aka: use Sink::send_all somehow
                     let used = 1;
                     let mut in_grant = handle.producer().send_grant_max(used).await;
                     in_grant[0] = inmsg;
