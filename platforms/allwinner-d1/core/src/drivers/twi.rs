@@ -16,7 +16,7 @@ use kernel::{
     embedded_hal_async::i2c::{ErrorKind, NoAcknowledgeSource},
     mnemos_alloc::containers::FixedVec,
     registry,
-    services::i2c::{Addr, Direction, I2cService, Transaction, Transfer},
+    services::i2c::{Addr, I2cService, OpKind, Transaction, Transfer},
     trace::{self},
     Kernel,
 };
@@ -326,7 +326,7 @@ impl TwiI2c0 {
                 State::WaitForStart(addr)
             };
             guard.data.op = match dir {
-                Direction::Read => {
+                OpKind::Read => {
                     // setup read op
                     tracing::debug!("reading {len} bytes");
                     TwiOp::Read {
@@ -336,7 +336,7 @@ impl TwiI2c0 {
                         end,
                     }
                 }
-                Direction::Write => {
+                OpKind::Write => {
                     // setup write op
                     tracing::debug!("writing {len} bytes");
                     TwiOp::Write {
@@ -356,11 +356,11 @@ impl TwiI2c0 {
             } else {
                 match core::mem::replace(&mut guard.data.op, TwiOp::None) {
                     TwiOp::Read { buf, .. } => {
-                        debug_assert_eq!(dir, Direction::Read);
+                        debug_assert_eq!(dir, OpKind::Read);
                         Ok(buf)
                     }
                     TwiOp::Write { buf, .. } => {
-                        debug_assert_eq!(dir, Direction::Write);
+                        debug_assert_eq!(dir, OpKind::Write);
                         Ok(buf)
                     }
                     _ => unreachable!(),

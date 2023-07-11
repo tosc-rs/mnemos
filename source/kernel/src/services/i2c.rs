@@ -12,9 +12,34 @@
 //!
 //! Unlike SPI, this is a "real protocol", and not just a sort of shared
 //! hallucination about the meanings of certain wires. That means it has
-//! _rules_.
+//! _rules_. Some of these rules are relevant to users of this module.
+//!
+//! ## Usage
+//!
+//! Users of the I<sup>2</sup>C bus will primarily interact with this module
+//! using the [`I2cClient`] type, which implements a client for the
+//! [`I2cService`] service. This client type can be used to perform read and
+//! write operations on the I<sup>2</sup>C bus. A new client can be acquired
+//! using [`I2cClient::from_registry`].
+//!
+//! Once an [`I2cClient`] has been obtained, it can be used to perform
+//! I<sup>2</sup>C operations. Two interfaces are available: an
+//! [implementation][impl-i2c] of the [`embedded_hal_async::i2c::I2c`] trait,
+//! and a lower-level interface using the [`I2cClient::start_transaction`]
+//! method. In general, the [`embedded_hal_async::i2c::I2c`] trait is the
+//! recommended interface.
+//!
+//! The lower-level interface allows reusing the same heap-allocated buffer for
+//! multiple I<sup>2</sup>C bus transactions. It also provides the ability to
+//! interleave other code between the write and read operations of an
+//! I<sup>2</sup>C transaction without sending a STOP condition. If either of
+//! these are necessary, the [`Transaction`] interface may be preferred over the
+//! [`embedded_hal_async`] interface.
 //!
 //! [RP2040 datasheet]: https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf
+//! [impl-i2c]: I2cClient#impl-I2c<u8>-for-I2cClient
+#![warn(missing_docs)]
+use self::messages::*;
 use crate::{
     comms::{
         kchannel::{KChannel, KConsumer, KProducer},
@@ -32,6 +57,10 @@ use uuid::Uuid;
 // Service Definition
 ////////////////////////////////////////////////////////////////////////////////
 
+/// [Service](crate::services) definition for I<sup>2</sup>C bus drivers.
+///
+/// See the [module-level documentation](crate::services::i2c) for details on
+/// using this service.
 pub struct I2cService;
 
 impl RegisteredDriver for I2cService {
@@ -46,55 +75,68 @@ impl RegisteredDriver for I2cService {
 // Message and Error Types
 ////////////////////////////////////////////////////////////////////////////////
 
+/// I<sup>2</sup>C bus address, in either 7-bit or 10-bit address format.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Addr {
+    /// A 7-bit I<sup>2</sup>C address.
     SevenBit(u8),
+    /// A 10-bit extended I<sup>2</sup>C address.
     TenBit(u16),
 }
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct StartTransaction {
-    pub addr: Addr,
-    capacity: usize,
-}
-
+/// A transaction on the I<sup>2</sup>C bus.
 pub struct Transaction {
     addr: Addr,
     tx: KProducer<Transfer>,
     rsp_rx: Reusable<Result<FixedVec<u8>, i2c::ErrorKind>>,
 }
 
+/// Errors returned by the `I2cService`
 #[derive(Debug)]
 pub struct I2cError {
     addr: Addr,
     kind: ErrorKind,
-    dir: Direction,
+    dir: OpKind,
 }
 
-pub struct Transfer {
-    pub buf: FixedVec<u8>,
-    pub len: usize,
-    pub end: bool,
-    pub dir: Direction,
-    pub rsp: oneshot::Sender<Result<FixedVec<u8>, i2c::ErrorKind>>,
-}
+/// Messages used to communicate with an [`I2cService`] implementation.
+pub mod messages {
+    use super::*;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Direction {
-    Read,
-    Write,
-}
+    /// Message sent to an [`I2cService`] by an [`I2cClient`] in order to start a
+    /// new bus [`Transaction`]
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub struct StartTransaction {
+        /// The address of the target device for this transaction.
+        pub addr: Addr,
+        pub(super) capacity: usize,
+    }
 
-pub struct ReadOp {
-    pub buf: FixedVec<u8>,
-    pub len: usize,
-    pub end: bool,
-}
+    pub struct Transfer {
+        pub buf: FixedVec<u8>,
+        pub len: usize,
+        pub end: bool,
+        pub dir: OpKind,
+        pub rsp: oneshot::Sender<Result<FixedVec<u8>, i2c::ErrorKind>>,
+    }
 
-pub struct WriteOp {
-    pub buf: FixedVec<u8>,
-    pub len: usize,
-    pub end: bool,
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum OpKind {
+        Read,
+        Write,
+    }
+
+    pub struct ReadOp {
+        pub buf: FixedVec<u8>,
+        pub len: usize,
+        pub end: bool,
+    }
+
+    pub struct WriteOp {
+        pub buf: FixedVec<u8>,
+        pub len: usize,
+        pub end: bool,
+    }
 }
 
 #[derive(Debug)]
@@ -244,7 +286,7 @@ impl Transaction {
             "read length ({len}) exceeds remaining buffer capacity ({})",
             buf.capacity() - buf.len()
         );
-        self.xfer(buf, len, end, Direction::Read).await
+        self.xfer(buf, len, end, OpKind::Read).await
     }
 
     pub async fn write(
@@ -253,7 +295,7 @@ impl Transaction {
         len: usize,
         end: bool,
     ) -> Result<FixedVec<u8>, I2cError> {
-        self.xfer(buf, len, end, Direction::Write).await
+        self.xfer(buf, len, end, OpKind::Write).await
     }
 
     async fn xfer(
@@ -261,7 +303,7 @@ impl Transaction {
         buf: FixedVec<u8>,
         len: usize,
         end: bool,
-        dir: Direction,
+        dir: OpKind,
     ) -> Result<FixedVec<u8>, I2cError> {
         let rsp = self
             .rsp_rx
@@ -320,7 +362,7 @@ impl Addr {
 // === impl I2cError ===
 
 impl I2cError {
-    pub fn new(addr: Addr, kind: i2c::ErrorKind, dir: Direction) -> Self {
+    pub fn new(addr: Addr, kind: i2c::ErrorKind, dir: OpKind) -> Self {
         Self {
             addr,
             kind: ErrorKind::I2c(kind),
@@ -330,11 +372,11 @@ impl I2cError {
 
     #[inline]
     #[must_use]
-    pub fn direction(&self) -> Direction {
+    pub fn direction(&self) -> OpKind {
         self.dir
     }
 
-    fn mk(addr: Addr, dir: Direction) -> impl Fn(i2c::ErrorKind) -> Self {
+    fn mk(addr: Addr, dir: OpKind) -> impl Fn(i2c::ErrorKind) -> Self {
         move |kind| Self {
             addr,
             kind: ErrorKind::I2c(kind),
@@ -342,7 +384,7 @@ impl I2cError {
         }
     }
 
-    fn mk_no_driver<E>(addr: Addr, dir: Direction) -> impl Fn(E) -> Self {
+    fn mk_no_driver<E>(addr: Addr, dir: OpKind) -> impl Fn(E) -> Self {
         move |_| Self {
             addr,
             dir,
@@ -355,8 +397,8 @@ impl fmt::Display for I2cError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self { addr, kind, dir } = self;
         let verb = match dir {
-            Direction::Read => "reading from",
-            Direction::Write => "writing to",
+            OpKind::Read => "reading from",
+            OpKind::Write => "writing to",
         };
         write!(f, "I2C error {verb} {addr:?}: ")?;
 
