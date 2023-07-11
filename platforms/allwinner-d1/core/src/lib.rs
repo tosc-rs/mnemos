@@ -75,7 +75,7 @@ impl D1 {
                 .unwrap()
         };
 
-        let [ch0, _, ..] = dmac.channels;
+        let [ch0, ..] = dmac.channels;
         dmac.dmac.dmac_irq_en0.modify(|_r, w| {
             // used for UART0 DMA sending
             w.dma0_queue_irq_en().enabled();
@@ -302,7 +302,6 @@ impl D1 {
     /// * Channel 1: SPI1 TX
     /// * Channel 2: TWI0 driver TX
     fn handle_dmac() {
-        let _isr = kernel::isr::Isr::enter();
         let dmac = unsafe { &*DMAC::PTR };
         dmac.dmac_irq_pend0.modify(|r, w| {
             tracing::trace!(dmac_irq_pend0 = ?format_args!("{:#b}", r.bits()), "DMAC interrupt");
