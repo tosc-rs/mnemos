@@ -104,7 +104,7 @@ export function init_term(command_callback) {
                         }
                     }
                     break;
-                case '[A':
+                case '\u001b[A':
                     if (term.hist_pos > 0) {
                         for (let i = 0; i < command.length; i++) {
                             term.write('\b \b');
@@ -114,7 +114,7 @@ export function init_term(command_callback) {
                         term.write(command);
                     }
                     break;
-                case '[B':
+                case '\u001b[B':
                     if (term.hist_pos < term.history.length) {
                         for (let i = 0; i < command.length; i++) {
                             term.write('\b \b');
