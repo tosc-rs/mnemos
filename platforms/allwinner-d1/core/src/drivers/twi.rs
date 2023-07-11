@@ -3,7 +3,7 @@
 //! This module contains an implementation of a driver for controlling the
 //! I²C hardware on the D1, which the D1 manual calls a TWI
 //! (Two-Wire Interface), likely due to I²C being a trademark of
-//! Phillips Semiconductor. The [`TwiI2c0`] type in this module implements the
+//! Phillips Semiconductor. The [`I2c0`] type in this module implements the
 //! [`I2cService`] trait using the TWI hardware mapped to the `I2C0` pins on the
 //! board's 40-pin Raspberry Pi header.
 //!
@@ -12,8 +12,8 @@
 //! between the MangoPi MQ Pro and the Lichee RV Dock. On the MQ Pro, [`TWI0`]
 //! is used, with `SCL` on pin `PG12` and `SDA` on pin `PG13`. On the Lichee
 //! RV Dock, [`TWI2`] is used instead, with `SCL` on pin `PB0` and `SDA` on
-//! pin `PB1`. Separate constructors for the [`TwiI2c0`] type,
-//! [`TwiI2c0::mq_pro`] and [`TwiI2c0::lichee_rv_dock`], are provided to
+//! pin `PB1`. Separate constructors for the [`I2c0`] type,
+//! [`I2c0::mq_pro`] and [`I2c0::lichee_rv_dock`], are provided to
 //! configure the appropriate pins for each board.
 //!
 //! ## Implementation Notes
@@ -135,7 +135,7 @@ enum State {
     WaitForData(Addr),
 }
 
-// === impl TwiI2c0 ===
+// === impl I2c0 ===
 
 impl I2c0 {
     /// Initialize a TWI for the MangoPi MQ Pro's Pi header I²C0
