@@ -59,7 +59,7 @@ export function init_term(command_callback) {
         }
 
         term._initialized = true;
-
+        term.forth_repl = false;
         term.prompt = () => {
             term.write('\r\n$ ');
         };
@@ -73,11 +73,20 @@ export function init_term(command_callback) {
         term.onData(e => {
             switch (e) {
                 case '\u0003': // Ctrl+C
+                    term.forth_repl = false;
                     term.write('^C');
+                    term.prompt = () => {
+                        term.write('\r\n$ ');
+                    };
                     term.prompt();
                     break;
                 case '\r': // Enter
-                    runCommand(term, command);
+                    if (term.forth_repl) {
+                        runCommand(term, 'forth ' + command);
+                    } else {
+                        runCommand(term, command);
+                    }
+
                     if (command.length > 0) {
                         if (!(term.history.length > 0 && command == term.history[term.history.length - 1])) {
                             term.history.push(command);
@@ -171,6 +180,15 @@ export function init_term(command_callback) {
                 command_callback({ 'Forth': args });
             },
             description: 'Execute a line of forth',
+        },
+        iforth: {
+            f: (_args) => {
+                term.forth_repl = true;
+                term.prompt = () => {
+                    term.write('\r\nF ');
+                };
+            },
+            description: 'forth REPL',
         }
     };
 
