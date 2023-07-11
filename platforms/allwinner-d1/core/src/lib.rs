@@ -61,7 +61,7 @@ impl D1 {
         spim: spim::Spim1,
         dmac: Dmac,
         plic: Plic,
-        i2c0: twi::TwiI2c0,
+        i2c0: twi::I2c0,
     ) -> Result<Self, ()> {
         let k_settings = KernelSettings {
             max_drivers: 16,

@@ -28,7 +28,7 @@ fn main() -> ! {
     let mut p = unsafe { d1_pac::Peripherals::steal() };
     let uart = unsafe { kernel_uart(&mut p.CCU, &mut p.GPIO, p.UART0) };
     let spim = unsafe { kernel_spim1(p.SPI_DBI, &mut p.CCU, &mut p.GPIO) };
-    let i2c0 = unsafe { twi::TwiI2c0::mq_pro(p.TWI0, &mut p.CCU, &mut p.GPIO) };
+    let i2c0 = unsafe { twi::I2c0::mq_pro(p.TWI0, &mut p.CCU, &mut p.GPIO) };
     let timers = Timers::new(p.TIMER);
     let dmac = Dmac::new(p.DMAC, &mut p.CCU);
     let plic = Plic::new(p.PLIC);

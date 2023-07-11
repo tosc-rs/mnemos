@@ -67,7 +67,7 @@ use kernel::{
 };
 
 /// A TWI mapped to the Raspberry Pi header's I<sup>2</sup>C0 pins.
-pub struct TwiI2c0 {
+pub struct I2c0 {
     isr: &'static IsrData,
     twi: &'static twi::RegisterBlock,
     /// Which TWI does this TWI Engine use?
@@ -137,7 +137,7 @@ enum State {
 
 // === impl TwiI2c0 ===
 
-impl TwiI2c0 {
+impl I2c0 {
     /// Initialize a TWI for the MangoPi MQ Pro's Pi header I<sup>2</sup>C0
     /// pins. This configures TWI0 in TWI engine mode, with the MangoPi MQ Pro pin
     /// mappings.
