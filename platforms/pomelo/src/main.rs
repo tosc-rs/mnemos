@@ -4,8 +4,12 @@ use async_std::{
     stream::{IntoStream, StreamExt},
     sync::{Condvar, Mutex},
 };
-use futures::{channel::mpsc, FutureExt};
+use futures::{
+    channel::mpsc::{self, Sender},
+    FutureExt,
+};
 use gloo::timers::future::IntervalStream;
+use gloo_utils::format::JsValueSerdeExt;
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
     daemons::{
@@ -18,11 +22,18 @@ use mnemos_kernel::{
     },
     Kernel, KernelSettings,
 };
-use pomelo::sim_drivers::serial::Serial;
+use pomelo::{
+    sim_drivers::serial::Serial,
+    term_iface::{init_term, to_term, Command, ECHO_TX},
+};
+use serde::{Deserialize, Serialize};
 use sermux_proto::PortChunk;
-use tracing::{debug, info, trace, Instrument, Level};
+#[allow(unused_imports)]
+use tracing::{debug, error, info, trace, Instrument, Level};
 use tracing_wasm::WASMLayerConfigBuilder;
+use wasm_bindgen::{closure::Closure, prelude::*};
 use wasm_bindgen_futures::spawn_local;
+
 const DISPLAY_WIDTH_PX: u32 = 400;
 const DISPLAY_HEIGHT_PX: u32 = 240;
 
@@ -31,12 +42,14 @@ static AHEAP: MnemosAlloc<System> = MnemosAlloc::new();
 
 fn main() {
     let tracing_config = WASMLayerConfigBuilder::new()
-        .set_max_level(Level::TRACE)
+        .set_max_level(Level::DEBUG)
         .build();
     tracing_wasm::set_as_global_default_with_config(tracing_config);
+
     let _span: tracing::span::EnteredSpan = tracing::info_span!("Pomelo").entered();
+
     spawn_local(run_pomelo());
-    // TODO wait, somehow?
+    // TODO do we need to wait?
 }
 
 async fn run_pomelo() {
@@ -86,7 +99,9 @@ async fn kernel_entry() {
         .unwrap();
 
     // Initialize a loopback UART
-    let (mut tx, rx) = mpsc::channel::<u8>(16);
+    let (tx, rx) = mpsc::channel::<u8>(64);
+    ECHO_TX.set(tx.clone()).unwrap();
+
     kernel
         .initialize({
             let irq = irq.clone();
@@ -94,11 +109,12 @@ async fn kernel_entry() {
                 debug!("initializing loopback UART");
                 Serial::register(
                     kernel,
-                    128,
-                    128,
+                    256,
+                    256,
                     WellKnown::Loopback.into(),
                     irq,
                     rx.into_stream(),
+                    to_term,
                 )
                 .await
                 .unwrap();
@@ -113,10 +129,6 @@ async fn kernel_entry() {
         .initialize(loopback(kernel, loopback_settings))
         .unwrap();
 
-    // Spawn a hello port
-    let hello_settings = HelloSettings::default();
-    kernel.initialize(hello(kernel, hello_settings)).unwrap();
-
     // Spawn the spawnulator
     kernel
         .initialize(SpawnulatorServer::register(kernel, 16))
@@ -126,21 +138,19 @@ async fn kernel_entry() {
     spawn_local(async move {
         IntervalStream::new(500)
             .for_each(move |_| {
-                let chunk = PortChunk::new(WellKnown::Loopback, b"!!");
-                let mut buf = [0u8; 8];
-                if let Ok(ser) = chunk.encode_to(&mut buf) {
-                    debug!("sending {ser:?}");
-                    for byte in ser {
-                        if let Err(e) = tx.try_send(*byte) {
-                            tracing::error!("could not send: {e:?}");
-                        } else {
-                            info!("sent a byte!");
-                        }
-                    }
-                }
+                //echo("mooo".to_string());
             })
             .await;
     });
+
+    // link to browser terminal: receive commands, dispatch bacon
+    let eternal_cb: Closure<dyn Fn(JsValue)> = Closure::new(|val: JsValue| {
+        if let Ok(cmd) = val.into_serde::<Command>() {
+            cmd.dispatch(kernel);
+        }
+    });
+    init_term(&eternal_cb);
+    eternal_cb.forget();
 
     // run the kernel on its own
     // TODO: remodel to a select, so we can actually advance the clock correctly

@@ -13,6 +13,9 @@ embedded-graphics = "0.7"
 embedded-graphics-web-simulator = "0.3"
 humantime = "2"
 postcard = "1"
+wasm-bindgen = "0.2.87"
+gloo-utils = { version = "0.1", features = ["serde"] }
+serde = { version = "1.0.171", features = ["derive"] }
 
 [dependencies.tracing]
 version = "0.1.35"

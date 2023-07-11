@@ -1,10 +1,4 @@
 ## running locally via dev server
-```shell
-# aliased via .cargo/config.toml
-$ cargo run-wasm-sim
-```
-
-or, if you have `trunk` installed (pro: automatic recompile + reload)
 
 ```shell
 $ trunk serve
