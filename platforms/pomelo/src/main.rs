@@ -24,23 +24,35 @@ use pomelo::{
 };
 #[allow(unused_imports)]
 use tracing::{debug, error, info, trace, Instrument, Level};
-use tracing_wasm::WASMLayerConfigBuilder;
+use tracing_subscriber::{
+    filter::{self, filter_fn},
+    prelude::*,
+    Registry,
+};
+use tracing_wasm::{WASMLayer, WASMLayerConfig, WASMLayerConfigBuilder};
 use wasm_bindgen::{closure::Closure, prelude::*};
 use wasm_bindgen_futures::spawn_local;
 
 #[global_allocator]
 static AHEAP: MnemosAlloc<System> = MnemosAlloc::new();
 
+fn setup_tracing() {
+    let wasm_layer = WASMLayer::new(WASMLayerConfig::default());
+    let filter = filter::Targets::new()
+        .with_target("pomelo", Level::DEBUG)
+        .with_target("maitake", Level::INFO)
+        .with_default(Level::DEBUG);
+
+    let subscriber = Registry::default().with(wasm_layer).with(filter);
+    tracing::subscriber::set_global_default(subscriber).unwrap();
+}
 fn main() {
-    let tracing_config = WASMLayerConfigBuilder::new()
-        .set_max_level(Level::TRACE)
-        .build();
-    tracing_wasm::set_as_global_default_with_config(tracing_config);
+    setup_tracing();
 
     let _span: tracing::span::EnteredSpan = tracing::info_span!("Pomelo").entered();
 
     spawn_local(run_pomelo());
-    // TODO do we need to wait?
+    // TODO do we need to wait? (how?)
 }
 
 async fn run_pomelo() {
@@ -174,12 +186,12 @@ async fn kernel_entry() {
             .signed_duration_since(then)
             .to_std()
             .unwrap();
-        debug!("timer - before sleep: advance {dt:?}");
+        trace!("timer - before sleep: advance {dt:?}");
         let next_turn = timer
             .force_advance(dt)
             .time_to_next_deadline()
             .unwrap_or(Duration::from_secs(1));
-        debug!("timer: before sleep: next turn in {next_turn:?}");
+        trace!("timer: before sleep: next turn in {next_turn:?}");
         let mut next_fut = TimeoutFuture::new(
             next_turn
                 .as_millis()
@@ -191,17 +203,17 @@ async fn kernel_entry() {
         then = chrono::Local::now();
         let now = select! {
             _ = irq_rx.next() => {
-                debug!("timer: WAKE: \"irq\" {tick:?}");
+                trace!("timer: WAKE: \"irq\" {tick:?}");
                 chrono::Local::now()
             },
             _ = next_fut => {
                 let tick = kernel.tick();
-                debug!("timer: WAKE: timer {tick:?}");
+                trace!("timer: WAKE: timer {tick:?}");
                 chrono::Local::now()
             }
         };
         let dt = now.signed_duration_since(then).to_std().unwrap();
-        debug!("timer: slept for {dt:?}");
+        trace!("timer: slept for {dt:?}");
         kernel.timer().force_advance(dt);
     }
 }
