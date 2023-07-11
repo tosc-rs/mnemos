@@ -132,7 +132,7 @@ impl D1 {
                 i2c0.register(k, 4).await.unwrap();
                 tracing::info!("I2C0 TWI initialized!");
             }
-            .instrument(tracing::info_span!("I2C0"))
+            .instrument(tracing::info_span!("I2C0")),
         )
         .unwrap();
 
