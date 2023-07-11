@@ -15,6 +15,17 @@ match the currently published documentation!
 
 [hosted mnemOS `main` branch documentation](https://mnemos-dev.jamesmunns.com/) - includes "the mnemOS book" and source/API documentation.
 
+## Development Blogs
+
+We've written a series of development blogs following the story of MnemOS'
+implementation. You can find them here:
+
+- [MnemOS Moment 1][moment-1], by James Munns (2023-06-02)
+- [MnemOS Moment 2: Search for a Shell][moment-2], by James Munns (2023-07-10)
+
+[moment-1]: https://onevariable.com/blog/mnemos-moment-1/
+[moment-2]: https://onevariable.com/blog/mnemos-moment-2/
+
 ## Folder Layout
 
 The project layout contains the following folders:
