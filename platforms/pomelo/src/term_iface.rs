@@ -6,13 +6,13 @@ use mnemos_kernel::{
     Kernel,
 };
 use serde::{Deserialize, Serialize};
+use sermux_proto::WellKnown;
 #[allow(unused_imports)]
 use tracing::{debug, error, info, trace, warn};
 use wasm_bindgen::{closure::Closure, prelude::*};
 
-use crate::sim_drivers::serial::echo;
-pub static ECHO_TX: OnceLock<Sender<u8>> = OnceLock::new();
-pub static COMMAND_TX: OnceLock<Sender<Command>> = OnceLock::new();
+use crate::sim_drivers::{self, serial::echo};
+pub static SERMUX_TX: OnceLock<Sender<u8>> = OnceLock::new();
 
 #[wasm_bindgen(module = "/src/js/glue.js")]
 extern "C" {
@@ -36,7 +36,7 @@ impl Command {
                 kernel.initialize(hello(kernel, hello_settings)).unwrap();
             }
             Command::Echo(s) => echo(s),
-            Command::Forth(s) => todo!(),
+            Command::Forth(s) => sim_drivers::io::send(WellKnown::ForthShell0.into(), s.as_bytes()),
         }
     }
 }

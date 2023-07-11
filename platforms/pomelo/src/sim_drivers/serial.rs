@@ -24,7 +24,8 @@ pub struct SerialRequest {
 
 use async_std::{sync::Condvar, task::spawn_local};
 
-use crate::term_iface::ECHO_TX;
+use super::io;
+use crate::term_iface::SERMUX_TX;
 pub struct Serial {}
 
 impl Serial {
@@ -99,10 +100,8 @@ async fn process_stream(
             // The kernel wants to write something.
             mut outmsg = handle.consumer().read_grant().fuse() => {
                 info!(len = outmsg.len(), "Got outgoing message");
-                // TODO where do we want to send it?
-                // let wall = stream.write_all(&outmsg);
-                // wall.await.unwrap();
                 let len = outmsg.len();
+                // send all strings to `recv_callback`
                 match PortChunk::decode_from(&mut outmsg) {
                     Ok(pc) => {
                         match from_utf8(pc.chunk) {
@@ -121,7 +120,7 @@ async fn process_stream(
                     // an IRQ.
                     irq.notify_one();
                     // TODO we can do better than single bytes
-                    // TODO aka: use Sink trait
+                    // TODO aka: use Sink trait somehow
                     let used = 1;
                     let mut in_grant = handle.producer().send_grant_max(used).await;
                     in_grant[0] = inmsg;
@@ -135,23 +134,5 @@ async fn process_stream(
 }
 
 pub fn echo(s: String) {
-    let s_b = s.as_bytes();
-    let chunk = PortChunk::new(WellKnown::Loopback, s.as_bytes());
-    let required_size = s_b.len() + 4;
-    let mut buf = vec![0; required_size];
-
-    let mut tx = ECHO_TX.get().expect("echo tx unavailable, bruh").clone();
-    match chunk.encode_to(&mut buf) {
-        Ok(ser) => {
-            debug!("echo: sending {ser:?}");
-            for byte in ser {
-                if let Err(e) = tx.try_send(*byte) {
-                    tracing::error!("could not send: {e:?}");
-                } else {
-                    info!("echo: sent a byte!");
-                }
-            }
-        }
-        Err(e) => error!("echo: {e:?}"),
-    }
+    io::send(WellKnown::Loopback.into(), s.as_bytes());
 }

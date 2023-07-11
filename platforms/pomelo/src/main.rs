@@ -16,15 +16,16 @@ use mnemos_kernel::{
         sermux::{hello, loopback, HelloSettings, LoopbackSettings},
         shells::{graphical_shell_mono, GraphicalShellSettings},
     },
+    forth::{self, Forth},
     services::{
         forth_spawnulator::SpawnulatorServer,
-        serial_mux::{SerialMuxServer, WellKnown},
+        serial_mux::{PortHandle, SerialMuxServer, WellKnown},
     },
     Kernel, KernelSettings,
 };
 use pomelo::{
     sim_drivers::serial::Serial,
-    term_iface::{init_term, to_term, Command, ECHO_TX},
+    term_iface::{init_term, to_term, Command, SERMUX_TX},
 };
 use serde::{Deserialize, Serialize};
 use sermux_proto::PortChunk;
@@ -100,7 +101,7 @@ async fn kernel_entry() {
 
     // Initialize a loopback UART
     let (tx, rx) = mpsc::channel::<u8>(64);
-    ECHO_TX.set(tx.clone()).unwrap();
+    SERMUX_TX.set(tx.clone()).unwrap();
 
     kernel
         .initialize({
@@ -139,6 +140,39 @@ async fn kernel_entry() {
         IntervalStream::new(500)
             .for_each(move |_| {
                 //echo("mooo".to_string());
+            })
+            .await;
+    });
+
+    // go forth and replduce
+    spawn_local(async move {
+        let port = PortHandle::open(kernel, WellKnown::ForthShell0.into(), 256)
+            .await
+            .unwrap();
+        let (task, tid_io) = Forth::new(kernel, forth::Params::default())
+            .await
+            .expect("Forth spawning must succeed");
+        kernel.spawn(task.run()).await;
+        kernel
+            .spawn(async move {
+                loop {
+                    futures::select_biased! {
+                        rgr = port.consumer().read_grant().fuse() => {
+                            let needed = rgr.len();
+                            trace!(needed, "Forth: received input");
+                            let mut tid_io_wgr = tid_io.producer().send_grant_exact(needed).await;
+                            tid_io_wgr.copy_from_slice(&rgr);
+                            tid_io_wgr.commit(needed);
+                            rgr.release(needed);
+                        },
+                        output = tid_io.consumer().read_grant().fuse() => {
+                            let needed = output.len();
+                            trace!(needed, "Forth: Received output from tid_io");
+                            port.send(&output).await;
+                            output.release(needed);
+                        }
+                    }
+                }
             })
             .await;
     });
