@@ -240,7 +240,7 @@ impl I2c0 {
             &mut (*I2C0_ISR.data.get())
         };
 
-        data.advance_isr::<0>(twi);
+        data.advance_isr(twi, 0);
     }
 
     /// Handle a TWI 1 interrupt on the I2C0 pins.
@@ -254,7 +254,7 @@ impl I2c0 {
             &mut (*I2C0_ISR.data.get())
         };
 
-        data.advance_isr::<1>(twi);
+        data.advance_isr(twi, 1);
     }
 
     /// Handle a TWI 2 interrupt on the I2C0 pins.
@@ -267,7 +267,7 @@ impl I2c0 {
             &mut (*I2C0_ISR.data.get())
         };
 
-        data.advance_isr::<2>(twi);
+        data.advance_isr(twi, 2);
     }
 
     /// Handle a TWI 3 interrupt on the I2C0 pins.
@@ -281,7 +281,7 @@ impl I2c0 {
             &mut (*I2C0_ISR.data.get())
         };
 
-        data.advance_isr::<3>(twi);
+        data.advance_isr(twi, 3);
     }
 
     /// This assumes the GPIO pin mappings are already configured.
@@ -488,19 +488,19 @@ impl DerefMut for TwiDataGuard<'_> {
 }
 
 impl TwiData {
-    fn advance_isr<const NUM: u8>(&mut self, twi: &twi::RegisterBlock) {
+    fn advance_isr(&mut self, twi: &twi::RegisterBlock, num: u8) {
         let status = {
             let byte = twi.twi_stat.read().sta().bits();
             match Status::try_from(byte) {
                 Ok(status) => status,
                 Err(error) => {
-                    tracing::error!(status = ?format_args!("{byte:#x}"), %error, twi = NUM, "TWI{NUM} status invalid");
+                    tracing::error!(status = ?format_args!("{byte:#x}"), %error, twi = num, "TWI{num} status invalid");
                     return;
                 }
             }
         };
         let mut needs_wake = false;
-        tracing::debug!(?status, state = ?self.state, twi = NUM, "TWI{NUM} interrupt");
+        tracing::debug!(?status, state = ?self.state, twi = num, "TWI{num} interrupt");
         twi.twi_cntr.modify(|_cntr_r, cntr_w| {
             self.state = match (self.state, status)  {
                 (State::Idle, _) => {
@@ -532,7 +532,7 @@ impl TwiData {
                         TwiOp::Write { buf, ref mut pos, .. } => {
                             // send the first byte of data
                             let byte = buf.as_slice()[0];
-                            tracing::debug!(twi = NUM, data = ?format_args!("{byte:#x}"), "TWI{NUM} write data");
+                            tracing::debug!(twi = num, data = ?format_args!("{byte:#x}"), "TWI{num} write data");
                             twi.twi_data.write(|w| w.data().variant(byte));
                             *pos += 1;
                             State::WaitForAck(Addr::SevenBit(addr))
@@ -573,11 +573,11 @@ impl TwiData {
                             *read += 1;
                             let remaining = len - *read;
                             tracing::trace!(
-                                twi = NUM,
+                                twi = num,
                                 data = ?format_args!("{data:#x}"),
                                 end,
                                 remaining,
-                                "TWI{NUM} read data",
+                                "TWI{num} read data",
                             );
                             if remaining < 1 {
                                 cntr_w.a_ack().clear_bit();
@@ -589,13 +589,13 @@ impl TwiData {
                                 // if this is the last operation in the
                                 // transaction, send a STOP.
                                 if end {
-                                    tracing::trace!(twi = NUM, "TWI{NUM} send STOP");
+                                    tracing::trace!(twi = num, "TWI{num} send STOP");
                                     cntr_w.m_stp().set_bit();
                                     State::Idle
                                 } else {
                                     // otherwise, send a repeated START for the
                                     // next operation.
-                                    tracing::trace!(twi = NUM, "TWI{NUM} send repeated START");
+                                    tracing::trace!(twi = num, "TWI{num} send repeated START");
                                     cntr_w.m_sta().set_bit();
                                     State::WaitForRestart(addr)
                                 }
@@ -612,24 +612,24 @@ impl TwiData {
                                 // Send a repeated START for the read portion of
                                 // the transaction.
                                 if end {
-                                    tracing::trace!(twi = NUM, "TWI{NUM} send STOP");
+                                    tracing::trace!(twi = num, "TWI{num} send STOP");
                                     cntr_w.m_stp().set_bit();
                                     State::Idle
                                 } else {
                                     // otherwise, send a repeated START for the
                                     // next operation.
                                     cntr_w.m_sta().set_bit();
-                                    tracing::trace!(twi = NUM, "TWI{NUM} send repeated START");
+                                    tracing::trace!(twi = num, "TWI{num} send repeated START");
                                     State::WaitForRestart(addr)
                                 }
                             } else {
                                 // Send the next byte of data
                                 let byte = buf.as_slice()[*pos];
                                 tracing::trace!(
-                                    twi = NUM,
+                                    twi = num,
                                     remaining = len - *pos,
                                     data = ?format_args!("{byte:#x}"),
-                                    "TWI{NUM} write data"
+                                    "TWI{num} write data"
                                 );
 
                                 twi.twi_data.write(|w| w.data().variant(byte));
@@ -643,7 +643,7 @@ impl TwiData {
                 }
                 (_, status) => {
                     let error: ErrorKind = status.into_error();
-                    tracing::warn!(?error, ?status, state = ?self.state, twi = NUM, "TWI{NUM} error");
+                    tracing::warn!(?error, ?status, state = ?self.state, twi = num, "TWI{num} error");
                     self.err = Some(error);
                     cntr_w.m_stp().variant(true);
                     needs_wake = true;
