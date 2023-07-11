@@ -1,5 +1,5 @@
 export function to_term(s) {
-    console.log("TO TERM", s);
+    // console.log("TO TERM", s);
     window.term.write(s);
 }
 
