@@ -1,5 +1,26 @@
 //! Beepy (nee Beepberry) board support.
-use kernel::{trace, Kernel, services::i2c::{I2cClient, I2cError}};
+use core::time::Duration;
+use kernel::{
+    services::i2c::{I2cClient, I2cError},
+    trace, Kernel,
+};
+
+/// Initialize all Beepy-specific peripherals.
+pub fn initialize(d1: &mnemos_d1_core::D1) {
+    d1.initialize_sharp_display();
+    d1.kernel
+        .initialize({
+            let k = d1.kernel;
+            async move {
+                k.sleep(Duration::from_secs(2)).await;
+                trace::info!("starting i2c_puppet test...");
+                if let Err(error) = i2c_puppet(k).await {
+                    trace::error!(?error, "i2c_puppet test failed");
+                }
+            }
+        })
+        .unwrap();
+}
 
 /// A rudimentary driver for Beepy's [i2c_puppet].
 ///
@@ -53,21 +74,27 @@ pub async fn i2c_puppet(k: &'static Kernel) -> Result<(), I2cError> {
     }
 
     trace::info!("setting i2c_puppet RGB LED to green...");
-    match i2c.transaction(ADDR, &mut [
-        // set red to 0
-        i2c::Operation::Write(&[REG_LED_R | WRITE_MASK, 0]),
-        // set green to 255
-        i2c::Operation::Write(&[REG_LED_G | WRITE_MASK, 255]),
-        // set blue to 0
-        i2c::Operation::Write(&[REG_LED_B | WRITE_MASK, 0]),
-        // turn on the LED
-        i2c::Operation::Write(&[REG_LED_ON | WRITE_MASK, 255]),
-    ]).await {
+    match i2c
+        .transaction(
+            ADDR,
+            &mut [
+                // set red to 0
+                i2c::Operation::Write(&[REG_LED_R | WRITE_MASK, 0]),
+                // set green to 255
+                i2c::Operation::Write(&[REG_LED_G | WRITE_MASK, 255]),
+                // set blue to 0
+                i2c::Operation::Write(&[REG_LED_B | WRITE_MASK, 0]),
+                // turn on the LED
+                i2c::Operation::Write(&[REG_LED_ON | WRITE_MASK, 255]),
+            ],
+        )
+        .await
+    {
         Ok(_) => trace::info!("i2c_puppet LED should now be green!"),
         Err(error) => {
             trace::error!(%error, "error writing to i2c_puppet LED");
             return Err(error);
-        },
+        }
     };
 
     // TODO(eliza): keyboard driver (using https://crates.io/crates/bbq10kbd)
