@@ -144,6 +144,10 @@ pub struct I2cError {
 }
 
 /// Messages used to communicate with an [`I2cService`] implementation.
+///
+/// The types in this module are primarily used by implementations of the
+/// [`I2cService`], and are not relevant to users of the [`I2cClient`]
+/// interface.
 pub mod messages {
     use super::*;
 

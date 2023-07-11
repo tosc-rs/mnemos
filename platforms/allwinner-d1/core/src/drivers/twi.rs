@@ -16,9 +16,11 @@ use kernel::{
     embedded_hal_async::i2c::{ErrorKind, NoAcknowledgeSource},
     mnemos_alloc::containers::FixedVec,
     registry,
-    services::i2c::{Addr, I2cService, OpKind, Transaction, Transfer},
-    trace::{self},
-    Kernel,
+    services::i2c::{
+        messages::{OpKind, Transfer},
+        Addr, I2cService, Transaction,
+    },
+    trace, Kernel,
 };
 
 /// A TWI mapped to the Raspberry Pi header's I<sup>2</sup>C0 pins.
