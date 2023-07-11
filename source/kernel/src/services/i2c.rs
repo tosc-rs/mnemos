@@ -384,7 +384,6 @@ impl i2c::I2c<i2c::SevenBitAddress> for I2cClient {
                     buf = read;
                 }
                 i2c::Operation::Write(src) => {
-                    let len = src.len();
                     buf.try_extend_from_slice(src)
                         .expect("we should have pre-allocated a large enough buffer!");
                     let write = txn.write(buf, end).await?;
