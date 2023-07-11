@@ -1,8 +1,8 @@
-//! Drivers for the Allwinner D1's I<sup>2</sup>C/TWI peripherals.
+//! Drivers for the Allwinner D1's I²C/TWI peripherals.
 //!
 //! This module contains an implementation of a driver for controlling the
-//! I<sup>2</sup>C hardware on the D1, which the D1 manual calls a TWI
-//! (Two-Wire Interface), likely due to I<sup>2</sup>C being a trademark of
+//! I²C hardware on the D1, which the D1 manual calls a TWI
+//! (Two-Wire Interface), likely due to I²C being a trademark of
 //! Phillips Semiconductor. The [`TwiI2c0`] type in this module implements the
 //! [`I2cService`] trait using the TWI hardware mapped to the `I2C0` pins on the
 //! board's 40-pin Raspberry Pi header.
@@ -19,18 +19,18 @@
 //! ## Implementation Notes
 //!
 //! The TWI hardware can be used in one of two modes: "TWI engine" mode, where
-//! individual bytes are written/read from the I<sup>2</sup>C bus in an
+//! individual bytes are written/read from the I²C bus in an
 //! interrupt handler, and "TWI driver" mode, where the TWI hardware can operate
-//! at the level of I<sup>2</sup>C register read/writes using a DMA buffer. This
+//! at the level of I²C register read/writes using a DMA buffer. This
 //! module currently only implements a driver for the "TWI engine" mode, since
-//! it can model all forms of I<sup>2</sup>C operations. In the future, we will
+//! it can model all forms of I²C operations. In the future, we will
 //! likely want to opportunistically use the offload capabilities of the TWI
-//! driver when the I<sup>2</sup>C transaction has the correct shape for
+//! driver when the I²C transaction has the correct shape for
 //! offloading, but this branch just implements the simpler TWI engine mode.
 //!
 //! The TWI hardware is a bit difficult to use correctly, so implementing this
 //! was a bit of a struggle. In particular, it turns out that the generation of
-//! I<sup>2</sup>C clock pulses occurs when the
+//! I²C clock pulses occurs when the
 //! [`TWI_CNTR`](d1_pac::twi::TWI_CNTR) register, which controls the TWI, is
 //! written to.
 //!
@@ -43,7 +43,7 @@
 //! writes to this shared state, but this doesn't actually matter, because the
 //! D1 is an inherently single-core CPU.
 //!
-//! I believe that the I<sup>2</sup>C controller used in the D1 is from the
+//! I believe that the I²C controller used in the D1 is from the
 //! Marvell MV64xxx family, although I'm not sure which one in particular. Linux
 //! has a driver for this device, which can be found [here][linux-driver].
 //!
@@ -66,7 +66,7 @@ use kernel::{
     trace, Kernel,
 };
 
-/// A TWI mapped to the Raspberry Pi header's I<sup>2</sup>C0 pins.
+/// A TWI mapped to the Raspberry Pi header's I²C0 pins.
 pub struct I2c0 {
     isr: &'static IsrData,
     twi: &'static twi::RegisterBlock,
@@ -138,7 +138,7 @@ enum State {
 // === impl TwiI2c0 ===
 
 impl I2c0 {
-    /// Initialize a TWI for the MangoPi MQ Pro's Pi header I<sup>2</sup>C0
+    /// Initialize a TWI for the MangoPi MQ Pro's Pi header I²C0
     /// pins. This configures TWI0 in TWI engine mode, with the MangoPi MQ Pro pin
     /// mappings.
     ///
@@ -181,7 +181,7 @@ impl I2c0 {
         )
     }
 
-    /// Initialize a TWI for the Lichee RV Dock's Pi header I<sup>2</sup>C0
+    /// Initialize a TWI for the Lichee RV Dock's Pi header I²C0
     /// pins. This configures TWI2 in TWI engine mode, with the Lichee RV pin
     /// mappings.
     ///

@@ -1,11 +1,11 @@
-//! I<sup>2</sup>C Driver Service
+//! I²C Driver Service
 //!
-//! This module contains a service definition for drivers for the I<sup>2</sup>C
+//! This module contains a service definition for drivers for the I²C
 //! bus.
 //!
-//! ## About I<sup>2</sup>C
+//! ## About I²C
 //!
-//! I<sup>2</sup>C, according to the [RP2040 datasheet], is "an ubiquitous
+//! I²C, according to the [RP2040 datasheet], is "an ubiquitous
 //! serial bus first described in the Dead Sea Scrolls, and later used by
 //! Philips Semiconductor". It's a two-wire, multi-drop bus, allowing multiple
 //! devices to be connected to a single clock and data line.
@@ -15,7 +15,7 @@
 //! _rules_. Some of these rules are relevant to users of this module. In
 //! particular:
 //!
-//! * I<sup>2</sup>C has a first-class notion of controller and target devices.
+//! * I²C has a first-class notion of controller and target devices.
 //!   The bus has a single controller (formerly referred to as the "master"),
 //!   which initiates all bus operations. All other devices are targets
 //!   (formerly, insensitively referred to as "slaves"), which may only respond
@@ -38,23 +38,23 @@
 //!
 //! ## Usage
 //!
-//! Users of the I<sup>2</sup>C bus will primarily interact with this module
+//! Users of the I²C bus will primarily interact with this module
 //! using the [`I2cClient`] type, which implements a client for the
 //! [`I2cService`] service. This client type can be used to perform read and
-//! write operations on the I<sup>2</sup>C bus. A new client can be acquired
+//! write operations on the I²C bus. A new client can be acquired
 //! using [`I2cClient::from_registry`].
 //!
 //! Once an [`I2cClient`] has been obtained, it can be used to perform
-//! I<sup>2</sup>C operations. Two interfaces are available: an
+//! I²C operations. Two interfaces are available: an
 //! [implementation][impl-i2c] of the [`embedded_hal_async::i2c::I2c`] trait,
 //! and a lower-level interface using the [`I2cClient::start_transaction`]
 //! method. In general, the [`embedded_hal_async::i2c::I2c`] trait is the
 //! recommended interface.
 //!
 //! The lower-level interface allows reusing the same heap-allocated buffer for
-//! multiple I<sup>2</sup>C bus transactions. It also provides the ability to
+//! multiple I²C bus transactions. It also provides the ability to
 //! interleave other code between the write and read operations of an
-//! I<sup>2</sup>C transaction without sending a STOP condition. If either of
+//! I²C transaction without sending a STOP condition. If either of
 //! these are necessary, the [`Transaction`] interface may be preferred over the
 //! [`embedded_hal_async`] interface.
 //!
@@ -63,7 +63,7 @@
 //! Because of mnemOS' message-passing design, the [`I2cService`] operates
 //! with owned buffers, rather than borrowed buffers, so a [`FixedVec`]`<u8>` is
 //! used as the buffer type for both read and write operations. This means
-//! that we must allocate when performing I<sup>2</sup>C operations. To
+//! that we must allocate when performing I²C operations. To
 //! reduce the amount of allocation necessary, all [`Transaction`] methods
 //! return the buffer that was passed in, allowing the buffer to be reused
 //! for multiple operations. To facilitate this, the [`Transaction::read`] and
@@ -101,7 +101,7 @@ use uuid::Uuid;
 // Service Definition
 ////////////////////////////////////////////////////////////////////////////////
 
-/// [Service](crate::services) definition for I<sup>2</sup>C bus drivers.
+/// [Service](crate::services) definition for I²C bus drivers.
 ///
 /// See the [module-level documentation](crate::services::i2c) for details on
 /// using this service.
@@ -119,20 +119,20 @@ impl RegisteredDriver for I2cService {
 // Message and Error Types
 ////////////////////////////////////////////////////////////////////////////////
 
-/// I<sup>2</sup>C bus address, in either 7-bit or 10-bit address format.
+/// I²C bus address, in either 7-bit or 10-bit address format.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Addr {
-    /// A 7-bit I<sup>2</sup>C address.
+    /// A 7-bit I²C address.
     SevenBit(u8),
-    /// A 10-bit extended I<sup>2</sup>C address.
+    /// A 10-bit extended I²C address.
     TenBit(u16),
 }
 
-/// A transaction on the I<sup>2</sup>C bus.
+/// A transaction on the I²C bus.
 ///
 /// This type represents a transaction consisting of a series of read and write
-/// operations to a target device on an I<sup>2</sup>C bus with a given
-/// [`Addr`]. This type is part of a lower-level interface for I<sup>2</sup>C
+/// operations to a target device on an I²C bus with a given
+/// [`Addr`]. This type is part of a lower-level interface for I²C
 /// bus transactions, and is returned by the [`I2cClient::start_transaction`]
 /// method.
 ///
@@ -143,7 +143,7 @@ pub enum Addr {
 /// `Transaction` until an operation with `end: true` is performed. This
 /// completes the transaction.
 ///
-/// While a [`Transaction`] is in progress, the I<sup>2</sup>C bus is "locked"
+/// While a [`Transaction`] is in progress, the I²C bus is "locked"
 /// by the client that is performing that transaction. Other clients calling
 /// [`I2cClient::start_transaction`] (or using the
 /// [`embedded_hal_async::i2c::I2c`] interface) will wait until the current
@@ -181,7 +181,7 @@ pub mod messages {
         pub(super) capacity: usize,
     }
 
-    /// An I<sup>2</sup>C bus transfer within a [`Transaction`].
+    /// An I²C bus transfer within a [`Transaction`].
     ///
     /// This message is sent to the [`I2cService`] by a [`Transaction`] in order
     /// to perform an individual bus read or write as part of that transaction.
@@ -191,7 +191,7 @@ pub mod messages {
         ///
         /// If performing a write, this buffer is guaranteed to contain at least
         /// [`len`] bytes. The driver is expected to write the contents of this
-        /// buffer to the I<sup>2</sup>C bus starting at `buf[0]` and ending at
+        /// buffer to the I²C bus starting at `buf[0]` and ending at
         /// `buf[len - 1]`.
         ///
         /// If performing a read, this buffer is guaranteed to have at least
@@ -203,7 +203,7 @@ pub mod messages {
         /// [`len`]: #structfield.len
         /// [*capacity*]: mnemos_alloc::containers::FixedVec::capacity
         pub buf: FixedVec<u8>,
-        /// The number of bytes to read or write from [`buf`] in this I<sup>2</sup>C bus
+        /// The number of bytes to read or write from [`buf`] in this I²C bus
         /// transfer.
         ///
         /// [`buf`]: #structfield.buf
@@ -228,7 +228,7 @@ pub mod messages {
         /// completed successfully.
         ///
         /// If the transfer was a read, then [`buf`] should contain the bytes read
-        /// from the I<sup>2</sup>C bus. If the transfer was a write, buf may
+        /// from the I²C bus. If the transfer was a write, buf may
         /// contain any data, or be empty.
         ///
         /// If the transfer could not be completed successfully, then the driver
@@ -239,7 +239,7 @@ pub mod messages {
         pub rsp: oneshot::Sender<Result<FixedVec<u8>, i2c::ErrorKind>>,
     }
 
-    /// Whether an I<sup>2</sup>C bus operation is a read or a write.
+    /// Whether an I²C bus operation is a read or a write.
     #[derive(Copy, Clone, Debug, Eq, PartialEq)]
     pub enum OpKind {
         /// The operation is a read.
@@ -263,19 +263,19 @@ enum ErrorKind {
 
 /// A client for the [`I2cService`].
 ///
-/// This type is used to perform I<sup>2</sup>C bus operations. It is obtained
+/// This type is used to perform I²C bus operations. It is obtained
 /// using [`I2cClient::from_registry`] (or
 /// [`I2cClient::from_registry_no_retry`]).
 ///
 /// Once an `I2cClient` has been acquired, it may be used to perform
-/// I<sup>2</sup>C operations, either using [its implementation of the
+/// I²C operations, either using [its implementation of the
 /// `embedded_hal_async` `I2c` trait][impl-i2c], or using the lower-level
 /// [`Transaction`] interface returned by [`I2cClient::start_transaction`]. See
 /// the documentation for [`embedded_hal_async::i2c::I2c`] for details on that
 /// interface, or the [`Transaction`] type for details on using the lower-level
 /// transaction interface.
 ///
-/// An `I2cClient` does *not* represent a "lock" on the I<sup>2</sup>C bus.
+/// An `I2cClient` does *not* represent a "lock" on the I²C bus.
 /// Multiple `I2cClients` can coexist without preventing each other from
 /// performing bus operations. Instead, the bus is locked only while performing
 /// a [`Transaction`], or while using the [`I2c::transaction`] method on the
@@ -321,7 +321,7 @@ impl I2cClient {
         })
     }
 
-    /// Starts an I<sup>2</sup>C [`Transaction`] with the device at the provided
+    /// Starts an I²C [`Transaction`] with the device at the provided
     /// `addr`.
     ///
     /// This method begins a bus transaction with the target device. While the
@@ -330,7 +330,7 @@ impl I2cClient {
     ///
     /// After starting a [`Transaction`], the [`Transaction::read`] and
     /// [`Transaction::write`] methods are used to write to and read from the
-    /// target I<sup>2</sup>C device. See the [`Transaction`] type's
+    /// target I²C device. See the [`Transaction`] type's
     /// documentation for more information on how to use it.
     pub async fn start_transaction(&mut self, addr: Addr) -> Transaction {
         let resp = self
@@ -413,7 +413,7 @@ impl Transaction {
         (txn, rx)
     }
 
-    /// Read `len` bytes from the I<sup>2</sup>C bus into `buf`.
+    /// Read `len` bytes from the I²C bus into `buf`.
     ///
     /// Note that, rather than always filling the entire buffer, this method
     /// takes a `len` argument which specifies the number of bytes to read. This
@@ -423,7 +423,7 @@ impl Transaction {
     /// # Arguments
     ///
     /// - `buf`: a [`FixedVec`] buffer into which bytes read from the
-    ///   I<sup>2</sup>C bus will be written
+    ///   I²C bus will be written
     /// - `len`: the number of bytes to read. This must be less than or equal to
     ///   `buf.len()`.
     /// - `end`: whether or not to end the transaction. If this is `true`, a
@@ -433,13 +433,13 @@ impl Transaction {
     ///
     /// # Errors
     ///
-    /// - If an error occurs performing the I<sup>2</sup>C bus transaction.
+    /// - If an error occurs performing the I²C bus transaction.
     /// - If `len` is greater than [`buf.capacity()`] - [`buf.len()`].
     /// - If there is no [`I2cService`] running.
     ///
     /// # Cancelation Safety
     ///
-    /// If this future is dropped, the underlying I<sup>2</sup>C bus read
+    /// If this future is dropped, the underlying I²C bus read
     /// operation may still be performed.
     ///
     /// [`FixedVec`]: mnemos_alloc::containers::FixedVec
@@ -460,7 +460,7 @@ impl Transaction {
         self.xfer(buf, len, end, OpKind::Read).await
     }
 
-    /// Write `len` bytes `buf` to the I<sup>2</sup>C.
+    /// Write `len` bytes `buf` to the I²C.
     ///
     /// Note that, rather than always writing all the bytes in the buffer, this
     /// method takes a `len` argument which specifies the number of bytes to
@@ -470,7 +470,7 @@ impl Transaction {
     /// # Arguments
     ///
     /// - `buf`: a [`FixedVec`] buffer containing at least `len` bytes to write
-    ///   to the I<sup>2</sup>C bus.
+    ///   to the I²C bus.
     /// - `len`: the number of bytes to write from `buf`. This must be less than
     ///   or equal to [`buf.len()`].
     /// - `end`: whether or not to end the transaction. If this is `true`, a
@@ -480,13 +480,13 @@ impl Transaction {
     ///
     /// # Errors
     ///
-    /// - If an error occurs performing the I<sup>2</sup>C bus transaction.
+    /// - If an error occurs performing the I²C bus transaction.
     /// - If `len` is greater  than [`buf.len()`].
     /// - If there is no [`I2cService`] running.
     ///
     /// # Cancelation Safety
     ///
-    /// If this future is dropped, the underlying I<sup>2</sup>C bus write
+    /// If this future is dropped, the underlying I²C bus write
     /// operation may still be performed.
     ///
     /// [`FixedVec`]: mnemos_alloc::containers::FixedVec
@@ -581,7 +581,7 @@ impl I2cError {
     /// [`embedded_hal_async::i2c::ErrorKind`].
     ///
     /// This method is intended to be used by implementations of the
-    /// [`I2cService`] when they encounter an error performing an I<sup>2</sup>C
+    /// [`I2cService`] when they encounter an error performing an I²C
     /// operation.
     #[must_use]
     pub fn new(addr: Addr, kind: i2c::ErrorKind, dir: OpKind) -> Self {
@@ -592,7 +592,7 @@ impl I2cError {
         }
     }
 
-    /// Returns whether this error occurred while performing an I<sup>2</sup>C
+    /// Returns whether this error occurred while performing an I²C
     /// [`read`](Transaction::read) or [`write`](Transaction::write) operation.
     #[inline]
     #[must_use]
