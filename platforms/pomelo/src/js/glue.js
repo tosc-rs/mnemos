@@ -67,14 +67,23 @@ export function init_term(command_callback) {
         term.writeln('\x1b[32mHello.\x1b[0m \x1b[36mWelcomelo, even.\x1b[0m');
         prompt(term);
 
+
+        term.history = [];
+        term.hist_pos = 0;
         term.onData(e => {
             switch (e) {
                 case '\u0003': // Ctrl+C
                     term.write('^C');
-                    prompt(term);
+                    term.prompt();
                     break;
                 case '\r': // Enter
                     runCommand(term, command);
+                    if (command.length > 0) {
+                        if (!(term.history.length > 0 && command == term.history[term.history.length - 1])) {
+                            term.history.push(command);
+                        }
+                    }
+                    term.hist_pos = term.history.length;
                     command = '';
                     break;
                 case '\u007F': // Backspace (DEL)
@@ -84,6 +93,29 @@ export function init_term(command_callback) {
                         if (command.length > 0) {
                             command = command.substr(0, command.length - 1);
                         }
+                    }
+                    break;
+                case '[A':
+                    if (term.hist_pos > 0) {
+                        for (let i = 0; i < command.length; i++) {
+                            term.write('\b \b');
+                        }
+                        term.hist_pos -= 1;
+                        command = term.history[term.hist_pos];
+                        term.write(command);
+                    }
+                    break;
+                case '[B':
+                    if (term.hist_pos < term.history.length) {
+                        for (let i = 0; i < command.length; i++) {
+                            term.write('\b \b');
+                        }
+                        term.hist_pos += 1;
+                        if (term.hist_pos < term.history.length) {
+                            command = term.history[term.hist_pos];
+                        }
+                        else { command = ''; }
+                        term.write(command);
                     }
                     break;
                 default: // Print all other characters for demo
@@ -105,19 +137,25 @@ export function init_term(command_callback) {
     var commands = {
         help: {
             f: (_args) => {
-                term.writeln('\n');
                 term.writeln([
+                    '',
+                    '',
                     'Try some of the commands below.',
                     '',
                     ...Object.keys(commands).map(e => `  ${e.padEnd(10)} ${commands[e].description}`)
                 ].join('\r\n'));
             },
             description: 'Prints this help message',
-            ser: (args) => { return 'Help' }
+        },
+        history: {
+            f: (_args) => {
+                term.writeln('');
+                term.writeln(term.history.join('\r\n'));
+            },
+            description: 'Prints command history',
         },
         echo: {
             f: (args) => {
-                // term.writeln(args.join('\r\n'));
                 command_callback({ 'Echo': args });
             },
             description: "Contender for world's most contorted echo implementation",
@@ -139,7 +177,7 @@ export function init_term(command_callback) {
     function runCommand(term, text) {
         text = text.trim();
         if (text == "open the pod bay doors") {
-            term.writeln('\r\n\r\nvery funny.');
+            term.writeln(['', '', 'very funny.'].join('\r\n'));
         } else {
             const space_idx = text.indexOf(' ');
             let command, args;
@@ -153,7 +191,7 @@ export function init_term(command_callback) {
                 if (command in commands) {
                     commands[command].f(args);
                 } else {
-                    term.writeln(`${command}: command not found`);
+                    term.writeln(['', `${command}: command not found`].join('\r\n'));
                 }
             }
         }
