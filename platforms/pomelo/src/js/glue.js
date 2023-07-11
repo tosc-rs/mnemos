@@ -132,7 +132,7 @@ export function init_term(command_callback) {
             f: (args) => {
                 command_callback({ 'Forth': args });
             },
-            description: 'Execute a bit of forth (SOON??)',
+            description: 'Execute a line of forth',
         }
     };
 
