@@ -74,7 +74,6 @@
 
 extern crate alloc;
 
-pub mod buf;
 pub mod comms;
 pub mod daemons;
 pub(crate) mod fmt;
