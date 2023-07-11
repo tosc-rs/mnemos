@@ -12,7 +12,29 @@
 //!
 //! Unlike SPI, this is a "real protocol", and not just a sort of shared
 //! hallucination about the meanings of certain wires. That means it has
-//! _rules_. Some of these rules are relevant to users of this module.
+//! _rules_. Some of these rules are relevant to users of this module. In
+//! particular:
+//!
+//! * I<sup>2</sup>C has a first-class notion of controller and target devices.
+//!   The bus has a single controller (formerly referred to as the "master"),
+//!   which initiates all bus operations. All other devices are targets
+//!   (formerly, insensitively referred to as "slaves"), which may only respond
+//!   to operations that target their address. The interfaces in this module
+//!   assume that the MnemOS kernel is running on the device acting as the bus
+//!   controller.
+//! * In order to communicate with a target device, the controller must first
+//!   send a `START` condition on the bus. When the controller has finished
+//!   communicating with that device, it will send a `STOP` condition. If the
+//!   controller completes a read or write operation and wishes to perform
+//!   additional read or write operations with the same device, it may instead
+//!   send a repeated `START` condition. Therefore, whether a bus operation
+//!   should end with a `STOP` or with a `START` depends on whether the user
+//!   intends to perform additional operations with that device as part of the
+//!   same transaction. The [`Transaction`] interface in this module allows the
+//!   user to indicate whether a read or write operation should end the bus
+//!   transaction. The [`embedded_hal_async::i2c::I2c`] trait also has an
+//!   [`I2c::transaction`] method, which may be used to perform multiple read
+//!   and write operations within the same transaction.
 //!
 //! ## Usage
 //!
@@ -38,6 +60,7 @@
 //!
 //! [RP2040 datasheet]: https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf
 //! [impl-i2c]: I2cClient#impl-I2c<u8>-for-I2cClient
+//! [`I2c::transaction`]: embedded_hal_async::i2c::I2c::transaction
 #![warn(missing_docs)]
 use self::messages::*;
 use crate::{
@@ -137,7 +160,7 @@ pub mod messages {
     /// This message is sent to the [`I2cService`] by a [`Transaction`] in order
     /// to perform an individual bus read or write as part of that transaction.
     pub struct Transfer {
-        /// A buffer to read bytes into (if `dir` is [`OpKind::Read`]), or write
+        /// A buffer to read bytes into (if [`dir`] is [`OpKind::Read`]), or write
         /// bytes from (if `dir` is [`OpKind::Write`]).
         ///
         /// If performing a write, this buffer is guaranteed to contain at least
@@ -150,10 +173,14 @@ pub mod messages {
         /// appending bytes to the end of this buffer until `len` bytes have
         /// been appended.
         ///
+        /// [`dir`]: #structfield.dir
+        /// [`len`]: #structfield.len
         /// [*capacity*]: mnemos_alloc::containers::FixedVec::capacity
         pub buf: FixedVec<u8>,
-        /// The number of bytes to read or write in this I<sup>2</sup>C bus
+        /// The number of bytes to read or write from [`buf`] in this I<sup>2</sup>C bus
         /// transfer.
+        ///
+        /// [`buf`]: #structfield.buf
         pub len: usize,
         /// If `true`, this transfer is the last transfer in the transaction.
         ///
@@ -171,16 +198,18 @@ pub mod messages {
         /// Sender for responses once the transfer has completed.
         ///
         /// Once the driver has completed the transfer, it is required to send
-        /// back the `buf` received in this `Transfer` message if the transfer
+        /// back the [`buf`] received in this `Transfer` message if the transfer
         /// completed successfully.
         ///
-        /// If the transfer was a read, then `buf` should contain the bytes read
+        /// If the transfer was a read, then [`buf`] should contain the bytes read
         /// from the I<sup>2</sup>C bus. If the transfer was a write, buf may
         /// contain any data, or be empty.
         ///
         /// If the transfer could not be completed successfully, then the driver
         /// must send an [`i2c::ErrorKind`] indicating the cause of the failure,
         /// instead.
+        ///
+        /// [`buf`]: #structfield.buf
         pub rsp: oneshot::Sender<Result<FixedVec<u8>, i2c::ErrorKind>>,
     }
 
@@ -226,6 +255,7 @@ enum ErrorKind {
 /// [`embedded_hal_async::i2c::I2c` implementation][impl-i2c].
 ///
 /// [impl-i2c]: I2cClient#impl-I2c<u8>-for-I2cClient
+/// [`I2c::transaction`]: embedded_hal::i2c::I2c::transaction
 #[must_use = "an `I2cClient` does nothing if it is not used to perform bus transactions"]
 pub struct I2cClient {
     handle: KernelHandle<I2cService>,
