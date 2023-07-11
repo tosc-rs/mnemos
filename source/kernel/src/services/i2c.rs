@@ -132,6 +132,7 @@ pub struct Transaction {
     addr: Addr,
     tx: KProducer<Transfer>,
     rsp_rx: Reusable<Result<FixedVec<u8>, i2c::ErrorKind>>,
+    ended: bool,
 }
 
 /// Errors returned by the [`I2cService`]
@@ -228,6 +229,7 @@ enum ErrorKind {
     I2c(i2c::ErrorKind),
     NoDriver,
     BufTooSmall { len: usize, buf: usize },
+    AlreadyEnded,
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -265,7 +267,8 @@ pub struct I2cClient {
 impl I2cClient {
     /// Obtain an `I2cClient`
     ///
-    /// If the [`I2cService`] hasn't been registered yet, we will retry until it has been
+    /// If the [`I2cService`] hasn't been registered yet, we will retry until it
+    /// has been registered.
     pub async fn from_registry(kernel: &'static Kernel) -> Self {
         loop {
             match I2cClient::from_registry_no_retry(kernel).await {
@@ -376,7 +379,12 @@ impl Transaction {
     ) -> (Self, KConsumer<Transfer>) {
         let (tx, rx) = KChannel::new_async(capacity).await.split();
         let rsp_rx = Reusable::new_async().await;
-        let txn = Transaction { addr, rsp_rx, tx };
+        let txn = Transaction {
+            addr,
+            rsp_rx,
+            tx,
+            ended: false,
+        };
         (txn, rx)
     }
 
@@ -477,6 +485,16 @@ impl Transaction {
         end: bool,
         dir: OpKind,
     ) -> Result<FixedVec<u8>, I2cError> {
+        if self.ended {
+            return Err(I2cError {
+                dir,
+                addr: self.addr,
+                kind: ErrorKind::AlreadyEnded,
+            });
+        } else {
+            self.ended = end;
+        }
+
         let rsp = self
             .rsp_rx
             .sender()
@@ -556,6 +574,24 @@ impl I2cError {
     pub fn operation(&self) -> OpKind {
         self.dir
     }
+
+    /// Returns `true` if this `I2cError` represents an invalid use of the
+    /// [`I2cClient`]/[`Transaction`] APIs.
+    ///
+    /// User errors include:
+    ///
+    /// - Attempting to read or write after performing a read or write operation
+    ///   with `end: true`, ending the transaction.
+    /// - Attempting to read or write with a buffer that is too small for the
+    ///   desired read/write operation.
+    #[must_use]
+    #[inline]
+    pub fn is_user_error(&self) -> bool {
+        matches!(
+            self.kind,
+            ErrorKind::BufTooSmall { .. } | ErrorKind::AlreadyEnded
+        )
+    }
 }
 
 impl Transaction {
@@ -595,17 +631,21 @@ impl fmt::Display for I2cError {
         };
         write!(f, "I2C error {verb} {addr:?}: ")?;
 
-        match (kind, dir) {
-            (ErrorKind::I2c(kind), _) => kind.fmt(f),
-            (ErrorKind::NoDriver, _) => "no driver task running".fmt(f),
-            (ErrorKind::BufTooSmall { len, buf }, OpKind::Read) => write!(
-                f,
-                "remaining buffer capacity ({buf}B) too small for desired read length ({len}B)"
-            ),
-            (ErrorKind::BufTooSmall { len, buf }, OpKind::Write) => write!(
-                f,
-                "input buffer does not contain enough bytes (found {buf}B, needed to write {len}B)",
-            ),
+        match kind {
+            ErrorKind::I2c(kind) => kind.fmt(f),
+            ErrorKind::NoDriver => "no driver task running".fmt(f),
+            ErrorKind::AlreadyEnded => {
+                "this transaction has already ended. start a new transaction.".fmt(f)
+            }
+            ErrorKind::BufTooSmall { len, buf } => match dir {
+                OpKind::Read => write!(
+                    f,
+                    "remaining buffer capacity ({buf}B) too small for desired read length ({len}B)"),
+                    OpKind::Write => write!(
+                        f,
+                        "input buffer does not contain enough bytes (found {buf}B, needed to write {len}B)",
+                    ),
+                },
         }
     }
 }
