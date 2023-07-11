@@ -110,7 +110,7 @@ enum TwiOp {
     Read {
         buf: FixedVec<u8>,
         len: usize,
-        read: usize,
+        amt: usize,
         end: bool,
     },
     None,
@@ -377,7 +377,7 @@ impl I2c0 {
                     TwiOp::Read {
                         buf,
                         len,
-                        read: 0,
+                        amt: 0,
                         end,
                     }
                 }
@@ -567,7 +567,7 @@ impl TwiData {
                 }
                 (State::WaitForData(addr), Status::RxDataAcked) | (State::WaitForData(addr), Status::RxDataNacked) => {
                     match &mut self.op {
-                        &mut TwiOp::Read { ref mut buf, len, ref mut read, end } => {
+                        &mut TwiOp::Read { ref mut buf, len, amt: ref mut read, end } => {
                             let data = twi.twi_data.read().data().bits();
                             buf.try_push(data).expect("read buf should have space for data");
                             *read += 1;
