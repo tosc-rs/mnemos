@@ -66,17 +66,24 @@
 //! that we must allocate when performing I²C operations. To
 //! reduce the amount of allocation necessary, all [`Transaction`] methods
 //! return the buffer that was passed in, allowing the buffer to be reused
-//! for multiple operations. To facilitate this, the [`Transaction::read`] and
-//! [`Transaction::write`] methods also take a `len` parameter indicating the
-//! actual number of bytes to write from the buffer/read into the buffer,
-//! rather than always writing the entire buffer contents or filling the
-//! entire buffer with bytes. This way, we can size the buffer to the
-//! largest buffer required for a sequence of operations, but perform
-//! smaller reads and writes using the same [`FixedVec`]`<u8>`, avoiding
-//! reallocations. The implementation of
-//! [`embedded_hal_async::i2c::I2c::transaction`] will allocate a single
-//! buffer large enough for the largest operation in the transaction, and
-//! reuse that buffer for every operation within the transaction.
+//! for multiple operations.
+//!
+//! To facilitate this, the [`Transaction::read`]  method also takes a
+//! `len` parameter indicating the actual number of bytes to read into
+//! the buffer, rather than always filling the  entire buffer with
+//! bytes. This way, we can size the buffer to the largest buffer
+//! required for a sequence of operations, but perform smaller reads and
+//! writes using the same [`FixedVec`]`<u8>`, avoiding reallocations.
+//! The implementation of [`embedded_hal_async::i2c::I2c::transaction`]
+//! will allocate a single buffer large enough for the largest operation
+//! in the transaction, and reuse that buffer for every operation within
+//! the transaction.
+//!
+//! Note that the [`Transaction::write`] method does *not* need to take a `len`
+//! parameter, and will always write all bytes currently in the buffer. The
+//! `len` parameter is only needed for [`Transaction::read`], because reads are
+//! limited by the buffer's *total capacity*, rather than the current length of
+//! the initialized portion.
 //!
 //! [RP2040 datasheet]: https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf
 //! [impl-i2c]: I2cClient#impl-I2c<u8>-for-I2cClient
@@ -253,7 +260,7 @@ pub mod messages {
 enum ErrorKind {
     I2c(i2c::ErrorKind),
     NoDriver,
-    BufTooSmall { len: usize, buf: usize },
+    ReadBufTooSmall { len: usize, cap: usize },
     AlreadyEnded,
 }
 
@@ -380,7 +387,7 @@ impl i2c::I2c<i2c::SevenBitAddress> for I2cClient {
                     let len = src.len();
                     buf.try_extend_from_slice(src)
                         .expect("we should have pre-allocated a large enough buffer!");
-                    let write = txn.write(buf, len, end).await?;
+                    let write = txn.write(buf, end).await?;
                     buf = write;
                 }
             }
@@ -460,28 +467,20 @@ impl Transaction {
         self.xfer(buf, len, end, OpKind::Read).await
     }
 
-    /// Write `len` bytes `buf` to the I²C.
+    /// Write bytes from `buf` to the I²C.
     ///
-    /// Note that, rather than always writing all the bytes in the buffer, this
-    /// method takes a `len` argument which specifies the number of bytes to
-    /// write. This is intended to allow callers to reuse the same [`FixedVec`]
-    /// for multiple [`read`](Self::read) and `write` operations.
     ///
     /// # Arguments
     ///
-    /// - `buf`: a [`FixedVec`] buffer containing at least `len` bytes to write
-    ///   to the I²C bus.
-    /// - `len`: the number of bytes to write from `buf`. This must be less than
-    ///   or equal to [`buf.len()`].
+    /// - `buf`: a [`FixedVec`] buffer containing the bytes to write to the I²C bus.
     /// - `end`: whether or not to end the transaction. If this is `true`, a
-    ///   `STOP` condition will be sent on the bus once `len` bytes have been
-    ///   written. If this is `false`, a repeated `START` condition will be sent on
-    ///   the bus once `len` bytes have been written.
+    ///   `STOP` condition will be sent on the bus once the entire buffer has
+    ///   been sent. If this is `false`, a repeated `START` condition will be
+    ///   sent on the bus once the entire buffer has been written.
     ///
     /// # Errors
     ///
     /// - If an error occurs performing the I²C bus transaction.
-    /// - If `len` is greater  than [`buf.len()`].
     /// - If there is no [`I2cService`] running.
     ///
     /// # Cancelation Safety
@@ -491,15 +490,8 @@ impl Transaction {
     ///
     /// [`FixedVec`]: mnemos_alloc::containers::FixedVec
     /// [`buf.len()`]: mnemos_alloc::containers::FixedVec::len
-    pub async fn write(
-        &mut self,
-        buf: FixedVec<u8>,
-        len: usize,
-        end: bool,
-    ) -> Result<FixedVec<u8>, I2cError> {
-        if buf.len() < len {
-            return Err(self.buf_too_small(OpKind::Write, len, buf.len()));
-        }
+    pub async fn write(&mut self, buf: FixedVec<u8>, end: bool) -> Result<FixedVec<u8>, I2cError> {
+        let len = buf.len();
         self.xfer(buf, len, end, OpKind::Write).await
     }
 
@@ -614,7 +606,7 @@ impl I2cError {
     pub fn is_user_error(&self) -> bool {
         matches!(
             self.kind,
-            ErrorKind::BufTooSmall { .. } | ErrorKind::AlreadyEnded
+            ErrorKind::ReadBufTooSmall { .. } | ErrorKind::AlreadyEnded
         )
     }
 }
@@ -623,7 +615,7 @@ impl Transaction {
     fn buf_too_small(&self, dir: OpKind, len: usize, buf: usize) -> I2cError {
         I2cError {
             addr: self.addr,
-            kind: ErrorKind::BufTooSmall { len, buf },
+            kind: ErrorKind::ReadBufTooSmall { len, cap: buf },
             dir,
         }
     }
@@ -662,15 +654,10 @@ impl fmt::Display for I2cError {
             ErrorKind::AlreadyEnded => {
                 "this transaction has already ended. start a new transaction.".fmt(f)
             }
-            ErrorKind::BufTooSmall { len, buf } => match dir {
-                OpKind::Read => write!(
-                    f,
-                    "remaining buffer capacity ({buf}B) too small for desired read length ({len}B)"),
-                    OpKind::Write => write!(
-                        f,
-                        "input buffer does not contain enough bytes (found {buf}B, needed to write {len}B)",
-                    ),
-                },
+            ErrorKind::ReadBufTooSmall { len, cap } => write!(
+                f,
+                "remaining buffer capacity ({cap}B) too small for desired read length ({len}B)"
+            ),
         }
     }
 }
