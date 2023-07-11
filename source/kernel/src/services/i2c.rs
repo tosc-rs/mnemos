@@ -58,9 +58,30 @@
 //! these are necessary, the [`Transaction`] interface may be preferred over the
 //! [`embedded_hal_async`] interface.
 //!
+//! ### On Buffer Reuse
+//!
+//! Because of mnemOS' message-passing design, the [`I2cService`] operates
+//! with owned buffers, rather than borrowed buffers, so a [`FixedVec`]`<u8>` is
+//! used as the buffer type for both read and write operations. This means
+//! that we must allocate when performing I<sup>2</sup>C operations. To
+//! reduce the amount of allocation necessary, all [`Transaction`] methods
+//! return the buffer that was passed in, allowing the buffer to be reused
+//! for multiple operations. To facilitate this, the [`Transaction::read`] and
+//! [`Transaction::write`] methods also take a `len` parameter indicating the
+//! actual number of bytes to write from the buffer/read into the buffer,
+//! rather than always writing the entire buffer contents or filling the
+//! entire buffer with bytes. This way, we can size the buffer to the
+//! largest buffer required for a sequence of operations, but perform
+//! smaller reads and writes using the same [`FixedVec`]`<u8>`, avoiding
+//! reallocations. The implementation of
+//! [`embedded_hal_async::i2c::I2c::transaction`] will allocate a single
+//! buffer large enough for the largest operation in the transaction, and
+//! reuse that buffer for every operation within the transaction.
+//!
 //! [RP2040 datasheet]: https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf
 //! [impl-i2c]: I2cClient#impl-I2c<u8>-for-I2cClient
 //! [`I2c::transaction`]: embedded_hal_async::i2c::I2c::transaction
+//! [`FixedVec`]: mnemos_alloc::containers::FixedVec
 #![warn(missing_docs)]
 use self::messages::*;
 use crate::{
@@ -261,7 +282,7 @@ enum ErrorKind {
 /// [`embedded_hal_async::i2c::I2c` implementation][impl-i2c].
 ///
 /// [impl-i2c]: I2cClient#impl-I2c<u8>-for-I2cClient
-/// [`I2c::transaction`]: embedded_hal::i2c::I2c::transaction
+/// [`I2c::transaction`]: embedded_hal_async::i2c::I2c::transaction
 #[must_use = "an `I2cClient` does nothing if it is not used to perform bus transactions"]
 pub struct I2cClient {
     handle: KernelHandle<I2cService>,

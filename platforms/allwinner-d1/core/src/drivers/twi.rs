@@ -1,5 +1,48 @@
 //! Drivers for the Allwinner D1's I<sup>2</sup>C/TWI peripherals.
 //!
+//! This module contains an implementation of a driver for controlling the
+//! I<sup>2</sup>C hardware on the D1, which the D1 manual calls a TWI
+//! (Two-Wire Interface), likely due to I<sup>2</sup>C being a trademark of
+//! Phillips Semiconductor. The [`TwiI2c0`] type in this module implements the
+//! [`I2cService`] trait using the TWI hardware mapped to the `I2C0` pins on the
+//! board's 40-pin Raspberry Pi header.
+//!
+//! The D1 has four separate TWI controllers, [`TWI0`], [`TWI1`], [`TWI2`], and
+//! [`TWI3`]. The pin mapping for the 40-pin Pi header `I2C0` pins differs
+//! between the MangoPi MQ Pro and the Lichee RV Dock. On the MQ Pro, [`TWI0`]
+//! is used, with `SCL` on pin `PG12` and `SDA` on pin `PG13`. On the Lichee
+//! RV Dock, [`TWI2`] is used instead, with `SCL` on pin `PB0` and `SDA` on
+//! pin `PB1`. Separate constructors for the [`TwiI2c0`] type,
+//! [`TwiI2c0::mq_pro`] and [`TwiI2c0::lichee_rv_dock`], are provided to
+//! configure the appropriate pins for each board.
+//!
+//! ## Implementation Notes
+//!
+//! The TWI hardware can be used in one of two modes: "TWI engine" mode, where
+//! individual bytes are written/read from the I<sup>2</sup>C bus in an
+//! interrupt handler, and "TWI driver" mode, where the TWI hardware can operate
+//! at the level of I<sup>2</sup>C register read/writes using a DMA buffer. This
+//! module currently only implements a driver for the "TWI engine" mode, since
+//! it can model all forms of I<sup>2</sup>C operations. In the future, we will
+//! likely want to opportunistically use the offload capabilities of the TWI
+//! driver when the I<sup>2</sup>C transaction has the correct shape for
+//! offloading, but this branch just implements the simpler TWI engine mode.
+//!
+//! The TWI hardware is a bit difficult to use correctly, so implementing this
+//! was a bit of a struggle. In particular, it turns out that the generation of
+//! I<sup>2</sup>C clock pulses occurs when the
+//! [`TWI_CNTR`](d1_pac::twi::TWI_CNTR) register, which controls the TWI, is
+//! written to.
+//!
+//! The driver works by sharing state between a driver task and an ISR, since
+//! the TWI engine mode is interrupt driven. The shared state is "locked" by
+//! disabling TWI interrupts temporarily while the driver task is writing to the
+//! shared state, and resuming interrupts when a write to the shared state
+//! completes. In theory, this driver is also safe for use on multi-core
+//! hardware, since a single daemon task is responsible for all the non-ISR
+//! writes to this shared state, but this doesn't actually matter, because the
+//! D1 is an inherently single-core CPU.
+//!
 //! I believe that the I<sup>2</sup>C controller used in the D1 is from the
 //! Marvell MV64xxx family, although I'm not sure which one in particular. Linux
 //! has a driver for this device, which can be found [here][linux-driver].
