@@ -70,6 +70,7 @@
 #![no_std]
 #![allow(clippy::missing_safety_doc)]
 #![feature(impl_trait_in_assoc_type)]
+#![feature(async_fn_in_trait)] // needed for `embedded-hal-async`
 
 extern crate alloc;
 
@@ -89,6 +90,7 @@ use abi::{
 };
 use comms::kchannel::KChannel;
 use core::{future::Future, ptr::NonNull};
+pub use embedded_hal_async;
 pub use maitake;
 use maitake::{
     scheduler::LocalScheduler,

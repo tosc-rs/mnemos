@@ -28,6 +28,7 @@ use self::{
     dmac::Dmac,
     drivers::{
         spim::{self, SpiSenderServer},
+        twi,
         uart::{D1Uart, Uart},
     },
     plic::{Plic, Priority},
@@ -40,6 +41,7 @@ pub struct D1 {
     pub plic: Plic,
     _uart: Uart,
     _spim: spim::Spim1,
+    i2c0_int: (Interrupt, fn()),
 }
 
 static COLLECTOR: trace::SerialCollector = trace::SerialCollector::new();
@@ -59,6 +61,7 @@ impl D1 {
         spim: spim::Spim1,
         dmac: Dmac,
         plic: Plic,
+        i2c0: twi::I2c0,
     ) -> Result<Self, ()> {
         let k_settings = KernelSettings {
             max_drivers: 16,
@@ -121,6 +124,18 @@ impl D1 {
         })
         .unwrap();
 
+        // Initialize the I2C0 TWI
+        let i2c0_int = i2c0.interrupt();
+        k.initialize(
+            async {
+                tracing::debug!("initializing I2C0 TWI...");
+                i2c0.register(k, 4).await.unwrap();
+                tracing::info!("I2C0 TWI initialized!");
+            }
+            .instrument(tracing::info_span!("I2C0")),
+        )
+        .unwrap();
+
         // Spawn a loopback port
         let loopback_settings = LoopbackSettings::default();
         k.initialize(loopback(k, loopback_settings)).unwrap();
@@ -138,6 +153,7 @@ impl D1 {
             _spim: spim,
             timers,
             plic,
+            i2c0_int,
         })
     }
 
@@ -192,6 +208,7 @@ impl D1 {
             plic,
             _uart,
             _spim,
+            i2c0_int: (i2c0_int, i2c0_isr),
         } = self;
 
         // Timer0 is used as a freewheeling rolling timer.
@@ -225,9 +242,11 @@ impl D1 {
             plic.register(Interrupt::TIMER1, Self::timer1_int);
             plic.register(Interrupt::DMAC_NS, Self::handle_dmac);
             plic.register(Interrupt::UART0, D1Uart::handle_uart0_int);
+            plic.register(i2c0_int, i2c0_isr);
 
             plic.activate(Interrupt::DMAC_NS, Priority::P1).unwrap();
             plic.activate(Interrupt::UART0, Priority::P1).unwrap();
+            plic.activate(i2c0_int, Priority::P1).unwrap();
         }
 
         timer0.start_counter(0xFFFF_FFFF);
@@ -278,8 +297,10 @@ impl D1 {
 
     /// DMAC ISR handler
     ///
-    /// At the moment, we only service the Channel 0 interrupt,
-    /// which indicates that the serial transmission is complete.
+    /// At the moment, we service the interrupts on the following channels:
+    /// * Channel 0: UART0 TX
+    /// * Channel 1: SPI1 TX
+    /// * Channel 2: TWI0 driver TX
     fn handle_dmac() {
         let dmac = unsafe { &*DMAC::PTR };
         dmac.dmac_irq_pend0.modify(|r, w| {

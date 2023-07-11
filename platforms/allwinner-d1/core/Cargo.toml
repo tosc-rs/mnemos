@@ -6,8 +6,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-riscv = "0.10"
 d1-pac = "0.0.31"
+critical-section = "1.1.1"
 
 # kernel
 [dependencies.mnemos]
@@ -24,3 +24,12 @@ default-features = false
 
 [dependencies.embedded-graphics]
 version = "0.7.1"
+
+[dependencies.futures]
+version = "0.3.21"
+features = ["async-await"]
+default-features = false
+
+[dependencies.riscv]
+version = "0.10"
+features =[ "critical-section-single-hart"]

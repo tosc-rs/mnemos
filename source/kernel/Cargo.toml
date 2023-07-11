@@ -103,6 +103,9 @@ features = ["experimental-derive"]
 [dependencies.embedded-graphics]
 version = "0.7.1"
 
+[dependencies.embedded-hal-async]
+version = "0.2.0-alpha.1"
+
 [dependencies.forth3]
 path = "../forth3"
 features = ["async"]
@@ -127,6 +130,11 @@ version = "0.6.1"
 
 [build-dependencies]
 vergen = { version = "8.0.0", features = ["cargo", "git", "gitcl", "rustc",] }
+
+[dev-dependencies.futures]
+version = "0.3.21"
+features = ["async-await", "executor"]
+default-features = false
 
 [features]
 default = ["tracing-01"]
