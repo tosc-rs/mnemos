@@ -25,11 +25,11 @@ use pomelo::{
 #[allow(unused_imports)]
 use tracing::{debug, error, info, trace, Instrument, Level};
 use tracing_subscriber::{
-    filter::{self, filter_fn},
+    filter::{self},
     prelude::*,
     Registry,
 };
-use tracing_wasm::{WASMLayer, WASMLayerConfig, WASMLayerConfigBuilder};
+use tracing_wasm::{WASMLayer, WASMLayerConfig};
 use wasm_bindgen::{closure::Closure, prelude::*};
 use wasm_bindgen_futures::spawn_local;
 
