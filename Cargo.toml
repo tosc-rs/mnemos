@@ -4,6 +4,7 @@ members = [
     # mnemOS source
     "source/kernel",
     "source/abi",
+    "source/beepy",
     "source/mstd",
     "source/spitebuf",
     "source/melpomene",
@@ -35,3 +36,7 @@ rev = "cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
 
 [patch.crates-io.mnemos-alloc]
 path = "./source/alloc"
+
+[patch.crates-io.bbq10kbd]
+git = "https://github.com/hawkw/bbq10kbd"
+branch = "eliza/async"
