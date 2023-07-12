@@ -96,13 +96,16 @@ export function init_term(command_callback) {
                     command = '';
                     break;
                 case '\u0009': // TAB
-                    for (const cmd_candidate in commands) {
-                        if (cmd_candidate.startsWith(command)) {
-                            const rest = cmd_candidate.replace(command, '');
-                            command += rest;
-                            term.write(rest);
+                    if (!term.forth_repl) {
+                        for (const cmd_candidate in commands) {
+                            if (cmd_candidate.startsWith(command)) {
+                                const rest = cmd_candidate.replace(command, '');
+                                command += rest;
+                                term.write(rest);
+                            }
                         }
                     }
+
                     break;
                 case '\u007F': // Backspace (DEL)
                     // Do not delete the prompt
