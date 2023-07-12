@@ -109,11 +109,7 @@ async fn process_stream(
             },
             inmsg = in_stream.next() => {
                 if let Some(inmsg) = inmsg {
-                    // Simulate an "interrupt", waking the kernel if it's waiting
-                    // an IRQ.
-                    trace!("IRQ");
-                    irq.send(()).await.expect("FATAL: pseudo irq failed");
-                    trace!("/IRQ");
+
                     // TODO we can do better than single bytes
                     // TODO aka: use Sink::send_all somehow
                     let used = 1;
@@ -121,6 +117,12 @@ async fn process_stream(
                     in_grant[0] = inmsg;
                     debug!(len = used, "Got incoming message",);
                     in_grant.commit(used);
+
+                    // Simulate an "interrupt", waking the kernel if it's waiting
+                    // an IRQ.
+                    trace!("IRQ");
+                    irq.send(()).await.expect("FATAL: pseudo irq failed");
+                    trace!("/IRQ");
                 }
 
             }
