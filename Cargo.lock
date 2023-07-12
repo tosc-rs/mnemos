@@ -232,9 +232,10 @@ checksum = "604178f6c5c21f02dc555784810edfb88d34ac2c73b2eae109655649ee73ce3d"
 [[package]]
 name = "bbq10kbd"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/bbq10kbd?branch=eliza/async#d15af9646c762ca213d35731335e06abec0d5090"
+source = "git+https://github.com/hawkw/bbq10kbd?branch=eliza/async#520e42ebf81c442d2c2ab53d97cee2d20ade47a8"
 dependencies = [
  "embedded-hal 0.2.7",
+ "embedded-hal-async",
 ]
 
 [[package]]
@@ -719,17 +720,17 @@ dependencies = [
 
 [[package]]
 name = "embedded-hal"
-version = "1.0.0-alpha.10"
+version = "1.0.0-alpha.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f65c4d073f5d91c66e629b216818a4c9747eeda0debedf2deda9a0a947e4e93b"
+checksum = "f7724ebabcadfeb15920571dd727bc8ccde8586e52f2890bdb8182fdf42c3ff2"
 
 [[package]]
 name = "embedded-hal-async"
-version = "0.2.0-alpha.1"
+version = "0.2.0-alpha.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8042370aa7af48de36d5312cda14c18ed8ca6b7ce64f5a07832fedc9dc83063f"
+checksum = "918285ec7b18edb024d4adc64f6f16cdc7c4d72eadfc85c3313d1e0ff40e0229"
 dependencies = [
- "embedded-hal 1.0.0-alpha.10",
+ "embedded-hal 1.0.0-alpha.11",
 ]
 
 [[package]]
@@ -1605,6 +1606,7 @@ version = "0.1.0"
 dependencies = [
  "bbq10kbd",
  "mnemos",
+ "tracing 0.2.0",
  "uuid 1.3.4",
 ]
 

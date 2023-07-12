@@ -56,6 +56,9 @@ git = "https://github.com/tokio-rs/tracing"
 features = ["attributes"]
 default-features = false
 
+[dependencies.mnemos-beepy]
+path = "../../beepy"
+
 ### patches ###
 
 [patch.crates-io.maitake]
@@ -72,3 +75,8 @@ rev = "cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
 
 [patch.crates-io.mnemos-alloc]
 path = "../../../source/alloc"
+
+
+[patch.crates-io.bbq10kbd]
+git = "https://github.com/hawkw/bbq10kbd"
+branch = "eliza/async"

@@ -6,13 +6,22 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies.mnemos]
-path = "../kernel"
+path = "../../source/kernel"
 default-features = false
+features = ["tracing-02"]
 
 [dependencies.bbq10kbd]
 version = "0.1.0"
+features = ["embedded-hal-async"]
 
 [dependencies.uuid]
 version = "1.1.2"
 default-features = false
 features = ["serde"]
+
+# tracing 0.2
+[dependencies.tracing]
+git = "https://github.com/tokio-rs/tracing"
+# branch = "master"
+features = ["attributes"]
+default-features = false

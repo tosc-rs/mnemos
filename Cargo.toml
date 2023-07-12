@@ -4,7 +4,6 @@ members = [
     # mnemOS source
     "source/kernel",
     "source/abi",
-    "source/beepy",
     "source/mstd",
     "source/spitebuf",
     "source/melpomene",
@@ -20,6 +19,7 @@ members = [
 
     # platforms
     "platforms/allwinner-d1/core",
+    "platforms/beepy",
 ]
 
 [patch.crates-io.maitake]

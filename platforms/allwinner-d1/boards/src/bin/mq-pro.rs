@@ -11,6 +11,7 @@ use mnemos_d1_core::{
     timer::Timers,
     Ram, D1,
 };
+use mnemos_beepy::i2c_puppet::{self, I2cPuppetClient, I2cPuppetServer};
 
 const HEAP_SIZE: usize = 384 * 1024 * 1024;
 
@@ -62,8 +63,26 @@ fn main() -> ! {
         })
         .unwrap();
 
-    // Initialize Beepy peripherals.
-    mnemos_d1::beepy::initialize(&d1);
+    // d1.initialize_sharp_display();
+    let i2c_puppet_up = d1.kernel.initialize(async move {
+        d1.kernel.sleep(Duration::from_secs(2)).await;
+        I2cPuppetServer::register(d1.kernel, Default::default()).await.expect("failed to register i2c_puppet driver!");
+    }).unwrap();
+
+    d1.kernel.initialize({
+        let k = d1.kernel;
+        async move {
+            use i2c_puppet::I2cPuppetClient;
+            i2c_puppet_up.await.unwrap();
+            let mut i2c_puppet = I2cPuppetClient::from_registry(k).await;
+            tracing::info!("got i2c puppet client");
+            let mut keys = i2c_puppet.subscribe_to_keys().await.expect("can't get keys");
+            tracing::info!("got key subscription");
+            while let Ok((status, key)) = keys.next_raw().await {
+                tracing::info!(?status, ?key, "got keypress");
+            }
+        }
+    }).unwrap();
 
     d1.run()
 }
