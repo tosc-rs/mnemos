@@ -9,7 +9,7 @@ pub fn send(port: u16, data: &[u8]) {
     let mut buf = vec![0; required_size];
     match chunk.encode_to(&mut buf) {
         Ok(ser) => {
-            debug!("sermux: sending on {port}");
+            debug!("sermux: sending on {port} {ser:?}");
             let mut tx = SERMUX_TX.get().expect("sermux unavailable, bruh").clone();
             for byte in ser {
                 if let Err(e) = tx.try_send(*byte) {
