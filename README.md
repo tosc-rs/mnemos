@@ -33,7 +33,7 @@ The project layout contains the following folders:
 * [`assets/`] - images and files used for READMEs and other documentation
 * [`book/`] - This is the source of "the mnemOS book"
 * [`source/`] - This folder contains the source code of the cross-platform kernel, userspace, simulator, and related libraries
-* [`platforms/`] - This kernel contains code specific to each targeted hardware platform
+* [`platforms/`] - This folder contains code specific to each targeted hardware platform
 * [`tools/`] - This folder contains desktop tools used for working with MnemOS
 
 [`assets/`]: ./assets/
