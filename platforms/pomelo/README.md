@@ -65,12 +65,13 @@ $ **********ok.
 
 [trunk](https://trunkrs.dev/#install) is a prerequisite. It can be used to build a version suitable for static hosting, or run a hot-reloading local development server.
 
-- tracing messages are sent to the browser's debug console.
 
 ## Local development server
 
 ```shell
 $ trunk serve
+# (...)
+INFO 📡 server listening at http://127.0.0.1:8080
 ```
 
 ## Static build
@@ -88,6 +89,7 @@ $ trunk build --release --public-url='/my/webroot/'
 
 - The [tracing-wasm](https://crates.io/crates/tracing-wasm) supports performance tracing, which at the moment seems to be supported only by Chrome.
 
+- tracing messages are sent to the browser's debug console.
 
 
 ## Licensing
