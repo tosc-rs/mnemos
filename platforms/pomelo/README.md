@@ -87,7 +87,7 @@ $ trunk build --release --public-url='/my/webroot/'
 
 - Commands are defined in `src/js/glue.js`. Some (like the REPL mode, or `help`) are handled entirely in JS, others that actually talk to the OS are dispatched as JavaScript objects and deserialized into `term_iface::Command`s.
 
-- The [tracing-wasm](https://crates.io/crates/tracing-wasm) supports performance tracing, which at the moment seems to be supported only by Chrome.
+- The [tracing-wasm](https://crates.io/crates/tracing-wasm) crate supports performance tracing, which at the moment seems to be supported only by Chrome.
 
 - tracing messages are sent to the browser's debug console.
 
