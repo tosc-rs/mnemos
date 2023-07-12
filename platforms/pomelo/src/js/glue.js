@@ -197,7 +197,7 @@ export function init_term(command_callback) {
                     term.write('\r\nF ');
                 };
             },
-            description: 'forth REPL',
+            description: 'Interactive forth (REPL) - exit with Ctrl-C',
         }
     };
 
