@@ -95,6 +95,15 @@ export function init_term(command_callback) {
                     term.hist_pos = term.history.length;
                     command = '';
                     break;
+                case '\u0009': // TAB
+                    for (const cmd_candidate in commands) {
+                        if (cmd_candidate.startsWith(command)) {
+                            const rest = cmd_candidate.replace(command, '');
+                            command += rest;
+                            term.write(rest);
+                        }
+                    }
+                    break;
                 case '\u007F': // Backspace (DEL)
                     // Do not delete the prompt
                     if (term._core.buffer.x > 2) {
@@ -104,7 +113,7 @@ export function init_term(command_callback) {
                         }
                     }
                     break;
-                case '\u001b[A':
+                case '\u001b[A': // Cursor up
                     if (term.hist_pos > 0) {
                         for (let i = 0; i < command.length; i++) {
                             term.write('\b \b');
@@ -114,7 +123,7 @@ export function init_term(command_callback) {
                         term.write(command);
                     }
                     break;
-                case '\u001b[B':
+                case '\u001b[B': // Cursor down
                     if (term.hist_pos < term.history.length) {
                         for (let i = 0; i < command.length; i++) {
                             term.write('\b \b');
