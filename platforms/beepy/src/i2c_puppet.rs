@@ -149,14 +149,21 @@ impl I2cPuppetServer {
         let (tx, rx) = KChannel::new_async(settings.channel_capacity).await.split();
         let mut i2c = I2cClient::from_registry(kernel).await;
         let subscriptions = FixedVec::new(settings.max_subscriptions).await;
-        // // first, make sure we can get the version...
-        // {
-        //     let Version { major, minor } = AsyncBbq10Kbd::new(&mut i2c)
-        //         .get_version()
-        //         .await
-        //         .map_err(RegistrationError::NoI2cPuppet)?;
-        //     tracing::info!("i2c_puppet firmware version: v{major}.{minor}");
-        // }
+        {
+            // first, make sure we can get the version...
+            let mut kbd = AsyncBbq10Kbd::new(&mut i2c);
+            let Version { major, minor } = kbd
+                .get_version()
+                .await
+                .map_err(RegistrationError::NoI2cPuppet)?;
+            tracing::info!("i2c_puppet firmware version: v{major}.{minor}");
+            // // and then, reset i2c_puppet
+            // kbd.sw_reset()
+            //     .await
+            //     .map_err(RegistrationError::NoI2cPuppet)?;
+            // kernel.timer().sleep(Duration::from_millis(20)).await;
+            // tracing::info!("i2c_puppet reset");
+        }
         let this = Self {
             settings,
             rx,
@@ -186,13 +193,11 @@ impl I2cPuppetServer {
         loop {
             // XXX(eliza): this Sucks and we should instead get i2c_puppet to send
             // us an interrupt...
-            tracing::info!("poll loop...");
             if let Ok(dq) = kernel
                 .timer()
                 .timeout(self.settings.poll_interval, self.rx.dequeue_async())
                 .await
             {
-                tracing::info!("got req");
                 let registry::Message { msg, reply } = match dq {
                     Ok(msg) => msg,
                     Err(_) => return Ok(()),
@@ -222,12 +227,10 @@ impl I2cPuppetServer {
                     }
                     req => todo!("eliza: {req:?}"),
                 }
-            } else {
-                tracing::info!("poll interval elapsed");
             }
 
             if !self.subscriptions.is_empty() {
-                tracing::info!("polling keys...");
+                tracing::trace!("polling keys...");
                 self.poll_keys().await?;
             }
         }
@@ -235,13 +238,15 @@ impl I2cPuppetServer {
 
     async fn poll_keys(&mut self) -> Result<(), I2cError> {
         let mut kbd = AsyncBbq10Kbd::new(&mut self.i2c);
-        let status = kbd.get_key_status().await?;
-        let cap = match status.fifo_count {
-            FifoCount::Known(cap) => cap,
-            FifoCount::EmptyOr32 => 32,
-        };
 
-        for _ in 0..cap {
+        loop {
+            let status = kbd.get_key_status().await?;
+            trace::info!(?status);
+            match status.fifo_count {
+                FifoCount::Known(0) => break,
+                FifoCount::EmptyOr32 => break,
+                _ => {}
+            };
             let key = kbd.get_fifo_key_raw().await?;
             // TODO(eliza): remove dead subscriptions...
             for sub in self.subscriptions.as_slice_mut() {
@@ -249,6 +254,7 @@ impl I2cPuppetServer {
                     trace::warn!(?error, "subscription dropped...");
                 }
             }
+            trace::info!("loop...")
         }
 
         Ok(())
