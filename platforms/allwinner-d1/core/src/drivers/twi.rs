@@ -303,7 +303,6 @@ impl I2c0 {
         // TWI_XADDR registers to finish TWI initialization configuration
         twi.twi_cntr.write(|w| {
             w.bus_en().respond();
-            w.a_ack().set_bit();
             w.m_stp().set_bit();
             w
         });
@@ -461,7 +460,6 @@ impl TwiDataGuard<'_> {
                 // these now, atomically, avoids weird cases where we send a
                 // START for some random address, as far as i can tell.
                 w.m_sta().set_bit();
-                w.a_ack().set_bit();
                 w.int_en().high();
                 w.bus_en().respond();
                 w
@@ -550,10 +548,14 @@ impl TwiData {
                 {
                     match self.op {
                         TwiOp::Read { len, .. } => {
-                            // if we are reading a single byte, clear the A_ACK
-                            // flag so that we don't ACK the byte.
                             if len == 1 {
+                                // if we are reading a single byte, clear the A_ACK
+                                // flag so that we don't ACK the byte.
                                 cntr_w.a_ack().clear_bit();
+                            } else {
+                                // otherwise, we'll want to ACK all but the
+                                // final byte.
+                                cntr_w.a_ack().set_bit();
                             }
                             State::WaitForData(Addr::SevenBit(addr))
                         }
@@ -579,9 +581,16 @@ impl TwiData {
                                 remaining,
                                 "TWI{num} read data",
                             );
-                            if remaining < 1 {
+
+                            if remaining <= 1 {
+                                // We have one byte left to read, so stop ACKing.
                                 cntr_w.a_ack().clear_bit();
+                            } else {
+                                // We have more than one byte remaining, so
+                                // continue ACKing.
+                                cntr_w.a_ack().set_bit();
                             }
+
                             if remaining > 0 {
                                 State::WaitForData(addr)
                             } else {
