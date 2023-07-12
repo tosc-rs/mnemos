@@ -1,6 +1,0 @@
-# this sadly breaks `cargo-run-wasm`
-#[build]
-#target = "wasm32-unknown-unknown"
-
-[alias]
-run-wasm-sim = "run --release --package run-wasm -- --package pomelo"

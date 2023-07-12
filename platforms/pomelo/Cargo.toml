@@ -3,14 +3,8 @@ name = "pomelo"
 version = "0.1.0"
 edition = "2021"
 
-[workspace]
-resolver = "2"
-members = [".", "run-wasm"]
-
 [dependencies]
 chrono = { version = "0.4.26", features = ["wasmbind"] }
-embedded-graphics = "0.7"
-embedded-graphics-web-simulator = "0.3"
 humantime = "2"
 postcard = "1"
 wasm-bindgen = "0.2.87"
@@ -72,7 +66,6 @@ features = ["futures-channel"]
 [dependencies.wasm-bindgen-futures]
 version = "0.4.37"
 
-#needed?
 [dependencies.async-std]
 version = "1.12.0"
 features = ["unstable"]
