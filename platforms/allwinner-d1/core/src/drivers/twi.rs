@@ -352,7 +352,6 @@ impl I2c0 {
         // reset the TWI engine.
         guard.twi.twi_srst.write(|w| w.soft_rst().set_bit());
         guard.twi.twi_efr.reset();
-        guard.twi.twi_data.reset();
 
         let mut started = false;
         while let Ok(Transfer {
