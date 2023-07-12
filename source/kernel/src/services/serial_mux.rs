@@ -8,6 +8,7 @@
 
 use core::time::Duration;
 
+use crate::comms::bbq::GrantR;
 use crate::tracing::{debug, warn};
 use crate::{
     comms::{
@@ -341,72 +342,233 @@ impl CommanderTask {
 impl IncomingMuxerTask {
     async fn run(mut self) {
         loop {
-            let mut rgr = self.incoming.read_grant().await;
-            let mut used = 0;
-            for ch in rgr.split_inclusive_mut(|&num| num == 0) {
-                used += ch.len();
+            let rgr = self.incoming.read_grant().await;
 
-                if ch.last() != Some(&0) {
-                    // This is the last chunk, and it doesn't end with a zero.
-                    // just add it to the accumulator, if we can.
-                    if self.buf.try_extend_from_slice(ch).is_err() {
-                        warn!("Overfilled accumulator");
-                        self.buf.clear();
-                    }
+            // No data, no worries
+            if !take_from_grant(&mut self.buf, rgr) {
+                continue;
+            }
 
-                    // Either we overfilled, or this was the last data. Move on.
+            //////////////////////////////////////////////////////////////////
+            // No early returns/continues until the jerb is done unless you
+            // clear the buffer!
+            //
+            let (port_id, datab) = match try_decode(self.buf.as_slice_mut()) {
+                Some(a) => a,
+                None => {
+                    // Nothing decoded, which means decoding has failed.
+                    self.buf.clear();
                     continue;
                 }
+            };
 
-                // Okay, we know that we have a zero terminated item. Do we have anything residual?
-                let buf = if self.buf.as_slice().is_empty() {
-                    // Yes, no pending data, just use the current chunk
-                    ch
+            // Great, now we have a message! Let's see if we have someone listening to this port
+            let mux = self.mux.lock().await;
+            if let Some(port) = mux.ports.as_slice().iter().find(|p| p.port == port_id) {
+                if let Some(mut wgr) = port.upstream.send_grant_exact_sync(datab.len()) {
+                    wgr.copy_from_slice(datab);
+                    wgr.commit(datab.len());
+                    debug!(port_id, len = datab.len(), "Sent bytes to port");
                 } else {
-                    // We have residual data, we need to copy the chunk to the end of the buffer
-                    if self.buf.try_extend_from_slice(ch).is_err() {
-                        warn!("Overfilled accumulator");
-                        self.buf.clear();
-                        continue;
-                    }
-
-                    self.buf.as_slice_mut()
-                };
-
-                // Great! Now decode the cobs message in place.
-                let used = match cobs::decode_in_place(buf) {
-                    Ok(u) if u < 3 => {
-                        warn!("Cobs decode too short!");
-                        continue;
-                    }
-                    Ok(u) => u,
-                    Err(_) => {
-                        warn!("Cobs decode failed!");
-                        continue;
-                    }
-                };
-
-                let mut port = [0u8; 2];
-                let (portb, datab) = buf[..used].split_at(2);
-                port.copy_from_slice(portb);
-                let port_id = u16::from_le_bytes(port);
-
-                // Great, now we have a message! Let's see if we have someone listening to this port
-                let mux = self.mux.lock().await;
-                if let Some(port) = mux.ports.as_slice().iter().find(|p| p.port == port_id) {
-                    if let Some(mut wgr) = port.upstream.send_grant_exact_sync(datab.len()) {
-                        wgr.copy_from_slice(datab);
-                        wgr.commit(datab.len());
-                        debug!(port_id, len = datab.len(), "Sent bytes to port");
-                    } else {
-                        warn!(port_id, len = datab.len(), "Discarded bytes, full buffer");
-                    }
-                } else {
-                    warn!(port_id, len = datab.len(), "Discarded bytes, no consumer");
+                    warn!(port_id, len = datab.len(), "Discarded bytes, full buffer");
                 }
+            } else {
+                warn!(port_id, len = datab.len(), "Discarded bytes, no consumer");
             }
-            rgr.release(used);
-            debug!(used, "processed incoming bytes");
+
+            // Now we clear the buffer
+            self.buf.clear();
+            //
+            // jerb done!
+            //////////////////////////////////////////////////////////////////
         }
+    }
+}
+
+/// Takes data from the grant
+///
+/// Returns true if the buffer is now ready for decoding
+/// Returns false if more data is needed
+///
+/// If the grant has been overfilled, the buffer will be cleared.
+fn take_from_grant(buffer: &mut FixedVec<u8>, grant: GrantR) -> bool {
+    let mut try_decode = false;
+
+    // How many bytes should we try to take?
+    let to_use = match grant.iter().position(|&v| v == 0) {
+        Some(idx) => {
+            try_decode = true;
+            &grant[..idx + 1]
+        }
+        None => &grant,
+    };
+
+    // Okay, add those to the buffer
+    if buffer.try_extend_from_slice(to_use).is_err() {
+        warn!("Overfilled accumulator");
+        buffer.clear();
+        try_decode = false;
+    }
+
+    // Now we can release the grant
+    let used = to_use.len();
+    grant.release(used);
+    debug!(used, "consumed incoming bytes");
+
+    try_decode
+}
+
+/// Tries to decode a port and message from the given buffer
+///
+/// Either way, you should probably clear the buffer when you are done.
+fn try_decode<'a>(buffer: &'a mut [u8]) -> Option<(u16, &'a [u8])> {
+    let used = match cobs::decode_in_place(buffer) {
+        Ok(u) if u < 3 => {
+            warn!("Cobs decode too short!");
+            return None;
+        }
+        Ok(u) => u,
+        Err(_) => {
+            warn!("Cobs decode failed!");
+            return None;
+        }
+    };
+
+    let total = buffer.get(..used)?;
+
+    let mut port = [0u8; 2];
+    let (portb, datab) = total.split_at(2);
+    port.copy_from_slice(portb);
+    let port_id = u16::from_le_bytes(port);
+
+    Some((port_id, datab))
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+    use crate::comms::bbq::{Consumer, SpscProducer};
+    use core::ops::Deref;
+
+    struct Stuff {
+        prod: SpscProducer,
+        cons: Consumer,
+        buffer: FixedVec<u8>,
+    }
+
+    impl Stuff {
+        fn setup() -> Self {
+            let (prod, cons) =
+                futures::executor::block_on(async { bbq::new_spsc_channel(128).await });
+            let buffer = futures::executor::block_on(async { FixedVec::<u8>::new(64).await });
+            Stuff { prod, cons, buffer }
+        }
+
+        fn send(&self, data: &[u8]) {
+            let mut wgr = self.prod.send_grant_exact_sync(data.len()).unwrap();
+            wgr.copy_from_slice(data);
+            wgr.commit(data.len());
+        }
+
+        fn read(&self) -> GrantR {
+            self.cons.read_grant_sync().unwrap()
+        }
+
+        fn clear(&mut self) {
+            self.buffer.clear();
+        }
+    }
+
+    /// Make sure we can decode messages
+    #[test]
+    fn simple_decode() {
+        const MESSAGE: &[u8] = &[0x01, 0x01, 0x02, b'!', 0x00];
+        let mut ctxt = Stuff::setup();
+        ctxt.send(MESSAGE);
+
+        let rgr = ctxt.read();
+
+        assert!(take_from_grant(&mut ctxt.buffer, rgr));
+        assert_eq!(ctxt.buffer.as_slice(), MESSAGE);
+        let (port_id, data) = try_decode(ctxt.buffer.as_slice_mut()).unwrap();
+        assert_eq!(port_id, 0);
+        assert_eq!(data, b"!");
+    }
+
+    /// Make sure we successfully report empty messages as failed
+    #[test]
+    fn empty_message() {
+        const MESSAGE: &[u8] = &[0x01, 0x01, 0x01, 0x00];
+        let mut ctxt = Stuff::setup();
+        ctxt.send(MESSAGE);
+
+        let rgr = ctxt.read();
+
+        assert!(take_from_grant(&mut ctxt.buffer, rgr));
+        assert_eq!(ctxt.buffer.as_slice(), MESSAGE);
+        assert!(try_decode(ctxt.buffer.as_slice_mut()).is_none());
+    }
+
+    /// OVERfill the buffer, ensure we recover
+    #[test]
+    fn fillup() {
+        const MESSAGE_GOOD: &[u8] = &[0x01, 0x01, 0x02, b'!', 0x00];
+        const MESSAGE_BAD: &[u8] = &[0x01, 0x01, 0x02, b'!'];
+        let mut ctxt = Stuff::setup();
+
+        let times = ctxt.buffer.capacity() / MESSAGE_BAD.len();
+
+        // ALMOST fill up the buffer
+        for _ in 0..times {
+            ctxt.send(MESSAGE_BAD);
+            let rgr = ctxt.read();
+            assert!(!take_from_grant(&mut ctxt.buffer, rgr));
+            assert!(!ctxt.buffer.is_empty());
+        }
+
+        // oops overflow
+        ctxt.send(MESSAGE_BAD);
+        let rgr = ctxt.read();
+        assert!(!take_from_grant(&mut ctxt.buffer, rgr));
+        assert!(ctxt.buffer.is_empty());
+
+        // Good messages still work after recovery
+        ctxt.send(MESSAGE_GOOD);
+
+        let rgr = ctxt.read();
+
+        assert!(take_from_grant(&mut ctxt.buffer, rgr));
+        assert_eq!(ctxt.buffer.as_slice(), MESSAGE_GOOD);
+        let (port_id, data) = try_decode(ctxt.buffer.as_slice_mut()).unwrap();
+        assert_eq!(port_id, 0);
+        assert_eq!(data, b"!");
+    }
+
+    /// We only consume up to one message at a time
+    #[test]
+    fn partial_take() {
+        const MESSAGE: &[u8] = &[0x01, 0x01, 0x02, b'!', 0x00];
+        let mut ctxt = Stuff::setup();
+        ctxt.send(MESSAGE);
+        ctxt.send(MESSAGE);
+
+        let rgr = ctxt.read();
+
+        assert!(take_from_grant(&mut ctxt.buffer, rgr));
+        assert_eq!(ctxt.buffer.as_slice(), MESSAGE);
+        let (port_id, data) = try_decode(ctxt.buffer.as_slice_mut()).unwrap();
+        assert_eq!(port_id, 0);
+        assert_eq!(data, b"!");
+        ctxt.clear();
+
+        let rgr = ctxt.read();
+        assert_eq!(rgr.deref(), MESSAGE);
+
+        assert!(take_from_grant(&mut ctxt.buffer, rgr));
+        assert_eq!(ctxt.buffer.as_slice(), MESSAGE);
+        let (port_id, data) = try_decode(ctxt.buffer.as_slice_mut()).unwrap();
+        assert_eq!(port_id, 0);
+        assert_eq!(data, b"!");
+        ctxt.clear();
     }
 }

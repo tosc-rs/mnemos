@@ -130,6 +130,11 @@ version = "0.6.1"
 [build-dependencies]
 vergen = { version = "8.0.0", features = ["cargo", "git", "gitcl", "rustc",] }
 
+[dev-dependencies.futures]
+version = "0.3.21"
+features = ["async-await", "executor"]
+default-features = false
+
 [features]
 default = ["tracing-01"]
 tracing-02 = ["dep:tracing-02", "tracing-core-02", "tracing-serde-structured", "mnemos-trace-proto"]
