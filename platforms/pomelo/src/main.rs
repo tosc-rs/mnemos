@@ -78,16 +78,18 @@ async fn kernel_entry() {
     // Simulates the kernel main loop being woken by an IRQ.
     let (irq_tx, irq_rx) = mpsc::channel::<()>(4);
 
-    // Initialize the SerialMuxServer
+    // Initialize the virtual serial port mux
+    const SERIAL_FRAME_SIZE: usize = 512;
+    let (tx, rx) = mpsc::channel::<u8>(64);
+    SERMUX_TX.set(tx.clone()).unwrap();
     kernel
         .initialize({
             const PORTS: usize = 16;
-            const FRAME_SIZE: usize = 512;
             async {
                 // * Up to 16 virtual ports max
                 // * Framed messages up to 512 bytes max each
                 debug!("initializing SerialMuxServer...");
-                SerialMuxServer::register(kernel, PORTS, FRAME_SIZE)
+                SerialMuxServer::register(kernel, PORTS, SERIAL_FRAME_SIZE)
                     .await
                     .unwrap();
                 info!("SerialMuxServer initialized!");
@@ -95,15 +97,12 @@ async fn kernel_entry() {
             .instrument(tracing::info_span!(
                 "SerialMuxServer",
                 ports = PORTS,
-                frame_size = FRAME_SIZE
+                frame_size = SERIAL_FRAME_SIZE
             ))
         })
         .unwrap();
 
     // Initialize a loopback UART
-    let (tx, rx) = mpsc::channel::<u8>(64);
-    SERMUX_TX.set(tx.clone()).unwrap();
-
     kernel
         .initialize({
             async move {
@@ -111,7 +110,7 @@ async fn kernel_entry() {
                 Serial::register(
                     kernel,
                     256,
-                    256,
+                    SERIAL_FRAME_SIZE * 2, // *1 is not quite enough, required overhead to be +10 bytes for cobs + sermux
                     WellKnown::Loopback.into(),
                     irq_tx.clone(),
                     rx.into_stream(),
