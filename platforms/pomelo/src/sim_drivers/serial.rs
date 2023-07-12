@@ -121,7 +121,9 @@ async fn process_stream(
                     // Simulate an "interrupt", waking the kernel if it's waiting
                     // an IRQ.
                     trace!("IRQ");
-                    irq.send(()).await.expect("FATAL: pseudo irq failed");
+                    if let Err(e) = irq.send(()).await {
+                        warn!("pseudo irq failed: {e:?}");
+                    }
                     trace!("/IRQ");
                 }
 
