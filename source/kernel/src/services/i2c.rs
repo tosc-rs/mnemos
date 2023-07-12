@@ -376,6 +376,7 @@ impl i2c::I2c<i2c::SevenBitAddress> for I2cClient {
         for (n, op) in operations.iter_mut().enumerate() {
             buf.clear();
             let end = n == n_ops - 1;
+            crate::tracing::info!(n, n_ops, ?op, ?end);
             match op {
                 i2c::Operation::Read(dest) => {
                     let len = dest.len();

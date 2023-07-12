@@ -47,7 +47,7 @@ checksum = "f8fe8f5a8a398345e52358e18ff07cc17a568fbca5c6f73873d3a62056309603"
 [[package]]
 name = "bbq10kbd"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/bbq10kbd?branch=eliza/async#520e42ebf81c442d2c2ab53d97cee2d20ade47a8"
+source = "git+https://github.com/hawkw/bbq10kbd?branch=eliza/async#d2365be8726e9320b0e4ab626043c1a8a41246f8"
 dependencies = [
  "embedded-hal 0.2.7",
  "embedded-hal-async",

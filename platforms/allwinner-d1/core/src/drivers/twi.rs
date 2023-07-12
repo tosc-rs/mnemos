@@ -488,7 +488,7 @@ impl TwiData {
             }
         };
         let mut needs_wake = false;
-        tracing::debug!(?status, state = ?self.state, twi = num, "TWI{num} interrupt");
+        tracing::info!(?status, state = ?self.state, twi = num, "TWI{num} interrupt");
         twi.twi_cntr.modify(|_cntr_r, cntr_w| {
             self.state = match (self.state, status)  {
                 (State::Idle, _) => {
@@ -610,7 +610,7 @@ impl TwiData {
                                 // Send a repeated START for the read portion of
                                 // the transaction.
                                 if end {
-                                    tracing::trace!(twi = num, "TWI{num} send STOP");
+                                    tracing::info!(twi = num, "TWI{num} send STOP");
                                     cntr_w.m_stp().set_bit();
                                     State::Idle
                                 } else {
@@ -656,15 +656,17 @@ impl TwiData {
                     // until the driver can prepare the next phase of the transaction.
                     cntr_w.int_en().low();
                 }
+            } else {
+                // Writing back to the TWI_CNTR register *with the INT_FLAG bit
+                // high* clears the interrupt. the D1 user manual never explains
+                // this, but it's the same behavior as the DMAC interrupts, and the
+                // Linux driver for the Marvell family mv64xxx has a special flag
+                // which changes it to write back to TWI_CNTR with INT_FLAG set on
+                // Allwinner hardware.
+                cntr_w.int_flag().set_bit();
             }
 
-            // Writing back to the TWI_CNTR register *with the INT_FLAG bit
-            // high* clears the interrupt. the D1 user manual never explains
-            // this, but it's the same behavior as the DMAC interrupts, and the
-            // Linux driver for the Marvell family mv64xxx has a special flag
-            // which changes it to write back to TWI_CNTR with INT_FLAG set on
-            // Allwinner hardware.
-            cntr_w.int_flag().set_bit();
+
             cntr_w
         });
     }

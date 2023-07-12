@@ -6,6 +6,7 @@ use kernel::{
         kchannel::{KChannel, KConsumer, KProducer},
         oneshot::{self, Reusable},
     },
+    embedded_hal_async::i2c::{self, I2c},
     mnemos_alloc::containers::FixedVec,
     registry::{self, Envelope, KernelHandle, RegisteredDriver},
     services::i2c::{I2cClient, I2cError},
@@ -238,23 +239,22 @@ impl I2cPuppetServer {
 
     async fn poll_keys(&mut self) -> Result<(), I2cError> {
         let mut kbd = AsyncBbq10Kbd::new(&mut self.i2c);
-
-        loop {
-            let status = kbd.get_key_status().await?;
-            trace::info!(?status);
-            match status.fifo_count {
-                FifoCount::Known(0) => break,
-                FifoCount::EmptyOr32 => break,
-                _ => {}
-            };
+        let status = kbd.get_key_status().await?;
+        trace::info!(?status);
+        let n = match status.fifo_count {
+            FifoCount::EmptyOr32 => 32,
+            FifoCount::Known(n) => n,
+        };
+        for i in 0..n {
+            trace::info!(i, "reading key");
             let key = kbd.get_fifo_key_raw().await?;
+            trace::info!(?key);
             // TODO(eliza): remove dead subscriptions...
             for sub in self.subscriptions.as_slice_mut() {
                 if let Err(error) = sub.enqueue_async((status, key)).await {
                     trace::warn!(?error, "subscription dropped...");
                 }
             }
-            trace::info!("loop...")
         }
 
         Ok(())
