@@ -381,6 +381,30 @@ impl<T> FixedVec<T> {
         &mut self.inner
     }
 
+    /// Retains only the elements specified by the predicate.
+    ///
+    /// In other words, remove all elements `e` for which `f(&e)` returns `false`.
+    /// This method operates in place, visiting each element exactly once in the
+    /// original order, and preserves the order of the retained elements.
+    pub fn retain<F>(&mut self, f: F)
+    where
+        F: FnMut(&T) -> bool,
+    {
+        self.inner.retain(f)
+    }
+
+    /// Retains only the elements specified by the predicate, passing a mutable reference to it.
+    ///
+    /// In other words, remove all elements `e` such that `f(&mut e)` returns `false`.
+    /// This method operates in place, visiting each element exactly once in the
+    /// original order, and preserves the order of the retained elements.
+    pub fn retain_mut<F>(&mut self, f: F)
+    where
+        F: FnMut(&mut T) -> bool,
+    {
+        self.inner.retain_mut(f)
+    }
+
     /// Obtain a reference to the current contents
     #[inline]
     pub fn as_slice(&self) -> &[T] {
