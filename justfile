@@ -27,6 +27,8 @@ _d1_start_addr := "0x40000000"
 _d1_bin_path := "target/riscv64imac-unknown-none-elf"
 _d1_dir := "platforms/allwinner-d1/boards"
 
+_pomelo_dir := "platforms/pomelo"
+
 # arguments to pass to all RustDoc invocations
 _rustdoc := _cargo + " doc --no-deps --all-features"
 
@@ -44,6 +46,7 @@ check:
         --lib --bins --examples --tests --benches --all-features \
         {{ _fmt }}
     (cd {{ _d1_dir }}; {{ _cargo }} check --workspace {{ _fmt }})
+    cd {{ _pomelo_dir }}; {{ _cargo }} check {{ _fmt }}
 
 # test all packages, across workspaces
 test: (_get-nextest)
