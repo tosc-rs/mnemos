@@ -341,6 +341,9 @@ impl<T> FixedVec<T> {
 
     /// Removes the last element from a vector and returns it, or [`None`] if it
     /// is empty.
+    ///
+    /// This method is identical to the [`Vec::pop`](alloc::vec::Vec::pop)
+    /// method in `liballoc`.
     #[inline]
     pub fn pop(&mut self) -> Option<T> {
         self.inner.pop()
@@ -393,6 +396,9 @@ impl<T> FixedVec<T> {
     /// In other words, remove all elements `e` for which `f(&e)` returns `false`.
     /// This method operates in place, visiting each element exactly once in the
     /// original order, and preserves the order of the retained elements.
+    ///
+    /// This method is identical to the
+    /// [`Vec::retain`](alloc::vec::Vec::retain) method in `liballoc`.
     pub fn retain<F>(&mut self, f: F)
     where
         F: FnMut(&T) -> bool,
@@ -405,6 +411,9 @@ impl<T> FixedVec<T> {
     /// In other words, remove all elements `e` such that `f(&mut e)` returns `false`.
     /// This method operates in place, visiting each element exactly once in the
     /// original order, and preserves the order of the retained elements.
+    ///
+    /// This method is identical to the
+    /// [`Vec::retain_mut`](alloc::vec::Vec::retain_mut) method in `liballoc`.
     pub fn retain_mut<F>(&mut self, f: F)
     where
         F: FnMut(&mut T) -> bool,
@@ -425,6 +434,9 @@ impl<T> FixedVec<T> {
     }
 
     /// Clear the FixedVec
+    ///
+    /// This method is identical to the [`Vec::clear`](alloc::vec::Vec::clear)
+    /// method in `liballoc`.
     #[inline]
     pub fn clear(&mut self) {
         self.inner.clear();
@@ -452,6 +464,9 @@ impl<T> FixedVec<T> {
     }
 
     /// Returns the total capacity in this `FixedVec`.
+    ///
+    /// This method is identical to the
+    /// [`Vec::capacity`](alloc::vec::Vec::capacity) method in `liballoc`.
     #[inline]
     #[must_use]
     pub fn capacity(&self) -> usize {
