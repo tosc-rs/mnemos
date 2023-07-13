@@ -457,14 +457,11 @@ impl DisplayInfo {
 
     fn remove_frame(&mut self, frame_id: u16) -> Result<(), FrameError> {
         let mut found = false;
-        unsafe {
-            // safety: This only removes items, and will not cause a realloc
-            self.frames.as_vec_mut().retain(|fr| {
-                let matches = fr.frame == frame_id;
-                found |= matches;
-                !matches
-            });
-        }
+        self.frames.retain(|fr| {
+            let matches = fr.frame == frame_id;
+            found |= matches;
+            !matches
+        });
         if found {
             Ok(())
         } else {
