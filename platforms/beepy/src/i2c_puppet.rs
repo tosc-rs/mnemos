@@ -1,4 +1,4 @@
-use bbq10kbd::{AsyncBbq10Kbd, FifoCount};
+use bbq10kbd::{AsyncBbq10Kbd, CapsLockState, FifoCount};
 pub use bbq10kbd::{KeyRaw, KeyStatus, Version};
 use core::time::Duration;
 use kernel::{
@@ -239,16 +239,13 @@ impl I2cPuppetServer {
 
     async fn poll_keys(&mut self) -> Result<(), I2cError> {
         let mut kbd = AsyncBbq10Kbd::new(&mut self.i2c);
-        let status = kbd.get_key_status().await?;
-        trace::info!(?status);
-        let n = match status.fifo_count {
-            FifoCount::EmptyOr32 => 32,
-            FifoCount::Known(n) => n,
-        };
-        for i in 0..n {
-            trace::info!(i, "reading key");
+        loop {
+            let status = kbd.get_key_status().await?;
+            if let FifoCount::Known(0) = status.fifo_count {
+                break;
+            }
             let key = kbd.get_fifo_key_raw().await?;
-            trace::info!(?key);
+            trace::debug!(?key);
             // TODO(eliza): remove dead subscriptions...
             for sub in self.subscriptions.as_slice_mut() {
                 if let Err(error) = sub.enqueue_async((status, key)).await {
@@ -256,7 +253,6 @@ impl I2cPuppetServer {
                 }
             }
         }
-
         Ok(())
     }
 }
@@ -293,15 +289,17 @@ pub enum KeySubscriptionError {
 impl KeySubscription {
     pub async fn next_char(&mut self) -> Result<char, KeySubscriptionError> {
         loop {
-            let (_status, key) = self.next_raw().await?;
-            // TODO(eliza): handle e.g. capslock
+            let (status, key) = self.next_raw().await?;
             let x = match key {
                 KeyRaw::Pressed(x) => x,
-                KeyRaw::Released(x) => x,
+                // KeyRaw::Released(x) => x,
                 KeyRaw::Invalid => return Err(KeySubscriptionError::InvalidKey),
                 _ => continue,
             };
-            if let Some(c) = char::from_u32(x as u32) {
+            if let Some(mut c) = char::from_u32(x as u32) {
+                if status.caps_lock == CapsLockState::On {
+                    c = c.to_ascii_uppercase();
+                }
                 return Ok(c);
             } else {
                 return Err(KeySubscriptionError::Decode);

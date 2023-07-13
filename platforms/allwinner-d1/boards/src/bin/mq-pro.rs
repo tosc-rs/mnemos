@@ -78,8 +78,8 @@ fn main() -> ! {
             tracing::info!("got i2c puppet client");
             let mut keys = i2c_puppet.subscribe_to_keys().await.expect("can't get keys");
             tracing::info!("got key subscription");
-            while let Ok((status, key)) = keys.next_raw().await {
-                tracing::info!(?status, ?key, "got keypress");
+            while let Ok(key) = keys.next_char().await {
+                tracing::info!(?key, "got keypress");
             }
         }
     }).unwrap();
