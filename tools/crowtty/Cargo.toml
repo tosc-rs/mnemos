@@ -22,7 +22,7 @@ version = "0.2"
 
 [dependencies.clap]
 version = "4.0"
-features = ["derive"]
+features = ["derive", "env"]
 
 [dependencies.serde]
 version = "1.0"
@@ -54,3 +54,10 @@ package = "tracing"
 git = "https://github.com/tokio-rs/tracing"
 # branch = "master"
 default-features = false
+
+[dependencies.tracing-subscriber]
+package = "tracing-subscriber"
+git = "https://github.com/tokio-rs/tracing"
+# branch = "master"
+default-features = false
+features = ["std"]
