@@ -70,12 +70,12 @@ struct Args {
     /// - the `INFO` level globally (regardless of module path),
     /// - the `DEBUG` level for all modules in the `kernel` crate,
     /// - and the `TRACE` level for the `comms::bbq` submodule in `kernel`.
-    /// 
+    ///
     /// enabling a more verbose level enables all levels less verbose than that
     /// level. for example, enabling the `INFO` level for a given target will also
-    /// enable the `WARN` and `ERROR` levels for that target. 
+    /// enable the `WARN` and `ERROR` levels for that target.
     ///
-    /// see <https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/targets/struct.Targets.html#filtering-with-targets> 
+    /// see <https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/targets/struct.Targets.html#filtering-with-targets>
     /// for more details on this syntax.
     #[arg(
         short,
