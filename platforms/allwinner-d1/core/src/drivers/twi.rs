@@ -488,7 +488,7 @@ impl TwiData {
             }
         };
         let mut needs_wake = false;
-        tracing::info!(?status, state = ?self.state, twi = num, "TWI{num} interrupt");
+        tracing::trace!(?status, state = ?self.state, twi = num, "TWI{num} interrupt");
         twi.twi_cntr.modify(|_cntr_r, cntr_w| {
             self.state = match (self.state, status)  {
                 (State::Idle, _) => {
@@ -610,7 +610,7 @@ impl TwiData {
                                 // Send a repeated START for the read portion of
                                 // the transaction.
                                 if end {
-                                    tracing::info!(twi = num, "TWI{num} send STOP");
+                                    tracing::trace!(twi = num, "TWI{num} send STOP");
                                     cntr_w.m_stp().set_bit();
                                     State::Idle
                                 } else {
