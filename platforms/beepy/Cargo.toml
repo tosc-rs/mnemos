@@ -25,3 +25,8 @@ git = "https://github.com/tokio-rs/tracing"
 # branch = "master"
 features = ["attributes"]
 default-features = false
+
+[dependencies.futures]
+version = "0.3.21"
+features = ["async-await"]
+default-features = false

@@ -497,6 +497,7 @@ name = "mnemos-beepy"
 version = "0.1.0"
 dependencies = [
  "bbq10kbd",
+ "futures",
  "mnemos",
  "tracing 0.2.0",
  "uuid",
