@@ -339,6 +339,13 @@ impl<T> FixedVec<T> {
         }
     }
 
+    /// Removes the last element from a vector and returns it, or [`None`] if it
+    /// is empty.
+    #[inline]
+    pub fn pop(&mut self) -> Option<T> {
+        self.inner.pop()
+    }
+
     /// Attempt to push an item into the fixed vec.
     ///
     /// Returns an error if the slice would not fit in the capacity.
