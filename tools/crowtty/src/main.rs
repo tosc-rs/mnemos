@@ -64,6 +64,19 @@ struct Args {
     verbose: bool,
 
     /// a comma-separated list of `tracing` targets and levels to enable.
+    ///
+    /// for example, `info,kernel=debug,kernel::comms::bbq=trace` will enable:
+    ///
+    /// - the `INFO` level globally (regardless of module path),
+    /// - the `DEBUG` level for all modules in the `kernel` crate,
+    /// - and the `TRACE` level for the `comms::bbq` submodule in `kernel`.
+    /// 
+    /// enabling a more verbose level enables all levels less verbose than that
+    /// level. for example, enabling the `INFO` level for a given target will also
+    /// enable the `WARN` and `ERROR` levels for that target. 
+    ///
+    /// see <https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/targets/struct.Targets.html#filtering-with-targets> 
+    /// for more details on this syntax.
     #[arg(
         short,
         long = "trace",
