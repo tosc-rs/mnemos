@@ -64,7 +64,6 @@ impl TcpSerial {
                 loop {
                     match listener.accept().await {
                         Ok((stream, addr)) => {
-                            irq.notify_one();
                             process_stream(&mut handle, stream, irq.clone())
                                 .instrument(info_span!("process_stream", client.addr = %addr))
                                 .await
@@ -102,12 +101,12 @@ async fn process_stream(handle: &mut BidiHandle, mut stream: TcpStream, irq: Arc
                 wall.await.unwrap();
                 let len = outmsg.len();
                 outmsg.release(len);
-            }
-            // The socket has more bytes to read.
-            _ = stream.readable() => {
                 // Simulate an "interrupt", waking the kernel if it's waiting
                 // an IRQ.
                 irq.notify_one();
+            }
+            // The socket has more bytes to read.
+            _ = stream.readable() => {
                 let mut in_grant = handle.producer().send_grant_max(256).await;
 
                 // Try to read data, this may still fail with `WouldBlock`
@@ -120,6 +119,9 @@ async fn process_stream(handle: &mut BidiHandle, mut stream: TcpStream, irq: Arc
                     Ok(used) => {
                         trace!(len = used, "Got incoming message",);
                         in_grant.commit(used);
+                        // Simulate an "interrupt", waking the kernel if it's waiting
+                        // an IRQ.
+                        irq.notify_one();
                     },
                     // WouldBlock here indicates that the `readable()` event was
                     // spurious. That's fine, just continue waiting for the
