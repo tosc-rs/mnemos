@@ -224,7 +224,7 @@ const ADDR: u8 = 0x1f;
 //// i2c_puppet I2C registers
 mod reg {
     /// To write with a register, we must OR the register number with this mask:
-    /// https://github.com/solderparty/i2c_puppet#protocol
+    /// <https://github.com/solderparty/i2c_puppet#protocol>
     pub(super) const WRITE: u8 = 0x80;
 
     // RGB LED configuration registers:
