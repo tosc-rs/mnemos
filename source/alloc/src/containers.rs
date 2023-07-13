@@ -458,3 +458,17 @@ impl<T> FixedVec<T> {
         self.inner.capacity()
     }
 }
+
+impl<T> AsRef<[T]> for FixedVec<T> {
+    #[inline(always)]
+    fn as_ref(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+impl<T> AsMut<[T]> for FixedVec<T> {
+    #[inline(always)]
+    fn as_mut(&mut self) -> &mut [T] {
+        self.as_slice_mut()
+    }
+}
