@@ -552,7 +552,7 @@ pub struct I2cPuppetSettings {
     pub max_subscriptions: usize,
     pub poll_interval: Duration,
     /// If set, the `i2c_puppet` service will also forward keypresses to the kernel's
-    /// [`KeyboardMuxService`].
+    /// [`KeyboardMuxService`](kernel::services::keyboard::mux::KeyboardMuxService).
     pub keymux: bool,
 }
 
