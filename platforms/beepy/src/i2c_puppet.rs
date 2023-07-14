@@ -254,6 +254,34 @@ mod reg {
     pub(super) const LED_G: u8 = 0x22;
     /// 8-bit RGB LED blue value.
     pub(super) const LED_B: u8 = 0x23;
+
+    /// Configuration register.
+    pub(super) const CFG: u8 = 0x02;
+
+    mycelium_bitfield::bitfield! {
+        #[derive(Eq, PartialEq)]
+        pub(super) struct Cfg<u8> {
+            /// When a FIFO overflow happens, should the new entry still be
+            /// pushed, overwriting the oldest one. If 0 then new entry is lost.
+            pub(super) const OVERFLOW_ON: bool;
+            /// Should an interrupt be generated when a FIFO overflow happens.
+            pub(super) const OVERFLOW_INT: bool;
+            /// Should an interrupt be generated when Caps Lock is toggled.
+            pub(super) const CAPSLOCK_INT: bool;
+            // Should an interrupt be generated when Num Lock is toggled.
+            pub(super) const NUMLOCK_INT: bool;
+            /// Should an interrupt be generated when a key is pressed.
+            pub(super) const KEY_INT: bool;
+            /// Should an interrupt be generated when the firmware panics? This
+            /// is currently not implemented.
+            pub(super) const PANIC_INT: bool;
+            /// Should Alt, Sym and the Shift keys be reported as well.
+            pub(super) const REPORT_MODS: bool;
+            /// Should Alt, Sym and the Shift keys modify the keys being
+            /// reported.
+            pub(super) const USE_MODS: bool;
+        }
+    }
 }
 
 impl I2cPuppetServer {
@@ -281,6 +309,15 @@ impl I2cPuppetServer {
             .await
             .map_err(RegistrationError::NoI2cPuppet)?;
         tracing::info!("i2c_puppet firmware version: v{major}.{minor}");
+
+        let cfg = reg::Cfg::new()
+            .with(reg::Cfg::KEY_INT, true)
+            .with(reg::Cfg::USE_MODS, true)
+            .with(reg::Cfg::OVERFLOW_INT, true);
+        tracing::info!("setting i2c_puppet config:\n{cfg}");
+        i2c.write(ADDR, &[reg::CFG | reg::WRITE, cfg.bits()])
+            .await
+            .map_err(RegistrationError::NoI2cPuppet)?;
 
         let this = Self {
             settings,
@@ -335,7 +372,7 @@ impl I2cPuppetServer {
                                 .split();
                         match self.subscriptions.try_push(sub_tx) {
                             Ok(()) => {
-                                tracing::info!("new subscription to keys");
+                                tracing::debug!("new subscription to keys");
                                 let reply = send_reply(Ok(Response::SubscribeToKeys(
                                     RawKeySubscription(sub_rx),
                                 )))
@@ -359,7 +396,7 @@ impl I2cPuppetServer {
                         let res = self.set_color(color).await;
                         match res {
                             Ok(color) => {
-                                tracing::info!(?color, "set i2c_puppet LED color");
+                                tracing::trace!(?color, "set i2c_puppet LED color");
                                 let _ = send_reply(Ok(Response::SetColor(color))).await;
                             }
                             Err(error) => {
@@ -370,14 +407,14 @@ impl I2cPuppetServer {
                     }
 
                     Request::ToggleLed(on) => {
-                        tracing::debug!(on, "toggling i2c_puppet LED...");
+                        tracing::trace!(on, "toggling i2c_puppet LED...");
                         let res = self
                             .i2c
                             .write(ADDR, &[reg::LED_ON | reg::WRITE, on as u8])
                             .await;
                         match res {
                             Ok(()) => {
-                                tracing::info!(on, "toggled i2c_puppet LED");
+                                tracing::trace!(on, "toggled i2c_puppet LED");
                                 let _ = send_reply(Ok(Response::ToggleLed(on))).await;
                             }
                             Err(error) => {
@@ -389,7 +426,7 @@ impl I2cPuppetServer {
 
                     Request::GetLedStatus => match self.get_led_status().await {
                         Ok(led) => {
-                            tracing::info!(?led.color, led.on, "got i2c_puppet LED status");
+                            tracing::trace!(?led.color, led.on, "got i2c_puppet LED status");
                             let _ = send_reply(Ok(Response::GetLedStatus(led))).await;
                         }
                         Err(error) => {
@@ -399,13 +436,13 @@ impl I2cPuppetServer {
                     },
 
                     Request::SetBacklight(brightness) => {
-                        tracing::debug!(brightness, "setting i2c_puppet backlight");
+                        tracing::trace!(brightness, "setting i2c_puppet backlight");
                         match AsyncBbq10Kbd::new(&mut self.i2c)
                             .set_backlight(brightness)
                             .await
                         {
                             Ok(()) => {
-                                tracing::info!(brightness, "set i2c_puppet backlight",);
+                                tracing::trace!(brightness, "set i2c_puppet backlight",);
                                 let _ = send_reply(Ok(Response::Backlight(brightness))).await;
                             }
                             Err(error) => {
@@ -416,10 +453,10 @@ impl I2cPuppetServer {
                     }
 
                     Request::GetBacklight => {
-                        tracing::debug!("getting i2c_puppet backlight");
+                        tracing::trace!("getting i2c_puppet backlight");
                         match AsyncBbq10Kbd::new(&mut self.i2c).get_backlight().await {
                             Ok(brightness) => {
-                                tracing::info!(brightness, "got i2c_puppet backlight",);
+                                tracing::trace!(brightness, "got i2c_puppet backlight",);
                                 let _ = send_reply(Ok(Response::Backlight(brightness))).await;
                             }
                             Err(error) => {
@@ -433,7 +470,7 @@ impl I2cPuppetServer {
                         tracing::debug!("getting i2c_puppet version");
                         match AsyncBbq10Kbd::new(&mut self.i2c).get_version().await {
                             Ok(version) => {
-                                tracing::info!(
+                                tracing::debug!(
                                     "i2c_puppet firmware version: v{}.{}",
                                     version.major,
                                     version.minor
@@ -510,6 +547,7 @@ impl I2cPuppetServer {
             }
             let key = kbd.get_fifo_key_raw().await?;
             trace::debug!(?key);
+
             // TODO(eliza): remove dead subscriptions...
             for sub in self.subscriptions.as_slice_mut() {
                 if let Err(error) = sub.enqueue_async((status, key)).await {

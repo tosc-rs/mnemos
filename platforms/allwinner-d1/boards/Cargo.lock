@@ -500,6 +500,7 @@ dependencies = [
  "bbq10kbd",
  "futures",
  "mnemos",
+ "mycelium-bitfield",
  "tracing 0.2.0",
  "uuid",
 ]
