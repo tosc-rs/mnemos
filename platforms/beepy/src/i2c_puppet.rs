@@ -47,7 +47,7 @@ pub enum Request {
     GetBacklight,
     ToggleLed(bool),
     GetLedStatus,
-    SubscribeToKeys,
+    SubscribeToRawKeys,
 }
 
 pub enum Response {
@@ -56,7 +56,7 @@ pub enum Response {
     Backlight(u8),
     ToggleLed(bool),
     GetLedStatus(LedState),
-    SubscribeToKeys(KeySubscription),
+    SubscribeToKeys(RawKeySubscription),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -86,7 +86,7 @@ pub enum Error {
     SendRequest(registry::OneshotRequestError),
 }
 
-pub struct KeySubscription(KConsumer<(KeyStatus, KeyRaw)>);
+pub struct RawKeySubscription(KConsumer<(KeyStatus, KeyRaw)>);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Client Definition
@@ -131,10 +131,18 @@ impl I2cPuppetClient {
         })
     }
 
-    /// Subscribe to keyboard input from `i2c_puppet`'s Blackberry Q10 keyboard,
-    /// returning a [`KeySubscription`].
-    pub async fn subscribe_to_keys(&mut self) -> Result<KeySubscription, Error> {
-        if let Response::SubscribeToKeys(sub) = self.request(Request::SubscribeToKeys).await? {
+    /// Subscribe to raw keyboard input from `i2c_puppet`'s Blackberry Q10
+    /// returning a [`RawKeySubscription`].
+    ///
+    /// The returned [`RawKeySubscription`] provides access to keyboard events
+    /// in the [`bbq10kbd`] crate's representation, which is specific to the
+    /// Blackberry Q10 keyboard. In general, it's preferable to implement code
+    /// that requires keyboard input against the more generic
+    /// [`KeyboardService`] defined in the cross-platform kernel crate.
+    ///
+    /// [`KeyboardService`]: kernel::services::keyboard::KeyboardService
+    pub async fn subscribe_to_raw_keys(&mut self) -> Result<RawKeySubscription, Error> {
+        if let Response::SubscribeToKeys(sub) = self.request(Request::SubscribeToRawKeys).await? {
             Ok(sub)
         } else {
             unreachable!("service responded with wrong response variant!")
@@ -320,7 +328,7 @@ impl I2cPuppetServer {
                     })
                 };
                 match msg.body {
-                    Request::SubscribeToKeys => {
+                    Request::SubscribeToRawKeys => {
                         let (sub_tx, sub_rx) =
                             KChannel::new_async(self.settings.subscription_capacity)
                                 .await
@@ -329,7 +337,7 @@ impl I2cPuppetServer {
                             Ok(()) => {
                                 tracing::info!("new subscription to keys");
                                 let reply = send_reply(Ok(Response::SubscribeToKeys(
-                                    KeySubscription(sub_rx),
+                                    RawKeySubscription(sub_rx),
                                 )))
                                 .await;
 
@@ -568,7 +576,7 @@ pub enum KeySubscriptionError {
     InvalidKey,
 }
 
-impl KeySubscription {
+impl RawKeySubscription {
     pub async fn next_char(&mut self) -> Result<char, KeySubscriptionError> {
         loop {
             let (status, key) = self.next_raw().await?;

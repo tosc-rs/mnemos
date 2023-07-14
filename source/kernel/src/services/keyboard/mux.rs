@@ -1,3 +1,12 @@
+//! Keyboard multiplexer service.
+//!
+//! This module contains the [`KeyboardMuxServer`] type, which implements both
+//! [`KeyboardService`] and a [`KeyboardMuxService`] defined in this module. It
+//! is used for systems where multiple hardware keyboards may be available, to
+//! allow clients to subscribe to events from *any keyboard* (using its
+//! [`KeyboardService`] implementation). Keyboard drivers use the
+//! [`KeyboardMuxService`] to publish events from their keyboards to the
+//! multiplexer, which broadcasts those events to all clients.
 use super::{KeyEvent, KeyboardError, KeyboardService, Subscribed};
 use crate::{
     comms::{
@@ -19,6 +28,7 @@ use uuid::Uuid;
 // Service Definition
 ////////////////////////////////////////////////////////////////////////////////
 
+/// Service definition for the keyboard multiplexer.
 pub struct KeyboardMuxService;
 
 impl RegisteredDriver for KeyboardMuxService {
@@ -44,6 +54,11 @@ pub struct Response {
 // Client Definition
 ////////////////////////////////////////////////////////////////////////////////
 
+/// A client for the [`KeyboardMuxService`].
+///
+/// This type is used by keyboard drivers to broadcast events from their
+/// hardware keyboard to the [`KeyboardMuxService`]. It is obtained using
+/// [`KeyboardMuxClient::from_registry`].
 pub struct KeyboardMuxClient {
     handle: KernelHandle<KeyboardMuxService>,
     reply: Reusable<Envelope<Result<Response, Infallible>>>,
@@ -100,6 +115,13 @@ impl KeyboardMuxClient {
 // Server Definition
 ////////////////////////////////////////////////////////////////////////////////
 
+/// The keyboard multiplexer.
+///
+/// This type implements both [`KeyboardMuxService`] *and* [`KeyboardService`].
+/// The [`KeyboardMuxService`] implementation is used by keyboard drivers to
+/// publish their key events to the multiplexer, while the [`KeyboardService`]
+/// implementation is used for tasks that consume keyboard input to subscribe to
+/// key events.
 pub struct KeyboardMuxServer {
     key_rx: KConsumer<registry::Message<KeyboardMuxService>>,
     sub_rx: KConsumer<registry::Message<KeyboardService>>,

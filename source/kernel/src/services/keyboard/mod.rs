@@ -1,11 +1,11 @@
 //! # Keyboard Service
 //!
 //! This module defines a generic service for modeling keyboard drivers. This
-//! service can be implemented by drivers for specific keyboards, or by generic
-//! "keyboard multiplexer" services. The latter is useful for systems that have
-//! multiple keyboards, where a centralized service can multiplex the input from
-//! multiple hardware keyboard drivers into a single stream of keyboard events
-//! from all keyboards.
+//! service can be implemented by drivers for specific keyboards, or by a generic
+//! ["keyboard multiplexer" service](self::mux::KeyboardMuxService) type in the
+//! [`mux`] submodule. The latter is useful for systems that have multiple
+//! keyboards, as it allows clients which consume keyboard input to subscribe to
+//! events from *all* hardware keyboard drivers, rather than a single keyboard.
 //!
 //! The [`event`] submodule defines a generic representation of keyboard events,
 //! which is, admittedly, a bit overly complex. It's intended to model as many

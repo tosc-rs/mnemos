@@ -77,7 +77,7 @@ fn main() -> ! {
             let mut i2c_puppet = I2cPuppetClient::from_registry(d1.kernel).await;
             tracing::info!("got i2c puppet client");
 
-            let mut keys = i2c_puppet.subscribe_to_keys().await.expect("can't get keys");
+            let mut keys = i2c_puppet.subscribe_to_raw_keys().await.expect("can't get keys");
             tracing::info!("got key subscription");
             while let Ok(key) = keys.next_char().await {
                 tracing::info!(?key, "got keypress");
