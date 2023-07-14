@@ -250,21 +250,16 @@ impl I2cPuppetServer {
         let (tx, rx) = KChannel::new_async(settings.channel_capacity).await.split();
         let mut i2c = I2cClient::from_registry(kernel).await;
         let subscriptions = FixedVec::new(settings.max_subscriptions).await;
-        {
-            // first, make sure we can get the version...
-            let mut kbd = AsyncBbq10Kbd::new(&mut i2c);
-            let Version { major, minor } = kbd
-                .get_version()
-                .await
-                .map_err(RegistrationError::NoI2cPuppet)?;
-            tracing::info!("i2c_puppet firmware version: v{major}.{minor}");
-            // // and then, reset i2c_puppet
-            // kbd.sw_reset()
-            //     .await
-            //     .map_err(RegistrationError::NoI2cPuppet)?;
-            // kernel.timer().sleep(Duration::from_millis(20)).await;
-            // tracing::info!("i2c_puppet reset");
-        }
+
+        // first, make sure we can get the version, to make sure there's
+        // actually an i2c_puppet on the bus. otherwise, there's no use in
+        // spawning the driver at all!
+        let Version { major, minor } = AsyncBbq10Kbd::new(&mut i2c)
+            .get_version()
+            .await
+            .map_err(RegistrationError::NoI2cPuppet)?;
+        tracing::info!("i2c_puppet firmware version: v{major}.{minor}");
+
         let this = Self {
             settings,
             rx,
