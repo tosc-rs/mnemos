@@ -1566,6 +1566,7 @@ dependencies = [
  "mnemos-abi",
  "mnemos-alloc",
  "mnemos-trace-proto",
+ "mycelium-bitfield",
  "mycelium-util",
  "portable-atomic",
  "postcard 1.0.4",
