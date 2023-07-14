@@ -95,22 +95,16 @@ async fn kernel_entry(opts: MelpomeneOptions) {
 
     // Initialize the SerialMuxServer
     k.initialize({
-        const PORTS: usize = 16;
-        const FRAME_SIZE: usize = 512;
         async {
             // * Up to 16 virtual ports max
             // * Framed messages up to 512 bytes max each
             tracing::debug!("initializing SerialMuxServer...");
-            SerialMuxServer::register(k, PORTS, FRAME_SIZE)
+            SerialMuxServer::register(k, Default::default())
                 .await
                 .unwrap();
             tracing::info!("SerialMuxServer initialized!");
         }
-        .instrument(tracing::info_span!(
-            "SerialMuxServer",
-            ports = PORTS,
-            frame_size = FRAME_SIZE
-        ))
+        .instrument(tracing::info_span!("SerialMuxServer"))
     })
     .unwrap();
 

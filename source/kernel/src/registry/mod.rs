@@ -30,6 +30,7 @@ pub mod known_uuids {
         pub const FORTH_SPAWNULATOR: Uuid = uuid!("4ae4a406-005a-4bde-be91-afc1900f76fa");
         pub const I2C: Uuid = uuid!("011ebd3e-1b14-4bfd-b581-6138239b82f3");
         pub const KEYBOARD: Uuid = uuid!("524d77b1-499c-440b-bd62-e63c0918efb5");
+        pub const KEYBOARD_MUX: Uuid = uuid!("70861d1c-9f01-4e9b-89e6-ede77d8f26d8");
     }
 
     // In case you need to iterate over every UUID
@@ -40,6 +41,7 @@ pub mod known_uuids {
         kernel::FORTH_SPAWNULATOR,
         kernel::I2C,
         kernel::KEYBOARD,
+        kernel::KEYBOARD_MUX,
     ];
 }
 

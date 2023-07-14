@@ -1,4 +1,4 @@
-use bbq10kbd::{AsyncBbq10Kbd, CapsLockState, FifoCount};
+use bbq10kbd::{AsyncBbq10Kbd, CapsLockState, FifoCount, NumLockState};
 pub use bbq10kbd::{KeyRaw, KeyStatus, Version};
 use core::{fmt, time::Duration};
 use futures::TryFutureExt;
@@ -10,7 +10,13 @@ use kernel::{
     embedded_hal_async::i2c::{self, I2c},
     mnemos_alloc::containers::FixedVec,
     registry::{self, Envelope, KernelHandle, RegisteredDriver},
-    services::i2c::{I2cClient, I2cError},
+    services::{
+        i2c::{I2cClient, I2cError},
+        keyboard::{
+            key_event::{self, KeyEvent, Modifiers},
+            mux::KeyboardMuxClient,
+        },
+    },
     trace::{self, instrument, Instrument, Level},
     Kernel,
 };
@@ -210,6 +216,7 @@ pub struct I2cPuppetServer {
     rx: KConsumer<registry::Message<I2cPuppetService>>,
     i2c: I2cClient,
     subscriptions: FixedVec<KProducer<(KeyStatus, KeyRaw)>>,
+    keymux: Option<KeyboardMuxClient>,
 }
 
 #[derive(Debug)]
@@ -247,6 +254,13 @@ impl I2cPuppetServer {
         kernel: &'static Kernel,
         settings: I2cPuppetSettings,
     ) -> Result<(), RegistrationError> {
+        let keymux = if settings.keymux {
+            let keymux = KeyboardMuxClient::from_registry(kernel).await;
+            tracing::debug!("acquired keyboard mux client");
+            Some(keymux)
+        } else {
+            None
+        };
         let (tx, rx) = KChannel::new_async(settings.channel_capacity).await.split();
         let mut i2c = I2cClient::from_registry(kernel).await;
         let subscriptions = FixedVec::new(settings.max_subscriptions).await;
@@ -265,6 +279,7 @@ impl I2cPuppetServer {
             rx,
             i2c,
             subscriptions,
+            keymux,
         };
 
         kernel
@@ -426,7 +441,7 @@ impl I2cPuppetServer {
                 }
             }
 
-            if !self.subscriptions.is_empty() {
+            if !self.subscriptions.is_empty() || self.keymux.is_some() {
                 tracing::trace!("polling keys...");
                 self.poll_keys().await?;
             }
@@ -493,6 +508,24 @@ impl I2cPuppetServer {
                     trace::warn!(?error, "subscription dropped...");
                 }
             }
+
+            if let Some(ref mut keymux) = self.keymux {
+                let mods = Modifiers::new()
+                    .with(Modifiers::NUMLOCK, status.num_lock == NumLockState::On)
+                    .with(Modifiers::CAPSLOCK, status.caps_lock == CapsLockState::On);
+                let event = match key {
+                    KeyRaw::Held(x) => KeyEvent::from_ascii(x, key_event::Kind::Held),
+                    KeyRaw::Pressed(x) => KeyEvent::from_ascii(x, key_event::Kind::Pressed),
+                    KeyRaw::Released(x) => KeyEvent::from_ascii(x, key_event::Kind::Released),
+                    KeyRaw::Invalid => None,
+                };
+                if let Some(mut event) = event {
+                    event.modifiers = mods;
+                    if let Err(error) = keymux.publish_key(event).await {
+                        tracing::warn!(?error, "failed to publish event to keymux!");
+                    }
+                }
+            }
         }
         Ok(())
     }
@@ -510,6 +543,9 @@ pub struct I2cPuppetSettings {
     pub subscription_capacity: usize,
     pub max_subscriptions: usize,
     pub poll_interval: Duration,
+    /// If set, the `i2c_puppet` service will also forward keypresses to the kernel's
+    /// [`KeyboardMuxService`].
+    pub keymux: bool,
 }
 
 impl Default for I2cPuppetSettings {
@@ -519,6 +555,7 @@ impl Default for I2cPuppetSettings {
             subscription_capacity: 32,
             max_subscriptions: 8,
             poll_interval: Duration::from_secs(1),
+            keymux: true,
         }
     }
 }

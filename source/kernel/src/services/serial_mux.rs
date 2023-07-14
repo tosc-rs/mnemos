@@ -17,7 +17,10 @@ use crate::{
         oneshot::Reusable,
     },
     registry::{Envelope, KernelHandle, Message, RegisteredDriver},
-    services::simple_serial::SimpleSerialClient,
+    services::{
+        keyboard::{mux::KeyboardMuxClient, KeyEvent},
+        simple_serial::SimpleSerialClient,
+    },
     Kernel,
 };
 use maitake::sync::Mutex;
@@ -173,17 +176,23 @@ impl PortHandle {
 /// Server implementation for the [`SerialMuxService`].
 pub struct SerialMuxServer;
 
+#[derive(Copy, Clone, Debug)]
+pub struct SerialMuxSettings {
+    max_ports: u16,
+    max_frame: usize,
+    keyboard_port: Option<u16>,
+}
+
 impl SerialMuxServer {
     /// Register the `SerialMuxServer`.
     ///
     /// Will retry to obtain a [`SimpleSerialClient`] until success.
     pub async fn register(
         kernel: &'static Kernel,
-        max_ports: usize,
-        max_frame: usize,
+        settings: SerialMuxSettings,
     ) -> Result<(), RegistrationError> {
         loop {
-            match SerialMuxServer::register_no_retry(kernel, max_ports, max_frame).await {
+            match SerialMuxServer::register_no_retry(kernel, settings).await {
                 Ok(_) => break,
                 Err(RegistrationError::SerialPortNotFound) => {
                     // Uart probably isn't registered yet. Try again in a bit
@@ -205,9 +214,13 @@ impl SerialMuxServer {
     /// the same time as registering this server.
     pub async fn register_no_retry(
         kernel: &'static Kernel,
-        max_ports: usize,
-        max_frame: usize,
+        SerialMuxSettings {
+            max_ports,
+            max_frame,
+            keyboard_port,
+        }: SerialMuxSettings,
     ) -> Result<(), RegistrationError> {
+        let max_ports = max_ports as usize;
         let mut serial_handle = SimpleSerialClient::from_registry(kernel)
             .await
             .ok_or(RegistrationError::SerialPortNotFound)?;
@@ -215,6 +228,15 @@ impl SerialMuxServer {
             .get_port()
             .await
             .ok_or(RegistrationError::NoSerialPortAvailable)?;
+
+        let pseudokeyboard = if let Some(port) = keyboard_port {
+            let client = KeyboardMuxClient::from_registry_no_retry(kernel)
+                .await
+                .ok_or(RegistrationError::KeymuxNotFound)?;
+            Some((client, port))
+        } else {
+            None
+        };
 
         let (sprod, scons) = serial_port.split();
         let sprod = sprod.into_mpmc_producer().await;
@@ -232,6 +254,7 @@ impl SerialMuxServer {
             incoming: scons,
             mux: imutex,
             buf,
+            pseudokeyboard,
         };
 
         kernel.spawn(commander.run()).await;
@@ -251,11 +274,47 @@ impl SerialMuxServer {
     }
 }
 
+impl SerialMuxSettings {
+    pub const DEFAULT_MAX_PORTS: u16 = 16;
+    pub const DEFAULT_MAX_FRAME: usize = 512;
+    pub const DEFAULT_KEYBOARD_PORT: Option<u16> = Some(WellKnown::PseudoKeyboard as u16);
+
+    pub fn with_max_ports(self, max_ports: u16) -> Self {
+        Self { max_ports, ..self }
+    }
+
+    pub fn with_max_frame(self, max_frame: usize) -> Self {
+        Self { max_frame, ..self }
+    }
+
+    pub fn with_pseudo_keyboard(self, keyboard_port: impl Into<Option<u16>>) -> Self {
+        let keyboard_port = keyboard_port.into();
+        if let Some(port) = keyboard_port {
+            assert!(port < self.max_ports);
+        }
+        Self {
+            keyboard_port,
+            ..self
+        }
+    }
+}
+
+impl Default for SerialMuxSettings {
+    fn default() -> Self {
+        Self {
+            max_ports: Self::DEFAULT_MAX_PORTS,
+            max_frame: Self::DEFAULT_MAX_FRAME,
+            keyboard_port: Self::DEFAULT_KEYBOARD_PORT,
+        }
+    }
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub enum RegistrationError {
     SerialPortNotFound,
     NoSerialPortAvailable,
     MuxAlreadyRegistered,
+    KeymuxNotFound,
 }
 
 struct PortInfo {
@@ -278,6 +337,7 @@ struct IncomingMuxerTask {
     buf: FixedVec<u8>,
     incoming: bbq::Consumer,
     mux: Arc<Mutex<MuxingInfo>>,
+    pseudokeyboard: Option<(KeyboardMuxClient, u16)>,
 }
 
 impl MuxingInfo {
@@ -363,17 +423,35 @@ impl IncomingMuxerTask {
             };
 
             // Great, now we have a message! Let's see if we have someone listening to this port
-            let mux = self.mux.lock().await;
-            if let Some(port) = mux.ports.as_slice().iter().find(|p| p.port == port_id) {
-                if let Some(mut wgr) = port.upstream.send_grant_exact_sync(datab.len()) {
-                    wgr.copy_from_slice(datab);
-                    wgr.commit(datab.len());
-                    debug!(port_id, len = datab.len(), "Sent bytes to port");
-                } else {
-                    warn!(port_id, len = datab.len(), "Discarded bytes, full buffer");
+            match self.pseudokeyboard {
+                Some((ref mut keymux, keyboard_port)) if port_id == keyboard_port => {
+                    // This is the pseudo-keyboard, so forward to the keyboard
+                    // muxer.
+                    match core::str::from_utf8(datab) {
+                        Ok(s) => {
+                            for ch in s.chars() {
+                                if let Err(error) = keymux.publish_key(ch).await {
+                                    warn!(?error, "failed to publish pseudo-keyboard character!");
+                                }
+                            }
+                        }
+                        Err(error) => warn!(%error, "Pseudo-keyboard port received invalid utf8"),
+                    }
                 }
-            } else {
-                warn!(port_id, len = datab.len(), "Discarded bytes, no consumer");
+                _ => {
+                    let mux = self.mux.lock().await;
+                    if let Some(port) = mux.ports.as_slice().iter().find(|p| p.port == port_id) {
+                        if let Some(mut wgr) = port.upstream.send_grant_exact_sync(datab.len()) {
+                            wgr.copy_from_slice(datab);
+                            wgr.commit(datab.len());
+                            debug!(port_id, len = datab.len(), "Sent bytes to port");
+                        } else {
+                            warn!(port_id, len = datab.len(), "Discarded bytes, full buffer");
+                        }
+                    } else {
+                        warn!(port_id, len = datab.len(), "Discarded bytes, no consumer");
+                    }
+                }
             }
 
             // Now we clear the buffer

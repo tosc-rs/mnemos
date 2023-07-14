@@ -9,7 +9,7 @@
 //! [`crossterm`]: https://github.com/crossterm-rs/crossterm/blob/1efdce7ef63cba6992729db5f22262a60936fa8b/src/event.rs
 
 /// A keyboard event.
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct KeyEvent {
     /// What keyboard event occurred?
     pub kind: Kind,
@@ -19,7 +19,7 @@ pub struct KeyEvent {
     pub code: KeyCode,
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Kind {
     Pressed,
     Released,
@@ -28,7 +28,7 @@ pub enum Kind {
 
 mycelium_bitfield::bitfield! {
     // Copy, Clone, and Debug are derived for us by `mycelium_bitfield`.
-    #[derive(PartialEq, Eq, Hash)]
+    #[derive(PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
     pub struct Modifiers<u8> {
         pub const SHIFT: bool;
         pub const CTRL: bool;
@@ -39,7 +39,7 @@ mycelium_bitfield::bitfield! {
     }
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum KeyCode {
     /// Backspace key.
     Backspace,
@@ -95,7 +95,7 @@ pub enum KeyCode {
     Media(MediaKeyCode),
 }
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum MediaKeyCode {
     /// Play media key.
     Play,
@@ -125,14 +125,50 @@ pub enum MediaKeyCode {
     MuteVolume,
 }
 
-impl KeyEvent {
+impl KeyCode {
+    #[must_use]
     pub fn into_char(self) -> Option<char> {
-        match self.code {
+        match self {
             KeyCode::Char(c) => Some(c),
             KeyCode::Enter => Some('\n'),
             KeyCode::Tab => Some('\t'),
             KeyCode::Null => Some('\0'),
             _ => None,
         }
+    }
+}
+
+impl KeyEvent {
+    #[must_use]
+    #[inline]
+    pub fn into_char(self) -> Option<char> {
+        self.code.into_char()
+    }
+
+    #[must_use]
+    pub fn from_char(c: char) -> Self {
+        Self {
+            kind: Kind::Pressed,
+            modifiers: Modifiers::new(),
+            code: KeyCode::Char(c),
+        }
+    }
+
+    #[must_use]
+    pub fn from_ascii(c: u8, kind: Kind) -> Option<Self> {
+        if !c.is_ascii() {
+            return None;
+        }
+        Some(Self {
+            kind,
+            modifiers: Modifiers::new(),
+            code: KeyCode::Char(c as char),
+        })
+    }
+}
+
+impl From<char> for KeyEvent {
+    fn from(c: char) -> Self {
+        Self::from_char(c)
     }
 }
