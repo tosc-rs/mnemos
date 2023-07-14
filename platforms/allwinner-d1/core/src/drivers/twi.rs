@@ -307,6 +307,10 @@ impl I2c0 {
             w
         });
 
+        // we only want to be the bus controller, so zero our address
+        twi.twi_addr.write(|w| w.sla().variant(0));
+        twi.twi_xaddr.write(|w| w.slax().variant(0));
+
         Self {
             twi,
             isr: &I2C0_ISR,
@@ -343,11 +347,6 @@ impl I2c0 {
     async fn transaction(&self, addr: Addr, txn: KConsumer<Transfer>) {
         tracing::trace!("starting I2C transaction");
         let mut guard = self.isr.lock(self.twi);
-
-        // reset the TWI engine.
-        // guard.twi.twi_srst.write(|w| w.soft_rst().set_bit());
-        // guard.twi.twi_efr.reset();
-        // guard.twi.twi_data.reset();
 
         let mut started = false;
         while let Ok(Transfer {
@@ -488,7 +487,7 @@ impl TwiData {
             }
         };
         let mut needs_wake = false;
-        tracing::trace!(?status, state = ?self.state, twi = num, "TWI{num} interrupt");
+        tracing::debug!(?status, state = ?self.state, twi = num, "TWI{num} interrupt");
         twi.twi_cntr.modify(|_cntr_r, cntr_w| {
             self.state = match (self.state, status)  {
                 (State::Idle, _) => {
@@ -656,17 +655,15 @@ impl TwiData {
                     // until the driver can prepare the next phase of the transaction.
                     cntr_w.int_en().low();
                 }
-            } else {
-                // Writing back to the TWI_CNTR register *with the INT_FLAG bit
-                // high* clears the interrupt. the D1 user manual never explains
-                // this, but it's the same behavior as the DMAC interrupts, and the
-                // Linux driver for the Marvell family mv64xxx has a special flag
-                // which changes it to write back to TWI_CNTR with INT_FLAG set on
-                // Allwinner hardware.
-                cntr_w.int_flag().set_bit();
             }
 
-
+            // Writing back to the TWI_CNTR register *with the INT_FLAG bit
+            // high* clears the interrupt. the D1 user manual never explains
+            // this, but it's the same behavior as the DMAC interrupts, and the
+            // Linux driver for the Marvell family mv64xxx has a special flag
+            // which changes it to write back to TWI_CNTR with INT_FLAG set on
+            // Allwinner hardware.
+            cntr_w.int_flag().set_bit();
             cntr_w
         });
     }
