@@ -85,20 +85,20 @@ fn main() -> ! {
         }
     ).unwrap();
 
-    // d1.kernel.initialize(async move {
-    //     // walk through the HSV color space. maybe eventually we'll use the RGB
-    //     // LED to display useful information, but this is fun for now.
-    //     let mut hue = 0;
+    d1.kernel.initialize(async move {
+        // walk through the HSV color space. maybe eventually we'll use the RGB
+        // LED to display useful information, but this is fun for now.
+        let mut hue = 0;
 
-    //     let mut i2c_puppet = I2cPuppetClient::from_registry(d1.kernel).await;
+        let mut i2c_puppet = I2cPuppetClient::from_registry(d1.kernel).await;
 
-    //     i2c_puppet.toggle_led(true).await.expect("can't turn on LED");
-    //     loop {
-    //         i2c_puppet.set_led_color(HsvColor::from_hue(hue)).await.expect("can't set color");
-    //         hue = hue.wrapping_add(1);
-    //         d1.kernel.sleep(Duration::from_millis(50)).await;
-    //     }
-    // }).unwrap();
+        i2c_puppet.toggle_led(true).await.expect("can't turn on LED");
+        loop {
+            i2c_puppet.set_led_color(HsvColor::from_hue(hue)).await.expect("can't set color");
+            hue = hue.wrapping_add(1);
+            d1.kernel.sleep(Duration::from_millis(50)).await;
+        }
+    }).unwrap();
 
     d1.run()
 }

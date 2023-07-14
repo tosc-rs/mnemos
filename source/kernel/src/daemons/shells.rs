@@ -8,7 +8,7 @@ use crate::{
     forth::Params,
     services::{
         emb_display::EmbDisplayClient,
-        keyboard::{key_event, KeyClient, KeyEvent},
+        keyboard::{key_event, KeyClient},
         serial_mux::{PortHandle, WellKnown},
     },
     tracing, Kernel,
