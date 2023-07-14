@@ -34,6 +34,3 @@ rev = "cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
 [patch.crates-io.cordyceps]
 git = "https://github.com/hawkw/mycelium.git"
 rev = "cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
-
-[patch.crates-io.mnemos-alloc]
-path = "./source/alloc"
