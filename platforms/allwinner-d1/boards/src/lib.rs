@@ -2,8 +2,6 @@
 
 extern crate alloc;
 
-pub mod beepy;
-
 use core::{panic::PanicInfo, ptr::NonNull};
 use kernel::mnemos_alloc::heap::{MnemosAlloc, SingleThreadedLinkedListAllocator};
 use mnemos_d1_core::{Ram, D1};

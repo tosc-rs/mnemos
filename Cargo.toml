@@ -19,6 +19,7 @@ members = [
 
     # platforms
     "platforms/allwinner-d1/core",
+    "platforms/beepy",
 ]
 
 exclude = ["platforms/pomelo"]
@@ -34,3 +35,7 @@ rev = "cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
 [patch.crates-io.cordyceps]
 git = "https://github.com/hawkw/mycelium.git"
 rev = "cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
+
+[patch.crates-io.bbq10kbd]
+git = "https://github.com/hawkw/bbq10kbd"
+branch = "eliza/async"

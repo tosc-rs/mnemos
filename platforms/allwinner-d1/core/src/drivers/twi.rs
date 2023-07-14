@@ -348,10 +348,6 @@ impl I2c0 {
         tracing::trace!("starting I2C transaction");
         let mut guard = self.isr.lock(self.twi);
 
-        // reset the TWI engine.
-        guard.twi.twi_srst.write(|w| w.soft_rst().set_bit());
-        guard.twi.twi_efr.reset();
-
         let mut started = false;
         while let Ok(Transfer {
             buf,
@@ -416,12 +412,6 @@ impl I2c0 {
         }
         // transaction ended!
         tracing::debug!("I2C transaction ended");
-
-        let guard = self.isr.lock(self.twi);
-        guard.twi.twi_cntr.modify(|_r, w| {
-            w.m_stp().set_bit();
-            w
-        });
     }
 }
 
@@ -501,7 +491,6 @@ impl TwiData {
         twi.twi_cntr.modify(|_cntr_r, cntr_w| {
             self.state = match (self.state, status)  {
                 (State::Idle, _) => {
-                    // TODO: send a STOP?
                     cntr_w.m_stp().set_bit();
                     State::Idle
                 }
