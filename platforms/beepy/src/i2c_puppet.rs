@@ -518,21 +518,38 @@ impl I2cPuppetServer {
             }
 
             if let Some(ref mut keymux) = self.keymux {
-                let mods = Modifiers::new()
+                let modifiers = Modifiers::new()
                     .with(Modifiers::NUMLOCK, status.num_lock == NumLockState::On)
                     .with(Modifiers::CAPSLOCK, status.caps_lock == CapsLockState::On);
                 let event = match key {
-                    KeyRaw::Held(x) => KeyEvent::from_ascii(x, key_event::Kind::Held),
-                    KeyRaw::Pressed(x) => KeyEvent::from_ascii(x, key_event::Kind::Pressed),
-                    KeyRaw::Released(x) => KeyEvent::from_ascii(x, key_event::Kind::Released),
-                    KeyRaw::Invalid => None,
+                    KeyRaw::Held(x) => KeyEvent {
+                        modifiers,
+                        code: keycode(x),
+                        kind: key_event::Kind::Held,
+                    },
+                    KeyRaw::Pressed(x) => KeyEvent {
+                        modifiers,
+                        code: keycode(x),
+                        kind: key_event::Kind::Pressed,
+                    },
+                    KeyRaw::Released(x) => KeyEvent {
+                        modifiers,
+                        code: keycode(x),
+                        kind: key_event::Kind::Released,
+                    },
+                    KeyRaw::Invalid => continue,
                 };
-                if let Some(mut event) = event {
-                    event.modifiers = mods;
-                    if let Err(error) = keymux.publish_key(event).await {
-                        tracing::warn!(?error, "failed to publish event to keymux!");
-                    }
+                if let Err(error) = keymux.publish_key(event).await {
+                    tracing::warn!(?error, "failed to publish event to keymux!");
                 }
+            }
+        }
+
+        fn keycode(x: u8) -> key_event::KeyCode {
+            match x {
+                0x08 => key_event::KeyCode::Backspace,
+                // TODO(eliza): figure out other keycodes
+                x => key_event::KeyCode::Char(x as char),
             }
         }
         Ok(())

@@ -133,6 +133,7 @@ impl KeyCode {
             KeyCode::Enter => Some('\n'),
             KeyCode::Tab => Some('\t'),
             KeyCode::Null => Some('\0'),
+            KeyCode::Backspace => Some('\x7f'),
             _ => None,
         }
     }

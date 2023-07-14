@@ -239,35 +239,41 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
                         tracing::error!("Keyboard service is dead???");
                         continue;
                     };
+                    tracing::info!(?event);
                     if event.kind == key_event::Kind::Released {
                         continue;
                     }
-                    let Some(ch) = event.code.into_char() else {
-                        continue;
-                    };
-                    if !ch.is_ascii() {
-                        tracing::warn!("skipping non-ASCII character: {ch:?}");
-                        continue;
-                    }
+                    if matches!(event.code, key_event::KeyCode::Backspace | key_event::KeyCode::Delete) {
+                        rline.pop_local_char();
+                    } else {
+                        let Some(ch) = event.code.into_char() else {
+                            continue;
+                        };
+                        if !ch.is_ascii() {
+                            tracing::warn!("skipping non-ASCII character: {ch:?}");
+                            continue;
+                        }
 
-                    let b = ch as u8;
-                    match rline.append_local_char(b) {
-                        Ok(_) => {}
-                        // backspace
-                        Err(_) if b == 0x7F => rline.pop_local_char(),
-                        Err(_) if b == b'\n' => {
-                            let needed = rline.local_editing_len();
-                            if needed != 0 {
-                                let mut tid_io_wgr = tid_io.producer().send_grant_exact(needed).await;
-                                rline.copy_local_editing_to(&mut tid_io_wgr).unwrap();
-                                tid_io_wgr.commit(needed);
-                                rline.submit_local_editing();
+                        let b = ch as u8;
+                        match rline.append_local_char(b) {
+                            Ok(_) => {}
+                            // backspace
+                            Err(_) if b == 0x7F => rline.pop_local_char(),
+                            Err(_) if b == b'\n' => {
+                                let needed = rline.local_editing_len();
+                                if needed != 0 {
+                                    let mut tid_io_wgr = tid_io.producer().send_grant_exact(needed).await;
+                                    rline.copy_local_editing_to(&mut tid_io_wgr).unwrap();
+                                    tid_io_wgr.commit(needed);
+                                    rline.submit_local_editing();
+                                }
+                            }
+                            Err(error) => {
+                                tracing::warn!(?error, "Error appending char: {ch:?}");
                             }
                         }
-                        Err(error) => {
-                            tracing::warn!(?error, "Error appending char: {ch:?}");
-                        }
                     }
+
                 },
                 output = tid_io.consumer().read_grant().fuse() => {
                     let len = output.len();
