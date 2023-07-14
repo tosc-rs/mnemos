@@ -7,11 +7,12 @@ use std::{
     sync::mpsc,
     time::Instant,
 };
-use tracing_02::level_filters::LevelFilter;
+use tracing_02::{collect::NoCollector, level_filters::LevelFilter, Level};
 use tracing_serde_structured::{
     CowString, SerializeLevel, SerializeMetadata, SerializeRecordFields, SerializeSpanFields,
     SerializeValue,
 };
+use tracing_subscriber::{filter::Targets, subscribe::Subscribe};
 
 use crate::LogTag;
 use owo_colors::{OwoColorize, Stream};
@@ -25,24 +26,35 @@ pub(crate) struct TraceWorker {
     stack: Vec<NonZeroU64>,
     textbuf: String,
     has_set_max_level: bool,
+    /// A set of `tracing` targets and levels to enable.
+    ///
+    /// Currently, this is processed on the crowtty side, and we only send the
+    /// max level to enable to the target. In the future, it would be more
+    /// efficient if the target could handle more granular filtering, since we
+    /// could disable more target-side instrumentation points. But, this works
+    /// fine for the time being.
+    filter: Targets,
     ser_max_level: Option<SerializeLevel>,
 }
 
 impl TraceWorker {
     pub fn new(
-        max_level: LevelFilter,
+        filter: Targets,
         tx: mpsc::Sender<Vec<u8>>,
         rx: mpsc::Receiver<Vec<u8>>,
         tag: LogTag,
     ) -> Self {
-        let ser_max_level = match max_level {
-            LevelFilter::OFF => None,
-            LevelFilter::ERROR => Some(SerializeLevel::Error),
-            LevelFilter::WARN => Some(SerializeLevel::Warn),
-            LevelFilter::INFO => Some(SerializeLevel::Info),
-            LevelFilter::DEBUG => Some(SerializeLevel::Debug),
-            LevelFilter::TRACE => Some(SerializeLevel::Trace),
-        };
+        let ser_max_level =
+            <Targets as Subscribe<NoCollector>>::max_level_hint(&filter).and_then(|level| {
+                match level {
+                    LevelFilter::OFF => None,
+                    LevelFilter::ERROR => Some(SerializeLevel::Error),
+                    LevelFilter::WARN => Some(SerializeLevel::Warn),
+                    LevelFilter::INFO => Some(SerializeLevel::Info),
+                    LevelFilter::DEBUG => Some(SerializeLevel::Debug),
+                    LevelFilter::TRACE => Some(SerializeLevel::Trace),
+                }
+            });
         Self {
             tx,
             rx,
@@ -53,6 +65,7 @@ impl TraceWorker {
             textbuf: String::new(),
             ser_max_level,
             has_set_max_level: false,
+            filter,
         }
     }
 }
@@ -170,6 +183,12 @@ impl TraceWorker {
                     return;
                 };
                 let target = meta.target.as_str();
+
+                // if the filter disables this event, skip it.
+                if !self.filter.would_enable(target, &ser_lvl(meta.level)) {
+                    return;
+                }
+
                 let level = DisplayLevel(meta.level);
                 write!(
                     &mut self.textbuf,
@@ -201,7 +220,15 @@ impl TraceWorker {
                     return;
                 };
 
+                let target = meta.target.as_str();
+                let level = DisplayLevel(meta.level);
                 let name = meta.name.as_str();
+
+                // does our filter actually enable this span?
+                if !self.filter.would_enable(target, &ser_lvl(meta.level)) {
+                    return;
+                }
+
                 write!(
                     repr,
                     "{}",
@@ -219,8 +246,6 @@ impl TraceWorker {
                 )
                 .unwrap();
 
-                let level = DisplayLevel(meta.level);
-                let target = meta.target.as_str();
                 write!(
                     &mut self.textbuf,
                     "{} {level} {} ",
@@ -252,10 +277,17 @@ impl TraceWorker {
                 );
             }
             TraceEvent::Enter(id) => {
-                self.stack.push(id.id);
+                // only put a span on the stack if we enabled it when it was created.
+                if self.spans.contains_key(&id.id) {
+                    self.stack.push(id.id);
+                }
             }
-            TraceEvent::Exit(_id) => {
-                self.stack.pop();
+            TraceEvent::Exit(id) => {
+                // only popped the span if we enabled it when it was created.
+                if self.spans.contains_key(&id.id) {
+                    let popped = self.stack.pop();
+                    debug_assert_eq!(popped, Some(id.id));
+                }
             }
             TraceEvent::CloneSpan(id) => {
                 if let Some(span) = self.spans.get_mut(&id.id) {
@@ -267,6 +299,7 @@ impl TraceWorker {
                     span.refs -= 1;
                     span.refs == 0
                 } else {
+                    // we previously skipped this span, so ignore it.
                     return;
                 };
 
@@ -278,6 +311,7 @@ impl TraceWorker {
                         start,
                         refs: _,
                     } = self.spans.remove(&id.id).unwrap();
+
                     let end = "END".if_supports_color(Stream::Stdout, |x| x.bright_red());
                     write!(
                         &mut self.textbuf,
@@ -394,5 +428,15 @@ impl fmt::Display for DisplayLevel {
 impl fmt::Debug for DisplayLevel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f)
+    }
+}
+
+fn ser_lvl(lvl: SerializeLevel) -> Level {
+    match lvl {
+        SerializeLevel::Trace => Level::TRACE,
+        SerializeLevel::Debug => Level::DEBUG,
+        SerializeLevel::Info => Level::INFO,
+        SerializeLevel::Warn => Level::WARN,
+        SerializeLevel::Error => Level::ERROR,
     }
 }

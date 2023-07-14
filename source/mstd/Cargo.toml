@@ -35,6 +35,7 @@ path = "../abi"
 
 [dependencies.mnemos-alloc]
 version = "0.1.0"
+path = "../alloc"
 
 [dependencies.heapless]
 version = "0.7.10"

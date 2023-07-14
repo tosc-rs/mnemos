@@ -63,9 +63,28 @@ struct Args {
     #[arg(short, long, global = true)]
     verbose: bool,
 
-    /// maximum `tracing` level to request from the target.
-    #[arg(short, long, global = true, default_value_t = LevelFilter::INFO)]
-    trace_level: LevelFilter,
+    /// a comma-separated list of `tracing` targets and levels to enable.
+    ///
+    /// for example, `info,kernel=debug,kernel::comms::bbq=trace` will enable:
+    ///
+    /// - the `INFO` level globally (regardless of module path),
+    /// - the `DEBUG` level for all modules in the `kernel` crate,
+    /// - and the `TRACE` level for the `comms::bbq` submodule in `kernel`.
+    ///
+    /// enabling a more verbose level enables all levels less verbose than that
+    /// level. for example, enabling the `INFO` level for a given target will also
+    /// enable the `WARN` and `ERROR` levels for that target.
+    ///
+    /// see <https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/targets/struct.Targets.html#filtering-with-targets>
+    /// for more details on this syntax.
+    #[arg(
+        short,
+        long = "trace",
+        global = true,
+        env = "MNEMOS_TRACE",
+        default_value_t = tracing_subscriber::filter::Targets::new().with_default(LevelFilter::INFO),
+    )]
+    trace_filter: tracing_subscriber::filter::Targets,
 
     /// SerMux port for a pseudo-keyboard for the graphical Forth shell on the target.
     #[arg(short, long, global = true, default_value_t = sermux_proto::WellKnown::PseudoKeyboard as u16)]
@@ -153,7 +172,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         no_keyboard,
         keyboard_port,
         verbose,
-        trace_level,
+        trace_filter,
     } = Args::parse();
     let (mut port, mut tag) = match command {
         Command::Tcp { port } => (Connect::new_from_tcp(port), LogTag::new(true)),
@@ -289,7 +308,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let (inp_send, inp_recv) = channel();
         let (out_send, out_recv) = channel::<Vec<u8>>();
         let thread_hdl = spawn(move || {
-            trace::TraceWorker::new(trace_level, inp_send, out_recv, tag.port(trace_port)).run()
+            trace::TraceWorker::new(trace_filter, inp_send, out_recv, tag.port(trace_port)).run()
         });
         WorkerHandle {
             out: out_send,
