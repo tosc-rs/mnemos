@@ -17,10 +17,7 @@ use crate::{
         oneshot::Reusable,
     },
     registry::{Envelope, KernelHandle, Message, RegisteredDriver},
-    services::{
-        keyboard::{mux::KeyboardMuxClient, KeyEvent},
-        simple_serial::SimpleSerialClient,
-    },
+    services::{keyboard::mux::KeyboardMuxClient, simple_serial::SimpleSerialClient},
     Kernel,
 };
 use maitake::sync::Mutex;
@@ -186,7 +183,14 @@ pub struct SerialMuxSettings {
 impl SerialMuxServer {
     /// Register the `SerialMuxServer`.
     ///
-    /// Will retry to obtain a [`SimpleSerialClient`] until success.
+    /// Registering a `SerialMuxServer` will always acquire a
+    /// [`SimpleSerialClient`] to access the serial port. If the SerMux
+    /// pseudo-keyboard is enabled (by
+    /// [`SerialMuxSettings::with_pseudo_keyboard`]), then it will also acquire
+    /// a [`KeyboardMuxClient`] to broadcast pseudo-keyboard input.
+    ///
+    /// Will retry to obtain a [`SimpleSerialClient`] and a
+    /// [`KeyboardMuxClient`] until success.
     pub async fn register(
         kernel: &'static Kernel,
         settings: SerialMuxSettings,
@@ -208,9 +212,15 @@ impl SerialMuxServer {
 
     /// Register the SerialMuxServer.
     ///
-    /// Does NOT attempt to obtain a [`SimpleSerialClient`] more than once.
+    /// Registering a `SerialMuxServer` will always acquire a
+    /// [`SimpleSerialClient`] to access the serial port. If the SerMux
+    /// pseudo-keyboard is enabled (by
+    /// [`SerialMuxSettings::with_pseudo_keyboard`]), then it will also acquire
+    /// a [`KeyboardMuxClient`] to broadcast pseudo-keyboard input.
     ///
-    /// Prefer [`SerialMuxServer::register`] unless you will not be spawning one around
+    /// This method does NOT attempt to obtain a [`SimpleSerialClient`] or
+    /// [`KeyboardMuxClient`] more than once. Prefer
+    /// [`SerialMuxServer::register`] unless you will not be spawning one around
     /// the same time as registering this server.
     pub async fn register_no_retry(
         kernel: &'static Kernel,
