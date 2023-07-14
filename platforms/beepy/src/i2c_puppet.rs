@@ -562,7 +562,7 @@ impl Default for I2cPuppetSettings {
             channel_capacity: 8,
             subscription_capacity: 32,
             max_subscriptions: 8,
-            poll_interval: Duration::from_secs(1),
+            poll_interval: Duration::from_millis(50),
             keymux: true,
         }
     }
