@@ -234,14 +234,12 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
             // loop *just* for skipping released key events
             futures::select_biased! {
                 event = keyboard.next().fuse() => {
-                    use key_event::{Kind, KeyCode};
 
                     let Some(event) = event else {
                         tracing::error!("Keyboard service is dead???");
                         continue;
                     };
-                    // tracing::debug!(?event, "shell got key event");
-                    if event.kind == Kind::Released {
+                    if event.kind == key_event::Kind::Released {
                         continue;
                     }
                     let Some(ch) = event.code.into_char() else {
@@ -252,11 +250,12 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
                         continue;
                     }
 
-                    match (rline.append_local_char(ch as u8), event.code) {
-                        (Ok(_), _) => {}
+                    let b = ch as u8;
+                    match rline.append_local_char(b) {
+                        Ok(_) => {}
                         // backspace
-                        (Err(_), KeyCode::Backspace) | (Err(_), KeyCode::Delete) => rline.pop_local_char(),
-                        (Err(_), KeyCode::Enter) => {
+                        Err(_) if b == 0x7F => rline.pop_local_char(),
+                        Err(_) if b == b'\n' => {
                             let needed = rline.local_editing_len();
                             if needed != 0 {
                                 let mut tid_io_wgr = tid_io.producer().send_grant_exact(needed).await;
@@ -265,7 +264,7 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
                                 rline.submit_local_editing();
                             }
                         }
-                        (Err(error), _) => {
+                        Err(error) => {
                             tracing::warn!(?error, "Error appending char: {ch:?}");
                         }
                     }
