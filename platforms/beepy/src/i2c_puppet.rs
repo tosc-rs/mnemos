@@ -313,7 +313,12 @@ impl I2cPuppetServer {
         let cfg = reg::Cfg::new()
             .with(reg::Cfg::KEY_INT, true)
             .with(reg::Cfg::USE_MODS, true)
-            .with(reg::Cfg::OVERFLOW_INT, true);
+            .with(reg::Cfg::OVERFLOW_INT, true)
+            // overwrite older keypresses when the FIFO is full. 
+            // since we only poll the keyboard when there are active 
+            // subscriptions, enable this setting so that the
+            // FIFO doesn't fill up with ancient keypresses. 
+            .with(reg::Cfg::OVERFLOW_ON, true);
         tracing::info!("setting i2c_puppet config:\n{cfg}");
         i2c.write(ADDR, &[reg::CFG | reg::WRITE, cfg.bits()])
             .await
