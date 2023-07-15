@@ -6,7 +6,7 @@ extern crate alloc;
 use core::time::Duration;
 use mnemos_d1_core::{
     dmac::Dmac,
-    drivers::{spim::kernel_spim1, uart::kernel_uart, twi},
+    drivers::{spim::kernel_spim1, twi, uart::kernel_uart},
     plic::Plic,
     timer::Timers,
     Ram, D1,
