@@ -7,9 +7,10 @@
 //! [`KeyboardService`] implementation). Keyboard drivers use the
 //! [`KeyboardMuxService`] to publish events from their keyboards to the
 //! multiplexer, which broadcasts those events to all clients.
-use super::{KeyEvent, KeyboardError, KeyboardService, Subscribed};
+use super::{key_event, KeyEvent, KeyboardError, KeyboardService, Subscribed};
 use crate::{
     comms::{
+        bbq,
         kchannel::{KChannel, KConsumer, KProducer},
         oneshot::Reusable,
     },
@@ -18,10 +19,11 @@ use crate::{
         self, known_uuids, Envelope, KernelHandle, OneshotRequestError, RegisteredDriver,
         RegistrationError,
     },
+    services::serial_mux,
     tracing, Kernel,
 };
 use core::{convert::Infallible, time::Duration};
-use futures::FutureExt;
+use futures::{future, FutureExt};
 use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -127,15 +129,21 @@ pub struct KeyboardMuxServer {
     sub_rx: KConsumer<registry::Message<KeyboardService>>,
     subscriptions: FixedVec<KProducer<KeyEvent>>,
     settings: KeyboardMuxSettings,
+    sermux_port: Option<serial_mux::PortHandle>,
 }
 
 pub struct KeyboardMuxSettings {
     max_keyboards: usize,
     buffer_capacity: usize,
+    sermux_port: Option<u16>,
 }
 
 impl KeyboardMuxServer {
     /// Register the `KeyboardMuxServer`.
+    ///
+    /// If [`KeyboardMuxSettings::with_sermux_port`] is [`Some`], this function
+    /// will attempt to acquire a [`serial_mux::PortHandle`] for the configured
+    /// serial mux port.
     pub async fn register(
         kernel: &'static Kernel,
         settings: KeyboardMuxSettings,
@@ -143,6 +151,19 @@ impl KeyboardMuxServer {
         let (key_tx, key_rx) = KChannel::new_async(settings.buffer_capacity).await.split();
         let (sub_tx, sub_rx) = KChannel::new_async(8).await.split();
         let subscriptions = FixedVec::new(settings.max_keyboards).await;
+        let sermux_port = if let Some(port) = settings.sermux_port {
+            let mut client = serial_mux::SerialMuxClient::from_registry(kernel).await;
+            tracing::info!("opening Serial Mux port {port}");
+            Some(
+                client
+                    .open_port(port, settings.buffer_capacity)
+                    .await
+                    // TODO(eliza): this could be a custom RegistrationError variant...
+                    .expect("failed to acquire serial mux keyboard port!"),
+            )
+        } else {
+            None
+        };
         kernel
             .spawn(
                 Self {
@@ -150,6 +171,7 @@ impl KeyboardMuxServer {
                     key_rx,
                     subscriptions,
                     settings,
+                    sermux_port,
                 }
                 .run(),
             )
@@ -167,6 +189,13 @@ impl KeyboardMuxServer {
     #[tracing::instrument(level = tracing::Level::INFO, name = "KeyboardMuxServer", skip(self))]
     pub async fn run(mut self) {
         loop {
+            let sermux_fut = match self.sermux_port {
+                Some(ref mut port) => {
+                    let rgr = port.consumer().read_grant();
+                    future::Either::Left(rgr)
+                }
+                None => future::Either::Right(future::pending::<bbq::GrantR>()),
+            };
             futures::select_biased! {
                 msg = self.sub_rx.dequeue_async().fuse() => {
                     let Ok(registry::Message { msg, reply }) = msg else {
@@ -204,6 +233,22 @@ impl KeyboardMuxServer {
 
                     let _ = reply.reply_konly(msg.reply_with(Ok(Response { _p: ()}))).await;
                 },
+                rgr = sermux_fut.fuse() => {
+                    let len = rgr.len();
+                    for &byte in &rgr[..] {
+                        let Some(key) = KeyEvent::from_ascii(byte, key_event::Kind::Pressed) else {
+                            tracing::warn!("invalid ASCII byte on SerMux port: {byte:#x}");
+                            continue;
+                        };
+                        tracing::debug!(?key, "publishing SerMux key event");
+
+                        for sub in self.subscriptions.as_slice_mut() {
+                            let _ = sub.enqueue_async(key).await;
+                        }
+                    }
+                    rgr.release(len);
+                }
+
             }
         }
     }
@@ -212,6 +257,21 @@ impl KeyboardMuxServer {
 impl KeyboardMuxSettings {
     pub const DEFAULT_BUFFER_CAPACITY: usize = 32;
     pub const DEFAULT_MAX_KEYBOARDS: usize = 8;
+    pub const DEFAULT_SERMUX_PORT: Option<u16> = Some(serial_mux::WellKnown::PseudoKeyboard as u16);
+
+    /// Sets a [serial mux](crate::services::serial_mux) port to use as a
+    /// virtual keyboard input.
+    ///
+    /// If this is [`None`], serial mux input will not be used as a virtual
+    /// keyboard.
+    #[must_use]
+    pub fn with_sermux_port(self, port: impl Into<Option<u16>>) -> Self {
+        let sermux_port = port.into();
+        Self {
+            sermux_port,
+            ..self
+        }
+    }
 }
 
 impl Default for KeyboardMuxSettings {
@@ -219,6 +279,7 @@ impl Default for KeyboardMuxSettings {
         Self {
             max_keyboards: Self::DEFAULT_MAX_KEYBOARDS,
             buffer_capacity: Self::DEFAULT_BUFFER_CAPACITY,
+            sermux_port: Self::DEFAULT_SERMUX_PORT,
         }
     }
 }
