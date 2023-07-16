@@ -1,10 +1,11 @@
 use std::{alloc::System, sync::Arc};
 
 use clap::Parser;
+use embedded_graphics::{primitives::{Rectangle, StyledDrawable, Primitive, PrimitiveStyleBuilder}, prelude::{Point, Size}, pixelcolor::BinaryColor, Drawable};
 use futures::FutureExt;
 use melpomene::{
     cli::{self, MelpomeneOptions},
-    sim_drivers::{emb_display::SimDisplay, tcp_serial::TcpSerial},
+    sim_drivers::{emb_display::SimDisplay, tcp_serial::TcpSerial, emb_display2::SimDisplay2, embd2_svc::{EmbDisplay2Client, FrameChunk, FrameLocSize, MonoChunk}},
 };
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
@@ -115,12 +116,22 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     .unwrap();
 
     // Spawn the graphics driver
+    // k.initialize(async move {
+    //     SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
+    //         .await
+    //         .unwrap();
+    // })
+    // .unwrap();
+
+    // Spawn the graphics driver
     k.initialize(async move {
-        SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
+        SimDisplay2::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
             .await
             .unwrap();
     })
     .unwrap();
+
+    k.initialize(disp_demo(k)).unwrap();
 
     // Spawn a loopback port
     let loopback_settings = LoopbackSettings::default();
@@ -131,12 +142,12 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     k.initialize(hello(k, hello_settings)).unwrap();
 
     // Spawn a graphical shell
-    let mut guish = GraphicalShellSettings::with_display_size(DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX);
-    guish.capacity = 1024;
-    k.initialize(graphical_shell_mono(k, guish)).unwrap();
+    // let mut guish = GraphicalShellSettings::with_display_size(DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX);
+    // guish.capacity = 1024;
+    // k.initialize(graphical_shell_mono(k, guish)).unwrap();
 
     // Spawn the spawnulator
-    k.initialize(SpawnulatorServer::register(k, 16)).unwrap();
+    // k.initialize(SpawnulatorServer::register(k, 16)).unwrap();
 
     loop {
         // Tick the scheduler
@@ -179,6 +190,43 @@ async fn kernel_entry(opts: MelpomeneOptions) {
         } else {
             // let other tokio tasks (simulated hardware devices) run.
             tokio::task::yield_now().await;
+        }
+    }
+}
+
+async fn disp_demo(k: &'static Kernel) {
+    k.sleep(Duration::from_millis(1000)).await;
+    tracing::warn!("DRAWING");
+    let mut client = EmbDisplay2Client::from_registry(k).await;
+    let mut chunk = MonoChunk::allocate_mono(FrameLocSize {
+        offset_x: 0,
+        offset_y: 100,
+        width: 100,
+        height: 100,
+    }).await;
+    loop {
+        for x in 0..6 {
+            for i in 0..5 {
+                chunk.meta.start_x = x * 50;
+                chunk.clear();
+                let style = PrimitiveStyleBuilder::new()
+                    .stroke_color(BinaryColor::On)
+                    .stroke_width(3)
+                    .build();
+                Rectangle::new(Point::new(10, 10), Size::new(i * 15, i * 15))
+                    .into_styled(style)
+                    .draw(&mut chunk).unwrap();
+                chunk = client.draw_mono(chunk).await.unwrap();
+
+                tracing::warn!("DREW");
+                k.sleep(Duration::from_millis(1000) / 15).await;
+
+                chunk.invert_masked();
+                chunk = client.draw_mono(chunk).await.unwrap();
+
+                tracing::warn!("DREW");
+
+            }
         }
     }
 }

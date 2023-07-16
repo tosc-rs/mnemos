@@ -5,7 +5,7 @@ use core::time::Duration;
 
 use embedded_graphics::{
     // pixelcolor::{Gray8, GrayColor},
-    pixelcolor::BinaryColor,
+    pixelcolor::{BinaryColor, Gray8},
     prelude::*,
 };
 use mnemos_kernel::{
@@ -89,10 +89,10 @@ pub struct EmbDisplay2Client {
 }
 
 pub struct FrameLocSize {
-    offset_x: u32,
-    offset_y: u32,
-    width: u32,
-    height: u32,
+    pub offset_x: u32,
+    pub offset_y: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl EmbDisplay2Client {
@@ -123,6 +123,20 @@ impl EmbDisplay2Client {
         Some(EmbDisplay2Client {
             prod,
             reply: Reusable::new_async().await,
+        })
+    }
+
+    pub async fn draw_mono(&mut self, chunk: MonoChunk) -> Result<MonoChunk, ()> {
+        let resp = self
+            .prod
+            .request_oneshot(Request::Draw(chunk.into()), &self.reply)
+            .await
+            .unwrap()
+            .body
+            .unwrap();
+        Ok(match resp {
+            Response::FrameMeta(M) => todo!(),
+            Response::DrawComplete(FrameChunk::Mono(fc)) => fc,
         })
     }
 
@@ -157,24 +171,8 @@ impl OriginDimensions for FrameChunk {
     }
 }
 
-impl FrameChunk {
-    pub async fn allocate_mono(size: FrameLocSize) -> Self {
-        let meta = FrameBufMeta {
-            start_x: size.offset_x,
-            start_y: size.offset_y,
-            width: size.width,
-            height: size.height,
-        };
-        let row_bytes = (size.width + 7) / 8;
-        let ttl = (row_bytes * size.height) as usize;
-        let data = BufBit {
-            bytes: HeapArray::new(ttl, 0).await,
-        };
-        let mask = BufBit {
-            bytes: HeapArray::new(ttl, 0).await,
-        };
-        Self::Mono(MonoChunk { meta, data, mask })
-    }
+impl MonoChunk {
+
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -184,25 +182,49 @@ impl FrameChunk {
 
 // TODO: wrapper types instead of aliases?
 
+impl From<MonoChunk> for FrameChunk {
+    fn from(value: MonoChunk) -> Self {
+        FrameChunk::Mono(value)
+    }
+}
+
 pub struct MonoChunk {
     pub meta: FrameBufMeta,
     pub data: BufBit,
     pub mask: BufBit,
 }
 
-pub struct MonoChunkIter<'a> {
-    idx
+impl MonoChunk {
+    pub fn clear(&mut self) {
+        self.mask.bytes.iter_mut().for_each(|b| *b = 0);
+    }
+
+    pub async fn allocate_mono(size: FrameLocSize) -> Self {
+        let meta = FrameBufMeta {
+            start_x: size.offset_x,
+            start_y: size.offset_y,
+            width: size.width,
+            height: size.height,
+        };
+        let ttl = (size.width * size.height) as usize;
+        let data = BufBit {
+            bytes: HeapArray::new(ttl, 0).await,
+        };
+        let mask = BufBit {
+            bytes: HeapArray::new(ttl, 0).await,
+        };
+        MonoChunk { meta, data, mask }
+    }
+
+    pub fn invert_masked(&mut self) {
+        let pixels = self.data.bytes.iter_mut().zip(self.mask.bytes.iter()).for_each(|(d, m)| {
+            if *m != 0 {
+                *d = !*d;
+            }
+        });
+    }
 }
 
-// Round up to bytes per row
-#[inline]
-fn idx_mask(x: u32, y: u32, row_bytes: u32) -> (usize, u8) {
-    let offset = y * row_bytes;
-    let offset = offset + (x / 8);
-    let bitoffset = (x % 8) as u8;
-    let mask = 1u8 << bitoffset; // todo: reverse?
-    (offset as usize, mask)
-}
 
 /// FrameChunk implements embedded-graphics's `DrawTarget` trait so that clients
 /// can directly use embedded-graphics primitives for drawing into the framebuffer.
@@ -215,15 +237,8 @@ impl DrawTarget for MonoChunk {
         I: IntoIterator<Item = Pixel<Self::Color>>,
     {
 
-
-        let row_bytes = (self.meta.width + 7) / 8;
-        let bit_set = |x: u32, y: u32, b: &mut [u8]| {
-            let (idx, mask) = idx_mask(x, y, row_bytes);
-            b[idx] |= mask;
-        };
-        let bit_clear = |x: u32, y: u32, b: &mut [u8]| {
-            let (idx, mask) = idx_mask(x, y, row_bytes);
-            b[idx] |= mask;
+        let idx = |x: u32, y: u32| {
+            ((y * self.meta.width) + x) as usize
         };
 
         let data = &mut self.data.bytes;
@@ -240,11 +255,12 @@ impl DrawTarget for MonoChunk {
                 continue;
             }
 
-            match color {
-                BinaryColor::Off => bit_clear(x, y, data),
-                BinaryColor::On => bit_set(x, y, data),
-            }
-            bit_set(x, y, mask);
+            let i = idx(x, y);
+            data[i] = match color {
+                BinaryColor::Off => Gray8::BLACK.into_storage(),
+                BinaryColor::On => Gray8::WHITE.into_storage(),
+            };
+            mask[idx(x, y)] = 0x01;
         }
 
         Ok(())
@@ -269,17 +285,17 @@ pub struct FrameBufMeta {
 }
 
 pub struct BufBit {
-    bytes: HeapArray<u8>,
+    pub bytes: HeapArray<u8>,
 }
 
 struct Buf8 {
-    bytes: HeapArray<u8>,
+    pub bytes: HeapArray<u8>,
 }
 
 struct Buf16 {
-    bytes: HeapArray<u16>,
+    pub bytes: HeapArray<u16>,
 }
 
 struct Buf32 {
-    words: HeapArray<u32>,
+    pub words: HeapArray<u32>,
 }

@@ -18,11 +18,11 @@
 //! them back to be rendered into the total frame. Any data in the client's sub-frame
 //! will replace the current contents of the whole frame buffer.
 
-use std::time::Duration;
+use std::{time::Duration, ops::Deref};
 
 use embedded_graphics::{
     image::{Image, ImageRaw},
-    pixelcolor::BinaryColor,
+    pixelcolor::{BinaryColor, Gray8},
     prelude::*,
 };
 use embedded_graphics_simulator::{
@@ -43,9 +43,9 @@ use super::embd2_svc::{
 
 /// Implements the [`EmbDisplay2Service`] driver using the `embedded-graphics`
 /// simulator.
-pub struct SimDisplay;
+pub struct SimDisplay2;
 
-impl SimDisplay {
+impl SimDisplay2 {
     /// Register the driver instance
     ///
     /// Registration will also start the simulated display, meaning that the display
@@ -57,7 +57,7 @@ impl SimDisplay {
         width: u32,
         height: u32,
     ) -> Result<(), FrameError> {
-        tracing::debug!("initializing SimDisplay server ({width}x{height})...");
+        tracing::debug!("initializing SimDisplay2 server ({width}x{height})...");
 
         let (cmd_prod, cmd_cons) = KChannel::new_async(1).await.split();
         let commander = CommanderTask {
@@ -72,7 +72,7 @@ impl SimDisplay {
             .await
             .map_err(|_| FrameError::DisplayAlreadyExists)?;
 
-        tracing::info!("SimDisplayServer initialized!");
+        tracing::info!("SimDisplay2Server initialized!");
 
         Ok(())
     }
@@ -82,7 +82,7 @@ impl SimDisplay {
 // CommanderTask - This is the "driver server"
 //////////////////////////////////////////////////////////////////////////////
 
-/// This task is spawned by the call to [`SimDisplay::register`]. It is a single
+/// This task is spawned by the call to [`SimDisplay2::register`]. It is a single
 /// async function that will process requests, and periodically redraw the
 /// framebuffer.
 struct CommanderTask {
@@ -91,7 +91,7 @@ struct CommanderTask {
 }
 
 struct Context {
-    sdisp: SimulatorDisplay<BinaryColor>,
+    sdisp: SimulatorDisplay<Gray8>,
     framebuf: HeapArray<u8>,
     window: Window,
     dirty: bool,
@@ -104,9 +104,11 @@ impl CommanderTask {
     async fn run(mut self, width: u32, height: u32) {
         let output_settings = OutputSettingsBuilder::new()
             .theme(BinaryColorTheme::OledBlue)
+            .scale(1)
             .build();
 
-        let bytes = (((width + 7) / 8) * height) as usize;
+        let bytes = (width * height) as usize;
+        tracing::error!(bytes, "buffy");
 
         // Create a mutex for the embedded graphics simulator objects.
         //
@@ -119,9 +121,9 @@ impl CommanderTask {
         // The update loop *needs* to drop the egsim items, otherwise they just exist
         // in the mutex until the next time a frame is displayed, which right now is
         // only whenever line characters actually arrive.
-        let sdisp = SimulatorDisplay::<BinaryColor>::new(Size::new(width, height));
+        let sdisp = SimulatorDisplay::<Gray8>::new(Size::new(width, height));
         let window = Window::new("mnemOS", &output_settings);
-        let framebuf = HeapArray::new(bytes, 0).await;
+        let framebuf = HeapArray::new(bytes, 0x00).await;
         let mutex = Arc::new(Mutex::new(Some(Context {
             sdisp,
             framebuf,
@@ -155,6 +157,9 @@ impl CommanderTask {
                             // If nothing has been drawn, only update the frame at 5Hz to save
                             // CPU usage
                             if *dirty || idle_ticks >= 3 {
+                                if *dirty {
+                                    tracing::warn!("WAS DIRTY");
+                                }
                                 idle_ticks = 0;
                                 *dirty = false;
                                 window.update(&sdisp);
@@ -200,8 +205,10 @@ impl CommanderTask {
                     }) = (&mut *guard).as_mut()
                     {
                         draw_to(framebuf, fc, *width, *height);
+                        // framebuf.iter_mut().take(400 * 100).for_each(|b| *b = 255);
                         let raw_img = frame_display(framebuf, *width).unwrap();
                         let image = Image::new(&raw_img, Point::new(0, 0));
+                        // tracing::info!(?image);
                         image.draw(sdisp).unwrap();
                         *dirty = true;
 
@@ -236,7 +243,7 @@ fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u32) {
                 start_x,
                 start_y,
                 width: src_width,
-                height: src_height,
+                height: _,
             },
         data,
         mask,
@@ -249,17 +256,34 @@ fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u32) {
         return;
     }
 
-    let max_y = (*start_y + *src_height).min(height);
-    let max_x = (*start_x + *src_width).min(width);
+    // Take all destination rows, starting at the start_y line
+    let all_dest_rows = dest.chunks_exact_mut(width as usize);
+    let dest_rows = all_dest_rows
+        .skip(*start_y as usize);
 
-    // Well this is just terrible.
-    for y in *start_y..max_y {
-        let src_y = y - *start_y;
-        for x in *start_x..max_x {
-            let src_x = x - *start_x;
-        }
+    // Then take all source rows, and zip together the mask bits
+    let all_src_rows = data.bytes.chunks(*src_width as usize);
+    let all_src_mask_rows = mask.bytes.chunks(*src_width as usize);
+    let all_src = all_src_rows.zip(all_src_mask_rows);
+
+    // Combine them together, this gives us automatic "early return"
+    // when either we run out of source rows, or destination rows
+    let zip_rows = dest_rows.zip(all_src);
+    for (dest_row, (src_data, src_mask)) in zip_rows {
+        // Zip the data and mask lines together so we can use them
+        let src = src_data.iter().zip(src_mask.iter());
+
+        dest_row
+            .iter_mut()
+            // Skip to the start of the subframe
+            .skip(*start_x as usize)
+            // Again, zipping means we stop as soon as we run out of
+            // source OR destination pixesl on this line
+            .zip(src)
+            .for_each(|(d, (s_d, s_m))| {
+                *d = (*s_m & *s_d) ^ (!*s_m & *d);
+            });
     }
-
 }
 
 /// Create and return a Simulator display object from raw pixel data.
@@ -268,8 +292,8 @@ fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u32) {
 /// This is necessary as a e-g Window only accepts SimulatorDisplay object
 /// On a physical display, the raw pixel data can be sent over to the display directly
 /// Using the display's device interface
-fn frame_display(fc: &HeapArray<u8>, width: u32) -> Result<ImageRaw<BinaryColor>, ()> {
-    let raw_image: ImageRaw<BinaryColor>;
-    raw_image = ImageRaw::<BinaryColor>::new(&fc, width);
+fn frame_display(fc: &HeapArray<u8>, width: u32) -> Result<ImageRaw<Gray8>, ()> {
+    let raw_image: ImageRaw<Gray8>;
+    raw_image = ImageRaw::<Gray8>::new(&fc, width);
     Ok(raw_image)
 }
