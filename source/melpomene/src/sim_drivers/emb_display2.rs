@@ -18,7 +18,7 @@
 //! them back to be rendered into the total frame. Any data in the client's sub-frame
 //! will replace the current contents of the whole frame buffer.
 
-use std::{time::Duration, ops::Deref};
+use std::{ops::Deref, time::Duration};
 
 use embedded_graphics::{
     image::{Image, ImageRaw},
@@ -33,15 +33,14 @@ use mnemos_alloc::containers::{Arc, HeapArray};
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
     registry::Message,
+    services::emb_display::{
+        EmbDisplayService, FrameBufMeta, FrameChunk, FrameError, FrameMeta, MonoChunk, Request,
+        Response,
+    },
     Kernel,
 };
 
-use super::embd2_svc::{
-    EmbDisplay2Service, FrameBufMeta, FrameChunk, FrameError, FrameMeta, MonoChunk, Request,
-    Response,
-};
-
-/// Implements the [`EmbDisplay2Service`] driver using the `embedded-graphics`
+/// Implements the [`EmbDisplayService`] driver using the `embedded-graphics`
 /// simulator.
 pub struct SimDisplay2;
 
@@ -68,7 +67,7 @@ impl SimDisplay2 {
         kernel.spawn(commander.run(width, height)).await;
 
         kernel
-            .with_registry(|reg| reg.register_konly::<EmbDisplay2Service>(&cmd_prod))
+            .with_registry(|reg| reg.register_konly::<EmbDisplayService>(&cmd_prod))
             .await
             .map_err(|_| FrameError::DisplayAlreadyExists)?;
 
@@ -87,7 +86,7 @@ impl SimDisplay2 {
 /// framebuffer.
 struct CommanderTask {
     kernel: &'static Kernel,
-    cmd: KConsumer<Message<EmbDisplay2Service>>,
+    cmd: KConsumer<Message<EmbDisplayService>>,
 }
 
 struct Context {
@@ -108,7 +107,6 @@ impl CommanderTask {
             .build();
 
         let bytes = (width * height) as usize;
-        tracing::error!(bytes, "buffy");
 
         // Create a mutex for the embedded graphics simulator objects.
         //
@@ -157,9 +155,6 @@ impl CommanderTask {
                             // If nothing has been drawn, only update the frame at 5Hz to save
                             // CPU usage
                             if *dirty || idle_ticks >= 3 {
-                                if *dirty {
-                                    tracing::warn!("WAS DIRTY");
-                                }
                                 idle_ticks = 0;
                                 *dirty = false;
                                 window.update(&sdisp);
@@ -205,10 +200,8 @@ impl CommanderTask {
                     }) = (&mut *guard).as_mut()
                     {
                         draw_to(framebuf, fc, *width, *height);
-                        // framebuf.iter_mut().take(400 * 100).for_each(|b| *b = 255);
                         let raw_img = frame_display(framebuf, *width).unwrap();
                         let image = Image::new(&raw_img, Point::new(0, 0));
-                        // tracing::info!(?image);
                         image.draw(sdisp).unwrap();
                         *dirty = true;
 
@@ -237,33 +230,28 @@ impl CommanderTask {
 }
 
 fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u32) {
-    let MonoChunk {
-        meta:
-            FrameBufMeta {
-                start_x,
-                start_y,
-                width: src_width,
-                height: _,
-            },
-        data,
-        mask,
-    } = src;
+    let meta = src.meta();
+    let data = src.data();
+    let mask = src.mask();
 
-    if *start_y >= height {
+    let start_x = meta.start_x();
+    let start_y = meta.start_y();
+    let src_width = meta.width();
+
+    if start_y >= height {
         return;
     }
-    if *start_x >= width {
+    if start_x >= width {
         return;
     }
 
     // Take all destination rows, starting at the start_y line
     let all_dest_rows = dest.chunks_exact_mut(width as usize);
-    let dest_rows = all_dest_rows
-        .skip(*start_y as usize);
+    let dest_rows = all_dest_rows.skip(start_y as usize);
 
     // Then take all source rows, and zip together the mask bits
-    let all_src_rows = data.bytes.chunks(*src_width as usize);
-    let all_src_mask_rows = mask.bytes.chunks(*src_width as usize);
+    let all_src_rows = data.chunks(src_width as usize);
+    let all_src_mask_rows = mask.chunks(src_width as usize);
     let all_src = all_src_rows.zip(all_src_mask_rows);
 
     // Combine them together, this gives us automatic "early return"
@@ -276,12 +264,21 @@ fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u32) {
         dest_row
             .iter_mut()
             // Skip to the start of the subframe
-            .skip(*start_x as usize)
+            .skip(start_x as usize)
             // Again, zipping means we stop as soon as we run out of
             // source OR destination pixesl on this line
             .zip(src)
-            .for_each(|(d, (s_d, s_m))| {
-                *d = (*s_m & *s_d) ^ (!*s_m & *d);
+            .filter_map(|(d, (s_d, s_m))| {
+                // look at the mask, to see if the subframe should modify
+                // the total frame
+                if *s_m != 0 {
+                    Some((d, s_d))
+                } else {
+                    None
+                }
+            })
+            .for_each(|(d, s)| {
+                *d = *s;
             });
     }
 }

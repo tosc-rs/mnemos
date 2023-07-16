@@ -5,7 +5,7 @@ use embedded_graphics::{primitives::{Rectangle, StyledDrawable, Primitive, Primi
 use futures::FutureExt;
 use melpomene::{
     cli::{self, MelpomeneOptions},
-    sim_drivers::{emb_display::SimDisplay, tcp_serial::TcpSerial, emb_display2::SimDisplay2, embd2_svc::{EmbDisplay2Client, FrameChunk, FrameLocSize, MonoChunk}},
+    sim_drivers::{tcp_serial::TcpSerial, emb_display2::SimDisplay2},
 };
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
@@ -13,7 +13,11 @@ use mnemos_kernel::{
         sermux::{hello, loopback, HelloSettings, LoopbackSettings},
         shells::{graphical_shell_mono, GraphicalShellSettings},
     },
-    services::{forth_spawnulator::SpawnulatorServer, serial_mux::SerialMuxServer},
+    services::{
+        forth_spawnulator::SpawnulatorServer,
+        serial_mux::SerialMuxServer,
+        emb_display::{EmbDisplayClient, FrameChunk, FrameLocSize, MonoChunk},
+    },
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -131,7 +135,7 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     })
     .unwrap();
 
-    k.initialize(disp_demo(k)).unwrap();
+    // k.initialize(disp_demo(k)).unwrap();
 
     // Spawn a loopback port
     let loopback_settings = LoopbackSettings::default();
@@ -142,12 +146,12 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     k.initialize(hello(k, hello_settings)).unwrap();
 
     // Spawn a graphical shell
-    // let mut guish = GraphicalShellSettings::with_display_size(DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX);
-    // guish.capacity = 1024;
-    // k.initialize(graphical_shell_mono(k, guish)).unwrap();
+    let mut guish = GraphicalShellSettings::with_display_size(DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX);
+    guish.capacity = 1024;
+    k.initialize(graphical_shell_mono(k, guish)).unwrap();
 
     // Spawn the spawnulator
-    // k.initialize(SpawnulatorServer::register(k, 16)).unwrap();
+    k.initialize(SpawnulatorServer::register(k, 16)).unwrap();
 
     loop {
         // Tick the scheduler
@@ -194,39 +198,35 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     }
 }
 
-async fn disp_demo(k: &'static Kernel) {
-    k.sleep(Duration::from_millis(1000)).await;
-    tracing::warn!("DRAWING");
-    let mut client = EmbDisplay2Client::from_registry(k).await;
-    let mut chunk = MonoChunk::allocate_mono(FrameLocSize {
-        offset_x: 0,
-        offset_y: 100,
-        width: 100,
-        height: 100,
-    }).await;
-    loop {
-        for x in 0..6 {
-            for i in 0..5 {
-                chunk.meta.start_x = x * 50;
-                chunk.clear();
-                let style = PrimitiveStyleBuilder::new()
-                    .stroke_color(BinaryColor::On)
-                    .stroke_width(3)
-                    .build();
-                Rectangle::new(Point::new(10, 10), Size::new(i * 15, i * 15))
-                    .into_styled(style)
-                    .draw(&mut chunk).unwrap();
-                chunk = client.draw_mono(chunk).await.unwrap();
+// async fn disp_demo(k: &'static Kernel) {
+//     k.sleep(Duration::from_millis(1000)).await;
+//     tracing::warn!("DRAWING");
+//     let mut client = EmbDisplayClient::from_registry(k).await;
+//     let mut chunk = MonoChunk::allocate_mono(FrameLocSize {
+//         offset_x: 0,
+//         offset_y: 100,
+//         width: 100,
+//         height: 100,
+//     }).await;
+//     loop {
+//         for x in 0..6 {
+//             for i in 0..5 {
+//                 chunk.meta_mut().set_start_x(x * 50);
+//                 chunk.clear();
+//                 let style = PrimitiveStyleBuilder::new()
+//                     .stroke_color(BinaryColor::On)
+//                     .stroke_width(3)
+//                     .build();
+//                 Rectangle::new(Point::new(10, 10), Size::new(i * 15, i * 15))
+//                     .into_styled(style)
+//                     .draw(&mut chunk).unwrap();
+//                 chunk = client.draw_mono(chunk).await.unwrap();
 
-                tracing::warn!("DREW");
-                k.sleep(Duration::from_millis(1000) / 15).await;
+//                 k.sleep(Duration::from_millis(1000) / 15).await;
 
-                chunk.invert_masked();
-                chunk = client.draw_mono(chunk).await.unwrap();
-
-                tracing::warn!("DREW");
-
-            }
-        }
-    }
-}
+//                 chunk.invert_masked();
+//                 chunk = client.draw_mono(chunk).await.unwrap();
+//             }
+//         }
+//     }
+// }

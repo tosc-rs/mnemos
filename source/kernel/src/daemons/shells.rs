@@ -7,15 +7,15 @@ use core::time::Duration;
 use crate::{
     forth::Params,
     services::{
-        emb_display::EmbDisplayClient,
+        emb_display::{EmbDisplayClient, FrameLocSize, MonoChunk},
         serial_mux::{PortHandle, WellKnown},
     },
     tracing, Kernel,
 };
 use embedded_graphics::{
     mono_font::{MonoFont, MonoTextStyle},
-    pixelcolor::Gray8,
-    prelude::{GrayColor, Point},
+    pixelcolor::BinaryColor,
+    prelude::Point,
     primitives::{Line, Primitive, PrimitiveStyle},
     text::Text,
     Drawable,
@@ -147,7 +147,8 @@ impl GraphicalShellSettings {
 }
 
 /// Spawns a graphical shell using the [EmbDisplayService](crate::services::emb_display::EmbDisplayService) service
-#[tracing::instrument(skip(k))]
+// TODO: tracing the `settings` field draws the whole PROFONT_12_POINT, which is hilarious but annoying
+#[tracing::instrument(skip(k, settings))]
 pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSettings) {
     let GraphicalShellSettings {
         port,
@@ -168,11 +169,15 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
 
     // Draw titlebar
     {
-        let mut fc_0 = disp_hdl
-            .get_framechunk(0, 0, disp_width_px, char_y)
-            .await
-            .unwrap();
-        let text_style = MonoTextStyle::new(&font, Gray8::WHITE);
+        let mut fc_0 = MonoChunk::allocate_mono(FrameLocSize {
+            height: char_y,
+            width: disp_width_px,
+            offset_x: 0,
+            offset_y: 0,
+        })
+        .await;
+
+        let text_style = MonoTextStyle::new(&font, BinaryColor::On);
         let text1 = Text::new("mnemOS", Point::new(0, font.baseline as i32), text_style);
         text1.draw(&mut fc_0).unwrap();
 
@@ -187,7 +192,7 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
         );
         text2.draw(&mut fc_0).unwrap();
 
-        let line_style = PrimitiveStyle::with_stroke(Gray8::WHITE, 1);
+        let line_style = PrimitiveStyle::with_stroke(BinaryColor::On, 1);
         Line::new(
             Point {
                 x: 0,
@@ -201,12 +206,12 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
         .into_styled(line_style)
         .draw(&mut fc_0)
         .unwrap();
-        disp_hdl.draw_framechunk(fc_0).await.unwrap();
+        disp_hdl.draw(fc_0).await.unwrap();
     }
 
     let style = ring_drawer::BwStyle {
-        background: Gray8::BLACK,
-        font: MonoTextStyle::new(&font, Gray8::WHITE),
+        background: BinaryColor::Off,
+        font: MonoTextStyle::new(&font, BinaryColor::On),
     };
 
     // At 12-pt font, there is enough room for 16 lines, with 50 chars/line.
@@ -221,21 +226,16 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
     // Spawn the forth task
     k.spawn(task.run()).await;
 
+    let mut fc_0 = MonoChunk::allocate_mono(FrameLocSize {
+        offset_x: 0,
+        offset_y: char_y,
+        width: disp_width_px,
+        height: disp_height_px - char_y,
+    }).await;
+
     loop {
-        // Wait until there is a frame buffer ready. There wouldn't be if we've spammed frames
-        // before they've been consumed.
-        let mut fc_0 = loop {
-            let fc = disp_hdl
-                .get_framechunk(0, char_y as i32, disp_width_px, disp_height_px - char_y)
-                .await;
-            if let Some(fc) = fc {
-                break fc;
-            } else {
-                k.sleep(Duration::from_millis(10)).await;
-            }
-        };
         ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
-        disp_hdl.draw_framechunk(fc_0).await.unwrap();
+        fc_0 = disp_hdl.draw_mono(fc_0).await.unwrap();
 
         futures::select_biased! {
             rgr = port.consumer().read_grant().fuse() => {
