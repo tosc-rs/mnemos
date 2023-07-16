@@ -61,6 +61,11 @@ pub enum KeyboardError {
     TooManySubscriptions,
 }
 
+#[derive(Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum KeyClientError {
+    NoKeyboardService,
+}
+
 impl Default for Subscribe {
     fn default() -> Self {
         Self {
@@ -136,9 +141,17 @@ impl KeyClient {
     }
 
     /// Returns the next [`KeyEvent`] received from the [`KeyboardService`].
-    #[must_use]
-    pub async fn next(&mut self) -> Option<KeyEvent> {
-        self.rx.dequeue_async().await.ok()
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[`KeyEvent`]`)` when a keyboard event is received.
+    /// - [`Err`]`(`[`KeyClientError`]`)` if the [`KeyboardService`] is no
+    ///   longer available.
+    pub async fn next(&mut self) -> Result<KeyEvent, KeyClientError> {
+        self.rx
+            .dequeue_async()
+            .await
+            .map_err(|_| KeyClientError::NoKeyboardService)
     }
 
     /// Returns the next Unicode [`char`] received from the [`KeyboardService`].
@@ -146,8 +159,23 @@ impl KeyClient {
     /// Any [`KeyEvent`]s which are not Unicode [`char`]s are skipped. This
     /// method is equivalent to calling [`KeyEvent::into_char`] on the
     /// [`KeyEvent`] returned by [`KeyClient::next`].
-    #[must_use]
-    pub async fn next_char(&mut self) -> Option<char> {
-        self.next().await?.into_char()
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[`char`]`)` if a keyboard event is received and the keyboard
+    ///   event corresponds to a Unicode [`char`]
+    /// - [`Err`]`(`[`KeyClientError`]`)` if the [`KeyboardService`] is no
+    ///   longer available.
+    pub async fn next_char(&mut self) -> Result<char, KeyClientError> {
+        loop {
+            // if the key subscription stream has ended, return `None`.
+            let key = self.next().await?;
+
+            // if the next event is a char, return it. otherwise, keep
+            // waiting for the next event
+            if let Some(c) = key.into_char() {
+                return Ok(c);
+            }
+        }
     }
 }

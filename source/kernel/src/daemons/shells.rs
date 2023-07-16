@@ -235,7 +235,7 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
             futures::select_biased! {
                 event = keyboard.next().fuse() => {
 
-                    let Some(event) = event else {
+                    let Ok(event) = event else {
                         tracing::error!("Keyboard service is dead???");
                         continue;
                     };
