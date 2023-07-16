@@ -7,11 +7,11 @@
 //! keyboards, as it allows clients which consume keyboard input to subscribe to
 //! events from *all* hardware keyboard drivers, rather than a single keyboard.
 //!
-//! The [`event`] submodule defines a generic representation of keyboard events,
-//! which is, admittedly, a bit overly complex. It's intended to model as many
-//! different types of keyboard as possible. Not all keyboards will provide all
-//! of the available keyboard event types, based on what keys actually exist on
-//! the keyboard.
+//! The [`key_event`] submodule defines a generic representation of keyboard
+//! events, which is, admittedly, a bit overly complex. It's intended to model
+//! as many different types of keyboard as possible. Not all keyboards will
+//! provide all of the available keyboard event types, based on what keys
+//! actually exist on the keyboard.
 use uuid::Uuid;
 
 use crate::{
@@ -87,6 +87,8 @@ impl Subscribed {
 ////////////////////////////////////////////////////////////////////////////////
 // Client types
 ////////////////////////////////////////////////////////////////////////////////
+
+/// A client that receives [`KeyEvent`]s from a [`KeyboardService`].
 pub struct KeyClient {
     rx: kchannel::KConsumer<KeyEvent>,
 }
@@ -96,6 +98,7 @@ impl KeyClient {
     ///
     /// If the [`KeyboardService`] hasn't been registered yet, we will retry until it
     /// has been registered.
+    #[must_use]
     pub async fn from_registry(kernel: &'static Kernel, subscribe: Subscribe) -> Self {
         loop {
             match Self::from_registry_no_retry(kernel, subscribe).await {
@@ -114,6 +117,7 @@ impl KeyClient {
     ///
     /// Prefer [`KeyClient::from_registry`] unless you will not be spawning one
     /// around the same time as obtaining a client.
+    #[must_use]
     pub async fn from_registry_no_retry(
         kernel: &'static Kernel,
         subscribe: Subscribe,
@@ -131,10 +135,18 @@ impl KeyClient {
         Some(Self { rx })
     }
 
+    /// Returns the next [`KeyEvent`] received from the [`KeyboardService`].
+    #[must_use]
     pub async fn next(&mut self) -> Option<KeyEvent> {
         self.rx.dequeue_async().await.ok()
     }
 
+    /// Returns the next Unicode [`char`] received from the [`KeyboardService`].
+    ///
+    /// Any [`KeyEvent`]s which are not Unicode [`char`]s are skipped. This
+    /// method is equivalent to calling [`KeyEvent::into_char`] on the
+    /// [`KeyEvent`] returned by [`KeyClient::next`].
+    #[must_use]
     pub async fn next_char(&mut self) -> Option<char> {
         self.next().await?.into_char()
     }

@@ -1,7 +1,7 @@
 //! Keyboard events
 //!
 //! This module contains types representing keyboard events that are published
-//! over a [`KeySubscription`](super::KeySubscription).
+//! to a [`KeyClient`](super::KeyClient).
 //!
 //! The structure of the keyboard event API is based loosely on the interface
 //! provided by the [`crossterm`] crate (MIT-licensed), with some modifications.
