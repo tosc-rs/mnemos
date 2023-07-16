@@ -4,7 +4,7 @@ use clap::Parser;
 use futures::FutureExt;
 use melpomene::{
     cli::{self, MelpomeneOptions},
-    sim_drivers::{tcp_serial::TcpSerial, emb_display::SimDisplay},
+    sim_drivers::{emb_display::SimDisplay, tcp_serial::TcpSerial},
 };
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
@@ -12,10 +12,7 @@ use mnemos_kernel::{
         sermux::{hello, loopback, HelloSettings, LoopbackSettings},
         shells::{graphical_shell_mono, GraphicalShellSettings},
     },
-    services::{
-        forth_spawnulator::SpawnulatorServer,
-        serial_mux::SerialMuxServer,
-    },
+    services::{forth_spawnulator::SpawnulatorServer, serial_mux::SerialMuxServer},
     Kernel, KernelSettings,
 };
 use tokio::{

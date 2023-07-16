@@ -34,7 +34,8 @@ use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
     registry::Message,
     services::emb_display::{
-        EmbDisplayService, FrameChunk, FrameError, MonoChunk, Request, Response, DisplayMetadata, FrameKind,
+        DisplayMetadata, EmbDisplayService, FrameChunk, FrameError, FrameKind, MonoChunk, Request,
+        Response,
     },
     Kernel,
 };
@@ -167,18 +168,14 @@ impl CommanderTask {
                     };
                     let response = env.fill(Ok(Response::FrameMeta(meta)));
                     let _ = reply_tx.reply_konly(response).await;
-                },
+                }
                 _ => todo!(),
             }
         }
     }
 
     /// Draw the given MonoChunk to the persistent framebuffer
-    async fn draw_mono(
-        &self,
-        fc: &MonoChunk,
-        mutex: &Mutex<Option<Context>>,
-    ) -> Result<(), ()> {
+    async fn draw_mono(&self, fc: &MonoChunk, mutex: &Mutex<Option<Context>>) -> Result<(), ()> {
         let mut guard = mutex.lock().await;
         let ctx = if let Some(c) = (&mut *guard).as_mut() {
             c

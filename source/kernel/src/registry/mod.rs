@@ -519,11 +519,14 @@ impl<P> Envelope<P> {
 // Message
 
 impl<RD: RegisteredDriver> Message<RD> {
-    pub fn split(self) -> (RD::Request, OpenEnvelope<Result<RD::Response, RD::Error>>, ReplyTo<RD>) {
-        let Self {
-            msg,
-            reply,
-        } = self;
+    pub fn split(
+        self,
+    ) -> (
+        RD::Request,
+        OpenEnvelope<Result<RD::Response, RD::Error>>,
+        ReplyTo<RD>,
+    ) {
+        let Self { msg, reply } = self;
         let (req, env) = msg.split_reply();
         (req, env, reply)
     }

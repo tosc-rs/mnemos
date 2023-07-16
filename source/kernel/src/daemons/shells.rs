@@ -229,7 +229,8 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
         offset_y: char_y,
         width: disp_width_px,
         height: disp_height_px - char_y,
-    }).await;
+    })
+    .await;
 
     loop {
         ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
