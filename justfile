@@ -45,7 +45,7 @@ check:
         --workspace \
         --lib --bins --examples --tests --benches --all-features \
         {{ _fmt }}
-    (cd {{ _d1_dir }}; {{ _cargo }} check --workspace {{ _fmt }})
+    cd {{ _d1_dir }}; {{ _cargo }} check --workspace {{ _fmt }}
     cd {{ _pomelo_dir }}; {{ _cargo }} check {{ _fmt }}
 
 # test all packages, across workspaces
@@ -57,7 +57,8 @@ test: (_get-nextest)
 # run rustfmt for all packages, across workspaces
 fmt:
     {{ _cargo }} fmt --all
-    (cd {{ _d1_dir }}; {{ _cargo }} fmt --all)
+    cd {{ _d1_dir }}; {{ _cargo }} fmt --all
+    cd {{ _pomelo_dir }}; {{ _cargo }} fmt --all
 
 
 # build a Mnemos binary for the Allwinner D1
