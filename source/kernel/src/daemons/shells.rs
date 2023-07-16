@@ -2,8 +2,6 @@
 //!
 //! This module provides daemons that serve a forth shell
 
-use core::time::Duration;
-
 use crate::{
     forth::Params,
     services::{

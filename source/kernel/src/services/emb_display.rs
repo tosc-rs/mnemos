@@ -1,15 +1,14 @@
-
 use core::time::Duration;
 
+use crate::{
+    comms::oneshot::Reusable,
+    mnemos_alloc::containers::HeapArray,
+    registry::{self, Envelope, KernelHandle, RegisteredDriver},
+    Kernel,
+};
 use embedded_graphics::{
     pixelcolor::{BinaryColor, Gray8},
     prelude::*,
-};
-use crate::{
-    comms::oneshot::{Reusable, ReusableError},
-    mnemos_alloc::containers::HeapArray,
-    registry::{self, Envelope, KernelHandle, RegisteredDriver, ReplyTo},
-    Kernel,
 };
 use uuid::Uuid;
 
@@ -100,40 +99,38 @@ impl EmbDisplayClient {
         })
     }
 
-    pub async fn draw<C: Into<FrameChunk>>(&mut self, chunk: C) -> Result<FrameChunk, ()> {
+    pub async fn draw<C: Into<FrameChunk>>(&mut self, chunk: C) -> Result<FrameChunk, FrameError> {
         let chunk = chunk.into();
         let resp = self
             .prod
             .request_oneshot(Request::Draw(chunk.into()), &self.reply)
             .await
-            .unwrap()
-            .body
-            .unwrap();
+            .map_err(|_| FrameError::InternalError)?
+            .body?;
         Ok(match resp {
-            Response::FrameMeta(M) => todo!(),
             Response::DrawComplete(fc) => fc,
+            _ => return Err(FrameError::InternalError),
         })
     }
 
-    pub async fn draw_mono(&mut self, chunk: MonoChunk) -> Result<MonoChunk, ()> {
+    pub async fn draw_mono(&mut self, chunk: MonoChunk) -> Result<MonoChunk, FrameError> {
         match self.draw(chunk).await {
             Ok(FrameChunk::Mono(mfc)) => Ok(mfc),
-            _ => Err(()),
+            _ => Err(FrameError::InternalError),
         }
     }
 
-    pub async fn get_meta(&mut self) -> Result<FrameMeta, ()> {
+    pub async fn get_meta(&mut self) -> Result<FrameMeta, FrameError> {
         let resp = self
             .prod
             .request_oneshot(Request::GetMeta, &self.reply)
             .await
-            .unwrap()
-            .body
-            .unwrap();
+            .map_err(|_| FrameError::InternalError)?
+            .body?;
 
         Ok(match resp {
             Response::FrameMeta(m) => m,
-            Response::DrawComplete(_) => panic!(),
+            Response::DrawComplete(_) => return Err(FrameError::InternalError),
         })
     }
 }
@@ -242,11 +239,15 @@ impl MonoChunk {
     }
 
     pub fn invert_masked(&mut self) {
-        self.data.bytes.iter_mut().zip(self.mask.bytes.iter()).for_each(|(d, m)| {
-            if *m != 0 {
-                *d = !*d;
-            }
-        });
+        self.data
+            .bytes
+            .iter_mut()
+            .zip(self.mask.bytes.iter())
+            .for_each(|(d, m)| {
+                if *m != 0 {
+                    *d = !*d;
+                }
+            });
     }
 
     pub fn meta(&self) -> &FrameBufMeta {
@@ -306,7 +307,6 @@ impl MonoChunk {
     }
 }
 
-
 /// FrameChunk implements embedded-graphics's `DrawTarget` trait so that clients
 /// can directly use embedded-graphics primitives for drawing into the framebuffer.
 impl DrawTarget for MonoChunk {
@@ -340,7 +340,6 @@ pub enum FrameKind {
     Mono,
 }
 
-
 impl OriginDimensions for MonoChunk {
     fn size(&self) -> Size {
         Size::new(self.meta.width, self.meta.height)
@@ -355,7 +354,6 @@ impl OriginDimensions for FrameChunk {
         }
     }
 }
-
 
 #[derive(Copy, Clone, Debug)]
 pub struct FrameMeta {
@@ -401,4 +399,3 @@ impl FrameBufMeta {
 struct Buf8 {
     bytes: HeapArray<u8>,
 }
-

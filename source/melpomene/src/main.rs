@@ -1,11 +1,10 @@
 use std::{alloc::System, sync::Arc};
 
 use clap::Parser;
-use embedded_graphics::{primitives::{Rectangle, StyledDrawable, Primitive, PrimitiveStyleBuilder}, prelude::{Point, Size}, pixelcolor::BinaryColor, Drawable};
 use futures::FutureExt;
 use melpomene::{
     cli::{self, MelpomeneOptions},
-    sim_drivers::{tcp_serial::TcpSerial, emb_display2::SimDisplay2},
+    sim_drivers::{tcp_serial::TcpSerial, emb_display::SimDisplay},
 };
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
@@ -16,7 +15,6 @@ use mnemos_kernel::{
     services::{
         forth_spawnulator::SpawnulatorServer,
         serial_mux::SerialMuxServer,
-        emb_display::{EmbDisplayClient, FrameChunk, FrameLocSize, MonoChunk},
     },
     Kernel, KernelSettings,
 };
@@ -120,22 +118,12 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     .unwrap();
 
     // Spawn the graphics driver
-    // k.initialize(async move {
-    //     SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
-    //         .await
-    //         .unwrap();
-    // })
-    // .unwrap();
-
-    // Spawn the graphics driver
     k.initialize(async move {
-        SimDisplay2::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
+        SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
             .await
             .unwrap();
     })
     .unwrap();
-
-    // k.initialize(disp_demo(k)).unwrap();
 
     // Spawn a loopback port
     let loopback_settings = LoopbackSettings::default();
@@ -197,36 +185,3 @@ async fn kernel_entry(opts: MelpomeneOptions) {
         }
     }
 }
-
-// async fn disp_demo(k: &'static Kernel) {
-//     k.sleep(Duration::from_millis(1000)).await;
-//     tracing::warn!("DRAWING");
-//     let mut client = EmbDisplayClient::from_registry(k).await;
-//     let mut chunk = MonoChunk::allocate_mono(FrameLocSize {
-//         offset_x: 0,
-//         offset_y: 100,
-//         width: 100,
-//         height: 100,
-//     }).await;
-//     loop {
-//         for x in 0..6 {
-//             for i in 0..5 {
-//                 chunk.meta_mut().set_start_x(x * 50);
-//                 chunk.clear();
-//                 let style = PrimitiveStyleBuilder::new()
-//                     .stroke_color(BinaryColor::On)
-//                     .stroke_width(3)
-//                     .build();
-//                 Rectangle::new(Point::new(10, 10), Size::new(i * 15, i * 15))
-//                     .into_styled(style)
-//                     .draw(&mut chunk).unwrap();
-//                 chunk = client.draw_mono(chunk).await.unwrap();
-
-//                 k.sleep(Duration::from_millis(1000) / 15).await;
-
-//                 chunk.invert_masked();
-//                 chunk = client.draw_mono(chunk).await.unwrap();
-//             }
-//         }
-//     }
-// }

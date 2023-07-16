@@ -29,11 +29,14 @@ use embedded_graphics_simulator::{
     BinaryColorTheme, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
 };
 use maitake::sync::Mutex;
-use mnemos_alloc::containers::{Arc, FixedVec};
+use mnemos_alloc::containers::{Arc, HeapArray};
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
     registry::Message,
-    services::emb_display::{EmbDisplayService, FrameChunk, FrameError, Request, Response},
+    services::emb_display::{
+        EmbDisplayService, FrameChunk, FrameError, MonoChunk, Request,
+        Response,
+    },
     Kernel,
 };
 
@@ -54,16 +57,11 @@ impl SimDisplay {
         height: u32,
     ) -> Result<(), FrameError> {
         tracing::debug!("initializing SimDisplay server ({width}x{height})...");
-        let frames = FixedVec::new(max_frames).await;
 
         let (cmd_prod, cmd_cons) = KChannel::new_async(1).await.split();
         let commander = CommanderTask {
             kernel,
             cmd: cmd_cons,
-            display_info: DisplayInfo {
-                frames,
-                frame_idx: 0,
-            },
         };
 
         kernel.spawn(commander.run(width, height)).await;
@@ -89,21 +87,26 @@ impl SimDisplay {
 struct CommanderTask {
     kernel: &'static Kernel,
     cmd: KConsumer<Message<EmbDisplayService>>,
-    display_info: DisplayInfo,
 }
 
 struct Context {
     sdisp: SimulatorDisplay<Gray8>,
+    framebuf: HeapArray<u8>,
     window: Window,
     dirty: bool,
+    width: u32,
+    height: u32,
 }
 
 impl CommanderTask {
     /// The entrypoint for the driver execution
-    async fn run(mut self, width: u32, height: u32) {
+    async fn run(self, width: u32, height: u32) {
         let output_settings = OutputSettingsBuilder::new()
             .theme(BinaryColorTheme::OledBlue)
+            .scale(1)
             .build();
+
+        let bytes = (width * height) as usize;
 
         // Create a mutex for the embedded graphics simulator objects.
         //
@@ -118,10 +121,14 @@ impl CommanderTask {
         // only whenever line characters actually arrive.
         let sdisp = SimulatorDisplay::<Gray8>::new(Size::new(width, height));
         let window = Window::new("mnemOS", &output_settings);
+        let framebuf = HeapArray::new(bytes, 0x00).await;
         let mutex = Arc::new(Mutex::new(Some(Context {
             sdisp,
+            framebuf,
             window,
             dirty: true,
+            width,
+            height,
         })))
         .await;
 
@@ -141,11 +148,12 @@ impl CommanderTask {
                             sdisp,
                             window,
                             dirty,
+                            ..
                         }) = (&mut *guard).as_mut()
                         {
-                            // If nothing has been drawn, only update the frame at 1Hz to save
+                            // If nothing has been drawn, only update the frame at 5Hz to save
                             // CPU usage
-                            if *dirty || idle_ticks >= 15 {
+                            if *dirty || idle_ticks >= 3 {
                                 idle_ticks = 0;
                                 *dirty = false;
                                 window.update(&sdisp);
@@ -179,59 +187,98 @@ impl CommanderTask {
                 reply,
             } = msg;
             match &mut req.body {
-                Request::NewFrameChunk {
-                    start_x,
-                    start_y,
-                    width,
-                    height,
-                } => {
-                    let res = self
-                        .display_info
-                        .new_frame(*start_x, *start_y, *width, *height)
-                        .await
-                        .map(Response::FrameChunkAllocated);
+                Request::Draw(FrameChunk::Mono(fc)) => {
+                    let mut guard = mutex.lock().await;
+                    if let Some(Context {
+                        sdisp,
+                        dirty,
+                        framebuf,
+                        width,
+                        height,
+                        ..
+                    }) = (&mut *guard).as_mut()
+                    {
+                        draw_to(framebuf, fc, *width, *height);
+                        let raw_img = frame_display(framebuf, *width).unwrap();
+                        let image = Image::new(&raw_img, Point::new(0, 0));
+                        image.draw(sdisp).unwrap();
+                        *dirty = true;
 
-                    let resp = req.reply_with(res);
+                        // Drop the guard before we reply so we don't hold it too long.
+                        drop(guard);
 
-                    let _ = reply.reply_konly(resp).await;
-                }
-                Request::Draw(fc) => match self.display_info.remove_frame(fc.frame_id) {
-                    Ok(_) => {
-                        let (x, y) = (fc.start_x, fc.start_y);
-                        let raw_img = frame_display(fc).unwrap();
-                        let image = Image::new(&raw_img, Point::new(x, y));
-
-                        let mut guard = mutex.lock().await;
-                        if let Some(Context { sdisp, dirty, .. }) = (&mut *guard).as_mut() {
-                            image.draw(sdisp).unwrap();
-                            *dirty = true;
-
-                            // Drop the guard before we reply so we don't hold it too long.
-                            drop(guard);
-
-                            let _ = reply
-                                .reply_konly(req.reply_with(Ok(Response::FrameDrawn)))
-                                .await;
-                        } else {
-                            break;
-                        }
+                        let _ = reply
+                            .reply_konly(req.reply_with_body(|fc| {
+                                // hate this
+                                let frame = match fc {
+                                    Request::GetMeta => todo!(),
+                                    Request::Draw(fc) => fc,
+                                };
+                                Ok(Response::DrawComplete(frame))
+                            }))
+                            .await;
+                    } else {
+                        break;
                     }
-                    Err(e) => {
-                        let _ = reply.reply_konly(req.reply_with(Err(e))).await;
-                    }
-                },
-                Request::Drop(fc) => {
-                    let _ = match self.display_info.remove_frame(fc.frame_id) {
-                        Ok(_) => {
-                            reply
-                                .reply_konly(req.reply_with(Ok(Response::FrameDropped)))
-                                .await
-                        }
-                        Err(e) => reply.reply_konly(req.reply_with(Err(e))).await,
-                    };
                 }
+                Request::GetMeta => todo!(),
+                _ => todo!(),
             }
         }
+    }
+}
+
+fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u32) {
+    let meta = src.meta();
+    let data = src.data();
+    let mask = src.mask();
+
+    let start_x = meta.start_x();
+    let start_y = meta.start_y();
+    let src_width = meta.width();
+
+    if start_y >= height {
+        return;
+    }
+    if start_x >= width {
+        return;
+    }
+
+    // Take all destination rows, starting at the start_y line
+    let all_dest_rows = dest.chunks_exact_mut(width as usize);
+    let dest_rows = all_dest_rows.skip(start_y as usize);
+
+    // Then take all source rows, and zip together the mask bits
+    let all_src_rows = data.chunks(src_width as usize);
+    let all_src_mask_rows = mask.chunks(src_width as usize);
+    let all_src = all_src_rows.zip(all_src_mask_rows);
+
+    // Combine them together, this gives us automatic "early return"
+    // when either we run out of source rows, or destination rows
+    let zip_rows = dest_rows.zip(all_src);
+    for (dest_row, (src_data, src_mask)) in zip_rows {
+        // Zip the data and mask lines together so we can use them
+        let src = src_data.iter().zip(src_mask.iter());
+
+        dest_row
+            .iter_mut()
+            // Skip to the start of the subframe
+            .skip(start_x as usize)
+            // Again, zipping means we stop as soon as we run out of
+            // source OR destination pixesl on this line
+            .zip(src)
+            .filter_map(|(d, (s_d, s_m))| {
+                // look at the mask, to see if the subframe should modify
+                // the total frame
+                if *s_m != 0 {
+                    Some((d, s_d))
+                } else {
+                    None
+                }
+            })
+            .for_each(|(d, s)| {
+                *d = *s;
+            });
     }
 }
 
@@ -241,74 +288,8 @@ impl CommanderTask {
 /// This is necessary as a e-g Window only accepts SimulatorDisplay object
 /// On a physical display, the raw pixel data can be sent over to the display directly
 /// Using the display's device interface
-fn frame_display(fc: &mut FrameChunk) -> Result<ImageRaw<Gray8>, ()> {
+fn frame_display(fc: &HeapArray<u8>, width: u32) -> Result<ImageRaw<Gray8>, ()> {
     let raw_image: ImageRaw<Gray8>;
-    raw_image = ImageRaw::<Gray8>::new(fc.bytes.as_slice(), fc.width);
+    raw_image = ImageRaw::<Gray8>::new(&fc, width);
     Ok(raw_image)
-}
-
-struct FrameInfo {
-    frame: u16,
-}
-
-struct DisplayInfo {
-    frame_idx: u16,
-    frames: FixedVec<FrameInfo>,
-}
-
-impl DisplayInfo {
-    // Returns a new frame chunk
-    async fn new_frame(
-        &mut self,
-        start_x: i32,
-        start_y: i32,
-        width: u32,
-        height: u32,
-    ) -> Result<FrameChunk, FrameError> {
-        let fidx = self.frame_idx;
-        self.frame_idx = self.frame_idx.wrapping_add(1);
-
-        self.frames
-            .try_push(FrameInfo { frame: fidx })
-            .map_err(|_| FrameError::NoFrameAvailable)?;
-
-        let size = (width * height) as usize;
-
-        // TODO: So, in the future, we might not want to ACTUALLY allocate here. Instead,
-        // we might want to allocate ALL potential frame chunks at registration time and
-        // hand those out, rather than requiring an allocation here.
-        //
-        // TODO: We might want to do ANY input checking here:
-        //
-        // * Making sure the request is smaller than the actual display
-        // * Making sure the request exists entirely within the actual display
-        let mut bytes = FixedVec::new(size).await;
-        for _ in 0..size {
-            let _ = bytes.try_push(0);
-        }
-        let fc = FrameChunk {
-            frame_id: fidx,
-            bytes,
-            start_x,
-            start_y,
-            width,
-            height,
-        };
-
-        Ok(fc)
-    }
-
-    fn remove_frame(&mut self, frame_id: u16) -> Result<(), FrameError> {
-        let mut found = false;
-        self.frames.retain(|fr| {
-            let matches = fr.frame == frame_id;
-            found |= matches;
-            !matches
-        });
-        if found {
-            Ok(())
-        } else {
-            Err(FrameError::NoSuchFrame)
-        }
-    }
 }
