@@ -30,3 +30,6 @@ default-features = false
 version = "0.3.21"
 features = ["async-await"]
 default-features = false
+
+[dependencies.mycelium-bitfield]
+version = "0.1.2"

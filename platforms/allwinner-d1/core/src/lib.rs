@@ -18,7 +18,10 @@ use d1_pac::{Interrupt, DMAC, TIMER};
 use kernel::{
     daemons::sermux::{hello, loopback, HelloSettings, LoopbackSettings},
     mnemos_alloc::containers::Box,
-    services::{forth_spawnulator::SpawnulatorServer, serial_mux::SerialMuxServer},
+    services::{
+        forth_spawnulator::SpawnulatorServer, keyboard::mux::KeyboardMuxServer,
+        serial_mux::SerialMuxServer,
+    },
     trace::{self, Instrument},
     Kernel, KernelSettings,
 };
@@ -97,24 +100,22 @@ impl D1 {
         })
         .unwrap();
 
+        // Initialize the kernel keyboard mux service.
+        k.initialize(KeyboardMuxServer::register(k, Default::default()))
+            .unwrap();
+
         // Initialize the SerialMuxServer
         k.initialize({
-            const PORTS: usize = 16;
-            const FRAME_SIZE: usize = 512;
             async {
                 // * Up to 16 virtual ports max
                 // * Framed messages up to 512 bytes max each
                 tracing::debug!("initializing SerialMuxServer...");
-                SerialMuxServer::register(k, PORTS, FRAME_SIZE)
+                SerialMuxServer::register(k, Default::default())
                     .await
                     .unwrap();
                 tracing::info!("SerialMuxServer initialized!");
             }
-            .instrument(tracing::info_span!(
-                "SerialMuxServer",
-                ports = PORTS,
-                frame_size = FRAME_SIZE
-            ))
+            .instrument(tracing::info_span!("SerialMuxServer",))
         })
         .unwrap();
 

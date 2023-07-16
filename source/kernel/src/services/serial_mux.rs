@@ -173,17 +173,25 @@ impl PortHandle {
 /// Server implementation for the [`SerialMuxService`].
 pub struct SerialMuxServer;
 
+#[derive(Copy, Clone, Debug)]
+pub struct SerialMuxSettings {
+    max_ports: u16,
+    max_frame: usize,
+}
+
 impl SerialMuxServer {
     /// Register the `SerialMuxServer`.
+    ///
+    /// Registering a `SerialMuxServer` will always acquire a
+    /// [`SimpleSerialClient`] to access the serial port.
     ///
     /// Will retry to obtain a [`SimpleSerialClient`] until success.
     pub async fn register(
         kernel: &'static Kernel,
-        max_ports: usize,
-        max_frame: usize,
+        settings: SerialMuxSettings,
     ) -> Result<(), RegistrationError> {
         loop {
-            match SerialMuxServer::register_no_retry(kernel, max_ports, max_frame).await {
+            match SerialMuxServer::register_no_retry(kernel, settings).await {
                 Ok(_) => break,
                 Err(RegistrationError::SerialPortNotFound) => {
                     // Uart probably isn't registered yet. Try again in a bit
@@ -199,15 +207,20 @@ impl SerialMuxServer {
 
     /// Register the SerialMuxServer.
     ///
-    /// Does NOT attempt to obtain a [`SimpleSerialClient`] more than once.
+    /// Registering a `SerialMuxServer` will always acquire a
+    /// [`SimpleSerialClient`] to access the serial port.
     ///
-    /// Prefer [`SerialMuxServer::register`] unless you will not be spawning one around
-    /// the same time as registering this server.
+    /// This method does NOT attempt to obtain a [`SimpleSerialClient`] more
+    /// than once. Prefer [`SerialMuxServer::register`] unless you will not be
+    /// spawning one around the same time as registering this server.
     pub async fn register_no_retry(
         kernel: &'static Kernel,
-        max_ports: usize,
-        max_frame: usize,
+        SerialMuxSettings {
+            max_ports,
+            max_frame,
+        }: SerialMuxSettings,
     ) -> Result<(), RegistrationError> {
+        let max_ports = max_ports as usize;
         let mut serial_handle = SimpleSerialClient::from_registry(kernel)
             .await
             .ok_or(RegistrationError::SerialPortNotFound)?;
@@ -248,6 +261,28 @@ impl SerialMuxServer {
             .map_err(|_| RegistrationError::MuxAlreadyRegistered)?;
 
         Ok(())
+    }
+}
+
+impl SerialMuxSettings {
+    pub const DEFAULT_MAX_PORTS: u16 = 16;
+    pub const DEFAULT_MAX_FRAME: usize = 512;
+
+    pub fn with_max_ports(self, max_ports: u16) -> Self {
+        Self { max_ports, ..self }
+    }
+
+    pub fn with_max_frame(self, max_frame: usize) -> Self {
+        Self { max_frame, ..self }
+    }
+}
+
+impl Default for SerialMuxSettings {
+    fn default() -> Self {
+        Self {
+            max_ports: Self::DEFAULT_MAX_PORTS,
+            max_frame: Self::DEFAULT_MAX_FRAME,
+        }
     }
 }
 

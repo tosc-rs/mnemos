@@ -1,4 +1,6 @@
-use bbq10kbd::{AsyncBbq10Kbd, CapsLockState, FifoCount};
+//! Driver for the [`i2c_puppet`](https://github.com/solderparty/i2c_puppet)
+//! keyboard firmware.
+use bbq10kbd::{AsyncBbq10Kbd, CapsLockState, FifoCount, NumLockState};
 pub use bbq10kbd::{KeyRaw, KeyStatus, Version};
 use core::{fmt, time::Duration};
 use futures::TryFutureExt;
@@ -10,7 +12,13 @@ use kernel::{
     embedded_hal_async::i2c::{self, I2c},
     mnemos_alloc::containers::FixedVec,
     registry::{self, Envelope, KernelHandle, RegisteredDriver},
-    services::i2c::{I2cClient, I2cError},
+    services::{
+        i2c::{I2cClient, I2cError},
+        keyboard::{
+            key_event::{self, KeyEvent, Modifiers},
+            mux::KeyboardMuxClient,
+        },
+    },
     trace::{self, instrument, Instrument, Level},
     Kernel,
 };
@@ -41,7 +49,7 @@ pub enum Request {
     GetBacklight,
     ToggleLed(bool),
     GetLedStatus,
-    SubscribeToKeys,
+    SubscribeToRawKeys,
 }
 
 pub enum Response {
@@ -50,7 +58,7 @@ pub enum Response {
     Backlight(u8),
     ToggleLed(bool),
     GetLedStatus(LedState),
-    SubscribeToKeys(KeySubscription),
+    SubscribeToKeys(RawKeySubscription),
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -80,7 +88,7 @@ pub enum Error {
     SendRequest(registry::OneshotRequestError),
 }
 
-pub struct KeySubscription(KConsumer<(KeyStatus, KeyRaw)>);
+pub struct RawKeySubscription(KConsumer<(KeyStatus, KeyRaw)>);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Client Definition
@@ -125,10 +133,18 @@ impl I2cPuppetClient {
         })
     }
 
-    /// Subscribe to keyboard input from `i2c_puppet`'s Blackberry Q10 keyboard,
-    /// returning a [`KeySubscription`].
-    pub async fn subscribe_to_keys(&mut self) -> Result<KeySubscription, Error> {
-        if let Response::SubscribeToKeys(sub) = self.request(Request::SubscribeToKeys).await? {
+    /// Subscribe to raw keyboard input from `i2c_puppet`'s Blackberry Q10
+    /// returning a [`RawKeySubscription`].
+    ///
+    /// The returned [`RawKeySubscription`] provides access to keyboard events
+    /// in the [`bbq10kbd`] crate's representation, which is specific to the
+    /// Blackberry Q10 and Q20 keyboards. In general, it's preferable to
+    /// implement code that requires keyboard input against the more generic
+    /// [`KeyboardService`] defined in the cross-platform kernel crate.
+    ///
+    /// [`KeyboardService`]: kernel::services::keyboard::KeyboardService
+    pub async fn subscribe_to_raw_keys(&mut self) -> Result<RawKeySubscription, Error> {
+        if let Response::SubscribeToKeys(sub) = self.request(Request::SubscribeToRawKeys).await? {
             Ok(sub)
         } else {
             unreachable!("service responded with wrong response variant!")
@@ -178,7 +194,7 @@ impl I2cPuppetClient {
         }
     }
 
-    /// Returns the `i2c_puppet` Blackberry Q10 keyboard's backlight brightness. 0
+    /// Returns the `i2c_puppet` keyboard's backlight brightness. 0
     /// is off, 255 is maximum brightness.
     pub async fn backlight(&mut self) -> Result<u8, Error> {
         if let Response::Backlight(brightness) = self.request(Request::GetBacklight).await? {
@@ -210,6 +226,7 @@ pub struct I2cPuppetServer {
     rx: KConsumer<registry::Message<I2cPuppetService>>,
     i2c: I2cClient,
     subscriptions: FixedVec<KProducer<(KeyStatus, KeyRaw)>>,
+    keymux: Option<KeyboardMuxClient>,
 }
 
 #[derive(Debug)]
@@ -239,6 +256,34 @@ mod reg {
     pub(super) const LED_G: u8 = 0x22;
     /// 8-bit RGB LED blue value.
     pub(super) const LED_B: u8 = 0x23;
+
+    /// Configuration register.
+    pub(super) const CFG: u8 = 0x02;
+
+    mycelium_bitfield::bitfield! {
+        #[derive(Eq, PartialEq)]
+        pub(super) struct Cfg<u8> {
+            /// When a FIFO overflow happens, should the new entry still be
+            /// pushed, overwriting the oldest one. If 0 then new entry is lost.
+            pub(super) const OVERFLOW_ON: bool;
+            /// Should an interrupt be generated when a FIFO overflow happens.
+            pub(super) const OVERFLOW_INT: bool;
+            /// Should an interrupt be generated when Caps Lock is toggled.
+            pub(super) const CAPSLOCK_INT: bool;
+            // Should an interrupt be generated when Num Lock is toggled.
+            pub(super) const NUMLOCK_INT: bool;
+            /// Should an interrupt be generated when a key is pressed.
+            pub(super) const KEY_INT: bool;
+            /// Should an interrupt be generated when the firmware panics? This
+            /// is currently not implemented.
+            pub(super) const PANIC_INT: bool;
+            /// Should Alt, Sym and the Shift keys be reported as well.
+            pub(super) const REPORT_MODS: bool;
+            /// Should Alt, Sym and the Shift keys modify the keys being
+            /// reported.
+            pub(super) const USE_MODS: bool;
+        }
+    }
 }
 
 impl I2cPuppetServer {
@@ -247,6 +292,13 @@ impl I2cPuppetServer {
         kernel: &'static Kernel,
         settings: I2cPuppetSettings,
     ) -> Result<(), RegistrationError> {
+        let keymux = if settings.keymux {
+            let keymux = KeyboardMuxClient::from_registry(kernel).await;
+            tracing::debug!("acquired keyboard mux client");
+            Some(keymux)
+        } else {
+            None
+        };
         let (tx, rx) = KChannel::new_async(settings.channel_capacity).await.split();
         let mut i2c = I2cClient::from_registry(kernel).await;
         let subscriptions = FixedVec::new(settings.max_subscriptions).await;
@@ -260,11 +312,26 @@ impl I2cPuppetServer {
             .map_err(RegistrationError::NoI2cPuppet)?;
         tracing::info!("i2c_puppet firmware version: v{major}.{minor}");
 
+        let cfg = reg::Cfg::new()
+            .with(reg::Cfg::KEY_INT, true)
+            .with(reg::Cfg::USE_MODS, true)
+            .with(reg::Cfg::OVERFLOW_INT, true)
+            // overwrite older keypresses when the FIFO is full.
+            // since we only poll the keyboard when there are active
+            // subscriptions, enable this setting so that the
+            // FIFO doesn't fill up with ancient keypresses.
+            .with(reg::Cfg::OVERFLOW_ON, true);
+        tracing::info!("setting i2c_puppet config:\n{cfg}");
+        i2c.write(ADDR, &[reg::CFG | reg::WRITE, cfg.bits()])
+            .await
+            .map_err(RegistrationError::NoI2cPuppet)?;
+
         let this = Self {
             settings,
             rx,
             i2c,
             subscriptions,
+            keymux,
         };
 
         kernel
@@ -305,16 +372,16 @@ impl I2cPuppetServer {
                     })
                 };
                 match msg.body {
-                    Request::SubscribeToKeys => {
+                    Request::SubscribeToRawKeys => {
                         let (sub_tx, sub_rx) =
                             KChannel::new_async(self.settings.subscription_capacity)
                                 .await
                                 .split();
                         match self.subscriptions.try_push(sub_tx) {
                             Ok(()) => {
-                                tracing::info!("new subscription to keys");
+                                tracing::debug!("new subscription to keys");
                                 let reply = send_reply(Ok(Response::SubscribeToKeys(
-                                    KeySubscription(sub_rx),
+                                    RawKeySubscription(sub_rx),
                                 )))
                                 .await;
 
@@ -336,7 +403,7 @@ impl I2cPuppetServer {
                         let res = self.set_color(color).await;
                         match res {
                             Ok(color) => {
-                                tracing::info!(?color, "set i2c_puppet LED color");
+                                tracing::trace!(?color, "set i2c_puppet LED color");
                                 let _ = send_reply(Ok(Response::SetColor(color))).await;
                             }
                             Err(error) => {
@@ -347,14 +414,14 @@ impl I2cPuppetServer {
                     }
 
                     Request::ToggleLed(on) => {
-                        tracing::debug!(on, "toggling i2c_puppet LED...");
+                        tracing::trace!(on, "toggling i2c_puppet LED...");
                         let res = self
                             .i2c
                             .write(ADDR, &[reg::LED_ON | reg::WRITE, on as u8])
                             .await;
                         match res {
                             Ok(()) => {
-                                tracing::info!(on, "toggled i2c_puppet LED");
+                                tracing::trace!(on, "toggled i2c_puppet LED");
                                 let _ = send_reply(Ok(Response::ToggleLed(on))).await;
                             }
                             Err(error) => {
@@ -366,7 +433,7 @@ impl I2cPuppetServer {
 
                     Request::GetLedStatus => match self.get_led_status().await {
                         Ok(led) => {
-                            tracing::info!(?led.color, led.on, "got i2c_puppet LED status");
+                            tracing::trace!(?led.color, led.on, "got i2c_puppet LED status");
                             let _ = send_reply(Ok(Response::GetLedStatus(led))).await;
                         }
                         Err(error) => {
@@ -376,13 +443,13 @@ impl I2cPuppetServer {
                     },
 
                     Request::SetBacklight(brightness) => {
-                        tracing::debug!(brightness, "setting i2c_puppet backlight");
+                        tracing::trace!(brightness, "setting i2c_puppet backlight");
                         match AsyncBbq10Kbd::new(&mut self.i2c)
                             .set_backlight(brightness)
                             .await
                         {
                             Ok(()) => {
-                                tracing::info!(brightness, "set i2c_puppet backlight",);
+                                tracing::trace!(brightness, "set i2c_puppet backlight",);
                                 let _ = send_reply(Ok(Response::Backlight(brightness))).await;
                             }
                             Err(error) => {
@@ -393,10 +460,10 @@ impl I2cPuppetServer {
                     }
 
                     Request::GetBacklight => {
-                        tracing::debug!("getting i2c_puppet backlight");
+                        tracing::trace!("getting i2c_puppet backlight");
                         match AsyncBbq10Kbd::new(&mut self.i2c).get_backlight().await {
                             Ok(brightness) => {
-                                tracing::info!(brightness, "got i2c_puppet backlight",);
+                                tracing::trace!(brightness, "got i2c_puppet backlight",);
                                 let _ = send_reply(Ok(Response::Backlight(brightness))).await;
                             }
                             Err(error) => {
@@ -410,7 +477,7 @@ impl I2cPuppetServer {
                         tracing::debug!("getting i2c_puppet version");
                         match AsyncBbq10Kbd::new(&mut self.i2c).get_version().await {
                             Ok(version) => {
-                                tracing::info!(
+                                tracing::debug!(
                                     "i2c_puppet firmware version: v{}.{}",
                                     version.major,
                                     version.minor
@@ -426,7 +493,7 @@ impl I2cPuppetServer {
                 }
             }
 
-            if !self.subscriptions.is_empty() {
+            if !self.subscriptions.is_empty() || self.keymux.is_some() {
                 tracing::trace!("polling keys...");
                 self.poll_keys().await?;
             }
@@ -487,11 +554,47 @@ impl I2cPuppetServer {
             }
             let key = kbd.get_fifo_key_raw().await?;
             trace::debug!(?key);
+
             // TODO(eliza): remove dead subscriptions...
             for sub in self.subscriptions.as_slice_mut() {
                 if let Err(error) = sub.enqueue_async((status, key)).await {
                     trace::warn!(?error, "subscription dropped...");
                 }
+            }
+
+            if let Some(ref mut keymux) = self.keymux {
+                let modifiers = Modifiers::new()
+                    .with(Modifiers::NUMLOCK, status.num_lock == NumLockState::On)
+                    .with(Modifiers::CAPSLOCK, status.caps_lock == CapsLockState::On);
+                let event = match key {
+                    KeyRaw::Held(x) => KeyEvent {
+                        modifiers,
+                        code: keycode(x),
+                        kind: key_event::Kind::Held,
+                    },
+                    KeyRaw::Pressed(x) => KeyEvent {
+                        modifiers,
+                        code: keycode(x),
+                        kind: key_event::Kind::Pressed,
+                    },
+                    KeyRaw::Released(x) => KeyEvent {
+                        modifiers,
+                        code: keycode(x),
+                        kind: key_event::Kind::Released,
+                    },
+                    KeyRaw::Invalid => continue,
+                };
+                if let Err(error) = keymux.publish_key(event).await {
+                    tracing::warn!(?error, "failed to publish event to keymux!");
+                }
+            }
+        }
+
+        fn keycode(x: u8) -> key_event::KeyCode {
+            match x {
+                0x08 => key_event::KeyCode::Backspace,
+                // TODO(eliza): figure out other keycodes
+                x => key_event::KeyCode::Char(x as char),
             }
         }
         Ok(())
@@ -510,6 +613,9 @@ pub struct I2cPuppetSettings {
     pub subscription_capacity: usize,
     pub max_subscriptions: usize,
     pub poll_interval: Duration,
+    /// If set, the `i2c_puppet` service will also forward keypresses to the kernel's
+    /// [`KeyboardMuxService`](kernel::services::keyboard::mux::KeyboardMuxService).
+    pub keymux: bool,
 }
 
 impl Default for I2cPuppetSettings {
@@ -518,7 +624,8 @@ impl Default for I2cPuppetSettings {
             channel_capacity: 8,
             subscription_capacity: 32,
             max_subscriptions: 8,
-            poll_interval: Duration::from_secs(1),
+            poll_interval: Duration::from_millis(50),
+            keymux: true,
         }
     }
 }
@@ -531,7 +638,7 @@ pub enum KeySubscriptionError {
     InvalidKey,
 }
 
-impl KeySubscription {
+impl RawKeySubscription {
     pub async fn next_char(&mut self) -> Result<char, KeySubscriptionError> {
         loop {
             let (status, key) = self.next_raw().await?;

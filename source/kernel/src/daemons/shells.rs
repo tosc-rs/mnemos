@@ -8,6 +8,7 @@ use crate::{
     forth::Params,
     services::{
         emb_display::EmbDisplayClient,
+        keyboard::{key_event, KeyClient},
         serial_mux::{PortHandle, WellKnown},
     },
     tracing, Kernel,
@@ -108,10 +109,6 @@ pub async fn sermux_shell(k: &'static Kernel, settings: SermuxShellSettings) {
 /// ```
 #[derive(Debug)]
 pub struct GraphicalShellSettings {
-    /// Sermux port to use as a PseudoKeyboard.
-    ///
-    /// Defaults to [WellKnown::PseudoKeyboard]
-    pub port: u16,
     /// Number of bytes used for the sermux buffer
     ///
     /// Defaults to 256
@@ -135,7 +132,6 @@ pub struct GraphicalShellSettings {
 impl GraphicalShellSettings {
     pub fn with_display_size(width_px: u32, height_px: u32) -> Self {
         Self {
-            port: WellKnown::PseudoKeyboard.into(),
             capacity: 256,
             forth_settings: Default::default(),
             disp_width_px: width_px,
@@ -150,8 +146,7 @@ impl GraphicalShellSettings {
 #[tracing::instrument(skip(k))]
 pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSettings) {
     let GraphicalShellSettings {
-        port,
-        capacity,
+        capacity: _cap,
         forth_settings,
         disp_width_px,
         disp_height_px,
@@ -159,9 +154,7 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
         _priv,
     } = settings;
 
-    // TODO: Reconsider using a sermux port here once we have a more real keyboard thing
-    let port = PortHandle::open(k, port, capacity).await.unwrap();
-
+    let mut keyboard = KeyClient::from_registry(k, Default::default()).await;
     let mut disp_hdl = EmbDisplayClient::from_registry(k).await;
     let char_y = font.character_size.height;
     let char_x = font.character_size.width + font.character_spacing;
@@ -237,48 +230,67 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
         ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
         disp_hdl.draw_framechunk(fc_0).await.unwrap();
 
-        futures::select_biased! {
-            rgr = port.consumer().read_grant().fuse() => {
-                let mut used = 0;
-                'input: for &b in rgr.iter() {
-                    used += 1;
-                    match rline.append_local_char(b) {
-                        Ok(_) => {}
-                        // backspace
-                        Err(_) if b == 0x7F => {
-                            rline.pop_local_char();
+        loop {
+            // loop *just* for skipping released key events
+            futures::select_biased! {
+                event = keyboard.next().fuse() => {
+
+                    let Ok(event) = event else {
+                        tracing::error!("Keyboard service is dead???");
+                        continue;
+                    };
+                    tracing::info!(?event);
+                    if event.kind == key_event::Kind::Released {
+                        continue;
+                    }
+                    if matches!(event.code, key_event::KeyCode::Backspace | key_event::KeyCode::Delete) {
+                        rline.pop_local_char();
+                    } else {
+                        let Some(ch) = event.code.into_char() else {
+                            continue;
+                        };
+                        if !ch.is_ascii() {
+                            tracing::warn!("skipping non-ASCII character: {ch:?}");
+                            continue;
                         }
-                        Err(_) if b == b'\n' => {
-                            let needed = rline.local_editing_len();
-                            if needed != 0 {
-                                let mut tid_io_wgr = tid_io.producer().send_grant_exact(needed).await;
-                                rline.copy_local_editing_to(&mut tid_io_wgr).unwrap();
-                                tid_io_wgr.commit(needed);
-                                rline.submit_local_editing();
-                                break 'input;
+
+                        let b = ch as u8;
+                        match rline.append_local_char(b) {
+                            Ok(_) => {}
+                            // backspace
+                            Err(_) if b == 0x7F => rline.pop_local_char(),
+                            Err(_) if b == b'\n' => {
+                                let needed = rline.local_editing_len();
+                                if needed != 0 {
+                                    let mut tid_io_wgr = tid_io.producer().send_grant_exact(needed).await;
+                                    rline.copy_local_editing_to(&mut tid_io_wgr).unwrap();
+                                    tid_io_wgr.commit(needed);
+                                    rline.submit_local_editing();
+                                }
+                            }
+                            Err(error) => {
+                                tracing::warn!(?error, "Error appending char: {ch:?}");
                             }
                         }
-                        Err(error) => {
-                            tracing::warn!(?error, "Error appending char: {:02X}", b);
+                    }
+
+                },
+                output = tid_io.consumer().read_grant().fuse() => {
+                    let len = output.len();
+                    tracing::trace!(len, "Received output from tid_io");
+                    for &b in output.iter() {
+                        // TODO(eliza): what if this errors lol
+                        if b == b'\n' {
+                            rline.submit_remote_editing();
+                        } else {
+                            let _ = rline.append_remote_char(b);
                         }
                     }
+                    output.release(len);
                 }
-
-                rgr.release(used);
-            },
-            output = tid_io.consumer().read_grant().fuse() => {
-                let len = output.len();
-                tracing::trace!(len, "Received output from tid_io");
-                for &b in output.iter() {
-                    // TODO(eliza): what if this errors lol
-                    if b == b'\n' {
-                        rline.submit_remote_editing();
-                    } else {
-                        let _ = rline.append_remote_char(b);
-                    }
-                }
-                output.release(len);
             }
+
+            break;
         }
     }
 }
