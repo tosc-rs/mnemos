@@ -1,3 +1,5 @@
+//! Driver for the [`i2c_puppet`](https://github.com/solderparty/i2c_puppet)
+//! keyboard firmware.
 use bbq10kbd::{AsyncBbq10Kbd, CapsLockState, FifoCount, NumLockState};
 pub use bbq10kbd::{KeyRaw, KeyStatus, Version};
 use core::{fmt, time::Duration};
@@ -136,8 +138,8 @@ impl I2cPuppetClient {
     ///
     /// The returned [`RawKeySubscription`] provides access to keyboard events
     /// in the [`bbq10kbd`] crate's representation, which is specific to the
-    /// Blackberry Q10 keyboard. In general, it's preferable to implement code
-    /// that requires keyboard input against the more generic
+    /// Blackberry Q10 and Q20 keyboards. In general, it's preferable to
+    /// implement code that requires keyboard input against the more generic
     /// [`KeyboardService`] defined in the cross-platform kernel crate.
     ///
     /// [`KeyboardService`]: kernel::services::keyboard::KeyboardService
@@ -192,7 +194,7 @@ impl I2cPuppetClient {
         }
     }
 
-    /// Returns the `i2c_puppet` Blackberry Q10 keyboard's backlight brightness. 0
+    /// Returns the `i2c_puppet` keyboard's backlight brightness. 0
     /// is off, 255 is maximum brightness.
     pub async fn backlight(&mut self) -> Result<u8, Error> {
         if let Response::Backlight(brightness) = self.request(Request::GetBacklight).await? {
@@ -314,10 +316,10 @@ impl I2cPuppetServer {
             .with(reg::Cfg::KEY_INT, true)
             .with(reg::Cfg::USE_MODS, true)
             .with(reg::Cfg::OVERFLOW_INT, true)
-            // overwrite older keypresses when the FIFO is full. 
-            // since we only poll the keyboard when there are active 
+            // overwrite older keypresses when the FIFO is full.
+            // since we only poll the keyboard when there are active
             // subscriptions, enable this setting so that the
-            // FIFO doesn't fill up with ancient keypresses. 
+            // FIFO doesn't fill up with ancient keypresses.
             .with(reg::Cfg::OVERFLOW_ON, true);
         tracing::info!("setting i2c_puppet config:\n{cfg}");
         i2c.write(ADDR, &[reg::CFG | reg::WRITE, cfg.bits()])
