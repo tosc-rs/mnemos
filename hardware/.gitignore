@@ -1,0 +1,5 @@
+fp-info-cache
+**/gerbers/*
+*auto_saved_files*
+*.zip
+*-backups
