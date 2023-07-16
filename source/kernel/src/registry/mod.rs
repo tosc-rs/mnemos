@@ -1,4 +1,4 @@
-use core::any::TypeId;
+use core::{any::TypeId, marker::PhantomData};
 
 use crate::{
     comms::oneshot::Reusable,
@@ -160,6 +160,13 @@ impl RequestResponseId {
 #[non_exhaustive]
 pub struct Envelope<P> {
     pub body: P,
+    service_id: ServiceId,
+    client_id: ClientId,
+    request_id: RequestResponseId,
+}
+
+pub struct OpenEnvelope<P> {
+    body: PhantomData<fn() -> P>,
     service_id: ServiceId,
     client_id: ClientId,
     request_id: RequestResponseId,
@@ -453,7 +460,29 @@ impl Registry {
 
 // Envelope
 
+impl<P> OpenEnvelope<P> {
+    pub fn fill(self, contents: P) -> Envelope<P> {
+        Envelope {
+            body: contents,
+            service_id: self.service_id,
+            client_id: self.client_id,
+            request_id: self.request_id,
+        }
+    }
+}
+
 impl<P> Envelope<P> {
+    // TODO: constrain types
+    fn split_reply<R>(self) -> (P, OpenEnvelope<R>) {
+        let env = OpenEnvelope {
+            body: PhantomData,
+            service_id: self.service_id,
+            client_id: self.client_id,
+            request_id: RequestResponseId::new(self.request_id.id(), MessageKind::Response),
+        };
+        (self.body, env)
+    }
+
     /// Create a response Envelope from a given request Envelope.
     ///
     /// Maintains the same Service ID and Client ID, and increments the
@@ -488,6 +517,17 @@ impl<P> Envelope<P> {
 }
 
 // Message
+
+impl<RD: RegisteredDriver> Message<RD> {
+    pub fn split(self) -> (RD::Request, OpenEnvelope<Result<RD::Response, RD::Error>>, ReplyTo<RD>) {
+        let Self {
+            msg,
+            reply,
+        } = self;
+        let (req, env) = msg.split_reply();
+        (req, env, reply)
+    }
+}
 
 // ReplyTo
 

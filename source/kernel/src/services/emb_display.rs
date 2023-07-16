@@ -1,3 +1,7 @@
+//! EmbDisplay Service v2
+//!
+//! TODO: James needs to rewrite the module level docs!
+
 use core::time::Duration;
 
 use crate::{
@@ -42,7 +46,7 @@ pub enum Request {
 }
 
 pub enum Response {
-    FrameMeta(FrameMeta),
+    FrameMeta(DisplayMetadata),
     /// Successful draw
     DrawComplete(FrameChunk),
 }
@@ -120,7 +124,7 @@ impl EmbDisplayClient {
         }
     }
 
-    pub async fn get_meta(&mut self) -> Result<FrameMeta, FrameError> {
+    pub async fn get_meta(&mut self) -> Result<DisplayMetadata, FrameError> {
         let resp = self
             .prod
             .request_oneshot(Request::GetMeta, &self.reply)
@@ -134,11 +138,6 @@ impl EmbDisplayClient {
         })
     }
 }
-
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
-////////////////////////////////////////////////////////////////////////////////
 
 /// A drawable buffer
 ///
@@ -211,18 +210,20 @@ impl From<MonoChunk> for FrameChunk {
 // targets with very small memory. For example, a 400x240 monochrome display would
 // be 93.75KiB at 8bpp, but only 11.72KiB at 1bpp.
 pub struct MonoChunk {
-    meta: FrameBufMeta,
+    meta: FrameChunkMetadata,
     data: Buf8,
     mask: Buf8,
 }
 
 impl MonoChunk {
+    /// Mark all transparency data as fully transparent
     pub fn clear(&mut self) {
         self.mask.bytes.iter_mut().for_each(|b| *b = 0);
     }
 
+    /// Allocate a monochrome framebuffer with the given metadata
     pub async fn allocate_mono(size: FrameLocSize) -> Self {
-        let meta = FrameBufMeta {
+        let meta = FrameChunkMetadata {
             start_x: size.offset_x,
             start_y: size.offset_y,
             width: size.width,
@@ -238,6 +239,9 @@ impl MonoChunk {
         MonoChunk { meta, data, mask }
     }
 
+    /// Invert all pixels that are NOT currently transparent
+    ///
+    /// This can be used to "unblit" an image
     pub fn invert_masked(&mut self) {
         self.data
             .bytes
@@ -250,14 +254,21 @@ impl MonoChunk {
             });
     }
 
-    pub fn meta(&self) -> &FrameBufMeta {
+    /// Get the metadata of this FrameChunk
+    pub fn meta(&self) -> &FrameChunkMetadata {
         &self.meta
     }
 
-    pub fn meta_mut(&mut self) -> &mut FrameBufMeta {
+    /// Get the metadatae of this FrameChunk as a mutable reference
+    pub fn meta_mut(&mut self) -> &mut FrameChunkMetadata {
         &mut self.meta
     }
 
+    /// Get the raw pixel data
+    ///
+    /// This is currently one byte per pixel, with 0x00 representing "OFF" and
+    /// 0xFF representing "ON". All other values are invalid.
+    ///
     // TODO: This interface would semantically change if we switch to 1bpp!
     pub fn data(&self) -> &[u8] {
         let bytes = self.meta.width * self.meta.height;
@@ -266,6 +277,11 @@ impl MonoChunk {
         data_sli
     }
 
+    /// Get the raw mask data
+    ///
+    /// This is currently one byte per pixel, with 0x00 representing "Transparent"
+    /// and 0xFF representing "Solid". All other values are invalid.
+    ///
     // TODO: This interface would semantically change if we switch to 1bpp!
     pub fn mask(&self) -> &[u8] {
         let bytes = self.meta.width * self.meta.height;
@@ -274,6 +290,10 @@ impl MonoChunk {
         mask_sli
     }
 
+    /// Draw the given pixel, and mark the pixel as not transparent
+    ///
+    /// If you want to instead mark the pixel as transparent, see
+    /// [MonoChunk::clear_pixel()].
     #[inline]
     pub fn draw_pixel(&mut self, x: u32, y: u32, state: bool) {
         let idx = match self.pix_idx(x, y) {
@@ -284,10 +304,16 @@ impl MonoChunk {
             false => Gray8::BLACK.into_storage(),
             true => Gray8::WHITE.into_storage(),
         };
-        self.mask.bytes[idx] = 0x01;
+        self.mask.bytes[idx] = 0xFF;
     }
 
-    fn pix_idx(&self, x: u32, y: u32) -> Option<usize> {
+    /// Get the data/mask array index of the given X/Y coordinates
+    ///
+    /// This does NOT account for `offset`, this is only in the coordinate system
+    /// of the [MonoChunk], not the total display.
+    ///
+    /// Returns None if the given x/y coordinates are outside of the [MonoChunk]
+    pub fn pix_idx(&self, x: u32, y: u32) -> Option<usize> {
         if x >= self.meta.width {
             return None;
         }
@@ -297,6 +323,10 @@ impl MonoChunk {
         Some(((y * self.meta.width) + x) as usize)
     }
 
+    /// Clear the given pixel by marking it as transparent
+    ///
+    /// NOTE: This is not used for setting the pixel as "off", instead
+    /// use [MonoChunk::draw_pixel()].
     #[inline]
     pub fn clear_pixel(&mut self, x: u32, y: u32) {
         let idx = match self.pix_idx(x, y) {
@@ -328,15 +358,23 @@ impl DrawTarget for MonoChunk {
     }
 }
 
+/// This is used for placing the [FrameChunk] in the overall display
 pub struct FrameLocSize {
+    /// Offset in pixels from the top left corner (rightward)
     pub offset_x: u32,
+    /// Offset in pixels from the top left corner (downward)
     pub offset_y: u32,
+    /// Width of the frame chunk in pixels
     pub width: u32,
+    /// Height of the frame chunk in pixels
     pub height: u32,
 }
 
+/// Kinds of [FrameChunk]s
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub enum FrameKind {
+    /// Monochrome - matches [FrameChunk::Mono]
     Mono,
 }
 
@@ -355,22 +393,24 @@ impl OriginDimensions for FrameChunk {
     }
 }
 
+/// Metadata of the entire display
 #[derive(Copy, Clone, Debug)]
-pub struct FrameMeta {
+pub struct DisplayMetadata {
     pub kind: FrameKind,
     pub width: u32,
     pub height: u32,
 }
 
 #[derive(Copy, Clone)]
-pub struct FrameBufMeta {
+pub struct FrameChunkMetadata {
     start_x: u32,
     start_y: u32,
     width: u32,
     height: u32,
 }
 
-impl FrameBufMeta {
+/// Metadata of the [FrameChunk]
+impl FrameChunkMetadata {
     pub fn start_x(&self) -> u32 {
         self.start_x
     }

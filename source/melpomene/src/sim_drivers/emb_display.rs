@@ -34,8 +34,7 @@ use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
     registry::Message,
     services::emb_display::{
-        EmbDisplayService, FrameChunk, FrameError, MonoChunk, Request,
-        Response,
+        EmbDisplayService, FrameChunk, FrameError, MonoChunk, Request, Response, DisplayMetadata, FrameKind,
     },
     Kernel,
 };
@@ -62,6 +61,8 @@ impl SimDisplay {
         let commander = CommanderTask {
             kernel,
             cmd: cmd_cons,
+            width,
+            height,
         };
 
         kernel.spawn(commander.run(width, height)).await;
@@ -87,6 +88,8 @@ impl SimDisplay {
 struct CommanderTask {
     kernel: &'static Kernel,
     cmd: KConsumer<Message<EmbDisplayService>>,
+    width: u32,
+    height: u32,
 }
 
 struct Context {
@@ -94,8 +97,6 @@ struct Context {
     framebuf: HeapArray<u8>,
     window: Window,
     dirty: bool,
-    width: u32,
-    height: u32,
 }
 
 impl CommanderTask {
@@ -127,8 +128,6 @@ impl CommanderTask {
             framebuf,
             window,
             dirty: true,
-            width,
-            height,
         })))
         .await;
 
@@ -136,94 +135,106 @@ impl CommanderTask {
         self.kernel
             .spawn({
                 let mutex = mutex.clone();
-                async move {
-                    let mut idle_ticks = 0;
-                    loop {
-                        self.kernel
-                            .sleep(Duration::from_micros(1_000_000 / 15))
-                            .await;
-                        let mut guard = mutex.lock().await;
-                        let mut done = false;
-                        if let Some(Context {
-                            sdisp,
-                            window,
-                            dirty,
-                            ..
-                        }) = (&mut *guard).as_mut()
-                        {
-                            // If nothing has been drawn, only update the frame at 5Hz to save
-                            // CPU usage
-                            if *dirty || idle_ticks >= 3 {
-                                idle_ticks = 0;
-                                *dirty = false;
-                                window.update(&sdisp);
-                            } else {
-                                idle_ticks += 1;
-                            }
-
-                            if window.events().any(|e| e == SimulatorEvent::Quit) {
-                                done = true;
-                            }
-                        } else {
-                            done = true;
-                        }
-                        if done {
-                            let _ = guard.take();
-                            break;
-                        }
-                    }
-                }
+                render_loop(self.kernel, mutex)
             })
             .await;
 
-        // This loop services incoming client requests.
-        //
-        // Generally, don't handle errors when replying to clients, this indicates that they
-        // sent us a message and "hung up" without waiting for a response.
+        self.message_loop(mutex).await;
+    }
+
+    /// This loop services incoming client requests.
+    ///
+    /// Generally, don't handle errors when replying to clients, this indicates that they
+    /// sent us a message and "hung up" without waiting for a response.
+    async fn message_loop(&self, mutex: Arc<Mutex<Option<Context>>>) {
         loop {
             let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
-            let Message {
-                msg: mut req,
-                reply,
-            } = msg;
-            match &mut req.body {
+            let (req, env, reply_tx) = msg.split();
+            match req {
                 Request::Draw(FrameChunk::Mono(fc)) => {
-                    let mut guard = mutex.lock().await;
-                    if let Some(Context {
-                        sdisp,
-                        dirty,
-                        framebuf,
-                        width,
-                        height,
-                        ..
-                    }) = (&mut *guard).as_mut()
-                    {
-                        draw_to(framebuf, fc, *width, *height);
-                        let raw_img = frame_display(framebuf, *width).unwrap();
-                        let image = Image::new(&raw_img, Point::new(0, 0));
-                        image.draw(sdisp).unwrap();
-                        *dirty = true;
-
-                        // Drop the guard before we reply so we don't hold it too long.
-                        drop(guard);
-
-                        let _ = reply
-                            .reply_konly(req.reply_with_body(|fc| {
-                                // hate this
-                                let frame = match fc {
-                                    Request::GetMeta => todo!(),
-                                    Request::Draw(fc) => fc,
-                                };
-                                Ok(Response::DrawComplete(frame))
-                            }))
-                            .await;
-                    } else {
+                    if self.draw_mono(&fc, &mutex).await.is_err() {
                         break;
+                    } else {
+                        let response = env.fill(Ok(Response::DrawComplete(fc.into())));
+                        let _ = reply_tx.reply_konly(response).await;
                     }
                 }
-                Request::GetMeta => todo!(),
+                Request::GetMeta => {
+                    let meta = DisplayMetadata {
+                        kind: FrameKind::Mono,
+                        width: self.width,
+                        height: self.height,
+                    };
+                    let response = env.fill(Ok(Response::FrameMeta(meta)));
+                    let _ = reply_tx.reply_konly(response).await;
+                },
                 _ => todo!(),
             }
+        }
+    }
+
+    /// Draw the given MonoChunk to the persistent framebuffer
+    async fn draw_mono(
+        &self,
+        fc: &MonoChunk,
+        mutex: &Mutex<Option<Context>>,
+    ) -> Result<(), ()> {
+        let mut guard = mutex.lock().await;
+        let ctx = if let Some(c) = (&mut *guard).as_mut() {
+            c
+        } else {
+            return Err(());
+        };
+
+        let Context {
+            sdisp,
+            dirty,
+            framebuf,
+            ..
+        } = ctx;
+
+        draw_to(framebuf, fc, self.width, self.height);
+        let raw_img = frame_display(framebuf, self.width).unwrap();
+        let image = Image::new(&raw_img, Point::new(0, 0));
+        image.draw(sdisp).unwrap();
+        *dirty = true;
+
+        Ok(())
+    }
+}
+
+async fn render_loop(kernel: &'static Kernel, mutex: Arc<Mutex<Option<Context>>>) {
+    let mut idle_ticks = 0;
+    loop {
+        kernel.sleep(Duration::from_micros(1_000_000 / 15)).await;
+        let mut guard = mutex.lock().await;
+        let mut done = false;
+        if let Some(Context {
+            sdisp,
+            window,
+            dirty,
+            ..
+        }) = (&mut *guard).as_mut()
+        {
+            // If nothing has been drawn, only update the frame at 5Hz to save
+            // CPU usage
+            if *dirty || idle_ticks >= 3 {
+                idle_ticks = 0;
+                *dirty = false;
+                window.update(&sdisp);
+            } else {
+                idle_ticks += 1;
+            }
+
+            if window.events().any(|e| e == SimulatorEvent::Quit) {
+                done = true;
+            }
+        } else {
+            done = true;
+        }
+        if done {
+            let _ = guard.take();
+            break;
         }
     }
 }
@@ -290,6 +301,8 @@ fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u32) {
 /// Using the display's device interface
 fn frame_display(fc: &HeapArray<u8>, width: u32) -> Result<ImageRaw<Gray8>, ()> {
     let raw_image: ImageRaw<Gray8>;
+    // TODO: We use Gray8 instead of BinaryColor here because BinaryColor bitpacks to 1bpp,
+    // while we are currently doing 8bpp.
     raw_image = ImageRaw::<Gray8>::new(&fc, width);
     Ok(raw_image)
 }
