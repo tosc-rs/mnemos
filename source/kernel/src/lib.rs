@@ -101,6 +101,11 @@ use maitake::{
 pub use mnemos_alloc;
 use mnemos_alloc::containers::Box;
 use registry::Registry;
+use services::{
+    forth_spawnulator::{SpawnulatorServer, SpawnulatorSettings},
+    keyboard::mux::{KeyboardMuxServer, KeyboardMuxSettings},
+    serial_mux::{SerialMuxServer, SerialMuxSettings},
+};
 
 /// Shim to handle tracing v0.1 vs v0.2
 ///
@@ -169,6 +174,18 @@ pub struct KernelInner {
 
     /// Maitake timer wheel.
     timer: Timer,
+}
+
+/// Settings for all services spawned by default.
+#[derive(Debug, Default)]
+pub struct DefaultServiceSettings {
+    pub keyboard_mux: KeyboardMuxSettings,
+    pub serial_mux: SerialMuxSettings,
+    pub spawnulator: SpawnulatorSettings,
+    pub sermux_loopback: daemons::sermux::LoopbackSettings,
+    pub sermux_hello: daemons::sermux::HelloSettings,
+    #[cfg(feature = "tracing-02")]
+    pub sermux_trace: trace::SerialTraceSettings,
 }
 
 impl Kernel {
@@ -266,5 +283,85 @@ impl Kernel {
     #[inline]
     pub fn timeout<F: Future>(&'static self, duration: Duration, f: F) -> Timeout<'static, F> {
         self.inner.timer.timeout(duration, f)
+    }
+
+    /// Initialize the default set of cross-platform kernel [`services`] that
+    /// are spawned on all hardware platforms.
+    ///
+    /// Calling this method is not *mandatory* for a hardware platform
+    /// implementation. The platform implementation may manually spawn these
+    /// services individually, or choose not to spawn them at all. However, this
+    /// method is provided to ensure that a consistent set of cross-platform
+    /// services are initialized on all hardware platforms *if they are
+    /// desired*.
+    ///
+    /// Services spawned by this method include:
+    ///
+    /// - The [`KeyboardMuxService`], which multiplexes keyboard input from
+    ///   multiple keyboards to tasks that depend on keyboard input,
+    /// - The [`SerialMuxService`], which multiplexes serial I/O to virtual
+    ///   serial ports
+    /// - The [`SpawnulatorService`], which is responsible for spawning
+    ///   new Forth tasks
+    ///
+    /// In addition, this method will initialize the following non-service
+    /// daemons:
+    ///
+    /// - [`daemons::sermux::loopback`], which serves a loopback service on a
+    ///   configured loopback port
+    /// - [`daemons::sermux::hello`], which sends periodic "hello world" pings
+    ///   to a configured serial mux port
+    /// - if the "tracing-02" feature flag is enabled, the worker task for the
+    ///   binary serial mux trace protocol
+    ///
+    /// If the kernel's [`maitake::time::Timer`] has not been set as the global
+    /// timer, this method will also ensure that the global timer is set as the
+    /// default.
+    ///
+    /// [`KeyboardMuxService`]:
+    ///     crate::services::keyboard::mux::KeyboardMuxService
+    /// [`SerialMuxService`]: crate::services::serial_mux::SerialMuxService
+    /// [`SpawnulatorService`]:
+    ///     crate::services::forth_spawnulator::SpawnulatorService
+    pub fn initialize_default_services(&'static self, settings: DefaultServiceSettings) {
+        // Set the kernel timer as the global timer.
+        // Disregard errors --- they just mean someone else has already set up
+        // the global timer.
+        let _ = self.set_global_timer();
+
+        // Initialize the kernel keyboard mux service.
+        self.initialize(KeyboardMuxServer::register(self, settings.keyboard_mux))
+            .expect("failed to spawn KeyboardMuxService initialization");
+
+        // Initialize the SerialMuxServer
+        let sermux_up = self
+            .initialize(SerialMuxServer::register(self, settings.serial_mux))
+            .expect("failed to spawn SerialMuxService initialization");
+
+        // Initialize the Forth spawnulator.
+        self.initialize(SpawnulatorServer::register(self, settings.spawnulator))
+            .expect("failed to spawn SpawnulatorService initialization");
+
+        // Initialize Serial Mux daemons.
+        self.initialize(async move {
+            sermux_up
+                .await
+                .expect("SerialMuxService initialization should not be cancelled")
+                .expect("SerialMuxService initialization failed");
+
+            #[cfg(feature = "tracing-02")]
+            crate::trace::COLLECTOR
+                .start(self, settings.sermux_trace)
+                .await;
+
+            self.spawn(daemons::sermux::loopback(self, settings.sermux_loopback))
+                .await;
+            tracing::debug!("SerMux loopback started");
+
+            self.spawn(daemons::sermux::hello(self, settings.sermux_hello))
+                .await;
+            tracing::debug!("SerMux Hello World started");
+        })
+        .expect("failed to spawn default serial mux service initialization");
     }
 }
