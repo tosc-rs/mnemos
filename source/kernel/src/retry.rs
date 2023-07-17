@@ -1,5 +1,5 @@
 use crate::tracing;
-use core::{fmt, future::Future, num::NonZeroUsize};
+use core::{fmt, future::IntoFuture};
 use maitake::time::{self, Duration};
 
 /// An exponential backoff.
@@ -10,27 +10,43 @@ pub struct ExpBackoff {
     cur: Duration,
 }
 
-pub struct Retry<P = ()> {
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct Retry<P = AlwaysRetry, B = ExpBackoff> {
     predicate: P,
-    backoff: ExpBackoff,
-    max: Option<NonZeroUsize>,
+    backoff: B,
 }
 
-pub struct MaxRetries<P> {
-    inner: P,
+/// A retry policy which will retry errors up to `max` times, and then fail.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct WithMaxRetries<P> {
+    predicate: P,
     max: usize,
     cur: usize,
 }
 
-pub trait ShouldRetry<E> {
-    fn should_retry(&mut self, error: &E) -> bool;
-    fn reset(&mut self) {
-        // nop
-    }
+/// A retry policy which always retries errors.
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct AlwaysRetry;
+
+/// A backoff strategy for retries.
+pub trait Backoff {
+    fn backoff(&mut self) -> time::Duration;
+    fn reset(&mut self);
 }
 
+/// A strategy for determining whether an error is retryable.
+pub trait ShouldRetry<E> {
+    /// Returns `true` if the provided error is retryable.
+    fn should_retry(&mut self, error: &E) -> bool;
+    fn reset(&mut self);
+}
+
+// === impl ExpBackoff ===
+
 impl ExpBackoff {
-    const DEFAULT_MAX_BACKOFF: Duration = Duration::from_secs(2);
+    /// The default maximum retry backoff.
+    pub const DEFAULT_MAX_BACKOFF: Duration = Duration::from_secs(2);
+    pub const DEFAULT_MIN_BACKOFF: Duration = Duration::from_millis(5);
 
     #[must_use]
     pub const fn new(min: Duration) -> Self {
@@ -41,14 +57,19 @@ impl ExpBackoff {
         }
     }
 
+    /// Sets the maximum duration to back off for.
+    ///
+    /// Once the backoff duration reaches the maximum, it will no longer
+    /// increase until the backoff is [`reset`].
     #[must_use]
-    pub const fn with_max(self, max: Duration) -> Self {
+    pub const fn with_max_backoff(self, max: Duration) -> Self {
         Self { max, ..self }
     }
 
-    /// Wait until the current backoff period has elapsed, incrementing the
-    /// backoff for the next call to `wait`.
-    pub async fn wait(&mut self) {
+    /// Returns the current backoff, incrementing the backoff returned by the
+    /// next call to `backoff`.
+    #[must_use]
+    pub fn backoff(&mut self) -> Duration {
         tracing::trace!("backing off for {:?}...", self.cur);
 
         let cur = self.cur;
@@ -57,7 +78,7 @@ impl ExpBackoff {
             self.cur *= 2;
         }
 
-        time::sleep(cur).await
+        cur
     }
 
     /// Reset the backoff to the `min` value.
@@ -66,98 +87,64 @@ impl ExpBackoff {
         self.cur = self.min;
     }
 
+    #[inline]
+    #[must_use]
     pub fn current(&self) -> Duration {
         self.cur
     }
 }
 
-// === impl Retry ===
-
-impl Retry {
-    pub const fn new(backoff: ExpBackoff) -> Self {
-        Self {
-            predicate: (),
-            backoff,
-            max: None,
-        }
+impl Default for ExpBackoff {
+    fn default() -> Self {
+        Self::new(Self::DEFAULT_MIN_BACKOFF).with_max_backoff(Self::DEFAULT_MAX_BACKOFF)
     }
 }
 
-impl<P> Retry<P> {
-    pub fn with_predicate<P2>(self, predicate: P2) -> Retry<P2> {
-        Retry {
-            predicate,
-            backoff: self.backoff,
-            max: self.max,
-        }
+impl Backoff for ExpBackoff {
+    fn backoff(&mut self) -> Duration {
+        ExpBackoff::backoff(self)
     }
 
-    pub fn with_max(self, max: impl Into<Option<NonZeroUsize>>) -> Self {
-        Self {
-            max: max.into(),
-            ..self
-        }
-    }
-
-    pub async fn retry<T, E, F>(&mut self, op: impl Fn() -> F) -> Result<T, E>
-    where
-        F: Future<Output = Result<T, E>>,
-        P: ShouldRetry<E>,
-        E: fmt::Display,
-    {
-        self.predicate.reset();
-        self.backoff.reset();
-        let mut retries: usize = 0;
-        loop {
-            match op().await {
-                Ok(t) => {
-                    if retries > 0 {
-                        tracing::debug!(retries, "succeeded after retrying");
-                    }
-                    return Ok(t);
-                }
-                Err(error) if !self.predicate.should_retry(&error) => {
-                    tracing::debug!(%error, "error is not retryable!");
-                    return Err(error);
-                }
-                Err(error) => {
-                    if let Some(max) = self.max {
-                        if retries >= max.into() {
-                            tracing::debug!(%error, max, "maximum retry limit reached!");
-                            return Err(error);
-                        }
-                    }
-                    self.backoff.wait().await;
-                    tracing::debug!(%error, retries, "retrying after backoff...");
-                    retries += 1;
-                }
-            }
-        }
+    fn reset(&mut self) {
+        ExpBackoff::reset(self)
     }
 }
 
-impl<E> ShouldRetry<E> for () {
-    fn should_retry(&mut self, _: &E) -> bool {
-        true
+// === impl Backoff for Duration ===
+
+impl Backoff for Duration {
+    fn backoff(&mut self) -> time::Duration {
+        *self
     }
+
+    fn reset(&mut self) {}
 }
 
-impl<E, F> ShouldRetry<E> for F
+// === impl ShouldRetry ===
+
+impl<F, E> ShouldRetry<E> for F
 where
-    F: FnMut(&E) -> bool,
+    F: Fn(&E) -> bool,
 {
     fn should_retry(&mut self, error: &E) -> bool {
-        (self)(error)
+        self(error)
     }
+
+    fn reset(&mut self) {}
 }
 
-impl<E, P> ShouldRetry<E> for MaxRetries<P>
+impl<P, E> ShouldRetry<E> for WithMaxRetries<P>
 where
     P: ShouldRetry<E>,
 {
     fn should_retry(&mut self, error: &E) -> bool {
-        if self.inner.should_retry(error) && self.cur <= self.max {
+        if self.cur > self.max {
+            tracing::debug!(max = self.max, "maximum retry limit reached!");
+            return false;
+        }
+        if self.predicate.should_retry(error) {
             self.cur += 1;
+            tracing::trace!(remaining = self.max - self.cur, "retrying...");
             true
         } else {
             false
@@ -165,7 +152,98 @@ where
     }
 
     fn reset(&mut self) {
-        self.inner.reset();
         self.cur = 0;
+    }
+}
+
+impl<E> ShouldRetry<E> for AlwaysRetry {
+    fn should_retry(&mut self, _: &E) -> bool {
+        true
+    }
+
+    fn reset(&mut self) {}
+}
+
+// === impl Retry ===
+
+impl Default for Retry {
+    fn default() -> Self {
+        Self::new(AlwaysRetry, ExpBackoff::default())
+    }
+}
+
+impl<P, B> Retry<P, B>
+where
+    B: Backoff,
+{
+    #[must_use]
+    pub const fn new(predicate: P, backoff: B) -> Self {
+        Self { predicate, backoff }
+    }
+
+    /// Sets the [predicate](ShouldRetry) used to determine if an error is
+    /// retryable.
+    ///
+    /// If [`predicate.should_retry()`](ShouldRetry::should_retry) returns
+    /// `true` for a given error, the error is retried.
+    /// Otherwise, the error is not retried.
+    #[must_use]
+    pub fn with_predicate<P2>(self, predicate: P2) -> Retry<P2, B> {
+        Retry {
+            predicate,
+            backoff: self.backoff,
+        }
+    }
+
+    /// Sets the [backoff policy](Backoff) used to determine how long to back
+    /// off for between retries.
+    #[must_use]
+    pub fn with_backoff<B2: Backoff>(self, backoff: B2) -> Retry<P, B2> {
+        Retry {
+            predicate: self.predicate,
+            backoff,
+        }
+    }
+
+    /// Sets a maximum retry limit of `max` retries. If an operation would be
+    /// retried more than `max` times, it will fail, regardless of whether the
+    /// `P` indicates it is retryable.
+    pub fn with_max_retries(self, max: usize) -> Retry<WithMaxRetries<P>, B> {
+        Retry {
+            predicate: WithMaxRetries {
+                predicate: self.predicate,
+                max,
+                cur: 0,
+            },
+            backoff: self.backoff,
+        }
+    }
+
+    /// Retry the asynchronous operation returned by `F`.
+    pub async fn retry<T, E, F>(&mut self, op: impl Fn() -> F) -> Result<T, E>
+    where
+        F: IntoFuture<Output = Result<T, E>>,
+        P: Fn(&E) -> bool,
+        E: fmt::Display,
+    {
+        self.backoff.reset();
+        self.predicate.reset();
+
+        loop {
+            match op().await {
+                Ok(t) => return Ok(t),
+                Err(error) if !(self.predicate)(&error) => {
+                    tracing::debug!(%error, "error is not retryable!");
+                    return Err(error);
+                }
+                Err(error) => {
+                    let backoff = self.backoff.backoff();
+                    tracing::trace!("backing off for {backoff:?}...");
+                    time::sleep(backoff).await;
+
+                    tracing::debug!(%error, "retrying after backoff...");
+                }
+            }
+        }
     }
 }
