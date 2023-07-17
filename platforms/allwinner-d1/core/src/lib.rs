@@ -16,12 +16,7 @@ use core::{
 };
 use d1_pac::{Interrupt, DMAC, TIMER};
 use kernel::{
-    daemons::sermux::{hello, loopback, HelloSettings, LoopbackSettings},
     mnemos_alloc::containers::Box,
-    services::{
-        forth_spawnulator::SpawnulatorServer, keyboard::mux::KeyboardMuxServer,
-        serial_mux::SerialMuxServer,
-    },
     trace::{self, Instrument},
     Kernel, KernelSettings,
 };

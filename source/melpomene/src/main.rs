@@ -8,14 +8,7 @@ use melpomene::{
 };
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
-    daemons::{
-        sermux::{hello, loopback, HelloSettings, LoopbackSettings},
-        shells::{graphical_shell_mono, GraphicalShellSettings},
-    },
-    services::{
-        forth_spawnulator::SpawnulatorServer, keyboard::mux::KeyboardMuxServer,
-        serial_mux::SerialMuxServer,
-    },
+    daemons::shells::{graphical_shell_mono, GraphicalShellSettings},
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -23,7 +16,6 @@ use tokio::{
     time::{self, Duration},
 };
 
-use tracing::Instrument;
 const DISPLAY_WIDTH_PX: u32 = 400;
 const DISPLAY_HEIGHT_PX: u32 = 240;
 
@@ -93,6 +85,14 @@ async fn kernel_entry(opts: MelpomeneOptions) {
                 .unwrap();
             tracing::info!("simulated UART ({}) initialized!", opts.serial_addr);
         }
+    })
+    .unwrap();
+
+    // Spawn the graphics driver
+    k.initialize(async move {
+        SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
+            .await
+            .unwrap();
     })
     .unwrap();
 

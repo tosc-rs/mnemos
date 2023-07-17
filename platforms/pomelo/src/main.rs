@@ -10,12 +10,9 @@ use gloo::timers::future::TimeoutFuture;
 use gloo_utils::format::JsValueSerdeExt;
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
-    daemons::sermux::{loopback, LoopbackSettings},
     forth::{self, Forth},
     services::{
-        forth_spawnulator::SpawnulatorServer,
-        keyboard::mux::KeyboardMuxServer,
-        serial_mux::{PortHandle, SerialMuxServer, WellKnown},
+        serial_mux::{PortHandle,WellKnown},
     },
     Kernel, KernelSettings,
 };
