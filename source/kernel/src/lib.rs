@@ -317,6 +317,12 @@ impl Kernel {
     /// If the kernel's [`maitake::time::Timer`] has not been set as the global
     /// timer, this method will also ensure that the global timer is set as the
     /// default.
+    ///
+    /// [`KeyboardMuxService`]:
+    ///     crate::services::keyboard::mux::KeyboardMuxService
+    /// [`SerialMuxService`]: crate::services::serial_mux::SerialMuxService
+    /// [`SpawnulatorService`]:
+    ///     crate::services::forth_spawnulator::SpawnulatorService
     pub fn initialize_default_services(&'static self, settings: DefaultServiceSettings) {
         // Set the kernel timer as the global timer.
         // Disregard errors --- they just mean someone else has already set up
