@@ -9,7 +9,7 @@
 use core::time::Duration;
 
 use crate::comms::bbq::GrantR;
-use crate::tracing::{debug, warn};
+use crate::tracing::{self, debug, warn, Level};
 use crate::{
     comms::{
         bbq,
@@ -186,6 +186,12 @@ impl SerialMuxServer {
     /// [`SimpleSerialClient`] to access the serial port.
     ///
     /// Will retry to obtain a [`SimpleSerialClient`] until success.
+    #[tracing::instrument(
+        name = "KeyboardMuxServer::register",
+        level = Level::DEBUG,
+        skip(kernel),
+        err(Debug),
+    )]
     pub async fn register(
         kernel: &'static Kernel,
         settings: SerialMuxSettings,

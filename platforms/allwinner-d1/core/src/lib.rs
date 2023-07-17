@@ -47,8 +47,6 @@ pub struct D1 {
     i2c0_int: (Interrupt, fn()),
 }
 
-static COLLECTOR: trace::SerialCollector = trace::SerialCollector::new();
-
 impl D1 {
     /// Initialize MnemOS for the D1.
     ///
@@ -100,31 +98,6 @@ impl D1 {
         })
         .unwrap();
 
-        // Initialize the kernel keyboard mux service.
-        k.initialize(KeyboardMuxServer::register(k, Default::default()))
-            .unwrap();
-
-        // Initialize the SerialMuxServer
-        k.initialize({
-            async {
-                // * Up to 16 virtual ports max
-                // * Framed messages up to 512 bytes max each
-                tracing::debug!("initializing SerialMuxServer...");
-                SerialMuxServer::register(k, Default::default())
-                    .await
-                    .unwrap();
-                tracing::info!("SerialMuxServer initialized!");
-            }
-            .instrument(tracing::info_span!("SerialMuxServer",))
-        })
-        .unwrap();
-
-        // initialize tracing
-        k.initialize(async move {
-            COLLECTOR.start(k).await;
-        })
-        .unwrap();
-
         // Initialize the I2C0 TWI
         let i2c0_int = i2c0.interrupt();
         k.initialize(
@@ -137,16 +110,7 @@ impl D1 {
         )
         .unwrap();
 
-        // Spawn a loopback port
-        let loopback_settings = LoopbackSettings::default();
-        k.initialize(loopback(k, loopback_settings)).unwrap();
-
-        // Spawn a hello port
-        let hello_settings = HelloSettings::default();
-        k.initialize(hello(k, hello_settings)).unwrap();
-
-        // Spawn the spawnulator
-        k.initialize(SpawnulatorServer::register(k, 16)).unwrap();
+        k.initialize_default_services(Default::default());
 
         Ok(Self {
             kernel: k,

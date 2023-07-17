@@ -20,7 +20,8 @@ use crate::{
         RegistrationError,
     },
     services::serial_mux,
-    tracing, Kernel,
+    tracing::{self, Level},
+    Kernel,
 };
 use core::{convert::Infallible, time::Duration};
 use futures::{future, FutureExt};
@@ -132,6 +133,7 @@ pub struct KeyboardMuxServer {
     sermux_port: Option<serial_mux::PortHandle>,
 }
 
+#[derive(Debug)]
 pub struct KeyboardMuxSettings {
     max_keyboards: usize,
     buffer_capacity: usize,
@@ -144,6 +146,12 @@ impl KeyboardMuxServer {
     /// If [`KeyboardMuxSettings::with_sermux_port`] is [`Some`], this function
     /// will attempt to acquire a [`serial_mux::PortHandle`] for the configured
     /// serial mux port.
+    #[tracing::instrument(
+        name = "KeyboardMuxServer::register",
+        level = Level::DEBUG,
+        skip(kernel),
+        err(Debug),
+    )]
     pub async fn register(
         kernel: &'static Kernel,
         settings: KeyboardMuxSettings,
@@ -183,10 +191,12 @@ impl KeyboardMuxServer {
                 reg.register_konly::<KeyboardService>(&sub_tx)?;
                 Ok(())
             })
-            .await
+            .await?;
+        tracing::info!("KeyboardMuxServer registered!");
+        Ok(())
     }
 
-    #[tracing::instrument(level = tracing::Level::INFO, name = "KeyboardMuxServer", skip(self))]
+    #[tracing::instrument(name = "KeyboardMuxServer", level = Level::INFO, skip(self))]
     pub async fn run(mut self) {
         loop {
             let sermux_fut = match self.sermux_port {

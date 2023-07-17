@@ -128,19 +128,30 @@ impl SpawnulatorClient {
 
 pub struct SpawnulatorServer;
 
+#[derive(Debug)]
 pub enum RegistrationError {
     SpawnulatorAlreadyRegistered,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub struct SpawnulatorSettings {
+    capacity: usize,
 }
 
 impl SpawnulatorServer {
     /// Start the spawnulator background task, returning a handle that can be
     /// used to spawn new `Forth` VMs.
-    #[tracing::instrument(level = tracing::Level::DEBUG, skip(kernel))]
+    #[tracing::instrument(
+        name = "SpawnulatorServer::register",
+        level = tracing::Level::DEBUG,
+        skip(kernel),
+        ret(Debug),
+    )]
     pub async fn register(
         kernel: &'static Kernel,
-        capacity: usize,
+        settings: SpawnulatorSettings,
     ) -> Result<(), RegistrationError> {
-        let (cmd_prod, cmd_cons) = KChannel::new_async(capacity).await.split();
+        let (cmd_prod, cmd_cons) = KChannel::new_async(settings.capacity).await.split();
         tracing::debug!("who spawns the spawnulator?");
         kernel
             .spawn(SpawnulatorServer::spawnulate(kernel, cmd_cons))
@@ -150,6 +161,7 @@ impl SpawnulatorServer {
             .with_registry(|reg| reg.register_konly::<SpawnulatorService>(&cmd_prod))
             .await
             .map_err(|_| RegistrationError::SpawnulatorAlreadyRegistered)?;
+        tracing::info!("ForthSpawnulatorService registered");
         Ok(())
     }
 
@@ -172,5 +184,21 @@ impl SpawnulatorServer {
             tracing::trace!(task.id = id, "spawnulated!");
         }
         tracing::info!("spawnulator channel closed!");
+    }
+}
+
+impl SpawnulatorSettings {
+    pub const DEFAULT_CAPACITY: usize = 16;
+
+    pub fn with_capacity(self, capacity: usize) -> Self {
+        Self { capacity, ..self }
+    }
+}
+
+impl Default for SpawnulatorSettings {
+    fn default() -> Self {
+        Self {
+            capacity: Self::DEFAULT_CAPACITY,
+        }
     }
 }

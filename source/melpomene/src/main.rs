@@ -96,48 +96,12 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     })
     .unwrap();
 
-    // Initialize the SerialMuxServer
-    k.initialize(
-        async {
-            // * Up to 16 virtual ports max
-            // * Framed messages up to 512 bytes max each
-            tracing::debug!("initializing SerialMuxServer...");
-            SerialMuxServer::register(k, Default::default())
-                .await
-                .unwrap();
-            tracing::info!("SerialMuxServer initialized!");
-        }
-        .instrument(tracing::info_span!("SerialMuxServer")),
-    )
-    .unwrap();
-
-    // Initialize the kernel keyboard mux service.
-    k.initialize(KeyboardMuxServer::register(k, Default::default()))
-        .unwrap();
-
-    // Spawn the graphics driver
-    k.initialize(async move {
-        SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
-            .await
-            .unwrap();
-    })
-    .unwrap();
-
-    // Spawn a loopback port
-    let loopback_settings = LoopbackSettings::default();
-    k.initialize(loopback(k, loopback_settings)).unwrap();
-
-    // Spawn a hello port
-    let hello_settings = HelloSettings::default();
-    k.initialize(hello(k, hello_settings)).unwrap();
+    k.initialize_default_services(Default::default());
 
     // Spawn a graphical shell
     let mut guish = GraphicalShellSettings::with_display_size(DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX);
     guish.capacity = 1024;
     k.initialize(graphical_shell_mono(k, guish)).unwrap();
-
-    // Spawn the spawnulator
-    k.initialize(SpawnulatorServer::register(k, 16)).unwrap();
 
     loop {
         // Tick the scheduler
