@@ -12,7 +12,10 @@ use mnemos_kernel::{
         sermux::{hello, loopback, HelloSettings, LoopbackSettings},
         shells::{graphical_shell_mono, GraphicalShellSettings},
     },
-    services::{forth_spawnulator::SpawnulatorServer, serial_mux::SerialMuxServer},
+    services::{
+        forth_spawnulator::SpawnulatorServer, keyboard::mux::KeyboardMuxServer,
+        serial_mux::SerialMuxServer,
+    },
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -94,7 +97,7 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     .unwrap();
 
     // Initialize the SerialMuxServer
-    k.initialize({
+    k.initialize(
         async {
             // * Up to 16 virtual ports max
             // * Framed messages up to 512 bytes max each
@@ -104,9 +107,13 @@ async fn kernel_entry(opts: MelpomeneOptions) {
                 .unwrap();
             tracing::info!("SerialMuxServer initialized!");
         }
-        .instrument(tracing::info_span!("SerialMuxServer"))
-    })
+        .instrument(tracing::info_span!("SerialMuxServer")),
+    )
     .unwrap();
+
+    // Initialize the kernel keyboard mux service.
+    k.initialize(KeyboardMuxServer::register(k, Default::default()))
+        .unwrap();
 
     // Spawn the graphics driver
     k.initialize(async move {
