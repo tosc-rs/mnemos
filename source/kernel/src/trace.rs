@@ -162,21 +162,19 @@ impl SerialCollector {
                                 let level = lvl
                                     .map(|lvl| lvl as u8)
                                     .unwrap_or(level_to_u8(LevelFilter::OFF));
-                                let prev = self.max_level.swap(level, Ordering::AcqRel);
-                                if prev != level {
-                                    tracing_core_02::callsite::rebuild_interest_cache();
-                                    info!(
-                                        message = %"hello from mnemOS",
-                                        version = %env!("CARGO_PKG_VERSION"),
-                                        git = %format_args!(
-                                            "{}@{}",
-                                            env!("VERGEN_GIT_BRANCH"),
-                                            env!("VERGEN_GIT_DESCRIBE")
-                                        ),
-                                        target = %env!("VERGEN_CARGO_TARGET_TRIPLE"),
-                                        profile = %if cfg!(debug_assertions) { "debug" } else { "release" },
-                                    );
-                                }
+                                self.max_level.store(level, Ordering::Release);
+                                tracing_core_02::callsite::rebuild_interest_cache();
+                                info!(
+                                    message = %"hello from mnemOS",
+                                    version = %env!("CARGO_PKG_VERSION"),
+                                    git = %format_args!(
+                                        "{}@{}",
+                                        env!("VERGEN_GIT_BRANCH"),
+                                        env!("VERGEN_GIT_DESCRIBE")
+                                    ),
+                                    target = %env!("VERGEN_CARGO_TARGET_TRIPLE"),
+                                    profile = %if cfg!(debug_assertions) { "debug" } else { "release" },
+                                );
                             }
                         }
 
