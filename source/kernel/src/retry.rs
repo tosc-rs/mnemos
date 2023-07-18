@@ -1,5 +1,5 @@
 use crate::tracing;
-use core::{fmt, future::IntoFuture};
+use core::{fmt, future::Future};
 use maitake::time::{self, Duration};
 
 /// An exponential backoff.
@@ -79,6 +79,10 @@ impl ExpBackoff {
         }
 
         cur
+    }
+
+    pub async fn wait(&mut self) {
+        time::sleep(self.backoff()).await
     }
 
     /// Reset the backoff to the `min` value.
@@ -219,11 +223,10 @@ where
         }
     }
 
-    /// Retry the asynchronous operation returned by `F`.
-    pub async fn retry<T, E, F>(&mut self, op: impl Fn() -> F) -> Result<T, E>
+    pub async fn retry<'op, T, E, F>(&mut self, mut op: impl FnMut() -> F) -> Result<T, E>
     where
-        F: IntoFuture<Output = Result<T, E>>,
-        P: Fn(&E) -> bool,
+        F: Future<Output = Result<T, E>> + 'op,
+        P: ShouldRetry<E>,
         E: fmt::Display,
     {
         self.backoff.reset();
@@ -232,7 +235,7 @@ where
         loop {
             match op().await {
                 Ok(t) => return Ok(t),
-                Err(error) if !(self.predicate)(&error) => {
+                Err(error) if !self.predicate.should_retry(&error) => {
                     tracing::debug!(%error, "error is not retryable!");
                     return Err(error);
                 }
@@ -242,6 +245,41 @@ where
                     time::sleep(backoff).await;
 
                     tracing::debug!(%error, "retrying after backoff...");
+                }
+            }
+        }
+    }
+
+    /// Retry the asynchronous operation returned by `F`.
+    pub async fn retry_with_input<I, T, E, F>(
+        &mut self,
+        input: I,
+        mut op: impl FnMut(I) -> F,
+    ) -> Result<T, E>
+    where
+        F: Future<Output = (I, Result<T, E>)>,
+        P: ShouldRetry<E>,
+        E: fmt::Display,
+    {
+        self.backoff.reset();
+        self.predicate.reset();
+
+        let mut input = Some(input);
+        loop {
+            let i = input.take().unwrap();
+            match op(i).await {
+                (_, Ok(t)) => return Ok(t),
+                (_, Err(error)) if !self.predicate.should_retry(&error) => {
+                    tracing::debug!(%error, "error is not retryable!");
+                    return Err(error);
+                }
+                (i, Err(error)) => {
+                    let backoff = self.backoff.backoff();
+                    tracing::trace!("backing off for {backoff:?}...");
+                    time::sleep(backoff).await;
+
+                    tracing::debug!(%error, "retrying after backoff...");
+                    input = Some(i);
                 }
             }
         }
