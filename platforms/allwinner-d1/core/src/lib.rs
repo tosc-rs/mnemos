@@ -25,6 +25,7 @@ pub use self::ram::Ram;
 use self::{
     dmac::Dmac,
     drivers::{
+        gpio,
         spim::{self, SpiSenderServer},
         twi,
         uart::{D1Uart, Uart},
@@ -201,10 +202,17 @@ impl D1 {
             plic.register(Interrupt::DMAC_NS, Self::handle_dmac);
             plic.register(Interrupt::UART0, D1Uart::handle_uart0_int);
             plic.register(i2c0_int, i2c0_isr);
+            // GPIO interrupts
+            for (interrupt, isr) in gpio::INTERRUPTS {
+                plic.register(interrupt, isr);
+            }
 
             plic.activate(Interrupt::DMAC_NS, Priority::P1).unwrap();
             plic.activate(Interrupt::UART0, Priority::P1).unwrap();
             plic.activate(i2c0_int, Priority::P1).unwrap();
+            for (interrupt, _) in gpio::INTERRUPTS {
+                plic.activate(interrupt, Priority::P1).unwrap();
+            }
         }
 
         timer0.start_counter(0xFFFF_FFFF);
