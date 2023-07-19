@@ -330,7 +330,8 @@ impl I2cClient {
         })
     }
 
-    /// Sets a cached buffer to use for [`embedded_hal::i2c::I2c`] transactions.
+    /// Sets a cached buffer to use for [`embedded_hal_async::i2c::I2c`]
+    /// transactions.
     ///
     /// If a cached buffer is present, and it is small enough to perform a
     /// read/write operation in a transaction, it will be used, rather than
