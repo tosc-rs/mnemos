@@ -300,7 +300,12 @@ impl I2cPuppetServer {
             None
         };
         let (tx, rx) = KChannel::new_async(settings.channel_capacity).await.split();
-        let mut i2c = I2cClient::from_registry(kernel).await;
+        let mut i2c = {
+            // The longest read or write operation we will perform is two bytes
+            // long. Thus, we can reuse a single 2-byte buffer forever.
+            let buf = FixedVec::new(2).await;
+            I2cClient::from_registry(kernel).await.with_cached_buf(buf)
+        };
         let subscriptions = FixedVec::new(settings.max_subscriptions).await;
 
         // first, make sure we can get the version, to make sure there's
