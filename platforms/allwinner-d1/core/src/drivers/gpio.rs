@@ -58,65 +58,134 @@ pub enum Pin {
     C(PinC),
     /// Pin group PD
     D(PinD),
+    /// Pin group PE
+    E(PinE),
+    /// Pin group PF
+    F(PinF),
+    /// Pin group PG
+    G(PinG),
 }
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum PinB {
     B0 = 0,
-    B1 = 1,
-    B2 = 2,
-    B3 = 3,
-    B4 = 4,
-    B5 = 5,
-    B6 = 6,
-    B7 = 7,
-    B8 = 8,
-    B9 = 9,
-    B10 = 10,
-    B11 = 11,
-    B12 = 12,
+    B1,
+    B2,
+    B3,
+    B4,
+    B5,
+    B6,
+    B7,
+    B8,
+    B9,
+    B10,
+    B11,
+    B12,
 }
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum PinC {
     C0 = 0,
-    C1 = 1,
-    C2 = 2,
-    C3 = 3,
-    C4 = 4,
-    C5 = 5,
-    C6 = 6,
-    C7 = 7,
+    C1,
+    C2,
+    C3,
+    C4,
+    C5,
+    C6,
+    C7,
 }
 
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum PinD {
     D0 = 0,
-    D1 = 1,
-    D2 = 2,
-    D3 = 3,
-    D4 = 4,
-    D5 = 5,
-    D6 = 6,
-    D7 = 7,
-    D8 = 8,
-    D9 = 9,
-    D10 = 10,
-    D11 = 11,
-    D12 = 12,
-    D13 = 13,
-    D14 = 14,
-    D15 = 15,
-    D16 = 16,
-    D17 = 17,
-    D18 = 18,
-    D19 = 19,
-    D20 = 20,
-    D21 = 21,
-    D22 = 22,
+    D1,
+    D2,
+    D3,
+    D4,
+    D5,
+    D6,
+    D7,
+    D8,
+    D9,
+    D10,
+    D11,
+    D12,
+    D13,
+    D14,
+    D15,
+    D16,
+    D17,
+    D18,
+    D19,
+    D20,
+    D21,
+    D22,
+}
+
+#[repr(u8)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum PinE {
+    E0 = 0,
+    E1,
+    E2,
+    E3,
+    E4,
+    E5,
+    E6,
+    E7,
+    E8,
+    E9,
+    E10,
+    E11,
+    E12,
+    E13,
+    E14,
+    E15,
+    E16,
+    E17,
+    E18,
+    E19,
+}
+
+#[repr(u8)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum PinF {
+    F0 = 0,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+}
+
+#[repr(u8)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub enum PinG {
+    G0 = 0,
+    G1,
+    G2,
+    G3,
+    G4,
+    G5,
+    G6,
+    G7,
+    G8,
+    G9,
+    G10,
+    G11,
+    G12,
+    G13,
+    G14,
+    G15,
+    G16,
+    G17,
+    G18,
+    G19,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -288,6 +357,18 @@ impl GpioServer {
                 let idx = pin as usize;
                 (&mut self.pd[idx], &PD_IRQS[idx])
             }
+            Pin::E(pin) => {
+                let idx = pin as usize;
+                (&mut self.pe[idx], &PE_IRQS[idx])
+            }
+            Pin::F(pin) => {
+                let idx = pin as usize;
+                (&mut self.pf[idx], &PF_IRQS[idx])
+            }
+            Pin::G(pin) => {
+                let idx = pin as usize;
+                (&mut self.pg[idx], &PG_IRQS[idx])
+            }
         }
     }
 }
@@ -315,7 +396,7 @@ static PC_IRQS: [WaitQueue; PC_COUNT] = [NEW_WAITQ; PC_COUNT];
 static PD_IRQS: [WaitQueue; PD_COUNT] = [NEW_WAITQ; PD_COUNT];
 static PE_IRQS: [WaitQueue; PE_COUNT] = [NEW_WAITQ; PE_COUNT];
 static PF_IRQS: [WaitQueue; PF_COUNT] = [NEW_WAITQ; PF_COUNT];
-// static PG_IRQS: [WaitQueue; 19] = [NEW_WAITQ; 19];
+static PG_IRQS: [WaitQueue; PG_COUNT] = [NEW_WAITQ; PG_COUNT];
 
 const PB_COUNT: usize = 13;
 const PC_COUNT: usize = 8;
