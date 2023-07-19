@@ -294,6 +294,7 @@ enum ErrorKind {
 pub struct I2cClient {
     handle: KernelHandle<I2cService>,
     reply: Reusable<Envelope<Result<Transaction, Infallible>>>,
+    cached_buf: Option<FixedVec<u8>>,
 }
 
 impl I2cClient {
@@ -325,7 +326,20 @@ impl I2cClient {
         Some(I2cClient {
             handle,
             reply: Reusable::new_async().await,
+            cached_buf: None,
         })
+    }
+
+    /// Sets a cached buffer to use for [`embedded_hal::i2c::I2c`] transactions.
+    ///
+    /// If a cached buffer is present, and it is small enough to perform a
+    /// read/write operation in a transaction, it will be used, rather than
+    /// allocating a new buffer for that transaction.
+    pub fn with_cached_buf(self, buf: impl Into<Option<FixedVec<u8>>>) -> Self {
+        Self {
+            cached_buf: buf.into(),
+            ..self
+        }
     }
 
     /// Starts an I²C [`Transaction`] with the device at the provided
@@ -359,40 +373,61 @@ impl i2c::I2c<i2c::SevenBitAddress> for I2cClient {
         address: i2c::SevenBitAddress,
         operations: &mut [i2c::Operation<'_>],
     ) -> Result<(), Self::Error> {
-        let mut buf = {
-            // determine the maximum size operation to allocate a buffer for the
-            // transaction.
-            let len = operations
-                .iter()
-                .map(|op| match op {
-                    i2c::Operation::Read(buf) => buf.len(),
-                    i2c::Operation::Write(buf) => buf.len(),
-                })
-                .max();
-            FixedVec::new(len.unwrap_or(0)).await
+        let (mut buf, was_cached) = match self.cached_buf.take() {
+            Some(buf) => (buf, true),
+            None => {
+                // determine the maximum size operation to allocate a buffer for the
+                // transaction.
+                let len = operations
+                    .iter()
+                    .map(|op| match op {
+                        i2c::Operation::Read(buf) => buf.len(),
+                        i2c::Operation::Write(buf) => buf.len(),
+                    })
+                    .max();
+                let buf = FixedVec::new(len.unwrap_or(0)).await;
+                (buf, false)
+            }
         };
+
         let mut txn = self.start_transaction(Addr::SevenBit(address)).await;
         let n_ops = operations.len();
         for (n, op) in operations.iter_mut().enumerate() {
-            buf.clear();
             let end = n == n_ops - 1;
             crate::tracing::trace!(n, n_ops, ?op, ?end);
+            buf.clear();
             match op {
                 i2c::Operation::Read(dest) => {
                     let len = dest.len();
-                    let read = txn.read(buf, len, end).await?;
+                    let op_buf = if len <= buf.capacity() {
+                        buf
+                    } else {
+                        FixedVec::new(len).await
+                    };
+                    let read = txn.read(op_buf, len, end).await?;
                     dest.copy_from_slice(read.as_slice());
                     buf = read;
                 }
                 i2c::Operation::Write(src) => {
-                    buf.try_extend_from_slice(src)
-                        .expect("we should have pre-allocated a large enough buffer!");
-                    let write = txn.write(buf, end).await?;
+                    let op_buf = match buf.try_extend_from_slice(src) {
+                        Ok(_) => buf,
+                        Err(_) => {
+                            let mut buf = FixedVec::new(src.len()).await;
+                            buf.try_extend_from_slice(src)
+                                .expect("we just allocated a buffer that was long enough!");
+                            buf
+                        }
+                    };
+                    let write = txn.write(op_buf, end).await?;
                     buf = write;
                 }
             }
         }
-        // TODO(eliza): save the buffer so that we can use it for future transactions?
+
+        if was_cached {
+            self.cached_buf = Some(buf);
+        }
+
         Ok(())
     }
 }
