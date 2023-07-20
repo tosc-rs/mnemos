@@ -12,6 +12,7 @@ use kernel::{
     embedded_hal_async::i2c::{self, I2c},
     mnemos_alloc::containers::FixedVec,
     registry::{self, Envelope, KernelHandle, RegisteredDriver},
+    retry::{AlwaysRetry, ExpBackoff, Retry, WithMaxRetries},
     services::{
         i2c::{I2cClient, I2cError},
         keyboard::{
@@ -500,7 +501,9 @@ impl I2cPuppetServer {
 
             if !self.subscriptions.is_empty() || self.keymux.is_some() {
                 tracing::trace!("polling keys...");
-                self.poll_keys().await?;
+                if let Err(error) = self.poll_keys().await {
+                    tracing::warn!(%error, "i2c_puppet: error polling keys!");
+                }
             }
         }
     }
@@ -551,13 +554,32 @@ impl I2cPuppetServer {
     }
 
     async fn poll_keys(&mut self) -> Result<(), I2cError> {
+        fn keycode(x: u8) -> key_event::KeyCode {
+            match x {
+                0x08 => key_event::KeyCode::Backspace,
+                // TODO(eliza): figure out other keycodes
+                x => key_event::KeyCode::Char(x as char),
+            }
+        }
+
+        let mut retry = self.settings.retry();
         let mut kbd = AsyncBbq10Kbd::new(&mut self.i2c);
         loop {
-            let status = kbd.get_key_status().await?;
+            let status = retry
+                .retry_with_input(&mut kbd, |kbd| async move {
+                    let res = kbd.get_key_status().await;
+                    (kbd, res)
+                })
+                .await?;
             if let FifoCount::Known(0) = status.fifo_count {
-                break;
+                return Ok(());
             }
-            let key = kbd.get_fifo_key_raw().await?;
+            let key = retry
+                .retry_with_input(&mut kbd, |kbd| async move {
+                    let res = kbd.get_fifo_key_raw().await;
+                    (kbd, res)
+                })
+                .await?;
             trace::debug!(?key);
 
             // TODO(eliza): remove dead subscriptions...
@@ -594,15 +616,6 @@ impl I2cPuppetServer {
                 }
             }
         }
-
-        fn keycode(x: u8) -> key_event::KeyCode {
-            match x {
-                0x08 => key_event::KeyCode::Backspace,
-                // TODO(eliza): figure out other keycodes
-                x => key_event::KeyCode::Char(x as char),
-            }
-        }
-        Ok(())
     }
 }
 
@@ -621,6 +634,8 @@ pub struct I2cPuppetSettings {
     /// If set, the `i2c_puppet` service will also forward keypresses to the kernel's
     /// [`KeyboardMuxService`](kernel::services::keyboard::mux::KeyboardMuxService).
     pub keymux: bool,
+    pub min_backoff: Duration,
+    pub max_retries: usize,
 }
 
 impl Default for I2cPuppetSettings {
@@ -631,10 +646,18 @@ impl Default for I2cPuppetSettings {
             max_subscriptions: 8,
             poll_interval: Duration::from_millis(50),
             keymux: true,
+            max_retries: 10,
+            min_backoff: Duration::from_micros(5),
         }
     }
 }
 
+impl I2cPuppetSettings {
+    fn retry(&self) -> Retry<WithMaxRetries<AlwaysRetry>, ExpBackoff> {
+        let backoff = ExpBackoff::new(self.min_backoff).with_max_backoff(self.poll_interval);
+        Retry::new(AlwaysRetry, backoff).with_max_retries(self.max_retries)
+    }
+}
 // === impl KeySubscription ===
 
 pub enum KeySubscriptionError {

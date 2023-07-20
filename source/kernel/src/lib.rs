@@ -80,6 +80,7 @@ pub(crate) mod fmt;
 pub mod forth;
 pub mod isr;
 pub mod registry;
+pub mod retry;
 pub mod services;
 #[cfg(feature = "tracing-02")]
 pub mod trace;
