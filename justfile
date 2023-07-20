@@ -77,6 +77,10 @@ flash-d1 board='mq-pro': (build-d1 board)
     xfel write {{ _d1_start_addr }} {{ _d1_dir}}/{{ _d1_bin_path }}/mnemos-{{ board }}.bin
     xfel exec {{ _d1_start_addr }}
 
+# run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard).
+crowtty *FLAGS:
+    @{{ _cargo }} run --release --bin crowtty -- {{ FLAGS }}
+
 _get-cargo-binutils:
     #!/usr/bin/env bash
     set -euo pipefail
