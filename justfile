@@ -29,8 +29,12 @@ _d1_dir := "platforms/allwinner-d1/boards"
 
 _pomelo_dir := "platforms/pomelo"
 
+_melpo_dir := "source/melpomene"
+
 # arguments to pass to all RustDoc invocations
 _rustdoc := _cargo + " doc --no-deps --all-features"
+
+alias melpo := melpomene
 
 # default recipe to display help information
 default:
@@ -77,9 +81,14 @@ flash-d1 board='mq-pro': (build-d1 board)
     xfel write {{ _d1_start_addr }} {{ _d1_dir}}/{{ _d1_bin_path }}/mnemos-{{ board }}.bin
     xfel exec {{ _d1_start_addr }}
 
-# run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard).
+# run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard)
 crowtty *FLAGS:
     @{{ _cargo }} run --release --bin crowtty -- {{ FLAGS }}
+
+# run the Melpomene simulator
+melpomene *FLAGS:
+    @cd {{ _melpo_dir }}; \
+        cargo run --release --bin melpomene -- {{ FLAGS }}
 
 _get-cargo-binutils:
     #!/usr/bin/env bash
