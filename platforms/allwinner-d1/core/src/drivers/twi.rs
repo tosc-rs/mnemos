@@ -494,25 +494,33 @@ impl TwiData {
                     cntr_w.m_stp().set_bit();
                     State::Idle
                 }
-                (State::WaitForStart(addr), Status::StartTransmitted) | (State::WaitForRestart(addr), Status::RepeatedStartTransmitted) =>
-                {
+                (State::WaitForStart(addr), Status::StartTransmitted) |
+                (State::WaitForRestart(addr), Status::RepeatedStartTransmitted) => {
                     let bits = {
                         // lowest bit is 1 if reading, 0 if writing.
                         let dir = match self.op {
                             TwiOp::Read { .. } => 0b1,
                             _ => 0b0,
                         };
-                        match addr {
-                            Addr::SevenBit(addr) => ((addr & 0x7f) << 1) | dir,
-                            Addr::TenBit(_) => todo!("eliza: implement ten bit addrs"),
-                        }
+                        let addr = match addr {
+                            Addr::SevenBit(addr) => (addr & 0x7f) << 1,
+                            Addr::TenBit(addr) => 0xf0 | ((addr & 0x300) >> 7) as u8,
+                        };
+                        addr | dir
                     };
                     // send the address
                     twi.twi_data.write(|w| w.data().variant(bits));
                     State::WaitForAddr1Ack(addr)
                 }
-                (State::WaitForAddr1Ack(Addr::SevenBit(addr)), Status::Addr1WriteAcked) =>
-                // TODO(eliza): handle 10 bit addr...
+                // Write address byte 2.
+                (State::WaitForAddr1Ack(Addr::TenBit(addr)), Status::Addr1ReadAcked) |
+                (State::WaitForAddr1Ack(Addr::TenBit(addr)), Status::Addr1WriteAcked) => {
+                    twi.twi_data.write(|w| w.data().variant(addr as u8));
+                    State::WaitForAddr2Ack(Addr::TenBit(addr))
+                }
+                // Last address byte was ACKed (write), so we can start sending data.
+                (State::WaitForAddr1Ack(addr @ Addr::SevenBit(_)), Status::Addr1WriteAcked) |
+                (State::WaitForAddr2Ack(addr @ Addr::TenBit(_)), Status::Addr2WriteAcked) =>
                 {
                     match &mut self.op {
                         TwiOp::Write { buf, ref mut pos, .. } => {
@@ -521,7 +529,7 @@ impl TwiData {
                             tracing::debug!(twi = num, data = ?format_args!("{byte:#x}"), "TWI{num} write data");
                             twi.twi_data.write(|w| w.data().variant(byte));
                             *pos += 1;
-                            State::WaitForAck(Addr::SevenBit(addr))
+                            State::WaitForAck(addr)
                         },
                         TwiOp::Read { .. } => unreachable!(
                             "if we sent an address with a write bit, we should be in a write state (was Read)"
@@ -531,7 +539,10 @@ impl TwiData {
                         ),
                     }
                 }
-                (State::WaitForAddr1Ack(Addr::SevenBit(addr)), Status::Addr1ReadAcked) =>
+
+                // Last address byte was ACKed (read), so we can start reading data.
+                (State::WaitForAddr1Ack(addr @ Addr::SevenBit(_)), Status::Addr1ReadAcked) |
+                (State::WaitForAddr2Ack(addr @ Addr::TenBit(_)), Status::Addr2ReadAcked) =>
                 // TODO(eliza): handle 10 bit addr...
                 {
                     match self.op {
@@ -545,7 +556,7 @@ impl TwiData {
                                 // final byte.
                                 cntr_w.a_ack().set_bit();
                             }
-                            State::WaitForData(Addr::SevenBit(addr))
+                            State::WaitForData(addr)
                         }
                         TwiOp::None => unreachable!(
                             "if we sent an address with a read bit, we should be in a read state (was None)"
@@ -781,6 +792,24 @@ enum_try_from! {
         Addr2WriteAcked = 0xD0,
         /// 0xD8: Second Address byte + Write bit transmitted, ACK not received
         Addr2WriteNacked = 0xD8,
+        /// 0xE0: Address 2 + Read bit received, ACK transmitted
+        ///
+        /// Note that the D1 manual neglects to mention this state (and the
+        /// corresponding NACK state), but [it's in the Linux driver][linux], so
+        /// I presume it's real.alloc
+        ///
+        /// [linux]:
+        ///     https://github.com/torvalds/linux/blob/46670259519f4ee4ab378dc014798aabe77c5057/drivers/i2c/busses/i2c-mv64xxx.c#L57
+        Addr2ReadAcked = 0xE0,
+        /// 0xE8: Address 2 + Read bit received, ACK transmitted
+        ///
+        /// Note that the D1 manual neglects to mention this state (and the
+        /// corresponding NACK state), but [it's in the Linux driver][linux], so
+        /// I presume it's real.alloc
+        ///
+        /// [linux]:
+        ///     https://github.com/torvalds/linux/blob/46670259519f4ee4ab378dc014798aabe77c5057/drivers/i2c/busses/i2c-mv64xxx.c#L58
+        Addr2ReadNacked = 0xE8,
         /// 0xF8: No relevant status information, `INT_FLAG` = 0
         None = 0xF8,
     }
@@ -789,14 +818,18 @@ enum_try_from! {
 impl Status {
     fn into_error(self) -> ErrorKind {
         match self {
+            // Arbitration Lost errors
             Self::ArbitrationLost
             | Self::ArbitrationLostGeneralCall
             | Self::ArbitrationLostTargetRead
             | Self::ArbitrationLostTargetWrite => ErrorKind::ArbitrationLoss,
             Self::BusError => ErrorKind::Bus,
-            Self::Addr1WriteNacked | Self::Addr1ReadNacked | Self::Addr2WriteNacked => {
-                ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address)
-            }
+            // Address NACKed errors
+            Self::Addr1WriteNacked
+            | Self::Addr1ReadNacked
+            | Self::Addr2WriteNacked
+            | Self::Addr2ReadNacked => ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address),
+            // Send data NACKed errors
             Self::TxDataNacked | Self::TargetTxDataNacked => {
                 ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data)
             }
