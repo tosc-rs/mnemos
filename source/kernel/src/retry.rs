@@ -60,7 +60,7 @@ impl ExpBackoff {
     /// Sets the maximum duration to back off for.
     ///
     /// Once the backoff duration reaches the maximum, it will no longer
-    /// increase until the backoff is [`reset`].
+    /// increase until the backoff is [`reset`](Self::reset).
     #[must_use]
     pub const fn with_max_backoff(self, max: Duration) -> Self {
         Self { max, ..self }
