@@ -171,15 +171,13 @@ impl D1 {
         use drivers::sharp_display::SharpDisplay;
         use kernel::daemons::shells;
 
-        const MAX_FRAMES: usize = 4;
-
         // the `'static` kernel reference is the only thing from `self` that
         // must be moved into the spawned tasks.
         let k = self.kernel;
 
         let sharp_display = self
             .kernel
-            .initialize(SharpDisplay::register(k, MAX_FRAMES))
+            .initialize(SharpDisplay::register(k))
             .expect("failed to spawn SHARP display driver");
 
         // spawn Forth shell
