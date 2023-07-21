@@ -1,4 +1,4 @@
-use core::time::Duration;
+use core::{fmt, ops, time::Duration};
 use d1_pac::{gpio, Interrupt, GPIO};
 use kernel::{
     comms::{
@@ -7,7 +7,7 @@ use kernel::{
     },
     isr::Isr,
     maitake::sync::WaitQueue,
-    mnemos_alloc::containers::FixedVec,
+    mnemos_alloc::containers::{Arc, FixedVec},
     registry::{self, uuid, Envelope, KernelHandle, RegisteredDriver, Uuid},
     trace, Kernel,
 };
@@ -29,23 +29,24 @@ impl RegisteredDriver for GpioService {
 // Message and Error Types
 ////////////////////////////////////////////////////////////////////////////////
 pub enum Request {
-    RegisterIrq {
+    ClaimIrq {
         pin: Pin,
         mode: InterruptMode,
     },
-    RegisterCustom {
+    ClaimCustom {
         pins: FixedVec<(Pin, &'static str)>,
         register: fn(&gpio::RegisterBlock),
     },
+    ClaimOutput(Pin),
     PinState(Pin),
 }
 
 #[derive(Debug)]
 pub enum Response {
-    RegisterIrq(&'static WaitQueue),
-    RegisterCustom,
+    ClaimIrq(&'static WaitQueue),
+    ClaimCustom,
     PinState(Pin, PinState),
-    // actually do IO...
+    ClaimOutput(OutputPin),
 }
 
 #[derive(Debug)]
@@ -70,7 +71,7 @@ pub enum Pin {
 }
 
 #[repr(u8)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PinB {
     B0 = 0,
     B1,
@@ -88,7 +89,7 @@ pub enum PinB {
 }
 
 #[repr(u8)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PinC {
     C0 = 0,
     C1,
@@ -101,7 +102,7 @@ pub enum PinC {
 }
 
 #[repr(u8)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PinD {
     D0 = 0,
     D1,
@@ -129,7 +130,7 @@ pub enum PinD {
 }
 
 #[repr(u8)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PinE {
     E0 = 0,
     E1,
@@ -154,7 +155,7 @@ pub enum PinE {
 }
 
 #[repr(u8)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PinF {
     F0 = 0,
     F1,
@@ -167,7 +168,7 @@ pub enum PinF {
 }
 
 #[repr(u8)]
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PinG {
     G0 = 0,
     G1,
@@ -207,6 +208,11 @@ pub enum PinState {
     Input,
     Output,
     Other(&'static str),
+}
+
+pub struct OutputPin {
+    pin: Pin,
+    _live: Arc<()>,
 }
 
 macro_rules! impl_from_pins {
@@ -277,7 +283,7 @@ impl GpioClient {
     ///
     /// The provided function must only modify the pin configuration for `pin`.
     /// There is currently no way to enforce this.
-    pub async fn register_custom(
+    pub async fn claim_custom(
         &mut self,
         pins: impl Into<FixedVec<(Pin, &'static str)>>,
         register: fn(&gpio::RegisterBlock),
@@ -285,14 +291,29 @@ impl GpioClient {
         let pins = pins.into();
         let resp = self
             .handle
-            .request_oneshot(Request::RegisterCustom { pins, register }, &self.reply)
+            .request_oneshot(Request::ClaimCustom { pins, register }, &self.reply)
             .await
             .unwrap();
         match resp.body {
-            Ok(Response::RegisterCustom) => Ok(()),
-            Ok(resp) => unreachable!(
-                "expected the GpioService to respond with RegisterCustom, got {resp:?}"
-            ),
+            Ok(Response::ClaimCustom) => Ok(()),
+            Ok(resp) => {
+                unreachable!("expected the GpioService to respond with ClaimCustom, got {resp:?}")
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    pub async fn claim_output(&mut self, pin: impl Into<Pin>) -> Result<OutputPin, Error> {
+        let resp = self
+            .handle
+            .request_oneshot(Request::ClaimOutput(pin.into()), &self.reply)
+            .await
+            .unwrap();
+        match resp.body {
+            Ok(Response::ClaimOutput(pin)) => Ok(pin),
+            Ok(resp) => {
+                unreachable!("expected the GpioService to respond with ClaimCustom, got {resp:?}")
+            }
             Err(e) => Err(e),
         }
     }
@@ -303,13 +324,22 @@ impl GpioClient {
 ////////////////////////////////////////////////////////////////////////////////
 
 pub struct GpioServer {
-    pb: [PinState; PB_COUNT],
-    pc: [PinState; PC_COUNT],
-    pd: [PinState; PD_COUNT],
-    pe: [PinState; PE_COUNT],
-    pf: [PinState; PF_COUNT],
-    pg: [PinState; PG_COUNT],
+    pb: [InternalPinState; PB_COUNT],
+    pc: [InternalPinState; PC_COUNT],
+    pd: [InternalPinState; PD_COUNT],
+    pe: [InternalPinState; PE_COUNT],
+    pf: [InternalPinState; PF_COUNT],
+    pg: [InternalPinState; PG_COUNT],
     rx: KConsumer<registry::Message<GpioService>>,
+}
+
+#[derive(Clone)]
+enum InternalPinState {
+    Unregistered,
+    Interrupt(InterruptMode),
+    Input(Arc<()>),
+    Output(Arc<()>),
+    Other(&'static str),
 }
 
 impl GpioServer {
@@ -319,13 +349,14 @@ impl GpioServer {
         queued: usize,
     ) -> Result<(), registry::RegistrationError> {
         let (tx, rx) = KChannel::new_async(queued).await.split();
+        const UNREGISTERED: InternalPinState = InternalPinState::Unregistered;
         let this = Self {
-            pb: [PinState::Unregistered; PB_COUNT],
-            pc: [PinState::Unregistered; PC_COUNT],
-            pd: [PinState::Unregistered; PD_COUNT],
-            pe: [PinState::Unregistered; PE_COUNT],
-            pf: [PinState::Unregistered; PF_COUNT],
-            pg: [PinState::Unregistered; PG_COUNT],
+            pb: [UNREGISTERED; PB_COUNT],
+            pc: [UNREGISTERED; PC_COUNT],
+            pd: [UNREGISTERED; PD_COUNT],
+            pe: [UNREGISTERED; PE_COUNT],
+            pf: [UNREGISTERED; PF_COUNT],
+            pg: [UNREGISTERED; PG_COUNT],
             rx,
         };
         kernel.spawn(this.run(gpio)).await;
@@ -337,32 +368,73 @@ impl GpioServer {
     #[trace::instrument(level = trace::Level::INFO, name = "GpioServer", skip(self, gpio))]
     async fn run(mut self, gpio: GPIO) {
         while let Ok(registry::Message { msg, reply }) = self.rx.dequeue_async().await {
-            let rsp = msg.reply_with_body(|body| self.handle_msg(&gpio, body));
-            if let Err(error) = reply.reply_konly(rsp).await {
+            let rsp = self.handle_msg(&gpio, &msg.body).await;
+            if let Err(error) = reply.reply_konly(msg.reply_with(rsp)).await {
                 tracing::warn!(?error, "requester cancelled request!")
                 // TODO(eliza): we should probably undo any pin state changes here...
             }
         }
     }
 
-    fn handle_msg(&mut self, gpio: &GPIO, msg: Request) -> Result<Response, Error> {
+    async fn handle_msg(&mut self, gpio: &GPIO, msg: &Request) -> Result<Response, Error> {
+        macro_rules! set_mode_all {
+            ($pin:ident, $mode:ident) => {
+                // XXX(eliza): this fucking sucks. maybe we should just do some
+                // math and do a "raw" write to the register, instead of trying
+                // to use the giant mess of `d1_pac` types...
+                set_mode! {
+                    match $pin {
+                        Pin::C(PinC::C0) => pc_cfg0, pc0_select, $mode,
+                        Pin::C(PinC::C1) => pc_cfg0, pc1_select, $mode,
+                        Pin::C(PinC::C2) => pc_cfg0, pc2_select, $mode,
+                        Pin::C(PinC::C3) => pc_cfg0, pc3_select, $mode,
+                        Pin::C(PinC::C4) => pc_cfg0, pc4_select, $mode,
+                        Pin::C(PinC::C5) => pc_cfg0, pc5_select, $mode,
+                        Pin::C(PinC::C6) => pc_cfg0, pc6_select, $mode,
+                        Pin::C(PinC::C7) => pc_cfg0, pc7_select, $mode,
+                        Pin::D(PinD::D18) => pd_cfg2, pd18_select, $mode,
+                        // TODO(eliza): add everything else :(
+                    }
+                }
+            };
+        }
+
+        macro_rules! set_mode {
+            (match $input:ident { $(Pin::$grp:ident($grpvar:ident::$pin:ident) => $reg:ident, $field:ident, $mode:ident),+ $(,)? }) => {
+                match $input {
+                    $(
+                        Pin::$grp($grpvar::$pin) => gpio.$reg.modify(|_r, w| w.$field().$mode()),
+                    )+
+                    pin => todo!("eliza: {pin:?}"),
+                }
+            }
+        }
+
         match msg {
-            Request::RegisterIrq { pin, mode } => {
+            &Request::ClaimIrq { pin, mode } => {
                 tracing::debug!(?pin, ?mode, "registering GPIO interrupt...");
                 let (state, irq) = self.pin(pin);
-                match *state {
-                    PinState::Unregistered => {
-                        *state = PinState::Interrupt(mode);
+                match state {
+                    InternalPinState::Unregistered => {
+                        *state = InternalPinState::Interrupt(mode);
                         // TODO(eliza): configure the interrupt mode!
 
                         tracing::info!(?pin, ?mode, "GPIO interrupt registered!");
-                        Ok(Response::RegisterIrq(irq))
+                        Ok(Response::ClaimIrq(irq))
                     }
-                    PinState::Interrupt(cur_mode) if cur_mode == mode => {
+                    InternalPinState::Interrupt(cur_mode) if *cur_mode == mode => {
                         tracing::info!(?pin, ?mode, "GPIO interrupt subscribed.");
-                        Ok(Response::RegisterIrq(irq))
+                        Ok(Response::ClaimIrq(irq))
+                    }
+                    InternalPinState::Output(refs) | InternalPinState::Input(refs)
+                        if alloc::sync::Arc::strong_count(refs) == 1 =>
+                    {
+                        *state = InternalPinState::Interrupt(mode);
+                        tracing::info!(?pin, ?mode, "GPIO interrupt registered!");
+                        Ok(Response::ClaimIrq(irq))
                     }
                     state => {
+                        let state = state.external();
                         tracing::warn!(
                             ?pin,
                             ?state,
@@ -375,15 +447,41 @@ impl GpioServer {
                     }
                 }
             }
-            Request::RegisterCustom { pins, register } => {
+            &Request::ClaimOutput(pin) => {
+                tracing::debug!(?pin, "claiming GPIO output pin...");
+                let (state, _) = self.pin(pin);
+                match state {
+                    InternalPinState::Unregistered => {}
+                    InternalPinState::Output(refs) | InternalPinState::Input(refs)
+                        if alloc::sync::Arc::strong_count(refs) == 1 => {}
+                    state => {
+                        let state = state.external();
+                        tracing::warn!(
+                            ?pin,
+                            ?state,
+                            "can't claim GPIO output pin, pin already in use!"
+                        );
+                        // TODO(eliza): add a way for a requester to wait
+                        // for a pin to become available?
+                        return Err(Error::PinInUse(pin, state));
+                    }
+                }
+                set_mode_all!(pin, output);
+                let refs = Arc::new(()).await;
+                *state = InternalPinState::Output(refs.clone());
+
+                tracing::info!(?pin, "claimed GPIO output pin");
+                Ok(Response::ClaimOutput(OutputPin { pin, _live: refs }))
+            }
+            Request::ClaimCustom { pins, register } => {
                 // first, try to claim all the requested pins --- don't do
                 // the register block manipulation if we can't claim any of
                 // the requested pins.
                 for &(pin, name) in pins.as_slice() {
                     match self.pin(pin) {
-                        (PinState::Unregistered, _) => {}
-                        (&mut PinState::Other(other_name), _) if other_name == name => {}
-                        (&mut state, _) => {
+                        (InternalPinState::Unregistered, _) => {}
+                        (state, _) => {
+                            let state = state.external();
                             tracing::warn!(
                                 ?pin,
                                 ?state,
@@ -398,25 +496,26 @@ impl GpioServer {
                 register(gpio);
                 for &(pin, name) in pins.as_slice() {
                     let (state, _) = self.pin(pin);
-                    match *state {
-                        PinState::Unregistered => {
+                    match state {
+                        InternalPinState::Unregistered => {
                             tracing::info!(?pin, state = %name, "claimed pin");
-                            *state = PinState::Other(name);
+                            *state = InternalPinState::Other(name);
                         }
-                        PinState::Other(_) => {}
+                        InternalPinState::Other(_) => {}
                         state => {
-                            unreachable!("we just checked the pin's state, and it was claimable!")
+                            let state = state.external();
+                            unreachable!("we just checked the pin's state, and it was claimable! but now it's {state:?}?")
                         }
                     }
                 }
 
-                Ok(Response::RegisterCustom)
+                Ok(Response::ClaimCustom)
             }
-            Request::PinState(pin) => Ok(Response::PinState(pin, *self.pin(pin).0)),
+            &Request::PinState(pin) => Ok(Response::PinState(pin, self.pin(pin).0.external())),
         }
     }
 
-    fn pin(&mut self, pin: Pin) -> (&mut PinState, &'static WaitQueue) {
+    fn pin(&mut self, pin: Pin) -> (&mut InternalPinState, &'static WaitQueue) {
         match pin {
             Pin::B(pin) => {
                 let idx = pin as usize;
@@ -442,6 +541,70 @@ impl GpioServer {
                 let idx = pin as usize;
                 (&mut self.pg[idx], &PG_IRQS[idx])
             }
+        }
+    }
+}
+impl OutputPin {
+    pub fn set(&mut self, high: bool) {
+        let gpio = unsafe { &*GPIO::PTR };
+        match self.pin {
+            Pin::B(pin) => gpio.pb_dat.modify(|r, w| {
+                let bits = r.pb_dat().bits();
+                w.pb_dat().variant(toggle_bit(bits, pin as u16, high))
+            }),
+            Pin::C(pin) => gpio.pc_dat.modify(|r, w| {
+                let bits = r.pc_dat().bits();
+                w.pc_dat().variant(toggle_bit(bits, pin as u8, high))
+            }),
+            Pin::D(pin) => gpio.pd_dat.modify(|r, w| {
+                let bits = r.pd_dat().bits();
+                w.pd_dat().variant(toggle_bit(bits, pin as u32, high))
+            }),
+            Pin::E(pin) => gpio.pe_dat.modify(|r, w| {
+                let bits = r.pe_dat().bits();
+                w.pe_dat().variant(toggle_bit(bits, pin as u32, high))
+            }),
+            Pin::F(pin) => gpio.pf_dat.modify(|r, w| {
+                let bits = r.pf_dat().bits();
+                w.pf_dat().variant(toggle_bit(bits, pin as u8, high))
+            }),
+            Pin::G(pin) => gpio.pg_dat.modify(|r, w| {
+                let bits = r.pg_dat().bits();
+                w.pg_dat().variant(toggle_bit(bits, pin as u32, high))
+            }),
+        }
+    }
+}
+
+impl fmt::Debug for OutputPin {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("OutputPin").field(&self.pin).finish()
+    }
+}
+
+fn toggle_bit<U>(bits: U, bit: U, set: bool) -> U
+where
+    U: ops::BitOr<Output = U>
+        + ops::BitAnd<Output = U>
+        + ops::Not<Output = U>
+        + ops::Shl<Output = U>
+        + From<u8>,
+{
+    if set {
+        bits | (U::from(1) << bit)
+    } else {
+        bits & !(U::from(1) << bit)
+    }
+}
+
+impl InternalPinState {
+    fn external(&self) -> PinState {
+        match self {
+            InternalPinState::Input(_) => PinState::Input,
+            InternalPinState::Output(_) => PinState::Output,
+            &InternalPinState::Interrupt(mode) => PinState::Interrupt(mode),
+            InternalPinState::Other(name) => PinState::Other(name),
+            InternalPinState::Unregistered => PinState::Unregistered,
         }
     }
 }

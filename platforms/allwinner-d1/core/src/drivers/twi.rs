@@ -319,7 +319,7 @@ impl I2c0 {
                     (gpio::PinB::B1.into(), "TWI2_SDA"),
                 ])
                 .await;
-                gpio.register_custom(pins, |gpio| {
+                gpio.claim_custom(pins, |gpio| {
                     gpio.pb_cfg0.modify(|_r, w| {
                         // on the Lichee RV Dock, the Pi header's I2C0 corresponds to TWI2, not
                         // TWI0 as on the MQ Pro.
@@ -339,7 +339,7 @@ impl I2c0 {
                     (gpio::PinG::G13.into(), "TWI0_SDA"),
                 ])
                 .await;
-                gpio.register_custom(pins, |gpio| {
+                gpio.claim_custom(pins, |gpio| {
                     gpio.pg_cfg1.modify(|_r, w| {
                         // on the Mango Pi MQ Pro, the pi header's I2C0 pins are mapped to
                         // TWI0 on PG12 and PG13:

@@ -101,7 +101,7 @@ impl SpiSenderServer {
             (PinD::D12.into(), "SPI1_MOSI_DBI_SDO"),
         ])
         .await;
-        gpio.register_custom(pins, |gpio| {
+        gpio.claim_custom(pins, |gpio| {
             // Map the pins
             gpio.pd_cfg1.write(|w| {
                 // Select SPI pin mode

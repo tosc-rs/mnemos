@@ -197,7 +197,7 @@ impl D1Uart {
             (gpio::PinB::B9.into(), "UART0_RX"),
         ])
         .await;
-        gpio.register_custom(pins, |gpio| {
+        gpio.claim_custom(pins, |gpio| {
             // Set PB8 and PB9 to function 6, UART0, internal pullup.
             gpio.pb_cfg1
                 .write(|w| w.pb8_select().uart0_tx().pb9_select().uart0_rx());
