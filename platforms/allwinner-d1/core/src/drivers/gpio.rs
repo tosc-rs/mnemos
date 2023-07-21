@@ -7,6 +7,7 @@ use kernel::{
     },
     isr::Isr,
     maitake::sync::WaitQueue,
+    mnemos_alloc::containers::FixedVec,
     registry::{self, uuid, Envelope, KernelHandle, RegisteredDriver, Uuid},
     trace, Kernel,
 };
@@ -33,12 +34,13 @@ pub enum Request {
         mode: InterruptMode,
     },
     RegisterCustom {
-        pin: Pin,
-        name: &'static str,
+        pins: FixedVec<(Pin, &'static str)>,
         register: fn(&gpio::RegisterBlock),
     },
     PinState(Pin),
 }
+
+#[derive(Debug)]
 pub enum Response {
     RegisterIrq(&'static WaitQueue),
     RegisterCustom,
@@ -46,6 +48,7 @@ pub enum Response {
     // actually do IO...
 }
 
+#[derive(Debug)]
 pub enum Error {
     PinInUse(Pin, PinState),
 }
@@ -206,6 +209,27 @@ pub enum PinState {
     Other(&'static str),
 }
 
+macro_rules! impl_from_pins {
+    ($($P:ty => $pin:ident),+ $(,)?) => {
+        $(
+            impl From<$P> for Pin {
+                fn from(p: $P) -> Self {
+                    Self::$pin(p)
+                }
+            }
+        )+
+    }
+}
+
+impl_from_pins! {
+    PinB => B,
+    PinC => C,
+    PinD => D,
+    PinE => E,
+    PinF => F,
+    PinG => G,
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Client Definition
 ////////////////////////////////////////////////////////////////////////////////
@@ -245,6 +269,32 @@ impl GpioClient {
             handle,
             reply: Reusable::new_async().await,
         })
+    }
+
+    /// Configure a pin with a custom configuration.
+    ///
+    /// # Warnings
+    ///
+    /// The provided function must only modify the pin configuration for `pin`.
+    /// There is currently no way to enforce this.
+    pub async fn register_custom(
+        &mut self,
+        pins: impl Into<FixedVec<(Pin, &'static str)>>,
+        register: fn(&gpio::RegisterBlock),
+    ) -> Result<(), Error> {
+        let pins = pins.into();
+        let resp = self
+            .handle
+            .request_oneshot(Request::RegisterCustom { pins, register }, &self.reply)
+            .await
+            .unwrap();
+        match resp.body {
+            Ok(Response::RegisterCustom) => Ok(()),
+            Ok(resp) => unreachable!(
+                "expected the GpioService to respond with RegisterCustom, got {resp:?}"
+            ),
+            Err(e) => Err(e),
+        }
     }
 }
 
@@ -287,59 +337,82 @@ impl GpioServer {
     #[trace::instrument(level = trace::Level::INFO, name = "GpioServer", skip(self, gpio))]
     async fn run(mut self, gpio: GPIO) {
         while let Ok(registry::Message { msg, reply }) = self.rx.dequeue_async().await {
-            let rsp = match msg.body {
-                Request::RegisterIrq { pin, mode } => {
-                    tracing::debug!(?pin, ?mode, "registering GPIO interrupt...");
-                    let (state, irq) = self.pin(pin);
-                    match *state {
-                        PinState::Unregistered => {
-                            *state = PinState::Interrupt(mode);
-                            // TODO(eliza): configure the interrupt mode!
-
-                            tracing::info!(?pin, ?mode, "GPIO interrupt registered!");
-                            Ok(Response::RegisterIrq(irq))
-                        }
-                        PinState::Interrupt(cur_mode) if cur_mode == mode => {
-                            tracing::info!(?pin, ?mode, "GPIO interrupt subscribed.");
-                            Ok(Response::RegisterIrq(irq))
-                        }
-                        state => {
-                            tracing::warn!(
-                                ?pin,
-                                ?state,
-                                ?mode,
-                                "can't register GPIO interrupt, pin already in use!"
-                            );
-                            // TODO(eliza): add a way for a requester to wait
-                            // for a pin to become available?
-                            Err(Error::PinInUse(pin, state))
-                        }
-                    }
-                }
-                Request::RegisterCustom {
-                    pin,
-                    name,
-                    register,
-                } => {
-                    let (state, _) = self.pin(pin);
-                    match *state {
-                        PinState::Unregistered => {
-                            register(&gpio);
-                            *state = PinState::Other(name);
-                            Ok(Response::RegisterCustom)
-                        }
-                        PinState::Other(cur_mode) if cur_mode == name => {
-                            Ok(Response::RegisterCustom)
-                        }
-                        state => Err(Error::PinInUse(pin, state)),
-                    }
-                }
-                Request::PinState(pin) => Ok(Response::PinState(pin, *self.pin(pin).0)),
-            };
-            if let Err(error) = reply.reply_konly(msg.reply_with(rsp)).await {
+            let rsp = msg.reply_with_body(|body| self.handle_msg(&gpio, body));
+            if let Err(error) = reply.reply_konly(rsp).await {
                 tracing::warn!(?error, "requester cancelled request!")
                 // TODO(eliza): we should probably undo any pin state changes here...
             }
+        }
+    }
+
+    fn handle_msg(&mut self, gpio: &GPIO, msg: Request) -> Result<Response, Error> {
+        match msg {
+            Request::RegisterIrq { pin, mode } => {
+                tracing::debug!(?pin, ?mode, "registering GPIO interrupt...");
+                let (state, irq) = self.pin(pin);
+                match *state {
+                    PinState::Unregistered => {
+                        *state = PinState::Interrupt(mode);
+                        // TODO(eliza): configure the interrupt mode!
+
+                        tracing::info!(?pin, ?mode, "GPIO interrupt registered!");
+                        Ok(Response::RegisterIrq(irq))
+                    }
+                    PinState::Interrupt(cur_mode) if cur_mode == mode => {
+                        tracing::info!(?pin, ?mode, "GPIO interrupt subscribed.");
+                        Ok(Response::RegisterIrq(irq))
+                    }
+                    state => {
+                        tracing::warn!(
+                            ?pin,
+                            ?state,
+                            ?mode,
+                            "can't register GPIO interrupt, pin already in use!"
+                        );
+                        // TODO(eliza): add a way for a requester to wait
+                        // for a pin to become available?
+                        Err(Error::PinInUse(pin, state))
+                    }
+                }
+            }
+            Request::RegisterCustom { pins, register } => {
+                // first, try to claim all the requested pins --- don't do
+                // the register block manipulation if we can't claim any of
+                // the requested pins.
+                for &(pin, name) in pins.as_slice() {
+                    match self.pin(pin) {
+                        (PinState::Unregistered, _) => {}
+                        (&mut PinState::Other(other_name), _) if other_name == name => {}
+                        (&mut state, _) => {
+                            tracing::warn!(
+                                ?pin,
+                                ?state,
+                                "can't claim pin for {name}, already in use!"
+                            );
+                            return Err(Error::PinInUse(pin, state));
+                        }
+                    }
+                }
+                // now that we've confirmed that all pins are claimable,
+                // actually perform the registration and set the pin states.
+                register(gpio);
+                for &(pin, name) in pins.as_slice() {
+                    let (state, _) = self.pin(pin);
+                    match *state {
+                        PinState::Unregistered => {
+                            tracing::info!(?pin, state = %name, "claimed pin");
+                            *state = PinState::Other(name);
+                        }
+                        PinState::Other(_) => {}
+                        state => {
+                            unreachable!("we just checked the pin's state, and it was claimable!")
+                        }
+                    }
+                }
+
+                Ok(Response::RegisterCustom)
+            }
+            Request::PinState(pin) => Ok(Response::PinState(pin, *self.pin(pin).0)),
         }
     }
 

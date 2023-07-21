@@ -14,7 +14,7 @@ use core::{
     sync::atomic::{AtomicBool, Ordering},
     time::Duration,
 };
-use d1_pac::{Interrupt, DMAC, TIMER};
+use d1_pac::{Interrupt, DMAC, GPIO, TIMER};
 use kernel::{
     mnemos_alloc::containers::Box,
     trace::{self, Instrument},
@@ -59,6 +59,7 @@ impl D1 {
         dmac: Dmac,
         plic: Plic,
         i2c0: twi::I2c0,
+        gpio: GPIO,
     ) -> Self {
         let k_settings = KernelSettings {
             max_drivers: 16,
@@ -80,6 +81,13 @@ impl D1 {
             w.dma1_queue_irq_en().enabled();
             w
         });
+
+        k.initialize(async move {
+            tracing::debug!("initializing GPIO...");
+            gpio::GpioServer::register(k, gpio, 8).await.unwrap();
+            tracing::info!("GPIO initialized!");
+        })
+        .unwrap();
 
         // Initialize SPI stuff
         k.initialize(async move {

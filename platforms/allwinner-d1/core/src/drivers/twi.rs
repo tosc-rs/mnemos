@@ -48,12 +48,13 @@
 //! has a driver for this device, which can be found [here][linux-driver].
 //!
 //! [linux-driver]: https://github.com/torvalds/linux/blob/995b406c7e972fab181a4bb57f3b95e59b8e5bf3/drivers/i2c/busses/i2c-mv64xxx.c
+use super::gpio::{self, GpioClient};
 use core::{
     cell::UnsafeCell,
     ops::{Deref, DerefMut},
     task::{Poll, Waker},
 };
-use d1_pac::{twi, Interrupt, CCU, GPIO, TWI0, TWI1, TWI2, TWI3};
+use d1_pac::{twi, Interrupt, CCU, TWI0, TWI1, TWI2, TWI3};
 use kernel::{
     comms::kchannel::{KChannel, KConsumer},
     embedded_hal_async::i2c::{ErrorKind, NoAcknowledgeSource},
@@ -68,10 +69,16 @@ use kernel::{
 
 /// A TWI mapped to the Raspberry Pi header's I²C0 pins.
 pub struct I2c0 {
-    isr: &'static IsrData,
     twi: &'static twi::RegisterBlock,
-    /// Which TWI does this TWI Engine use?
-    int: (Interrupt, fn()),
+    isr: &'static IsrData,
+    map: I2c0PinMap,
+}
+
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum RegistrationError {
+    Gpio(gpio::Error),
+    Registry(registry::RegistrationError),
 }
 
 /// Data used by a TWI interrupt.
@@ -116,6 +123,12 @@ enum TwiOp {
     None,
 }
 
+#[derive(Debug)]
+enum I2c0PinMap {
+    MqPro,
+    LicheeRv,
+}
+
 /// TWI state machine
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[allow(dead_code)] // TODO(eliza): implement 10-bit addresses
@@ -147,17 +160,7 @@ impl I2c0 {
     /// - The TWI register block must not be concurrently written to.
     /// - This function should be called only while running on a MangoPi MQ Pro
     ///   board.
-    pub unsafe fn mq_pro(_twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
-        // Step 1: Configure GPIO pin mappings.
-        gpio.pg_cfg1.modify(|_r, w| {
-            // on the Mango Pi MQ Pro, the pi header's I2C0 pins are mapped to
-            // TWI0 on PG12 and PG13:
-            // https://mangopi.org/_media/mq-pro-sch-v12.pdf
-            w.pg12_select().twi0_sck();
-            w.pg13_select().twi0_sda();
-            w
-        });
-
+    pub unsafe fn mq_pro(_twi: TWI0, ccu: &mut CCU) -> Self {
         ccu.twi_bgr.modify(|_r, w| {
             // Step 2: Set TWI_BGR_REG[TWI(n)_GATING] to 0 to close TWI(n) clock.
             w.twi0_gating().mask();
@@ -174,11 +177,7 @@ impl I2c0 {
             w
         });
 
-        Self::init(
-            unsafe { &*TWI0::ptr() },
-            Interrupt::TWI0,
-            Self::handle_twi0_interrupt,
-        )
+        Self::init(unsafe { &*TWI0::ptr() }, I2c0PinMap::MqPro)
     }
 
     /// Initialize a TWI for the Lichee RV Dock's Pi header I²C0
@@ -190,18 +189,7 @@ impl I2c0 {
     /// - The TWI register block must not be concurrently written to.
     /// - This function should be called only while running on a Lichee RV
     ///   board.
-    pub unsafe fn lichee_rv_dock(_twi: TWI2, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
-        // Step 1: Configure GPIO pin mappings.
-        gpio.pb_cfg0.modify(|_r, w| {
-            // on the Lichee RV Dock, the Pi header's I2C0 corresponds to TWI2, not
-            // TWI0 as on the MQ Pro.
-            // I2C0 SDA is mapped to TWI2 PB1, and I2C0 SCL is mapped to TWI2 PB0:
-            // https://dl.sipeed.com/fileList/LICHEE/D1/Lichee_RV-Dock/2_Schematic/Lichee_RV_DOCK_3516(Schematic).pdf
-            w.pb0_select().twi2_sck();
-            w.pb1_select().twi2_sda();
-            w
-        });
-
+    pub unsafe fn lichee_rv_dock(_twi: TWI2, ccu: &mut CCU) -> Self {
         ccu.twi_bgr.modify(|_r, w| {
             // Step 2: Set TWI_BGR_REG[TWI(n)_GATING] to 0 to close TWI(n) clock.
             w.twi2_gating().mask();
@@ -218,16 +206,15 @@ impl I2c0 {
             w
         });
 
-        Self::init(
-            unsafe { &*TWI2::ptr() },
-            Interrupt::TWI2,
-            Self::handle_twi2_interrupt,
-        )
+        Self::init(unsafe { &*TWI2::ptr() }, I2c0PinMap::LicheeRv)
     }
 
     /// Returns the interrupt and ISR for this TWI.
     pub fn interrupt(&self) -> (Interrupt, fn()) {
-        self.int
+        match self.map {
+            I2c0PinMap::LicheeRv => (Interrupt::TWI2, Self::handle_twi2_interrupt),
+            I2c0PinMap::MqPro => (Interrupt::TWI0, Self::handle_twi0_interrupt),
+        }
     }
 
     /// Handle a TWI 0 interrupt on the I2C0 pins.
@@ -285,7 +272,7 @@ impl I2c0 {
     }
 
     /// This assumes the GPIO pin mappings are already configured.
-    unsafe fn init(twi: &'static twi::RegisterBlock, int: Interrupt, isr: fn()) -> Self {
+    unsafe fn init(twi: &'static twi::RegisterBlock, map: I2c0PinMap) -> Self {
         // soft reset bit
         twi.twi_srst.write(|w| w.soft_rst().set_bit());
 
@@ -313,19 +300,68 @@ impl I2c0 {
 
         Self {
             twi,
+            map,
             isr: &I2C0_ISR,
-            int: (int, isr),
         }
     }
 
-    pub async fn register(self, kernel: &'static Kernel, queued: usize) -> Result<(), ()> {
+    pub async fn register(
+        self,
+        kernel: &'static Kernel,
+        queued: usize,
+    ) -> Result<(), RegistrationError> {
+        // set up GPIO pin mappings
+        let mut gpio = GpioClient::from_registry(kernel).await;
+        match self.map {
+            I2c0PinMap::LicheeRv => {
+                let pins = FixedVec::from_slice(&[
+                    (gpio::PinB::B0.into(), "TWI2_SCK"),
+                    (gpio::PinB::B1.into(), "TWI2_SDA"),
+                ])
+                .await;
+                gpio.register_custom(pins, |gpio| {
+                    gpio.pb_cfg0.modify(|_r, w| {
+                        // on the Lichee RV Dock, the Pi header's I2C0 corresponds to TWI2, not
+                        // TWI0 as on the MQ Pro.
+                        // I2C0 SDA is mapped to TWI2 PB1, and I2C0 SCL is mapped to TWI2 PB0:
+                        // https://dl.sipeed.com/fileList/LICHEE/D1/Lichee_RV-Dock/2_Schematic/Lichee_RV_DOCK_3516(Schematic).pdf
+                        w.pb0_select().twi2_sck();
+                        w.pb1_select().twi2_sda();
+                        w
+                    })
+                })
+                .await
+                .map_err(RegistrationError::Gpio)?;
+            }
+            I2c0PinMap::MqPro => {
+                let pins = FixedVec::from_slice(&[
+                    (gpio::PinG::G12.into(), "TWI0_SCK"),
+                    (gpio::PinG::G13.into(), "TWI0_SDA"),
+                ])
+                .await;
+                gpio.register_custom(pins, |gpio| {
+                    gpio.pg_cfg1.modify(|_r, w| {
+                        // on the Mango Pi MQ Pro, the pi header's I2C0 pins are mapped to
+                        // TWI0 on PG12 and PG13:
+                        // https://mangopi.org/_media/mq-pro-sch-v12.pdf
+                        w.pg12_select().twi0_sck();
+                        w.pg13_select().twi0_sda();
+                        w
+                    })
+                })
+                .await
+                .map_err(RegistrationError::Gpio)?;
+            }
+        };
+
         let (tx, rx) = KChannel::new_async(queued).await.split();
 
         kernel.spawn(self.run(rx)).await;
         trace::info!("TWI driver task spawned");
         kernel
-            .with_registry(move |reg| reg.register_konly::<I2cService>(&tx).map_err(drop))
-            .await?;
+            .with_registry(move |reg| reg.register_konly::<I2cService>(&tx))
+            .await
+            .map_err(RegistrationError::Registry)?;
 
         Ok(())
     }
