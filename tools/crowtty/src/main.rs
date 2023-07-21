@@ -326,6 +326,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     loop {
         let mut buf = [0u8; 256];
 
+        let mut any = false;
         for (port_idx, hdl) in manager.workers.iter_mut() {
             if let Ok(msg) = hdl.inp.try_recv() {
                 let mut nmsg = Vec::new();
@@ -336,7 +337,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 tag.port(*port_idx)
                     .if_verbose(format_args!("{mux} {}B <- :{port_idx}", enc_msg.len()));
                 port.write_all(&enc_msg)?;
+                any = true;
             }
+        }
+        if any {
+            port.flush()?;
+            println!("FLUSHED");
         }
 
         let used = match port.read(&mut buf) {

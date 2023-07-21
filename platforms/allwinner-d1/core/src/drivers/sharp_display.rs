@@ -33,7 +33,7 @@ use embedded_graphics::{
 };
 use kernel::{
     comms::kchannel::{KChannel, KConsumer},
-    maitake::sync::{Mutex, WaitCell},
+    maitake::sync::{Mutex, WaitCell, WaitQueue},
     mnemos_alloc::containers::{Arc, FixedVec},
     registry::Message,
     services::emb_display::{
@@ -169,21 +169,21 @@ impl Dimensions for FullFrame {
     }
 }
 
-impl DrawTarget for FullFrame {
-    type Color = Gray8;
+// impl DrawTarget for FullFrame {
+//     type Color = Gray8;
 
-    type Error = ();
+//     type Error = ();
 
-    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
-    where
-        I: IntoIterator<Item = Pixel<Self::Color>>,
-    {
-        for px in pixels {
-            self.set_px(px.0.x as usize, px.0.y as usize, px.1)
-        }
-        Ok(())
-    }
-}
+//     fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
+//     where
+//         I: IntoIterator<Item = Pixel<Self::Color>>,
+//     {
+//         for px in pixels {
+//             self.set_px(px.0.x as usize, px.0.y as usize, px.1)
+//         }
+//         Ok(())
+//     }
+// }
 
 //////////////////////////////////////////////////////////////////////////////
 // Helper tasks
@@ -228,8 +228,11 @@ impl Draw {
     #[tracing::instrument(skip(self))]
     async fn draw_run(mut self) {
         loop {
-            let c = self.ctxt.lock().await;
+            // tracing::info!("ding");
+            let mut c = self.ctxt.lock().await;
             self.buf.clear();
+
+            let mut drawn = 0;
 
             // Are there ANY dirty lines?
             if c.sdisp.dirty_line.iter().copied().any(identity) {
@@ -242,7 +245,7 @@ impl Draw {
                 // Write the command
                 let _ = self.buf.try_push(cmd);
 
-                let FullFrame { frame, mut dirty_line } = c.sdisp;
+                let FullFrame { frame, dirty_line } = &mut c.sdisp;
 
                 // Filter out to only the dirty lines, clearing the dirty flag
                 let all_lines = dirty_line.iter_mut().zip(frame.iter()).enumerate();
@@ -255,6 +258,7 @@ impl Draw {
                     }
                 });
 
+
                 // Now we need to write all the dirty lines, zip together the dest buffer
                 // with our current frame buffer
                 for (line, iline) in dirty_lines {
@@ -264,6 +268,7 @@ impl Draw {
                     let _ = self.buf.try_extend_from_slice(iline);
                     // dummy byte
                     let _ = self.buf.try_push(0);
+                    drawn += 1;
                 }
             } else {
                 // No buffer to write, just toggle vcom
@@ -282,13 +287,23 @@ impl Draw {
             // Drop the mutex once we're done using the framebuffer data
             drop(c);
 
+            tracing::info!(
+                drawn,
+                "Drew lines",
+            );
+
             self.buf = self.spim.send_wait(self.buf).await.map_err(drop).unwrap();
 
             // Wait a reasonable amount of time to redraw
-            let _ = self
+            if self
                 .kernel
                 .timeout(Duration::from_millis(500), DIRTY.wait())
-                .await;
+                .await.is_err()
+            {
+                tracing::info!("TIMEOUT DING");
+            } else {
+                tracing::info!("WAITCELL DING");
+            }
         }
     }
 }
@@ -316,8 +331,9 @@ impl CommanderTask {
             let (req, env, reply_tx) = msg.split();
             match req {
                 Request::Draw(FrameChunk::Mono(fc)) => {
+                    tracing::info!("Draw Command");
                     self.draw_mono(&fc, &self.ctxt).await;
-                    DIRTY.wake();
+                    DIRTY.wake_all();
                     let response = env.fill(Ok(Response::DrawComplete(fc.into())));
                     let _ = reply_tx.reply_konly(response).await;
                 }
@@ -363,9 +379,10 @@ struct Context {
 }
 
 /// Waiter for "changes have been made to the working frame buffer"
-static DIRTY: WaitCell = WaitCell::new();
+static DIRTY: WaitQueue = WaitQueue::new();
 
 fn draw_to(dest: &mut FullFrame, src: &MonoChunk, width: u32, height: u32) {
+    tracing::info!("drawing to");
     let meta = src.meta();
     let data = src.data();
     let mask = src.mask();
@@ -385,6 +402,8 @@ fn draw_to(dest: &mut FullFrame, src: &MonoChunk, width: u32, height: u32) {
         .chunks(src_width as usize)
         .zip(mask.chunks(src_width as usize));
 
+    let before = dest.dirty_line.iter().filter(|b| **b).count();
+
     for (src_y, (src_data_line, src_mask_line)) in s.enumerate() {
         // Any data on this line?
         if src_mask_line.iter().all(|b| *b == 0) {
@@ -394,13 +413,17 @@ fn draw_to(dest: &mut FullFrame, src: &MonoChunk, width: u32, height: u32) {
         for (src_x, (s_data, s_mask)) in sl.enumerate() {
             if *s_mask != 0 {
                 let val = if *s_data < 128 {
-                    Gray8::WHITE
-                } else {
                     Gray8::BLACK
+                } else {
+                    Gray8::WHITE
                 };
                 dest.set_px(start_x as usize + src_x, start_y as usize + src_y, val);
             }
         }
     }
+
+    let after = dest.dirty_line.iter().filter(|b| **b).count();
+    // tracing::info!(made_dirty = (after-before), "gross");
+
 }
 
