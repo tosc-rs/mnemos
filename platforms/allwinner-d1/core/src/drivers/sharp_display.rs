@@ -123,14 +123,17 @@ impl SharpDisplay {
 /// One entire frame, stored one bit per pixel
 struct FullFrame {
     frame: [[u8; WIDTH_BYTES]; HEIGHT],
-    dirty_line: [bool; HEIGHT],
+    /// One bool per vertical line to track if there have beem changes.
+    /// We can draw line-at-a-time with the sharp display, so we can avoid
+    /// sending lines that haven't changed, as the display is persistent.
+    dirty_lines: [bool; HEIGHT],
 }
 
 impl FullFrame {
     pub fn new() -> Self {
         Self {
             frame: [[0u8; WIDTH_BYTES]; HEIGHT],
-            dirty_line: [true; HEIGHT],
+            dirty_lines: [true; HEIGHT],
         }
     }
 }
@@ -141,7 +144,9 @@ impl FullFrame {
         if x >= WIDTH || y > HEIGHT {
             return;
         }
-        self.dirty_line[y] = true;
+        // mark the line as dirty so it will be sent on the next
+        // update of the display
+        self.dirty_lines[y] = true;
         let byte_x = x / 8;
         let bit_x = x % 8;
 
@@ -206,7 +211,7 @@ struct Draw {
 
 impl Draw {
     #[tracing::instrument(skip(self))]
-    async fn draw_run(mut self) {
+    async fn draw_run(mut self) -> Result<(), ()> {
         loop {
             let mut c = self.ctxt.lock().await;
             self.buf.clear();
@@ -214,7 +219,7 @@ impl Draw {
             let mut drawn = 0;
 
             // Are there ANY dirty lines?
-            if c.sdisp.dirty_line.iter().copied().any(identity) {
+            if c.sdisp.dirty_lines.iter().copied().any(identity) {
                 // render into the buffer
                 let mut cmd = commands::WRITE_LINE;
                 if c.vcom {
@@ -224,11 +229,11 @@ impl Draw {
                 // Write the command
                 let _ = self.buf.try_push(cmd);
 
-                let FullFrame { frame, dirty_line } = &mut c.sdisp;
+                let FullFrame { frame, dirty_lines } = &mut c.sdisp;
 
                 // Filter out to only the dirty lines, clearing the dirty flag
-                let all_lines = dirty_line.iter_mut().zip(frame.iter()).enumerate();
-                let dirty_lines = all_lines.filter_map(|(idx, (dirty, line))| {
+                let all_lines = dirty_lines.iter_mut().zip(frame.iter()).enumerate();
+                let dirty = all_lines.filter_map(|(idx, (dirty, line))| {
                     if *dirty {
                         *dirty = false;
                         Some((idx, line))
@@ -239,15 +244,17 @@ impl Draw {
 
                 // Now we need to write all the dirty lines, zip together the dest buffer
                 // with our current frame buffer
-                for (line, iline) in dirty_lines {
+                let res: Result<(), ()> = dirty.into_iter().try_for_each(|(line, iline)| {
                     // Lines are 1-indexed on the wire
-                    let _ = self.buf.try_push((line as u8) + 1);
+                    self.buf.try_push((line as u8) + 1).map_err(drop)?;
                     // We keep our internal frame buffer in the same format as the wire
-                    let _ = self.buf.try_extend_from_slice(iline);
+                    self.buf.try_extend_from_slice(iline)?;
                     // dummy byte
-                    let _ = self.buf.try_push(0);
+                    self.buf.try_push(0).map_err(drop)?;
                     drawn += 1;
-                }
+                    Ok(())
+                });
+                res.expect("Failed to push data to SPI buffer!");
             } else {
                 // No buffer to write, just toggle vcom
                 let mut cmd = commands::TOGGLE_VCOM;
@@ -256,11 +263,15 @@ impl Draw {
                 }
 
                 // Write the command
-                let _ = self.buf.try_push(cmd);
+                self.buf
+                    .try_push(cmd)
+                    .expect("SPI buffer should be large enough");
             }
 
             // Write one final dummy byte
-            let _ = self.buf.try_push(0);
+            self.buf
+                .try_push(0)
+                .expect("SPI buffer should be large enough");
 
             // Drop the mutex once we're done using the framebuffer data
             drop(c);
@@ -368,7 +379,7 @@ fn draw_to(dest: &mut FullFrame, src: &MonoChunk, width: u32, height: u32) {
         .chunks(src_width as usize)
         .zip(mask.chunks(src_width as usize));
 
-    let before = dest.dirty_line.iter().filter(|b| **b).count();
+    let before = dest.dirty_lines.iter().filter(|b| **b).count();
 
     for (src_y, (src_data_line, src_mask_line)) in s.enumerate() {
         // Any data on this line?
@@ -388,7 +399,7 @@ fn draw_to(dest: &mut FullFrame, src: &MonoChunk, width: u32, height: u32) {
         }
     }
 
-    let after = dest.dirty_line.iter().filter(|b| **b).count();
+    let after = dest.dirty_lines.iter().filter(|b| **b).count();
     tracing::trace!(
         made_dirty = (after - before),
         "Finished rendering to frame buffer"
