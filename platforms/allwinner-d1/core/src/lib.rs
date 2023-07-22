@@ -2,6 +2,7 @@
 
 extern crate alloc;
 
+pub mod clint;
 pub mod dmac;
 pub mod drivers;
 pub mod plic;
