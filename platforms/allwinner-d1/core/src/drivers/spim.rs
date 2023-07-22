@@ -11,13 +11,13 @@ use crate::dmac::{
 use d1_pac::{CCU, GPIO, SPI_DBI};
 use kernel::{
     comms::{kchannel::KChannel, oneshot::Reusable},
-    maitake::sync::WaitCell,
+    maitake::sync::WaitQueue,
     mnemos_alloc::containers::FixedVec,
     registry::{uuid, Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo, Uuid},
     Kernel,
 };
 
-pub static SPI1_TX_DONE: WaitCell = WaitCell::new();
+pub static SPI1_TX_DONE: WaitQueue = WaitQueue::new();
 
 pub struct Spim1 {
     _x: (),
@@ -163,7 +163,7 @@ impl SpiSenderServer {
                     SPI1_TX_DONE
                         .wait()
                         .await
-                        .expect("SPI1_TX_DONE WaitCell should never be closed");
+                        .expect("SPI1_TX_DONE WaitQueue should never be closed");
                     unsafe {
                         chan.stop_dma();
                     }

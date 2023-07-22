@@ -131,15 +131,13 @@ impl D1 {
         use drivers::sharp_display::SharpDisplay;
         use kernel::daemons::shells;
 
-        const MAX_FRAMES: usize = 4;
-
         // the `'static` kernel reference is the only thing from `self` that
         // must be moved into the spawned tasks.
         let k = self.kernel;
 
         let sharp_display = self
             .kernel
-            .initialize(SharpDisplay::register(k, MAX_FRAMES))
+            .initialize(SharpDisplay::register(k))
             .expect("failed to spawn SHARP display driver");
 
         // spawn Forth shell
@@ -266,11 +264,11 @@ impl D1 {
         dmac.dmac_irq_pend0.modify(|r, w| {
             tracing::trace!(dmac_irq_pend0 = ?format_args!("{:#b}", r.bits()), "DMAC interrupt");
             if r.dma0_queue_irq_pend().bit_is_set() {
-                D1Uart::tx_done_waker().wake();
+                D1Uart::tx_done_waker().wake_all();
             }
 
             if r.dma1_queue_irq_pend().bit_is_set() {
-                spim::SPI1_TX_DONE.wake();
+                spim::SPI1_TX_DONE.wake_all();
             }
 
             // Will write-back and high bits

@@ -24,20 +24,18 @@
 //!
 //! Reference: <https://www.sharpsde.com/fileadmin/products/Displays/2016_SDE_App_Note_for_Memory_LCD_programming_V1.3.pdf>
 
-use core::time::Duration;
+use core::{convert::identity, time::Duration};
 
-use embedded_graphics::{
-    image::{Image, ImageRaw},
-    pixelcolor::Gray8,
-    prelude::*,
-    primitives::Rectangle,
-};
+use embedded_graphics::{pixelcolor::Gray8, prelude::*, primitives::Rectangle};
 use kernel::{
     comms::kchannel::{KChannel, KConsumer},
-    maitake::sync::{Mutex, WaitCell},
+    maitake::sync::{Mutex, WaitQueue},
     mnemos_alloc::containers::{Arc, FixedVec},
     registry::Message,
-    services::emb_display::{EmbDisplayService, FrameChunk, FrameError, Request, Response},
+    services::emb_display::{
+        DisplayMetadata, EmbDisplayService, FrameChunk, FrameError, FrameKind, MonoChunk, Request,
+        Response,
+    },
     Kernel,
 };
 
@@ -53,20 +51,19 @@ const WIDTH_BYTES: usize = WIDTH / 8;
 //   * 1 byte for line number
 //   * (400bits / 8 = 50bytes) of data (one bit per pixel)
 //   * 1 "dummy" byte
-const LINE_COMMAND_IDX: usize = 0;
 const LINE_COMMAND_BYTES: usize = 1;
 const LINE_DUMMY_BYTES: usize = 1;
 const LINE_DATA_BYTES: usize = WIDTH_BYTES;
 const LINE_BYTES: usize = LINE_COMMAND_BYTES + LINE_DATA_BYTES + LINE_DUMMY_BYTES;
 
 // Every FRAME gets a 1 byte command, all of the lines, and one extra dummy byte
-const FRAME_COMMAND_IDX: usize = 0;
 const FRAME_COMMAND_BYTES: usize = 1;
 const FRAME_DUMMY_BYTES: usize = 1;
 const FRAME_DATA_BYTES: usize = HEIGHT * LINE_BYTES;
 const FRAME_BYTES: usize = FRAME_COMMAND_BYTES + FRAME_DATA_BYTES + FRAME_DUMMY_BYTES;
 
 mod commands {
+    pub const TOGGLE_VCOM: u8 = 0b0000_0000;
     pub const WRITE_LINE: u8 = 0b0000_0001;
     pub const VCOM_MASK: u8 = 0b0000_0010;
 }
@@ -82,12 +79,8 @@ impl SharpDisplay {
     ///
     /// Registration will also start the simulated display, meaning that the display
     /// window will appear.
-    pub async fn register(kernel: &'static Kernel, max_frames: usize) -> Result<(), FrameError> {
-        let frames = FixedVec::new(max_frames).await;
-        let mut linebuf = FixedVec::new(FRAME_BYTES).await;
-        for _ in 0..FRAME_BYTES {
-            let _ = linebuf.try_push(0);
-        }
+    pub async fn register(kernel: &'static Kernel) -> Result<(), FrameError> {
+        let linebuf = FixedVec::new(FRAME_BYTES).await;
 
         let ctxt = Arc::new(Mutex::new(Context {
             sdisp: FullFrame::new(),
@@ -98,11 +91,9 @@ impl SharpDisplay {
         let (cmd_prod, cmd_cons) = KChannel::new_async(1).await.split();
         let commander = CommanderTask {
             cmd: cmd_cons,
-            display_info: DisplayInfo {
-                frames,
-                frame_idx: 0,
-            },
             ctxt: ctxt.clone(),
+            height: HEIGHT as u32,
+            width: WIDTH as u32,
         };
 
         let vcom = VCom {
@@ -132,12 +123,17 @@ impl SharpDisplay {
 /// One entire frame, stored one bit per pixel
 struct FullFrame {
     frame: [[u8; WIDTH_BYTES]; HEIGHT],
+    /// One bool per vertical line to track if there have beem changes.
+    /// We can draw line-at-a-time with the sharp display, so we can avoid
+    /// sending lines that haven't changed, as the display is persistent.
+    dirty_lines: [bool; HEIGHT],
 }
 
 impl FullFrame {
     pub fn new() -> Self {
         Self {
             frame: [[0u8; WIDTH_BYTES]; HEIGHT],
+            dirty_lines: [true; HEIGHT],
         }
     }
 }
@@ -148,6 +144,9 @@ impl FullFrame {
         if x >= WIDTH || y > HEIGHT {
             return;
         }
+        // mark the line as dirty so it will be sent on the next
+        // update of the display
+        self.dirty_lines[y] = true;
         let byte_x = x / 8;
         let bit_x = x % 8;
 
@@ -168,22 +167,6 @@ impl Dimensions for FullFrame {
                 height: HEIGHT as u32,
             },
         )
-    }
-}
-
-impl DrawTarget for FullFrame {
-    type Color = Gray8;
-
-    type Error = ();
-
-    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
-    where
-        I: IntoIterator<Item = Pixel<Self::Color>>,
-    {
-        for px in pixels {
-            self.set_px(px.0.x as usize, px.0.y as usize, px.1)
-        }
-        Ok(())
     }
 }
 
@@ -218,24 +201,7 @@ impl VCom {
 /// Drawing task
 ///
 /// This task draws whenever there are pending (or "dirty") changes to the frame
-/// buffer, or at a base rate of 2Hz. At the moment, we only do a full redraw to
-/// ensure that VCOM is updated periodically.
-///
-/// ## Room for improvement
-///
-/// In the future, we can likely send a "no-op" command instead of a full frame
-/// redraw if the dirty flag has not been set, as a power optimization or latency
-/// improvement. This is not necessary if we are using GPIO VCOM instead of SPI
-/// VCOM toggling.
-///
-/// We could also keep track of "dirty lines" instead of just a whole "dirty frame",
-/// and only pull lines that have changed. This would help when typing a on a single
-/// line, and only one font-height needs to be redrawn.
-///
-/// For example: a single line is 52 * 8 bits, or 416 bits, or 208us at 2MHz. For
-/// sending an entire 240 line frame, this is 208 * 240us, or 49_920 us. If we can
-/// only are updating one 12pt font line, which is 15 pixels tall, this would reduce
-/// our sending time from 49.9ms to 3.1ms.
+/// buffer, or at a base rate of 2Hz.
 struct Draw {
     kernel: &'static Kernel,
     buf: FixedVec<u8>,
@@ -245,37 +211,72 @@ struct Draw {
 
 impl Draw {
     #[tracing::instrument(skip(self))]
-    async fn draw_run(mut self) {
+    async fn draw_run(mut self) -> Result<(), ()> {
         loop {
-            let c = self.ctxt.lock().await;
-            // render into the buffer
-            let mut cmd = commands::WRITE_LINE;
-            if c.vcom {
-                cmd |= commands::VCOM_MASK;
+            let mut c = self.ctxt.lock().await;
+            self.buf.clear();
+
+            let mut drawn = 0;
+
+            // Are there ANY dirty lines?
+            if c.sdisp.dirty_lines.iter().copied().any(identity) {
+                // render into the buffer
+                let mut cmd = commands::WRITE_LINE;
+                if c.vcom {
+                    cmd |= commands::VCOM_MASK;
+                }
+
+                // Write the command
+                let _ = self.buf.try_push(cmd);
+
+                let FullFrame { frame, dirty_lines } = &mut c.sdisp;
+
+                // Filter out to only the dirty lines, clearing the dirty flag
+                let all_lines = dirty_lines.iter_mut().zip(frame.iter()).enumerate();
+                let dirty = all_lines.filter_map(|(idx, (dirty, line))| {
+                    if *dirty {
+                        *dirty = false;
+                        Some((idx, line))
+                    } else {
+                        None
+                    }
+                });
+
+                // Now we need to write all the dirty lines, zip together the dest buffer
+                // with our current frame buffer
+                let res: Result<(), ()> = dirty.into_iter().try_for_each(|(line, iline)| {
+                    // Lines are 1-indexed on the wire
+                    self.buf.try_push((line as u8) + 1).map_err(drop)?;
+                    // We keep our internal frame buffer in the same format as the wire
+                    self.buf.try_extend_from_slice(iline)?;
+                    // dummy byte
+                    self.buf.try_push(0).map_err(drop)?;
+                    drawn += 1;
+                    Ok(())
+                });
+                res.expect("Failed to push data to SPI buffer!");
+            } else {
+                // No buffer to write, just toggle vcom
+                let mut cmd = commands::TOGGLE_VCOM;
+                if c.vcom {
+                    cmd |= commands::VCOM_MASK;
+                }
+
+                // Write the command
+                self.buf
+                    .try_push(cmd)
+                    .expect("SPI buffer should be large enough");
             }
 
-            // Write the command
-            self.buf.as_slice_mut()[FRAME_COMMAND_IDX] = cmd;
-
-            // Now we need to write all the lines, zip together the dest buffer
-            // with our current frame buffer
-            let out_lines =
-                self.buf.as_slice_mut()[FRAME_COMMAND_BYTES..].chunks_exact_mut(LINE_BYTES);
-            let in_lines = c.sdisp.frame.iter();
-            let lines = out_lines.zip(in_lines);
-
-            for (line, (oline, iline)) in &mut lines.enumerate() {
-                // Lines are 1-indexed on the wire
-                oline[LINE_COMMAND_IDX] = (line as u8) + 1;
-                // We keep our internal frame buffer in the same format as the wire
-                oline[LINE_COMMAND_BYTES..][..LINE_DATA_BYTES].copy_from_slice(iline);
-                // We don't need to write the dummy byte for the line
-            }
+            // Write one final dummy byte
+            self.buf
+                .try_push(0)
+                .expect("SPI buffer should be large enough");
 
             // Drop the mutex once we're done using the framebuffer data
             drop(c);
 
-            // We don't need to write the (extra) dummy byte for the frame
+            tracing::debug!(drawn, "Drew all dirty lines");
 
             self.buf = self.spim.send_wait(self.buf).await.map_err(drop).unwrap();
 
@@ -293,89 +294,55 @@ impl Draw {
 /// framebuffer.
 struct CommanderTask {
     cmd: KConsumer<Message<EmbDisplayService>>,
-    display_info: DisplayInfo,
     ctxt: Arc<Mutex<Context>>,
+    width: u32,
+    height: u32,
 }
 
 impl CommanderTask {
     /// The entrypoint for the driver execution
     #[tracing::instrument(skip(self))]
-    async fn cmd_run(mut self) {
+    async fn cmd_run(self) {
         // This loop services incoming client requests.
         //
         // Generally, don't handle errors when replying to clients, this indicates that they
         // sent us a message and "hung up" without waiting for a response.
         loop {
             let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
-            let Message {
-                msg: mut req,
-                reply,
-            } = msg;
-            match &mut req.body {
-                Request::NewFrameChunk {
-                    start_x,
-                    start_y,
-                    width,
-                    height,
-                } => {
-                    let res = self
-                        .display_info
-                        .new_frame(*start_x, *start_y, *width, *height)
-                        .await
-                        .map(Response::FrameChunkAllocated);
-
-                    if res.is_ok() {
-                        tracing::debug!(start_x, start_y, width, height, "allocated frame",);
-                    } else {
-                        tracing::warn!(
-                            start_x,
-                            start_y,
-                            width,
-                            height,
-                            "refused to allocate frame"
-                        );
-                    }
-
-                    let resp = req.reply_with(res);
-                    let _ = reply.reply_konly(resp).await;
+            let (req, env, reply_tx) = msg.split();
+            match req {
+                Request::Draw(FrameChunk::Mono(fc)) => {
+                    tracing::debug!("Processing Draw Mono command");
+                    self.draw_mono(&fc, &self.ctxt).await;
+                    DIRTY.wake_all();
+                    let response = env.fill(Ok(Response::DrawComplete(fc.into())));
+                    let _ = reply_tx.reply_konly(response).await;
                 }
-                Request::Draw(fc) => match self.display_info.remove_frame(fc.frame_id) {
-                    Ok(_) => {
-                        let (x, y) = (fc.start_x, fc.start_y);
-                        let raw_img = frame_display(fc).unwrap();
-                        let image = Image::new(&raw_img, Point::new(x, y));
-
-                        let mut guard = self.ctxt.lock().await;
-
-                        tracing::debug!("Drawing frame");
-                        image.draw(&mut guard.sdisp).unwrap();
-                        DIRTY.wake();
-
-                        // Drop the guard before we reply so we don't hold it too long.
-                        drop(guard);
-
-                        let _ = reply
-                            .reply_konly(req.reply_with(Ok(Response::FrameDrawn)))
-                            .await;
-                    }
-                    Err(e) => {
-                        tracing::warn!("Refused to draw frame");
-                        let _ = reply.reply_konly(req.reply_with(Err(e))).await;
-                    }
-                },
-                Request::Drop(fc) => {
-                    let _ = match self.display_info.remove_frame(fc.frame_id) {
-                        Ok(_) => {
-                            tracing::debug!("Dropped frame");
-                            reply
-                                .reply_konly(req.reply_with(Ok(Response::FrameDropped)))
-                                .await
-                        }
-                        Err(e) => reply.reply_konly(req.reply_with(Err(e))).await,
+                Request::GetMeta => {
+                    let meta = DisplayMetadata {
+                        kind: FrameKind::Mono,
+                        width: self.width,
+                        height: self.height,
                     };
+                    let response = env.fill(Ok(Response::FrameMeta(meta)));
+                    let _ = reply_tx.reply_konly(response).await;
+                }
+                _ => {
+                    let response = env.fill(Err(FrameError::InternalError));
+                    let _ = reply_tx.reply_konly(response).await;
                 }
             }
         }
+    }
+
+    /// Draw the given MonoChunk to the persistent framebuffer
+    async fn draw_mono(&self, fc: &MonoChunk, mutex: &Mutex<Context>) {
+        let mut guard = mutex.lock().await;
+        let ctx: &mut Context = &mut guard;
+
+        let Context { sdisp, .. } = ctx;
+
+        draw_to(sdisp, fc, self.width, self.height);
     }
 }
 
@@ -390,82 +357,51 @@ struct Context {
 }
 
 /// Waiter for "changes have been made to the working frame buffer"
-static DIRTY: WaitCell = WaitCell::new();
+static DIRTY: WaitQueue = WaitQueue::new();
 
-/// Create and return a Simulator display object from raw pixel data.
-///
-/// Pixel data is turned into a raw image, and then drawn onto a SimulatorDisplay object
-/// This is necessary as a e-g Window only accepts SimulatorDisplay object
-/// On a physical display, the raw pixel data can be sent over to the display directly
-/// Using the display's device interface
-fn frame_display(fc: &mut FrameChunk) -> Result<ImageRaw<Gray8>, ()> {
-    let raw_image: ImageRaw<Gray8>;
-    raw_image = ImageRaw::<Gray8>::new(fc.bytes.as_slice(), fc.width);
-    Ok(raw_image)
-}
+fn draw_to(dest: &mut FullFrame, src: &MonoChunk, width: u32, height: u32) {
+    let meta = src.meta();
+    let data = src.data();
+    let mask = src.mask();
 
-struct FrameInfo {
-    frame: u16,
-}
+    let start_x = meta.start_x();
+    let start_y = meta.start_y();
+    let src_width = meta.width();
 
-struct DisplayInfo {
-    frame_idx: u16,
-    frames: FixedVec<FrameInfo>,
-}
-
-impl DisplayInfo {
-    // Returns a new frame chunk
-    async fn new_frame(
-        &mut self,
-        start_x: i32,
-        start_y: i32,
-        width: u32,
-        height: u32,
-    ) -> Result<FrameChunk, FrameError> {
-        let fidx = self.frame_idx;
-        self.frame_idx = self.frame_idx.wrapping_add(1);
-
-        self.frames
-            .try_push(FrameInfo { frame: fidx })
-            .map_err(|_| FrameError::NoFrameAvailable)?;
-
-        let size = (width * height) as usize;
-
-        // TODO: So, in the future, we might not want to ACTUALLY allocate here. Instead,
-        // we might want to allocate ALL potential frame chunks at registration time and
-        // hand those out, rather than requiring an allocation here.
-        //
-        // TODO: We might want to do ANY input checking here:
-        //
-        // * Making sure the request is smaller than the actual display
-        // * Making sure the request exists entirely within the actual display
-        let mut bytes = FixedVec::new(size).await;
-        for _ in 0..size {
-            let _ = bytes.try_push(0);
-        }
-        let fc = FrameChunk {
-            frame_id: fidx,
-            bytes,
-            start_x,
-            start_y,
-            width,
-            height,
-        };
-
-        Ok(fc)
+    if start_y >= height {
+        return;
+    }
+    if start_x >= width {
+        return;
     }
 
-    fn remove_frame(&mut self, frame_id: u16) -> Result<(), FrameError> {
-        let mut found = false;
-        self.frames.retain(|fr| {
-            let matches = fr.frame == frame_id;
-            found |= matches;
-            !matches
-        });
-        if found {
-            Ok(())
-        } else {
-            Err(FrameError::NoSuchFrame)
+    let s = data
+        .chunks(src_width as usize)
+        .zip(mask.chunks(src_width as usize));
+
+    let before = dest.dirty_lines.iter().filter(|b| **b).count();
+
+    for (src_y, (src_data_line, src_mask_line)) in s.enumerate() {
+        // Any data on this line?
+        if src_mask_line.iter().all(|b| *b == 0) {
+            continue;
+        }
+        let sl = src_data_line.iter().zip(src_mask_line.iter());
+        for (src_x, (s_data, s_mask)) in sl.enumerate() {
+            if *s_mask != 0 {
+                let val = if *s_data < 128 {
+                    Gray8::BLACK
+                } else {
+                    Gray8::WHITE
+                };
+                dest.set_px(start_x as usize + src_x, start_y as usize + src_y, val);
+            }
         }
     }
+
+    let after = dest.dirty_lines.iter().filter(|b| **b).count();
+    tracing::trace!(
+        made_dirty = (after - before),
+        "Finished rendering to frame buffer"
+    );
 }

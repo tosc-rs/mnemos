@@ -276,6 +276,93 @@ impl<T> DerefMut for ArrayBuf<T> {
 }
 
 //
+// HeapArray
+//
+
+/// A heap allocation of a `[T; N]`. Useful for things like buffers that never need to
+/// change size (unlike [FixedVec]), and are less spooky than [ArrayBuf].
+pub struct HeapArray<T> {
+    ptr: NonNull<T>,
+    len: usize,
+}
+
+unsafe impl<T: Send> Send for HeapArray<T> {}
+unsafe impl<T: Sync> Sync for HeapArray<T> {}
+
+impl<T> HeapArray<T> {
+    /// Gets the layout for `len` items
+    ///
+    /// Panics if creating the layout would fail (e.g. too large for the platform)
+    fn layout(len: usize) -> Layout {
+        Layout::array::<T>(len).unwrap()
+    }
+
+    /// Try to allocate a new HeapArray with storage for `len` items.
+    ///
+    /// Will not return until allocation succeeds.
+    ///
+    /// Panics if the len is zero, or large enough that creating the layout would fail
+    pub async fn new(len: usize, init: T) -> Self
+    where
+        T: Copy,
+    {
+        assert_ne!(len, 0, "ZST HeapArray doesn't make sense");
+        let layout = Self::layout(len);
+        let ptr: NonNull<T> = alloc(layout).await.cast();
+        unsafe {
+            let ptr = ptr.as_ptr();
+            for i in 0..len {
+                ptr.add(i).write(init);
+            }
+        }
+        HeapArray { ptr, len }
+    }
+
+    /// Returns the length of the `HeapArray`.
+    #[inline]
+    #[must_use]
+    #[allow(clippy::len_without_is_empty)]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+}
+
+impl<T> Drop for HeapArray<T> {
+    fn drop(&mut self) {
+        debug_assert_ne!(self.len, 0, "how did you do that");
+        let layout = Self::layout(self.len);
+        unsafe {
+            alloc::alloc::dealloc(self.ptr.as_ptr().cast(), layout);
+        }
+    }
+}
+
+impl<T> Deref for HeapArray<T> {
+    type Target = [T];
+    fn deref(&self) -> &Self::Target {
+        unsafe {
+            // Safety: the `HeapArray` logically owns `self.ptr`, and it is only
+            // deallocated when the `HeapArray` is dropped. The `HeapArray` was
+            // allocated with a layout of `self.len` `T`s, and thus the
+            // constructed slice should not exceed the bounds of the allocation.
+            core::slice::from_raw_parts(self.ptr.as_ptr(), self.len)
+        }
+    }
+}
+
+impl<T> DerefMut for HeapArray<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        unsafe {
+            // Safety: the `ArrayBuf` logically owns `self.ptr`, and it is only
+            // deallocated when the `ArrayBuf` is dropped. The `ArrayBuf` was
+            // allocated with a layout of `self.len` `T`s, and thus the
+            // constructed slice should not exceed the bounds of the allocation.
+            core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len)
+        }
+    }
+}
+
+//
 // FixedVec
 //
 
