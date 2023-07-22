@@ -5,6 +5,7 @@ extern crate alloc;
 
 use core::time::Duration;
 use mnemos_d1_core::{
+    ccu::Ccu,
     dmac::Dmac,
     drivers::{spim::kernel_spim1, twi, uart::kernel_uart},
     plic::Plic,
@@ -26,6 +27,11 @@ fn main() -> ! {
     }
 
     let mut p = unsafe { d1_pac::Peripherals::steal() };
+
+    let mut ccu = Ccu::new(p.CCU);
+    ccu.sys_clock_init();
+    p.CCU = ccu.release();
+
     let uart = unsafe { kernel_uart(&mut p.CCU, &mut p.GPIO, p.UART0) };
     let spim = unsafe { kernel_spim1(p.SPI_DBI, &mut p.CCU, &mut p.GPIO) };
     let i2c0 = unsafe { twi::I2c0::lichee_rv_dock(p.TWI2, &mut p.CCU, &mut p.GPIO) };
