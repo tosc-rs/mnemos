@@ -308,7 +308,7 @@ impl D1 {
             }
 
             if r.dma1_queue_irq_pend().bit_is_set() {
-                spim::SPI1_TX_DONE.wake();
+                spim::SPI1_TX_DONE.wake_all();
             }
 
             // Will write-back and high bits

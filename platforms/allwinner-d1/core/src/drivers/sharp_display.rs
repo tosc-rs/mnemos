@@ -24,16 +24,12 @@
 //!
 //! Reference: <https://www.sharpsde.com/fileadmin/products/Displays/2016_SDE_App_Note_for_Memory_LCD_programming_V1.3.pdf>
 
-use core::{time::Duration, convert::identity};
+use core::{convert::identity, time::Duration};
 
-use embedded_graphics::{
-    pixelcolor::Gray8,
-    prelude::*,
-    primitives::Rectangle,
-};
+use embedded_graphics::{pixelcolor::Gray8, prelude::*, primitives::Rectangle};
 use kernel::{
     comms::kchannel::{KChannel, KConsumer},
-    maitake::sync::{Mutex, WaitCell, WaitQueue},
+    maitake::sync::{Mutex, WaitQueue},
     mnemos_alloc::containers::{Arc, FixedVec},
     registry::Message,
     services::emb_display::{
@@ -228,7 +224,6 @@ impl Draw {
     #[tracing::instrument(skip(self))]
     async fn draw_run(mut self) {
         loop {
-            // tracing::info!("ding");
             let mut c = self.ctxt.lock().await;
             self.buf.clear();
 
@@ -258,7 +253,6 @@ impl Draw {
                     }
                 });
 
-
                 // Now we need to write all the dirty lines, zip together the dest buffer
                 // with our current frame buffer
                 for (line, iline) in dirty_lines {
@@ -287,23 +281,15 @@ impl Draw {
             // Drop the mutex once we're done using the framebuffer data
             drop(c);
 
-            tracing::info!(
-                drawn,
-                "Drew lines",
-            );
+            tracing::debug!(drawn, "Drew all dirty lines");
 
             self.buf = self.spim.send_wait(self.buf).await.map_err(drop).unwrap();
 
             // Wait a reasonable amount of time to redraw
-            if self
+            let _ = self
                 .kernel
                 .timeout(Duration::from_millis(500), DIRTY.wait())
-                .await.is_err()
-            {
-                tracing::info!("TIMEOUT DING");
-            } else {
-                tracing::info!("WAITCELL DING");
-            }
+                .await;
         }
     }
 }
@@ -331,7 +317,7 @@ impl CommanderTask {
             let (req, env, reply_tx) = msg.split();
             match req {
                 Request::Draw(FrameChunk::Mono(fc)) => {
-                    tracing::info!("Draw Command");
+                    tracing::debug!("Processing Draw Mono command");
                     self.draw_mono(&fc, &self.ctxt).await;
                     DIRTY.wake_all();
                     let response = env.fill(Ok(Response::DrawComplete(fc.into())));
@@ -349,7 +335,7 @@ impl CommanderTask {
                 _ => {
                     let response = env.fill(Err(FrameError::InternalError));
                     let _ = reply_tx.reply_konly(response).await;
-                },
+                }
             }
         }
     }
@@ -359,10 +345,7 @@ impl CommanderTask {
         let mut guard = mutex.lock().await;
         let ctx: &mut Context = &mut guard;
 
-        let Context {
-            sdisp,
-            ..
-        } = ctx;
+        let Context { sdisp, .. } = ctx;
 
         draw_to(sdisp, fc, self.width, self.height);
     }
@@ -423,7 +406,8 @@ fn draw_to(dest: &mut FullFrame, src: &MonoChunk, width: u32, height: u32) {
     }
 
     let after = dest.dirty_line.iter().filter(|b| **b).count();
-    // tracing::info!(made_dirty = (after-before), "gross");
-
+    tracing::trace!(
+        made_dirty = (after - before),
+        "Finished rendering to frame buffer"
+    );
 }
-
