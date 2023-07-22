@@ -101,7 +101,7 @@ use crate::{
     Kernel,
 };
 use core::{convert::Infallible, fmt, time::Duration};
-use embedded_hal_async::i2c;
+use embedded_hal_async::i2c::{self, AddressMode};
 use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -368,10 +368,14 @@ impl i2c::ErrorType for I2cClient {
     type Error = I2cError;
 }
 
-impl i2c::I2c<i2c::SevenBitAddress> for I2cClient {
+impl<A> i2c::I2c<A> for I2cClient
+where
+    A: AddressMode,
+    Addr: From<A>,
+{
     async fn transaction(
         &mut self,
-        address: i2c::SevenBitAddress,
+        address: A,
         operations: &mut [i2c::Operation<'_>],
     ) -> Result<(), Self::Error> {
         let (mut buf, was_cached) = match self.cached_buf.take() {
@@ -391,7 +395,7 @@ impl i2c::I2c<i2c::SevenBitAddress> for I2cClient {
             }
         };
 
-        let mut txn = self.start_transaction(Addr::SevenBit(address)).await;
+        let mut txn = self.start_transaction(address.into()).await;
         let n_ops = operations.len();
         for (n, op) in operations.iter_mut().enumerate() {
             let end = n == n_ops - 1;
@@ -599,6 +603,22 @@ impl Addr {
             Self::SevenBit(bits) => bits,
             Self::TenBit(bits) => (bits & 0b0111_1111) as u8,
         }
+    }
+}
+
+impl From<i2c::SevenBitAddress> for Addr {
+    #[inline]
+    #[must_use]
+    fn from(addr: i2c::SevenBitAddress) -> Self {
+        Addr::SevenBit(addr)
+    }
+}
+
+impl From<i2c::TenBitAddress> for Addr {
+    #[inline]
+    #[must_use]
+    fn from(addr: i2c::TenBitAddress) -> Self {
+        Addr::TenBit(addr)
     }
 }
 
