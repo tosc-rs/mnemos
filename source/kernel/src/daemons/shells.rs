@@ -5,13 +5,14 @@
 use core::time::Duration;
 
 use crate::{
+    comms::bbq::BidiHandle,
     forth::Params,
     services::{
         emb_display::{EmbDisplayClient, FrameLocSize, MonoChunk},
         keyboard::{key_event, KeyClient},
         serial_mux::{PortHandle, WellKnown},
     },
-    tracing, Kernel, comms::bbq::BidiHandle,
+    tracing, Kernel,
 };
 use embedded_graphics::{
     mono_font::{MonoFont, MonoTextStyle},
@@ -238,7 +239,12 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
             any = false;
         }
 
-        let _ = k.timeout(interval, io_poll(&mut any, &mut keyboard, &mut rline, &tid_io)).await;
+        let _ = k
+            .timeout(
+                interval,
+                io_poll(&mut any, &mut keyboard, &mut rline, &tid_io),
+            )
+            .await;
     }
 }
 
