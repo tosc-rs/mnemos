@@ -218,38 +218,38 @@ impl D1 {
             let elapsed = start.wrapping_sub(timer0.current_value());
             let turn = k.timer().force_advance_ticks(elapsed.into());
 
-            // If there is nothing else scheduled, and we didn't just wake something up,
-            // sleep for some amount of time
-            if turn.expired == 0 && !tick.has_remaining {
-                let wfi_start = timer0.current_value();
+            // // If there is nothing else scheduled, and we didn't just wake something up,
+            // // sleep for some amount of time
+            // if turn.expired == 0 && !tick.has_remaining {
+            //     let wfi_start = timer0.current_value();
 
-                // TODO(AJM): Sometimes there is no "next" in the timer wheel, even though there should
-                // be. Don't take lack of timer wheel presence as the ONLY heuristic of whether we
-                // should just wait for SOME interrupt to occur. For now, force a max sleep of 100ms
-                // which is still probably wrong.
-                let amount = turn.ticks_to_next_deadline().unwrap_or(100 * 1000 * 3); // 3 ticks per us, 1000 us per ms, 100ms sleep
+            //     // TODO(AJM): Sometimes there is no "next" in the timer wheel, even though there should
+            //     // be. Don't take lack of timer wheel presence as the ONLY heuristic of whether we
+            //     // should just wait for SOME interrupt to occur. For now, force a max sleep of 100ms
+            //     // which is still probably wrong.
+            //     let amount = turn.ticks_to_next_deadline().unwrap_or(100 * 1000 * 3); // 3 ticks per us, 1000 us per ms, 100ms sleep
 
-                // Don't sleep for too long until james figures out wrapping timers
-                let amount = amount.min(0x4000_0000) as u32;
-                let _ = timer1.get_and_clear_interrupt();
-                unsafe {
-                    plic.activate(Interrupt::TIMER1, Priority::P1).unwrap();
-                }
-                timer1.set_interrupt_en(true);
-                timer1.start_counter(amount);
+            //     // Don't sleep for too long until james figures out wrapping timers
+            //     let amount = amount.min(0x4000_0000) as u32;
+            //     let _ = timer1.get_and_clear_interrupt();
+            //     unsafe {
+            //         plic.activate(Interrupt::TIMER1, Priority::P1).unwrap();
+            //     }
+            //     timer1.set_interrupt_en(true);
+            //     timer1.start_counter(amount);
 
-                unsafe {
-                    riscv::asm::wfi();
-                }
-                // Disable the timer interrupt in case that wasn't what woke us up
-                plic.deactivate(Interrupt::TIMER1).unwrap();
-                timer1.set_interrupt_en(false);
-                timer1.stop();
+            //     unsafe {
+            //         riscv::asm::wfi();
+            //     }
+            //     // Disable the timer interrupt in case that wasn't what woke us up
+            //     plic.deactivate(Interrupt::TIMER1).unwrap();
+            //     timer1.set_interrupt_en(false);
+            //     timer1.stop();
 
-                // Account for time slept
-                let elapsed = wfi_start.wrapping_sub(timer0.current_value());
-                let _turn = k.timer().force_advance_ticks(elapsed.into());
-            }
+            //     // Account for time slept
+            //     let elapsed = wfi_start.wrapping_sub(timer0.current_value());
+            //     let _turn = k.timer().force_advance_ticks(elapsed.into());
+            // }
         }
     }
 

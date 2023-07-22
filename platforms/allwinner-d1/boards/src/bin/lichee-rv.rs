@@ -4,6 +4,7 @@
 extern crate alloc;
 
 use core::time::Duration;
+use d1_pac::GPIO;
 use mnemos_d1_core::{
     dmac::Dmac,
     drivers::{spim::kernel_spim1, twi, uart::kernel_uart},
@@ -21,11 +22,17 @@ static AHEAP_BUF: Ram<HEAP_SIZE> = Ram::new();
 #[allow(non_snake_case)]
 #[riscv_rt::entry]
 fn main() -> ! {
+    let mut p = unsafe { d1_pac::Peripherals::steal() };
+
+    p.CCU.mbus_mat_clk_gating.write(|w| unsafe {
+        w.bits(0x00000805u32)
+    });
+
     unsafe {
         mnemos_d1::initialize_heap(&AHEAP_BUF);
     }
+    // 0x00000D87
 
-    let mut p = unsafe { d1_pac::Peripherals::steal() };
     let uart = unsafe { kernel_uart(&mut p.CCU, &mut p.GPIO, p.UART0) };
     let spim = unsafe { kernel_spim1(p.SPI_DBI, &mut p.CCU, &mut p.GPIO) };
     let i2c0 = unsafe { twi::I2c0::lichee_rv_dock(p.TWI2, &mut p.CCU, &mut p.GPIO) };
@@ -34,13 +41,20 @@ fn main() -> ! {
     let plic = Plic::new(p.PLIC);
 
     let d1 = D1::initialize(timers, uart, spim, dmac, plic, i2c0).unwrap();
-
+    p.GPIO.pe_cfg2.modify(|_r, w| {
+        w.pe16_select().output();
+        w
+    });
     p.GPIO.pc_cfg0.modify(|_r, w| {
         w.pc1_select().output();
         w
     });
     p.GPIO.pc_dat.modify(|_r, w| {
         w.pc_dat().variant(0b0000_0010);
+        w
+    });
+    p.GPIO.pe_dat.modify(|_r, w| {
+        w.pe_dat().variant(0);
         w
     });
 
@@ -65,4 +79,16 @@ fn main() -> ! {
         .unwrap();
 
     d1.run()
+}
+
+#[export_name = "ExceptionHandler"]
+fn custom_exception_handler(trap_frame: &riscv_rt::TrapFrame) -> ! {
+    let gpio = unsafe { &*GPIO::ptr() };
+    gpio.pe_dat.write(|w| unsafe {
+        w.pe_dat().bits(1 << 16);
+        w
+    });
+
+
+    panic!("{:?}", trap_frame);
 }
