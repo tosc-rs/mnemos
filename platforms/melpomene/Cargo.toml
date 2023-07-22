@@ -26,18 +26,18 @@ features = ["serde"]
 
 [dependencies.mnemos-kernel]
 package = "mnemos"
-path = "../kernel"
+path = "../../source/kernel"
 
 [dependencies.mnemos-alloc]
 version = "0.1.0"
 features = ["use-std"]
-path = "../alloc"
+path = "../../source/alloc"
 
 [dependencies.mnemos-abi]
-path = "../abi"
+path = "../../source/abi"
 
 [dependencies.mnemos-std]
-path = "../mstd"
+path = "../../source/mstd"
 
 [dependencies.postcard]
 version = "1.0.1"
@@ -81,7 +81,7 @@ version = "0.1.0"
 features = ["tracing-01"]
 
 [dependencies.forth3]
-path = "../forth3"
+path = "../../source/forth3"
 features = ["async"]
 
 [dependencies.futures]

@@ -6,7 +6,6 @@ members = [
     "source/abi",
     "source/mstd",
     "source/spitebuf",
-    "source/melpomene",
     "source/alloc",
     "source/forth3",
     "source/sermux-proto",
@@ -20,6 +19,7 @@ members = [
     # platforms
     "platforms/allwinner-d1/core",
     "platforms/beepy",
+    "platforms/melpomene",
 ]
 
 exclude = ["platforms/pomelo"]

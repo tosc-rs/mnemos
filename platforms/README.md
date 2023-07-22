@@ -1,7 +1,6 @@
 # MnemOS Hardware Platforms
 
-This directory contains code for running MnemOS on the supported hardware
-platforms.
+This directory contains code for running MnemOS on the supported hardware and simulation platforms.
 
 ## Folder Layout
 
@@ -9,10 +8,13 @@ platforms.
   - [`allwinner-d1/boards/`]: Platform implementations for supported D1
         single-board computers.
   - [`allwinner-d1/core/`]: MnemOS core for all Allwinner D1 boards
+* [`melpomene/`] - Melpomene is a desktop simulator for MnemOS development
+* [`pomelo/`] - Pomelo is a web/wasm simulator for MnemOS development
 
 [`allwinner-d1/`]: ./allwinner-d1/
 [`allwinner-d1/boards/`]: ./allwinner-d1/boards/
 [`allwinner-d1/core/`]: ./allwinner-d1/core/
+[`melpomene/`]: ./melpomene
 
 ## License
 
