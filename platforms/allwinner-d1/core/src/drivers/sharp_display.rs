@@ -165,22 +165,6 @@ impl Dimensions for FullFrame {
     }
 }
 
-// impl DrawTarget for FullFrame {
-//     type Color = Gray8;
-
-//     type Error = ();
-
-//     fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
-//     where
-//         I: IntoIterator<Item = Pixel<Self::Color>>,
-//     {
-//         for px in pixels {
-//             self.set_px(px.0.x as usize, px.0.y as usize, px.1)
-//         }
-//         Ok(())
-//     }
-// }
-
 //////////////////////////////////////////////////////////////////////////////
 // Helper tasks
 //

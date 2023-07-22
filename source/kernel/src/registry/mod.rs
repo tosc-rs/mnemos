@@ -26,6 +26,7 @@ pub mod known_uuids {
 
         pub const SERIAL_MUX: Uuid = uuid!("54c983fa-736f-4223-b90d-c4360a308647");
         pub const SIMPLE_SERIAL_PORT: Uuid = uuid!("f06aac01-2773-4266-8681-583ffe756554");
+        #[deprecated(note = "Use EMB_DISPLAY_V2 instead")]
         pub const EMB_DISPLAY: Uuid = uuid!("b54db574-3eb7-4c89-8bfb-1a20890be68e");
         pub const FORTH_SPAWNULATOR: Uuid = uuid!("4ae4a406-005a-4bde-be91-afc1900f76fa");
         pub const I2C: Uuid = uuid!("011ebd3e-1b14-4bfd-b581-6138239b82f3");
@@ -35,6 +36,7 @@ pub mod known_uuids {
     }
 
     // In case you need to iterate over every UUID
+    #[allow(deprecated)]
     pub static ALL: &[Uuid] = &[
         kernel::SERIAL_MUX,
         kernel::SIMPLE_SERIAL_PORT,

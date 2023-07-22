@@ -276,16 +276,11 @@ impl<T> DerefMut for ArrayBuf<T> {
 }
 
 //
-// ArrayBuf
+// HeapArray
 //
 
-/// A spooky owned array type
-///
-/// This type represents ownership of essentially an `UnsafeCell<MaybeUninit<[T]>>`.
-///
-/// It is intended as a low level building block for things like bbqueue and other data
-/// structures that need to own a specific number of items, and would like to set their
-/// own safety invariants, without manually using `alloc`.
+/// A heap allocation of a `[T; N]`. Useful for things like buffers that never need to
+/// change size (unlike [FixedVec]), and are less spooky than [ArrayBuf].
 pub struct HeapArray<T> {
     ptr: NonNull<T>,
     len: usize,
@@ -322,14 +317,6 @@ impl<T> HeapArray<T> {
         }
         HeapArray { ptr, len }
     }
-
-    // /// Obtain a pointer to the heap allocated storage, as well as the length of items
-    // ///
-    // /// This does NOT leak the heap allocation. The returned pointer has the lifetime
-    // /// of this `HeapArray`.
-    // pub fn ptrlen(&self) -> (NonNull<UnsafeCell<MaybeUninit<T>>>, usize) {
-    //     (self.ptr, self.len)
-    // }
 
     /// Returns the length of the `HeapArray`.
     #[inline]
