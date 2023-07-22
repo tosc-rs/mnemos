@@ -16,9 +16,7 @@ use core::{
 };
 use d1_pac::{Interrupt, DMAC, TIMER};
 use kernel::{
-    daemons::sermux::{hello, loopback, HelloSettings, LoopbackSettings},
     mnemos_alloc::containers::Box,
-    services::{forth_spawnulator::SpawnulatorServer, serial_mux::SerialMuxServer},
     trace::{self, Instrument},
     Kernel, KernelSettings,
 };
@@ -43,8 +41,6 @@ pub struct D1 {
     _spim: spim::Spim1,
     i2c0_int: (Interrupt, fn()),
 }
-
-static COLLECTOR: trace::SerialCollector = trace::SerialCollector::new();
 
 impl D1 {
     /// Initialize MnemOS for the D1.
@@ -97,33 +93,6 @@ impl D1 {
         })
         .unwrap();
 
-        // Initialize the SerialMuxServer
-        k.initialize({
-            const PORTS: usize = 16;
-            const FRAME_SIZE: usize = 512;
-            async {
-                // * Up to 16 virtual ports max
-                // * Framed messages up to 512 bytes max each
-                tracing::debug!("initializing SerialMuxServer...");
-                SerialMuxServer::register(k, PORTS, FRAME_SIZE)
-                    .await
-                    .unwrap();
-                tracing::info!("SerialMuxServer initialized!");
-            }
-            .instrument(tracing::info_span!(
-                "SerialMuxServer",
-                ports = PORTS,
-                frame_size = FRAME_SIZE
-            ))
-        })
-        .unwrap();
-
-        // initialize tracing
-        k.initialize(async move {
-            COLLECTOR.start(k).await;
-        })
-        .unwrap();
-
         // Initialize the I2C0 TWI
         let i2c0_int = i2c0.interrupt();
         k.initialize(
@@ -136,16 +105,7 @@ impl D1 {
         )
         .unwrap();
 
-        // Spawn a loopback port
-        let loopback_settings = LoopbackSettings::default();
-        k.initialize(loopback(k, loopback_settings)).unwrap();
-
-        // Spawn a hello port
-        let hello_settings = HelloSettings::default();
-        k.initialize(hello(k, hello_settings)).unwrap();
-
-        // Spawn the spawnulator
-        k.initialize(SpawnulatorServer::register(k, 16)).unwrap();
+        k.initialize_default_services(Default::default());
 
         Ok(Self {
             kernel: k,

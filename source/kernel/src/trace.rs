@@ -42,19 +42,31 @@ pub struct SerialCollector {
     in_send: AtomicBool,
 }
 
+#[derive(Debug)]
+pub struct SerialTraceSettings {
+    /// SerialMux port for sermux tracing.
+    port: u16,
+
+    /// Capacity for the serial port's send buffer.
+    sendbuf_capacity: usize,
+
+    /// Capacity for the trace ring buffer.
+    ///
+    /// Note that *two* buffers of this size will be allocated. One buffer is
+    /// used for the normal trace ring buffer, and another is used for the
+    /// interrupt service routine trace ring buffer.
+    tracebuf_capacity: usize,
+
+    /// Initial level filter used if the debug host does not select a max level.
+    initial_level: LevelFilter,
+}
+
+pub(crate) static COLLECTOR: SerialCollector = SerialCollector::new();
+
 // === impl SerialCollector ===
 
 impl SerialCollector {
-    pub const PORT: u16 = 3;
-
-    // 64k ought to be big enough for anyone
-    const CAPACITY: usize = 1024 * 64;
-
     pub const fn new() -> Self {
-        Self::with_max_level(LevelFilter::OFF)
-    }
-
-    pub const fn with_max_level(max_level: LevelFilter) -> Self {
         Self {
             tx: InitOnce::uninitialized(),
             isr_tx: InitOnce::uninitialized(),
@@ -65,19 +77,22 @@ impl SerialCollector {
             dropped_spans: AtomicUsize::new(0),
             dropped_metas: AtomicUsize::new(0),
             dropped_span_activity: AtomicUsize::new(0),
-            max_level: AtomicU8::new(level_to_u8(max_level)),
+            max_level: AtomicU8::new(level_to_u8(LevelFilter::OFF)),
             in_send: AtomicBool::new(false),
         }
     }
 
-    pub async fn start(&'static self, k: &'static crate::Kernel) {
+    pub async fn start(&'static self, k: &'static crate::Kernel, settings: SerialTraceSettings) {
+        self.max_level
+            .store(level_to_u8(settings.initial_level), Ordering::Release);
+
         // acquire sermux port 3
-        let port = serial_mux::PortHandle::open(k, 3, 1024)
+        let port = serial_mux::PortHandle::open(k, settings.port, settings.sendbuf_capacity)
             .await
             .expect("cannot initialize serial tracing, cannot open port 3!");
 
-        let (tx, rx) = bbq::new_spsc_channel(Self::CAPACITY).await;
-        let (isr_tx, isr_rx) = bbq::new_spsc_channel(Self::CAPACITY).await;
+        let (tx, rx) = bbq::new_spsc_channel(settings.tracebuf_capacity).await;
+        let (isr_tx, isr_rx) = bbq::new_spsc_channel(settings.tracebuf_capacity).await;
         self.tx.init(tx);
         self.isr_tx.init(isr_tx);
 
@@ -147,21 +162,19 @@ impl SerialCollector {
                                 let level = lvl
                                     .map(|lvl| lvl as u8)
                                     .unwrap_or(level_to_u8(LevelFilter::OFF));
-                                let prev = self.max_level.swap(level, Ordering::AcqRel);
-                                if prev != level {
-                                    tracing_core_02::callsite::rebuild_interest_cache();
-                                    info!(
-                                        message = %"hello from mnemOS",
-                                        version = %env!("CARGO_PKG_VERSION"),
-                                        git = %format_args!(
-                                            "{}@{}",
-                                            env!("VERGEN_GIT_BRANCH"),
-                                            env!("VERGEN_GIT_DESCRIBE")
-                                        ),
-                                        target = %env!("VERGEN_CARGO_TARGET_TRIPLE"),
-                                        profile = %if cfg!(debug_assertions) { "debug" } else { "release" },
-                                    );
-                                }
+                                self.max_level.store(level, Ordering::Release);
+                                tracing_core_02::callsite::rebuild_interest_cache();
+                                info!(
+                                    message = %"hello from mnemOS",
+                                    version = %env!("CARGO_PKG_VERSION"),
+                                    git = %format_args!(
+                                        "{}@{}",
+                                        env!("VERGEN_GIT_BRANCH"),
+                                        env!("VERGEN_GIT_DESCRIBE")
+                                    ),
+                                    target = %env!("VERGEN_CARGO_TARGET_TRIPLE"),
+                                    profile = %if cfg!(debug_assertions) { "debug" } else { "release" },
+                                );
                             }
                         }
 
@@ -377,6 +390,85 @@ impl Collect for SerialCollector {
             self.dropped_span_activity.fetch_add(1, Ordering::Relaxed);
         }
         false
+    }
+}
+
+// === impl SermuxTraceSettings ===
+
+impl SerialTraceSettings {
+    pub const DEFAULT_PORT: u16 = serial_mux::WellKnown::BinaryTracing as u16;
+    pub const DEFAULT_SENDBUF_CAPACITY: usize = 1024;
+    pub const DEFAULT_TRACEBUF_CAPACITY: usize = Self::DEFAULT_SENDBUF_CAPACITY * 64;
+    pub const DEFAULT_INITIAL_LEVEL: LevelFilter = LevelFilter::OFF;
+
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            port: Self::DEFAULT_PORT,
+            sendbuf_capacity: Self::DEFAULT_SENDBUF_CAPACITY,
+            tracebuf_capacity: Self::DEFAULT_TRACEBUF_CAPACITY,
+            initial_level: Self::DEFAULT_INITIAL_LEVEL,
+        }
+    }
+
+    /// Sets the [`serial_mux`] port on which the binary tracing service is
+    /// served.
+    ///
+    /// By default, this is [`Self::DEFAULT_PORT`] (the value of
+    /// [`serial_mux::WellKnown::BinaryTracing`]).
+    #[must_use]
+    pub fn with_port(self, port: impl Into<u16>) -> Self {
+        Self {
+            port: port.into(),
+            ..self
+        }
+    }
+
+    /// Sets the initial [`LevelFilter`] used when no trace client is connected
+    /// or when the trace client does not select a level.
+    ///
+    /// By default, this set to [`Self::DEFAULT_INITIAL_LEVEL`] ([`LevelFilter::OFF`]).
+    #[must_use]
+    pub fn with_initial_level(self, level: impl Into<LevelFilter>) -> Self {
+        Self {
+            initial_level: level.into(),
+            ..self
+        }
+    }
+
+    /// Sets the maximum capacity of the serial port send buffer (the buffer
+    /// used for communication between the trace service task and the serial mux
+    /// server).
+    ///
+    /// By default, this set to [`Self::DEFAULT_SENDBUF_CAPACITY`] (1 KB).
+    #[must_use]
+    pub const fn with_sendbuf_capacity(self, capacity: usize) -> Self {
+        Self {
+            sendbuf_capacity: capacity,
+            ..self
+        }
+    }
+
+    /// Sets the maximum capacity of the trace ring buffer (the buffer into
+    /// which new traces are serialized before being sent to the worker task).
+    ///
+    /// Note that *two* buffers of this size will be allocated. One buffer is
+    /// used for traces emitted by non-interrupt kernel code, and the other is
+    /// used for traces emitted inside of interrupt service routines (ISRs).
+    ///
+    /// By default, this set to [`Self::DEFAULT_TRACEBUF_CAPACITY`] (64 KB).
+    #[must_use]
+    pub const fn with_tracebuf_capacity(self, capacity: usize) -> Self {
+        Self {
+            tracebuf_capacity: capacity,
+            ..self
+        }
+    }
+}
+
+impl Default for SerialTraceSettings {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

@@ -365,7 +365,6 @@ struct Context {
 static DIRTY: WaitQueue = WaitQueue::new();
 
 fn draw_to(dest: &mut FullFrame, src: &MonoChunk, width: u32, height: u32) {
-    tracing::info!("drawing to");
     let meta = src.meta();
     let data = src.data();
     let mask = src.mask();

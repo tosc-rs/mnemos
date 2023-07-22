@@ -8,11 +8,7 @@ use melpomene::{
 };
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
-    daemons::{
-        sermux::{hello, loopback, HelloSettings, LoopbackSettings},
-        shells::{graphical_shell_mono, GraphicalShellSettings},
-    },
-    services::{forth_spawnulator::SpawnulatorServer, serial_mux::SerialMuxServer},
+    daemons::shells::{graphical_shell_mono, GraphicalShellSettings},
     Kernel, KernelSettings,
 };
 use tokio::{
@@ -20,7 +16,6 @@ use tokio::{
     time::{self, Duration},
 };
 
-use tracing::Instrument;
 const DISPLAY_WIDTH_PX: u32 = 400;
 const DISPLAY_HEIGHT_PX: u32 = 240;
 
@@ -93,27 +88,6 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     })
     .unwrap();
 
-    // Initialize the SerialMuxServer
-    k.initialize({
-        const PORTS: usize = 16;
-        const FRAME_SIZE: usize = 512;
-        async {
-            // * Up to 16 virtual ports max
-            // * Framed messages up to 512 bytes max each
-            tracing::debug!("initializing SerialMuxServer...");
-            SerialMuxServer::register(k, PORTS, FRAME_SIZE)
-                .await
-                .unwrap();
-            tracing::info!("SerialMuxServer initialized!");
-        }
-        .instrument(tracing::info_span!(
-            "SerialMuxServer",
-            ports = PORTS,
-            frame_size = FRAME_SIZE
-        ))
-    })
-    .unwrap();
-
     // Spawn the graphics driver
     k.initialize(async move {
         SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
@@ -122,21 +96,12 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     })
     .unwrap();
 
-    // Spawn a loopback port
-    let loopback_settings = LoopbackSettings::default();
-    k.initialize(loopback(k, loopback_settings)).unwrap();
-
-    // Spawn a hello port
-    let hello_settings = HelloSettings::default();
-    k.initialize(hello(k, hello_settings)).unwrap();
+    k.initialize_default_services(Default::default());
 
     // Spawn a graphical shell
     let mut guish = GraphicalShellSettings::with_display_size(DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX);
     guish.capacity = 1024;
     k.initialize(graphical_shell_mono(k, guish)).unwrap();
-
-    // Spawn the spawnulator
-    k.initialize(SpawnulatorServer::register(k, 16)).unwrap();
 
     loop {
         // Tick the scheduler

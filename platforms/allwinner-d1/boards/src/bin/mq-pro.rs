@@ -83,7 +83,7 @@ fn main() -> ! {
             tracing::info!("got i2c puppet client");
 
             let mut keys = i2c_puppet
-                .subscribe_to_keys()
+                .subscribe_to_raw_keys()
                 .await
                 .expect("can't get keys");
             tracing::info!("got key subscription");

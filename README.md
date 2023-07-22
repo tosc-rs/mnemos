@@ -52,10 +52,12 @@ If you don't have access to a supported D1 board, or want a quicker development
 workflow for testing cross-platform changes, MnemOS also has a software
 simulator, called [Melpomene]. Melpomene runs as a userspace application binary on
 a development machine, and runs the MnemOS kernel with simulated hardware.
-Melpomene can be run using the `cargo melpomene` Cargo alias.
+Melpomene can be run using the `just melpomene` [`just` recipe], or using
+`cargo run --bin melpomene`.
 
 [`platforms/allwinner-d1/README.md`]: ./platforms/allwinner-d1/README.md
 [Melpomene]: ./source/melpomene
+[`just` recipe]: ./justfile
 
 ## Getting Involved
 
