@@ -1,7 +1,13 @@
 //! EmbDisplay Service v2
 //!
-//! TODO: James needs to rewrite the module level docs!
-
+//! EmbDisplayV2 is the second generation display driver interface.
+//!
+//! Users are expected to allocate [FrameChunk]s, which are a subsection of the
+//! total screen, and send them to the Display service for drawing. Once drawn,
+//! the display returns the chunks to the user for potential re-use.
+//!
+//! See the docs of [FrameChunk] and [EmbDisplayClient] for additional details
+//! of use.
 use core::time::Duration;
 
 use crate::{

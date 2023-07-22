@@ -16,7 +16,7 @@ use kernel::{
         bbq::{new_bidi_channel, BidiHandle, Consumer, GrantW, SpscProducer},
         kchannel::{KChannel, KConsumer},
     },
-    maitake::sync::WaitCell,
+    maitake::sync::WaitQueue,
     mnemos_alloc::containers::Box,
     registry::Message,
     services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
@@ -43,7 +43,7 @@ impl core::fmt::Write for GrantWriter {
     }
 }
 
-static TX_DONE: WaitCell = WaitCell::new();
+static TX_DONE: WaitQueue = WaitQueue::new();
 static UART_RX: AtomicPtr<SpscProducer> = AtomicPtr::new(null_mut());
 
 pub struct D1Uart {
@@ -51,7 +51,7 @@ pub struct D1Uart {
 }
 
 impl D1Uart {
-    pub fn tx_done_waker() -> &'static WaitCell {
+    pub fn tx_done_waker() -> &'static WaitQueue {
         &TX_DONE
     }
 
