@@ -407,6 +407,7 @@ pub struct DisplayMetadata {
     pub height: u32,
 }
 
+/// Metadata of the [FrameChunk]
 #[derive(Copy, Clone)]
 pub struct FrameChunkMetadata {
     start_x: u32,
@@ -415,7 +416,6 @@ pub struct FrameChunkMetadata {
     height: u32,
 }
 
-/// Metadata of the [FrameChunk]
 impl FrameChunkMetadata {
     pub fn start_x(&self) -> u32 {
         self.start_x
