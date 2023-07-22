@@ -105,7 +105,6 @@ impl CommanderTask {
     async fn run(self, width: u32, height: u32) {
         let output_settings = OutputSettingsBuilder::new()
             .theme(BinaryColorTheme::OledBlue)
-            .scale(1)
             .build();
 
         let bytes = (width * height) as usize;

@@ -472,7 +472,7 @@ impl<P> OpenEnvelope<P> {
 }
 
 impl<P> Envelope<P> {
-    // TODO: constrain types
+    // NOTE: proper types are constrained by [Message::split]
     fn split_reply<R>(self) -> (P, OpenEnvelope<R>) {
         let env = OpenEnvelope {
             body: PhantomData,
