@@ -29,7 +29,7 @@ _d1_dir := "platforms/allwinner-d1/boards"
 
 _pomelo_dir := "platforms/pomelo"
 
-_melpo_dir := "source/melpomene"
+_melpo_dir := "platforms/melpomene"
 
 # arguments to pass to all RustDoc invocations
 _rustdoc := _cargo + " doc --no-deps --all-features"

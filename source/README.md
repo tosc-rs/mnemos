@@ -19,7 +19,6 @@ Focus on userspace will resume after more progress has been made on the kernel.
 * [`alloc/`] - The MnemOS memory allocator.
 * [`forth3/`] - This library implements a [Forth] virtual machine for the MnemOS userspace.
 * [`kernel/`] - This is the kernel library for MnemOS
-* [`melpomene/`] - Melpomene is the simulator for MnemOS development
 * [`mstd/`] - This is the userspace "standard library", which wraps mnemos-specific capabilities
 * [`notes/`] - Miscellaneous development notes
 * [`sermux-proto`] - Wire types used for the Serial Mux service, which allows for multiplexed "ports" over a serial link
@@ -30,7 +29,6 @@ Focus on userspace will resume after more progress has been made on the kernel.
 [`alloc/`]: ./alloc
 [`forth3/`]: ./forth3
 [`kernel/`]: ./kernel/
-[`melpomene/`]: ./melpomene/
 [`mstd/`]: ./mstd/
 [`notes/`]: ./notes/
 [`sermux-proto`]: ./sermux-proto

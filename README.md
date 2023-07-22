@@ -32,8 +32,8 @@ The project layout contains the following folders:
 
 * [`assets/`] - images and files used for READMEs and other documentation
 * [`book/`] - This is the source of "the mnemOS book"
-* [`source/`] - This folder contains the source code of the cross-platform kernel, userspace, simulator, and related libraries
-* [`platforms/`] - This folder contains code specific to each targeted hardware platform
+* [`source/`] - This folder contains the source code of the cross-platform kernel, userspace, and related libraries
+* [`platforms/`] - This folder contains code specific to each targeted hardware and simulation platform
 * [`tools/`] - This folder contains desktop tools used for working with MnemOS
 
 [`assets/`]: ./assets/
@@ -56,7 +56,7 @@ Melpomene can be run using the `just melpomene` [`just` recipe], or using
 `cargo run --bin melpomene`.
 
 [`platforms/allwinner-d1/README.md`]: ./platforms/allwinner-d1/README.md
-[Melpomene]: ./source/melpomene
+[Melpomene]: ./platforms/melpomene
 [`just` recipe]: ./justfile
 
 ## Getting Involved
