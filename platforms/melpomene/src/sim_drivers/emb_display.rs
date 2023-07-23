@@ -18,8 +18,6 @@
 //! them back to be rendered into the total frame. Any data in the client's sub-frame
 //! will replace the current contents of the whole frame buffer.
 
-#![allow(dead_code, unused_variables, unreachable_code, unused_mut)]
-
 use std::time::Duration;
 
 use embedded_graphics::{
