@@ -26,6 +26,7 @@ use embedded_graphics::{
     prelude::*,
 };
 use embedded_graphics_simulator::{
+    sdl2::{Keycode, Mod},
     BinaryColorTheme, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
 };
 use maitake::sync::Mutex;
@@ -33,9 +34,16 @@ use mnemos_alloc::containers::{Arc, HeapArray};
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
     registry::Message,
-    services::emb_display::{
-        DisplayMetadata, EmbDisplayService, FrameChunk, FrameError, FrameKind, MonoChunk, Request,
-        Response,
+    services::{
+        emb_display::{
+            DisplayMetadata, EmbDisplayService, FrameChunk, FrameError, FrameKind, MonoChunk,
+            Request, Response,
+        },
+        keyboard::{
+            key_event::{self, KeyCode, Modifiers},
+            mux::KeyboardMuxClient,
+            KeyEvent,
+        },
     },
     Kernel,
 };
@@ -199,8 +207,41 @@ impl CommanderTask {
     }
 }
 
+async fn handle_key_event(kmc: &mut KeyboardMuxClient, evt: SimulatorEvent) -> bool {
+    match evt {
+        SimulatorEvent::KeyDown {
+            keycode,
+            keymod,
+            repeat,
+        } => {
+            tracing::trace!(?evt, "Got key event from Simulator");
+            if let Some(k) = sim_key_to_key_event(keycode, keymod, repeat, true) {
+                kmc.publish_key(k).await.is_err()
+            } else {
+                false
+            }
+        }
+        SimulatorEvent::KeyUp {
+            keycode,
+            keymod,
+            repeat,
+        } => {
+            tracing::trace!(?evt, "Got key event from Simulator");
+            if let Some(k) = sim_key_to_key_event(keycode, keymod, repeat, false) {
+                kmc.publish_key(k).await.is_err()
+            } else {
+                false
+            }
+        }
+        SimulatorEvent::Quit => true,
+        _ => false,
+    }
+}
+
 async fn render_loop(kernel: &'static Kernel, mutex: Arc<Mutex<Option<Context>>>) {
     let mut idle_ticks = 0;
+
+    let mut keymux = KeyboardMuxClient::from_registry(kernel).await;
     loop {
         kernel.sleep(Duration::from_micros(1_000_000 / 15)).await;
         let mut guard = mutex.lock().await;
@@ -222,8 +263,10 @@ async fn render_loop(kernel: &'static Kernel, mutex: Arc<Mutex<Option<Context>>>
                 idle_ticks += 1;
             }
 
-            if window.events().any(|e| e == SimulatorEvent::Quit) {
-                done = true;
+            for evt in window.events().into_iter() {
+                if handle_key_event(&mut keymux, evt).await {
+                    done = true;
+                }
             }
         } else {
             done = true;
@@ -301,4 +344,313 @@ fn frame_display(fc: &HeapArray<u8>, width: u32) -> Result<ImageRaw<Gray8>, ()> 
     // while we are currently doing 8bpp.
     raw_image = ImageRaw::<Gray8>::new(&fc, width);
     Ok(raw_image)
+}
+
+fn sim_key_to_key_event(
+    keycode: Keycode,
+    keymod: Mod,
+    repeat: bool,
+    is_down: bool,
+) -> Option<KeyEvent> {
+    let key_kind = match (repeat, is_down) {
+        (true, true) => key_event::Kind::Held,
+        (false, true) => key_event::Kind::Pressed,
+        (_, false) => key_event::Kind::Released,
+    };
+
+    let mut modi = Modifiers::new();
+
+    if (keymod & Mod::LSHIFTMOD) != Mod::NOMOD {
+        modi.set(Modifiers::SHIFT, true);
+    }
+    if (keymod & Mod::RSHIFTMOD) != Mod::NOMOD {
+        modi.set(Modifiers::SHIFT, true);
+    }
+    if (keymod & Mod::LCTRLMOD) != Mod::NOMOD {
+        modi.set(Modifiers::CTRL, true);
+    }
+    if (keymod & Mod::RCTRLMOD) != Mod::NOMOD {
+        modi.set(Modifiers::CTRL, true);
+    }
+    if (keymod & Mod::LALTMOD) != Mod::NOMOD {
+        modi.set(Modifiers::ALT, true);
+    }
+    if (keymod & Mod::RALTMOD) != Mod::NOMOD {
+        modi.set(Modifiers::ALT, true);
+    }
+    if (keymod & Mod::LGUIMOD) != Mod::NOMOD {
+        modi.set(Modifiers::META, true);
+    }
+    if (keymod & Mod::RGUIMOD) != Mod::NOMOD {
+        modi.set(Modifiers::META, true);
+    }
+    if (keymod & Mod::NUMMOD) != Mod::NOMOD {
+        modi.set(Modifiers::NUMLOCK, true);
+    }
+    if (keymod & Mod::CAPSMOD) != Mod::NOMOD {
+        modi.set(Modifiers::CAPSLOCK, true);
+    }
+    if (keymod & Mod::MODEMOD) != Mod::NOMOD {
+        tracing::warn!("Modemod not supported");
+    }
+    if (keymod & Mod::RESERVEDMOD) != Mod::NOMOD {
+        tracing::warn!("Reservedmod not supported");
+    }
+
+    let upper = modi.get(Modifiers::SHIFT) || modi.get(Modifiers::CAPSLOCK);
+
+    // Whew this is something.
+    //
+    // TODO(eliza): Fix this once keymux handles meta characters!
+    let code: KeyCode = match keycode {
+        Keycode::Backspace => KeyCode::Backspace,
+        Keycode::Tab => KeyCode::Tab,
+        Keycode::Return => KeyCode::Enter,
+        Keycode::Escape => KeyCode::Esc,
+        Keycode::Space => KeyCode::Char(' '),
+        Keycode::Semicolon => KeyCode::Char(if upper { ':' } else { ';' }),
+        Keycode::Less => KeyCode::Char('<'),
+        Keycode::Equals => KeyCode::Char('='),
+        Keycode::Greater => KeyCode::Char('>'),
+        Keycode::Question => KeyCode::Char('?'),
+        Keycode::At => KeyCode::Char('@'),
+        Keycode::Caret => KeyCode::Char('^'),
+        Keycode::Underscore => KeyCode::Char('_'),
+        Keycode::A => KeyCode::Char(if upper { 'A' } else { 'a' }),
+        Keycode::B => KeyCode::Char(if upper { 'B' } else { 'b' }),
+        Keycode::C => KeyCode::Char(if upper { 'C' } else { 'c' }),
+        Keycode::D => KeyCode::Char(if upper { 'D' } else { 'd' }),
+        Keycode::E => KeyCode::Char(if upper { 'E' } else { 'e' }),
+        Keycode::F => KeyCode::Char(if upper { 'F' } else { 'f' }),
+        Keycode::G => KeyCode::Char(if upper { 'G' } else { 'g' }),
+        Keycode::H => KeyCode::Char(if upper { 'H' } else { 'h' }),
+        Keycode::I => KeyCode::Char(if upper { 'I' } else { 'i' }),
+        Keycode::J => KeyCode::Char(if upper { 'J' } else { 'j' }),
+        Keycode::K => KeyCode::Char(if upper { 'K' } else { 'k' }),
+        Keycode::L => KeyCode::Char(if upper { 'L' } else { 'l' }),
+        Keycode::M => KeyCode::Char(if upper { 'M' } else { 'm' }),
+        Keycode::N => KeyCode::Char(if upper { 'N' } else { 'n' }),
+        Keycode::O => KeyCode::Char(if upper { 'O' } else { 'o' }),
+        Keycode::P => KeyCode::Char(if upper { 'P' } else { 'p' }),
+        Keycode::Q => KeyCode::Char(if upper { 'Q' } else { 'q' }),
+        Keycode::R => KeyCode::Char(if upper { 'R' } else { 'r' }),
+        Keycode::S => KeyCode::Char(if upper { 'S' } else { 's' }),
+        Keycode::T => KeyCode::Char(if upper { 'T' } else { 't' }),
+        Keycode::U => KeyCode::Char(if upper { 'U' } else { 'u' }),
+        Keycode::V => KeyCode::Char(if upper { 'V' } else { 'v' }),
+        Keycode::W => KeyCode::Char(if upper { 'W' } else { 'w' }),
+        Keycode::X => KeyCode::Char(if upper { 'X' } else { 'x' }),
+        Keycode::Y => KeyCode::Char(if upper { 'Y' } else { 'y' }),
+        Keycode::Z => KeyCode::Char(if upper { 'Z' } else { 'z' }),
+        Keycode::Delete => KeyCode::Delete,
+        Keycode::F1 => KeyCode::F(1),
+        Keycode::F2 => KeyCode::F(2),
+        Keycode::F3 => KeyCode::F(3),
+        Keycode::F4 => KeyCode::F(4),
+        Keycode::F5 => KeyCode::F(5),
+        Keycode::F6 => KeyCode::F(6),
+        Keycode::F7 => KeyCode::F(7),
+        Keycode::F8 => KeyCode::F(8),
+        Keycode::F9 => KeyCode::F(9),
+        Keycode::F10 => KeyCode::F(10),
+        Keycode::F11 => KeyCode::F(11),
+        Keycode::F12 => KeyCode::F(12),
+        Keycode::F13 => KeyCode::F(13),
+        Keycode::F14 => KeyCode::F(14),
+        Keycode::F15 => KeyCode::F(15),
+        Keycode::F16 => KeyCode::F(16),
+        Keycode::F17 => KeyCode::F(17),
+        Keycode::F18 => KeyCode::F(18),
+        Keycode::F19 => KeyCode::F(19),
+        Keycode::F20 => KeyCode::F(20),
+        Keycode::F21 => KeyCode::F(21),
+        Keycode::F22 => KeyCode::F(22),
+        Keycode::F23 => KeyCode::F(23),
+        Keycode::F24 => KeyCode::F(24),
+        Keycode::PrintScreen => KeyCode::PrintScreen,
+        Keycode::Pause => KeyCode::Pause,
+        Keycode::Insert => KeyCode::Insert,
+        Keycode::Home => KeyCode::Home,
+        Keycode::PageUp => KeyCode::PageUp,
+        Keycode::End => KeyCode::End,
+        Keycode::PageDown => KeyCode::PageDown,
+        Keycode::Right => KeyCode::Right,
+        Keycode::Left => KeyCode::Left,
+        Keycode::Down => KeyCode::Down,
+        Keycode::Up => KeyCode::Up,
+        Keycode::Num0 => KeyCode::Char(if upper { ')' } else { '0' }),
+        Keycode::Num1 => KeyCode::Char(if upper { '!' } else { '1' }),
+        Keycode::Num2 => KeyCode::Char(if upper { '@' } else { '2' }),
+        Keycode::Num3 => KeyCode::Char(if upper { '#' } else { '3' }),
+        Keycode::Num4 => KeyCode::Char(if upper { '$' } else { '4' }),
+        Keycode::Num5 => KeyCode::Char(if upper { '%' } else { '5' }),
+        Keycode::Num6 => KeyCode::Char(if upper { '^' } else { '6' }),
+        Keycode::Num7 => KeyCode::Char(if upper { '&' } else { '7' }),
+        Keycode::Num8 => KeyCode::Char(if upper { '*' } else { '8' }),
+        Keycode::Num9 => KeyCode::Char(if upper { '(' } else { '9' }),
+        Keycode::Quote => KeyCode::Char(if upper { '"' } else { '\'' }),
+        Keycode::LeftBracket => KeyCode::Char(if upper { '{' } else { '[' }),
+        Keycode::Backslash => KeyCode::Char(if upper { '|' } else { '\\' }),
+        Keycode::RightBracket => KeyCode::Char(if upper { '}' } else { ']' }),
+        Keycode::Backquote => KeyCode::Char(if upper { '~' } else { '`' }),
+        Keycode::Plus => KeyCode::Char('+'),
+        Keycode::Comma => KeyCode::Char(if upper { '<' } else { ',' }),
+        Keycode::Minus => KeyCode::Char(if upper { '_' } else { '-' }),
+        Keycode::Period => KeyCode::Char(if upper { '>' } else { '.' }),
+        Keycode::Slash => KeyCode::Char(if upper { '/' } else { '?' }),
+
+        // Ignored
+        Keycode::LCtrl => return None,
+        Keycode::LShift => return None,
+        Keycode::LAlt => return None,
+        Keycode::LGui => return None,
+        Keycode::RCtrl => return None,
+        Keycode::RShift => return None,
+        Keycode::RAlt => return None,
+        Keycode::RGui => return None,
+        Keycode::Mode => return None,
+
+        // TODO
+        // Keycode::Exclaim => todo!(),
+        // Keycode::Quotedbl => todo!(),
+        // Keycode::Hash => todo!(),
+        // Keycode::Dollar => todo!(),
+        // Keycode::Percent => todo!(),
+        // Keycode::Ampersand => todo!(),
+        // Keycode::LeftParen => todo!(),
+        // Keycode::RightParen => todo!(),
+        // Keycode::Asterisk => todo!(),
+        // Keycode::Colon => todo!(),
+        // Keycode::CapsLock => todo!(),
+        // Keycode::ScrollLock => todo!(),
+        // Keycode::NumLockClear => todo!(),
+        // Keycode::KpDivide => todo!(),
+        // Keycode::KpMultiply => todo!(),
+        // Keycode::KpMinus => todo!(),
+        // Keycode::KpPlus => todo!(),
+        // Keycode::KpEnter => todo!(),
+        // Keycode::Kp1 => todo!(),
+        // Keycode::Kp2 => todo!(),
+        // Keycode::Kp3 => todo!(),
+        // Keycode::Kp4 => todo!(),
+        // Keycode::Kp5 => todo!(),
+        // Keycode::Kp6 => todo!(),
+        // Keycode::Kp7 => todo!(),
+        // Keycode::Kp8 => todo!(),
+        // Keycode::Kp9 => todo!(),
+        // Keycode::Kp0 => todo!(),
+        // Keycode::KpPeriod => todo!(),
+        // Keycode::Application => todo!(),
+        // Keycode::Power => todo!(),
+        // Keycode::KpEquals => todo!(),
+        // Keycode::Execute => todo!(),
+        // Keycode::Help => todo!(),
+        // Keycode::Menu => todo!(),
+        // Keycode::Select => todo!(),
+        // Keycode::Stop => todo!(),
+        // Keycode::Again => todo!(),
+        // Keycode::Undo => todo!(),
+        // Keycode::Cut => todo!(),
+        // Keycode::Copy => todo!(),
+        // Keycode::Paste => todo!(),
+        // Keycode::Find => todo!(),
+        // Keycode::Mute => todo!(),
+        // Keycode::VolumeUp => todo!(),
+        // Keycode::VolumeDown => todo!(),
+        // Keycode::KpComma => todo!(),
+        // Keycode::KpEqualsAS400 => todo!(),
+        // Keycode::AltErase => todo!(),
+        // Keycode::Sysreq => todo!(),
+        // Keycode::Cancel => todo!(),
+        // Keycode::Clear => todo!(),
+        // Keycode::Prior => todo!(),
+        // Keycode::Return2 => todo!(),
+        // Keycode::Separator => todo!(),
+        // Keycode::Out => todo!(),
+        // Keycode::Oper => todo!(),
+        // Keycode::ClearAgain => todo!(),
+        // Keycode::CrSel => todo!(),
+        // Keycode::ExSel => todo!(),
+        // Keycode::Kp00 => todo!(),
+        // Keycode::Kp000 => todo!(),
+        // Keycode::ThousandsSeparator => todo!(),
+        // Keycode::DecimalSeparator => todo!(),
+        // Keycode::CurrencyUnit => todo!(),
+        // Keycode::CurrencySubUnit => todo!(),
+        // Keycode::KpLeftParen => todo!(),
+        // Keycode::KpRightParen => todo!(),
+        // Keycode::KpLeftBrace => todo!(),
+        // Keycode::KpRightBrace => todo!(),
+        // Keycode::KpTab => todo!(),
+        // Keycode::KpBackspace => todo!(),
+        // Keycode::KpA => todo!(),
+        // Keycode::KpB => todo!(),
+        // Keycode::KpC => todo!(),
+        // Keycode::KpD => todo!(),
+        // Keycode::KpE => todo!(),
+        // Keycode::KpF => todo!(),
+        // Keycode::KpXor => todo!(),
+        // Keycode::KpPower => todo!(),
+        // Keycode::KpPercent => todo!(),
+        // Keycode::KpLess => todo!(),
+        // Keycode::KpGreater => todo!(),
+        // Keycode::KpAmpersand => todo!(),
+        // Keycode::KpDblAmpersand => todo!(),
+        // Keycode::KpVerticalBar => todo!(),
+        // Keycode::KpDblVerticalBar => todo!(),
+        // Keycode::KpColon => todo!(),
+        // Keycode::KpHash => todo!(),
+        // Keycode::KpSpace => todo!(),
+        // Keycode::KpAt => todo!(),
+        // Keycode::KpExclam => todo!(),
+        // Keycode::KpMemStore => todo!(),
+        // Keycode::KpMemRecall => todo!(),
+        // Keycode::KpMemClear => todo!(),
+        // Keycode::KpMemAdd => todo!(),
+        // Keycode::KpMemSubtract => todo!(),
+        // Keycode::KpMemMultiply => todo!(),
+        // Keycode::KpMemDivide => todo!(),
+        // Keycode::KpPlusMinus => todo!(),
+        // Keycode::KpClear => todo!(),
+        // Keycode::KpClearEntry => todo!(),
+        // Keycode::KpBinary => todo!(),
+        // Keycode::KpOctal => todo!(),
+        // Keycode::KpDecimal => todo!(),
+        // Keycode::KpHexadecimal => todo!(),
+        // Keycode::AudioNext => todo!(),
+        // Keycode::AudioPrev => todo!(),
+        // Keycode::AudioStop => todo!(),
+        // Keycode::AudioPlay => todo!(),
+        // Keycode::AudioMute => todo!(),
+        // Keycode::MediaSelect => todo!(),
+        // Keycode::Www => todo!(),
+        // Keycode::Mail => todo!(),
+        // Keycode::Calculator => todo!(),
+        // Keycode::Computer => todo!(),
+        // Keycode::AcSearch => todo!(),
+        // Keycode::AcHome => todo!(),
+        // Keycode::AcBack => todo!(),
+        // Keycode::AcForward => todo!(),
+        // Keycode::AcStop => todo!(),
+        // Keycode::AcRefresh => todo!(),
+        // Keycode::AcBookmarks => todo!(),
+        // Keycode::BrightnessDown => todo!(),
+        // Keycode::BrightnessUp => todo!(),
+        // Keycode::DisplaySwitch => todo!(),
+        // Keycode::KbdIllumToggle => todo!(),
+        // Keycode::KbdIllumDown => todo!(),
+        // Keycode::KbdIllumUp => todo!(),
+        // Keycode::Eject => todo!(),
+        // Keycode::Sleep => todo!(),
+        other => {
+            tracing::error!(key = other.to_string(), "Key not supported!",);
+            return None;
+        }
+    };
+
+    Some(KeyEvent {
+        kind: key_kind,
+        modifiers: modi,
+        code,
+    })
 }
