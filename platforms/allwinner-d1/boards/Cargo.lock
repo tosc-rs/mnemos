@@ -112,7 +112,7 @@ dependencies = [
 [[package]]
 name = "cordyceps"
 version = "0.3.2"
-source = "git+https://github.com/hawkw/mycelium.git?rev=f65ff5abfc3a59eb40f649a1b0f56a38bca52b98#f65ff5abfc3a59eb40f649a1b0f56a38bca52b98"
+source = "git+https://github.com/hawkw/mycelium.git?rev=944f0aae15b155159d65c2ddbc65a42e70a8edd2#944f0aae15b155159d65c2ddbc65a42e70a8edd2"
 dependencies = [
  "loom",
  "tracing 0.1.37",
@@ -413,7 +413,7 @@ dependencies = [
 [[package]]
 name = "maitake"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=f65ff5abfc3a59eb40f649a1b0f56a38bca52b98#f65ff5abfc3a59eb40f649a1b0f56a38bca52b98"
+source = "git+https://github.com/hawkw/mycelium.git?rev=944f0aae15b155159d65c2ddbc65a42e70a8edd2#944f0aae15b155159d65c2ddbc65a42e70a8edd2"
 dependencies = [
  "cordyceps",
  "mycelium-bitfield",
@@ -545,12 +545,12 @@ dependencies = [
 [[package]]
 name = "mycelium-bitfield"
 version = "0.1.3"
-source = "git+https://github.com/hawkw/mycelium.git?rev=f65ff5abfc3a59eb40f649a1b0f56a38bca52b98#f65ff5abfc3a59eb40f649a1b0f56a38bca52b98"
+source = "git+https://github.com/hawkw/mycelium.git?rev=944f0aae15b155159d65c2ddbc65a42e70a8edd2#944f0aae15b155159d65c2ddbc65a42e70a8edd2"
 
 [[package]]
 name = "mycelium-util"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=f65ff5abfc3a59eb40f649a1b0f56a38bca52b98#f65ff5abfc3a59eb40f649a1b0f56a38bca52b98"
+source = "git+https://github.com/hawkw/mycelium.git?rev=944f0aae15b155159d65c2ddbc65a42e70a8edd2#944f0aae15b155159d65c2ddbc65a42e70a8edd2"
 dependencies = [
  "cordyceps",
  "loom",

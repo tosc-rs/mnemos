@@ -1,7 +1,6 @@
 //! Kernel Channels
 //!
 //! Kernel Channels are an async/await, MPSC queue, with a fixed backing storage (e.g. they are bounded).
-
 use core::{cell::UnsafeCell, ops::Deref, ptr::NonNull};
 use mnemos_alloc::containers::{Arc, ArrayBuf};
 use spitebuf::{DequeueError, EnqueueError, MpScQueue};

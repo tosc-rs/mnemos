@@ -63,11 +63,11 @@ path = "../../beepy"
 
 [patch.crates-io.maitake]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "f65ff5abfc3a59eb40f649a1b0f56a38bca52b98"
+rev = "944f0aae15b155159d65c2ddbc65a42e70a8edd2"
 
 [patch.crates-io.mycelium-util]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "f65ff5abfc3a59eb40f649a1b0f56a38bca52b98"
+rev = "944f0aae15b155159d65c2ddbc65a42e70a8edd2"
 
 # Use the `mycelium-bitfield` crate from the Mycelium monorepo rather than
 # crates.io.
@@ -78,11 +78,11 @@ rev = "f65ff5abfc3a59eb40f649a1b0f56a38bca52b98"
 # having both a Git dep and a crates.io dep seems unfortunate.
 [patch.crates-io.mycelium-bitfield]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "f65ff5abfc3a59eb40f649a1b0f56a38bca52b98"
+rev = "944f0aae15b155159d65c2ddbc65a42e70a8edd2"
 
 [patch.crates-io.cordyceps]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "f65ff5abfc3a59eb40f649a1b0f56a38bca52b98"
+rev = "944f0aae15b155159d65c2ddbc65a42e70a8edd2"
 
 [patch.crates-io.mnemos-alloc]
 path = "../../../source/alloc"
