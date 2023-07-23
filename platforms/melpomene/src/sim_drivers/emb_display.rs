@@ -18,7 +18,7 @@
 //! them back to be rendered into the total frame. Any data in the client's sub-frame
 //! will replace the current contents of the whole frame buffer.
 
-use std::time::Duration;
+use std::{time::Duration, process::exit};
 
 use embedded_graphics::{
     image::{Image, ImageRaw},
@@ -242,8 +242,9 @@ async fn render_loop(kernel: &'static Kernel, mutex: Arc<Mutex<Option<Context>>>
     let mut idle_ticks = 0;
 
     let mut keymux = KeyboardMuxClient::from_registry(kernel).await;
+    let mut first_done = false;
     loop {
-        kernel.sleep(Duration::from_micros(1_000_000 / 15)).await;
+        kernel.sleep(Duration::from_micros(1_000_000 / 20)).await;
         let mut guard = mutex.lock().await;
         let mut done = false;
         if let Some(Context {
@@ -253,27 +254,37 @@ async fn render_loop(kernel: &'static Kernel, mutex: Arc<Mutex<Option<Context>>>
             ..
         }) = (&mut *guard).as_mut()
         {
+            // We can't poll the events until the first draw, or we'll panic.
+            // But once we have: we want to always process events, even if there
+            // is nothing to draw, to potentially feed the keymux or catch
+            // a "time to die" event.
+            if first_done {
+                for evt in window.events().into_iter() {
+                    if handle_key_event(&mut keymux, evt).await {
+                        done = true;
+                    }
+                }
+            }
+
             // If nothing has been drawn, only update the frame at 5Hz to save
             // CPU usage
-            if *dirty || idle_ticks >= 3 {
+            if *dirty || idle_ticks >= 4 {
                 idle_ticks = 0;
                 *dirty = false;
                 window.update(&sdisp);
+                first_done = true;
             } else {
                 idle_ticks += 1;
             }
 
-            for evt in window.events().into_iter() {
-                if handle_key_event(&mut keymux, evt).await {
-                    done = true;
-                }
-            }
+
         } else {
             done = true;
         }
         if done {
-            let _ = guard.take();
-            break;
+            tracing::warn!("Display closed, stopping melpomene");
+            kernel.sleep(Duration::from_millis(100)).await;
+            exit(0);
         }
     }
 }
