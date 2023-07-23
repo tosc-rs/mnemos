@@ -18,7 +18,7 @@
 //! them back to be rendered into the total frame. Any data in the client's sub-frame
 //! will replace the current contents of the whole frame buffer.
 
-use std::{time::Duration, process::exit};
+use std::{process::exit, time::Duration};
 
 use embedded_graphics::{
     image::{Image, ImageRaw},
@@ -276,8 +276,6 @@ async fn render_loop(kernel: &'static Kernel, mutex: Arc<Mutex<Option<Context>>>
             } else {
                 idle_ticks += 1;
             }
-
-
         } else {
             done = true;
         }
