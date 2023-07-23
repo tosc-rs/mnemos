@@ -360,9 +360,6 @@ fn sim_key_to_key_event(
 
     let mut modi = Modifiers::new();
 
-    if (keymod & Mod::NOMOD) != Mod::NOMOD {
-        // modi |= Modifiers::NOMOD;
-    }
     if (keymod & Mod::LSHIFTMOD) != Mod::NOMOD {
         modi.set(Modifiers::SHIFT, true);
     }
@@ -394,10 +391,10 @@ fn sim_key_to_key_event(
         modi.set(Modifiers::CAPSLOCK, true);
     }
     if (keymod & Mod::MODEMOD) != Mod::NOMOD {
-        // modi.set(Modifiers::MODEMOD, true);
+        tracing::warn!("Modemod not supported");
     }
     if (keymod & Mod::RESERVEDMOD) != Mod::NOMOD {
-        // modi.set(Modifiers::RESERVEDMOD, true);
+        tracing::warn!("Reservedmod not supported");
     }
 
     let upper = modi.get(Modifiers::SHIFT) || modi.get(Modifiers::CAPSLOCK);
