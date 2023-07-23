@@ -11,13 +11,13 @@ use crate::dmac::{
 use d1_pac::{CCU, GPIO, SPI_DBI};
 use kernel::{
     comms::{kchannel::KChannel, oneshot::Reusable},
-    maitake::sync::WaitQueue,
+    maitake::sync::WaitCell,
     mnemos_alloc::containers::FixedVec,
     registry::{uuid, Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo, Uuid},
     Kernel,
 };
 
-pub static SPI1_TX_DONE: WaitQueue = WaitQueue::new();
+pub static SPI1_TX_DONE: WaitCell = WaitCell::new();
 
 pub struct Spim1 {
     _x: (),
@@ -154,16 +154,24 @@ impl SpiSenderServer {
                         src_drq_type: SrcDrqType::Dram,
                     };
                     let descriptor = d_cfg.try_into().map_err(drop)?;
+
+                    // pre-register wait future to ensure the waker is in place before
+                    // starting the DMA transfer.
+                    let wait = SPI1_TX_DONE.subscribe().await;
+
+                    // start the DMA transfer.
                     let mut chan;
                     unsafe {
                         chan = Channel::summon_channel(1);
                         chan.set_channel_modes(ChannelMode::Wait, ChannelMode::Wait);
                         chan.start_descriptor(NonNull::from(&descriptor));
                     }
-                    SPI1_TX_DONE
-                        .wait()
-                        .await
-                        .expect("SPI1_TX_DONE WaitQueue should never be closed");
+
+                    // wait for the DMA transfer to complete.
+                    wait.await
+                        .expect("SPI1_TX_DONE WaitCell should never be closed");
+
+                    // stop the DMA transfer.
                     unsafe {
                         chan.stop_dma();
                     }
