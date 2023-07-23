@@ -113,6 +113,7 @@ impl CommanderTask {
     async fn run(self, width: u32, height: u32) {
         let output_settings = OutputSettingsBuilder::new()
             .theme(BinaryColorTheme::OledBlue)
+            .scale(1)
             .build();
 
         let bytes = (width * height) as usize;
@@ -157,6 +158,7 @@ impl CommanderTask {
     async fn message_loop(&self, mutex: Arc<Mutex<Option<Context>>>) {
         loop {
             let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
+            tracing::info!("MLOOP");
             let (req, env, reply_tx) = msg.split();
             match req {
                 Request::Draw(FrameChunk::Mono(fc)) => {
@@ -176,14 +178,19 @@ impl CommanderTask {
                     let response = env.fill(Ok(Response::FrameMeta(meta)));
                     let _ = reply_tx.reply_konly(response).await;
                 }
-                _ => todo!(),
+                _ => {
+                    tracing::error!("WELP");
+                    todo!()
+                },
             }
         }
     }
 
     /// Draw the given MonoChunk to the persistent framebuffer
     async fn draw_mono(&self, fc: &MonoChunk, mutex: &Mutex<Option<Context>>) -> Result<(), ()> {
+        tracing::warn!("DRAWLOCK");
         let mut guard = mutex.lock().await;
+        tracing::warn!("DRAWLOCKED");
         let ctx = if let Some(c) = (&mut *guard).as_mut() {
             c
         } else {
@@ -202,7 +209,7 @@ impl CommanderTask {
         let image = Image::new(&raw_img, Point::new(0, 0));
         image.draw(sdisp).unwrap();
         *dirty = true;
-
+        tracing::warn!("DRAWDROP");
         Ok(())
     }
 }
@@ -245,7 +252,9 @@ async fn render_loop(kernel: &'static Kernel, mutex: Arc<Mutex<Option<Context>>>
     let mut first_done = false;
     loop {
         kernel.sleep(Duration::from_micros(1_000_000 / 20)).await;
+        tracing::warn!("RENDERLOCK");
         let mut guard = mutex.lock().await;
+        tracing::warn!("RENDERLOCKED");
         let mut done = false;
         if let Some(Context {
             sdisp,
@@ -276,6 +285,7 @@ async fn render_loop(kernel: &'static Kernel, mutex: Arc<Mutex<Option<Context>>>
             } else {
                 idle_ticks += 1;
             }
+            tracing::warn!("RENDERDONE");
         } else {
             done = true;
         }

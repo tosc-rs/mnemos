@@ -49,7 +49,7 @@ pub enum DequeueError {
 
 impl<T, STO: Storage<T>> MpScQueue<T, STO> {
     /// Creates an empty queue
-    #[track_caller]
+    // #[track_caller]
     pub fn new(storage: STO) -> Self {
         let (ptr, len) = storage.buf();
         assert_eq!(len, len.next_power_of_two());

@@ -1,6 +1,7 @@
 use std::{alloc::System, sync::Arc};
 
 use clap::Parser;
+use embedded_graphics::{primitives::{Circle, StyledDrawable, PrimitiveStyleBuilder}, prelude::Point, pixelcolor::BinaryColor};
 use futures::FutureExt;
 use melpomene::{
     cli::{self, MelpomeneOptions},
@@ -9,7 +10,7 @@ use melpomene::{
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
     daemons::shells::{graphical_shell_mono, GraphicalShellSettings},
-    Kernel, KernelSettings,
+    Kernel, KernelSettings, services::emb_display::{EmbDisplayClient, FrameChunk, MonoChunk, FrameLocSize},
 };
 use tokio::{
     task,
@@ -99,9 +100,17 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     k.initialize_default_services(Default::default());
 
     // Spawn a graphical shell
-    let mut guish = GraphicalShellSettings::with_display_size(DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX);
-    guish.capacity = 1024;
-    k.initialize(graphical_shell_mono(k, guish)).unwrap();
+    // let mut guish = GraphicalShellSettings::with_display_size(DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX);
+    // guish.capacity = 1024;
+    // k.initialize(graphical_shell_mono(k, guish)).unwrap();
+
+    for i in 0..32 {
+        k.initialize(async move {
+            k.sleep(Duration::from_secs(i * 3)).await;
+            gui_demo(k, format!("GUI {i}")).await
+        }).unwrap();
+    }
+
 
     loop {
         // Tick the scheduler
@@ -145,5 +154,81 @@ async fn kernel_entry(opts: MelpomeneOptions) {
             // let other tokio tasks (simulated hardware devices) run.
             tokio::task::yield_now().await;
         }
+    }
+}
+
+#[tracing::instrument(skip(k))]
+async fn gui_demo(k: &'static Kernel, name: String) {
+    let mut window = EmbDisplayClient::from_registry(k).await;
+
+    const MIN_X: u32 = 0;
+    const MAX_X: u32 = 400;
+    const MIN_Y: u32 = 0;
+    const MAX_Y: u32 = 240;
+
+    let mut orb = MonoChunk::allocate_mono(FrameLocSize {
+        offset_x: 0,
+        offset_y: 0,
+        width: 50,
+        height: 50,
+    }).await;
+
+    let style = PrimitiveStyleBuilder::new()
+        .fill_color(BinaryColor::On)
+        .build();
+    Circle::new(Point::new(0, 0), 48)
+        .draw_styled(&style, &mut orb);
+
+    // orb = window.draw_mono(orb).await.unwrap();
+
+    let mut go_up = false;
+    let mut go_left = false;
+
+    loop {
+        let meta = orb.meta_mut();
+        let now_x = meta.start_x();
+        let now_y = meta.start_y();
+
+        if go_left {
+            if now_x == 0 {
+                meta.set_start_x(now_x + 1);
+                go_left = false;
+            } else {
+                meta.set_start_x(now_x - 1);
+            }
+        } else {
+            if now_x + meta.width() >= MAX_X {
+                meta.set_start_x(now_x - 1);
+                go_left = true;
+            } else {
+                meta.set_start_x(now_x + 1);
+            }
+        }
+
+        if go_up {
+            if now_y == 0 {
+                meta.set_start_y(now_y + 1);
+                go_up = false;
+            } else {
+                meta.set_start_y(now_y - 1);
+            }
+        } else {
+            if now_y + meta.height() >= MAX_Y {
+                meta.set_start_y(now_y - 1);
+                go_up = true;
+            } else {
+                meta.set_start_y(now_y + 1);
+            }
+        }
+
+        tracing::info!("DRAW");
+        orb = window.draw_mono(orb).await.unwrap();
+        orb.invert_masked();
+        tracing::info!("DRAWDONE");
+        k.sleep(Duration::from_millis(25)).await;
+        tracing::info!("DRAW INVERT");
+        orb = window.draw_mono(orb).await.unwrap();
+        orb.invert_masked();
+        tracing::info!("DRAW INVERTDONE");
     }
 }
