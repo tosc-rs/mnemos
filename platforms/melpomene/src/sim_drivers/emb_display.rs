@@ -419,7 +419,7 @@ fn sim_key_to_key_event(
         Keycode::Space => KeyCode::Char(' '),
         Keycode::Semicolon => KeyCode::Char(if upper { ':' } else { ';' }),
         Keycode::Less => KeyCode::Char('<'),
-        Keycode::Equals => KeyCode::Char('='),
+        Keycode::Equals => KeyCode::Char(if upper { '+' } else { '=' }),
         Keycode::Greater => KeyCode::Char('>'),
         Keycode::Question => KeyCode::Char('?'),
         Keycode::At => KeyCode::Char('@'),
@@ -506,9 +506,9 @@ fn sim_key_to_key_event(
         Keycode::Comma => KeyCode::Char(if upper { '<' } else { ',' }),
         Keycode::Minus => KeyCode::Char(if upper { '_' } else { '-' }),
         Keycode::Period => KeyCode::Char(if upper { '>' } else { '.' }),
-        Keycode::Slash => KeyCode::Char(if upper { '/' } else { '?' }),
+        Keycode::Slash => KeyCode::Char(if upper { '?' } else { '/' }),
 
-        // Ignored
+        // Ignored - these show up as meta keys
         Keycode::LCtrl => return None,
         Keycode::LShift => return None,
         Keycode::LAlt => return None,
