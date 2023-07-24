@@ -1,5 +1,9 @@
 [package]
 name = "mnemos-alloc"
+description = """
+An async allocator wrapper. This crate provides collection types and helper functions to allow
+for async handling of allocations, including turning allocation async.
+"""
 version = "0.1.0"
 edition = "2021"
 

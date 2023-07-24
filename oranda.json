@@ -1,0 +1,7 @@
+{
+    "project": {
+        "name": "Mnemos",
+        "description": "Hello this is mnemos",
+        "readme_path": "./README.md"
+    }
+}

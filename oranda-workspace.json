@@ -1,0 +1,68 @@
+{
+  "workspace": {
+    "name": "MnemOS",
+    "members": [
+      {
+        "//": "This is called 'a' just to defeat project sorting",
+        "slug": "a",
+        "path": "."
+      },
+      {
+        "slug": "kernel",
+        "path": "./source/kernel"
+      },
+      {
+        "slug": "abi",
+        "path": "source/abi"
+      },
+      {
+        "slug": "mstd",
+        "path": "source/mstd"
+      },
+      {
+        "slug": "spitebuf",
+        "path": "source/spitebuf"
+      },
+      {
+        "slug": "alloc",
+        "path": "source/alloc"
+      },
+      {
+        "slug": "forth3",
+        "path": "source/forth3"
+      },
+      {
+        "slug": "sermux-proto",
+        "path": "source/sermux-proto"
+      },
+      {
+        "slug": "trace-proto",
+        "path": "source/trace-proto"
+      },
+      {
+        "slug": "crowtty",
+        "path": "tools/crowtty"
+      },
+      {
+        "slug": "dumbloader",
+        "path": "tools/dumbloader"
+      },
+      {
+        "slug": "f3repl",
+        "path": "tools/f3repl"
+      },
+      {
+        "slug": "allwinner-core",
+        "path": "platforms/allwinner-d1/core"
+      },
+      {
+        "slug": "beepy",
+        "path": "platforms/beepy"
+      },
+      {
+        "slug": "melpomene",
+        "path": "platforms/melpomene"
+      }
+    ]
+  }
+}
