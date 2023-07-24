@@ -16,7 +16,7 @@ use kernel::{
         bbq::{new_bidi_channel, BidiHandle, Consumer, GrantW, SpscProducer},
         kchannel::{KChannel, KConsumer},
     },
-    maitake::sync::WaitQueue,
+    maitake::sync::WaitCell,
     mnemos_alloc::containers::Box,
     registry::Message,
     services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
@@ -43,7 +43,7 @@ impl core::fmt::Write for GrantWriter {
     }
 }
 
-static TX_DONE: WaitQueue = WaitQueue::new();
+static TX_DONE: WaitCell = WaitCell::new();
 static UART_RX: AtomicPtr<SpscProducer> = AtomicPtr::new(null_mut());
 
 pub struct D1Uart {
@@ -51,7 +51,7 @@ pub struct D1Uart {
 }
 
 impl D1Uart {
-    pub fn tx_done_waker() -> &'static WaitQueue {
+    pub fn tx_done_waker() -> &'static WaitCell {
         &TX_DONE
     }
 
@@ -130,11 +130,21 @@ impl D1Uart {
                 src_drq_type: SrcDrqType::Dram,
             };
             let descriptor = d_cfg.try_into().unwrap();
+
+            // pre-register wait future to ensure the waker is in place before
+            // starting the DMA transfer.
+            let wait = TX_DONE.subscribe().await;
+
+            // start the DMA transfer.
             unsafe {
                 tx_channel.set_channel_modes(ChannelMode::Wait, ChannelMode::Handshake);
                 tx_channel.start_descriptor(NonNull::from(&descriptor));
             }
-            let _ = TX_DONE.wait().await;
+
+            // wait for the DMA transfer to complete.
+            wait.await.expect("UART TX_DONE WaitCell is never closed!");
+
+            // stop the DMA transfer.
             unsafe {
                 tx_channel.stop_dma();
             }
