@@ -510,6 +510,7 @@ name = "mnemos-d1"
 version = "0.1.0"
 dependencies = [
  "d1-pac",
+ "embedded-graphics",
  "embedded-hal 0.2.7",
  "futures",
  "mnemos",
