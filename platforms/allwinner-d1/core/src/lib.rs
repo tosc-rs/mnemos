@@ -264,11 +264,11 @@ impl D1 {
         dmac.dmac_irq_pend0.modify(|r, w| {
             tracing::trace!(dmac_irq_pend0 = ?format_args!("{:#b}", r.bits()), "DMAC interrupt");
             if r.dma0_queue_irq_pend().bit_is_set() {
-                D1Uart::tx_done_waker().wake_all();
+                D1Uart::tx_done_waker().wake();
             }
 
             if r.dma1_queue_irq_pend().bit_is_set() {
-                spim::SPI1_TX_DONE.wake_all();
+                spim::SPI1_TX_DONE.wake();
             }
 
             // Will write-back and high bits

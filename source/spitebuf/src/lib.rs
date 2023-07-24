@@ -128,11 +128,14 @@ impl<T, STO: Storage<T>> MpScQueue<T, STO> {
 
     pub async fn dequeue_async(&self) -> Result<T, DequeueError> {
         loop {
+            // note: this future always completes immediately, it's awaited just
+            // to grab the wait future with a preregistered waker.
+            let wait = self.cons_wait.subscribe().await;
             match self.dequeue_sync() {
                 Some(t) => return Ok(t),
 
                 // Note: if we have been closed, this wait will fail.
-                None => match self.cons_wait.wait().await {
+                None => match wait.await {
                     Ok(()) => {}
                     Err(_) => return Err(DequeueError::Closed),
                 },

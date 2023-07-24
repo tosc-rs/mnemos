@@ -238,6 +238,7 @@ impl Kernel {
         maitake::time::set_global_timer(self.timer())
     }
 
+    #[track_caller]
     pub fn initialize<F>(&'static self, fut: F) -> Result<JoinHandle<F::Output>, &'static str>
     where
         F: Future + 'static,
@@ -263,6 +264,7 @@ impl Kernel {
         f(&mut guard)
     }
 
+    #[track_caller]
     pub fn spawn_allocated<F>(
         &'static self,
         task: <BoxStorage as Storage<LocalScheduler, F>>::StoredTask,
