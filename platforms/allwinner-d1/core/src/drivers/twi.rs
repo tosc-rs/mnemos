@@ -322,7 +322,7 @@ impl I2c0 {
         let (tx, rx) = KChannel::new_async(queued).await.split();
 
         kernel.spawn(self.run(rx)).await;
-        trace::debug!("TWI driver task spawned");
+        trace::info!("TWI driver task spawned");
         kernel
             .with_registry(move |reg| reg.register_konly::<I2cService>(&tx).map_err(drop))
             .await?;
@@ -332,7 +332,7 @@ impl I2c0 {
 
     #[tracing::instrument(name = "TWI", level = tracing::Level::INFO, skip(self, rx))]
     async fn run(self, rx: KConsumer<registry::Message<I2cService>>) {
-        tracing::debug!("starting TWI driver task");
+        tracing::info!("starting TWI driver task");
         while let Ok(registry::Message { msg, reply }) = rx.dequeue_async().await {
             let addr = msg.body.addr;
             let (txn, rx) = Transaction::new(msg.body).await;
@@ -411,7 +411,7 @@ impl I2c0 {
             }
         }
         // transaction ended!
-        tracing::debug!("I2C transaction ended");
+        tracing::trace!("I2C transaction ended");
     }
 }
 
@@ -487,7 +487,7 @@ impl TwiData {
             }
         };
         let mut needs_wake = false;
-        tracing::debug!(?status, state = ?self.state, twi = num, "TWI{num} interrupt");
+        tracing::trace!(?status, state = ?self.state, twi = num, "TWI{num} interrupt");
         twi.twi_cntr.modify(|_cntr_r, cntr_w| {
             self.state = match (self.state, status)  {
                 (State::Idle, _) => {
@@ -526,7 +526,7 @@ impl TwiData {
                         TwiOp::Write { buf, ref mut pos, .. } => {
                             // send the first byte of data
                             let byte = buf.as_slice()[0];
-                            tracing::debug!(twi = num, data = ?format_args!("{byte:#x}"), "TWI{num} write data");
+                            tracing::trace!(twi = num, data = ?format_args!("{byte:#x}"), "TWI{num} write data");
                             twi.twi_data.write(|w| w.data().variant(byte));
                             *pos += 1;
                             State::WaitForAck(addr)
