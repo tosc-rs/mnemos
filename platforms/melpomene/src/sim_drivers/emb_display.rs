@@ -66,7 +66,7 @@ impl SimDisplay {
     ) -> Result<(), FrameError> {
         tracing::debug!("initializing SimDisplay server ({width}x{height})...");
 
-        let (cmd_prod, cmd_cons) = KChannel::new_async(1).await.split();
+        let (cmd_prod, cmd_cons) = KChannel::new_async(2).await.split();
         let commander = CommanderTask {
             kernel,
             cmd: cmd_cons,
