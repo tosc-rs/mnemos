@@ -377,7 +377,7 @@ impl<T> Forth<T> {
             Lookup::Do => return Err(Error::InterpretingCompileOnlyWord),
             Lookup::Loop => return Err(Error::InterpretingCompileOnlyWord),
             Lookup::LQuote => {
-                self.input.advance_str().replace_err(Error::BadStrLiteral)?;
+                self.input.advance_str().map_err(Error::BadStrLiteral)?;
                 let lit = self.input.cur_str_literal().unwrap();
                 self.output.push_str(lit)?;
             }

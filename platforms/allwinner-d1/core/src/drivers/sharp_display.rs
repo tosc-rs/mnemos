@@ -211,7 +211,7 @@ struct Draw {
 
 impl Draw {
     #[tracing::instrument(skip(self))]
-    async fn draw_run(mut self) -> Result<(), ()> {
+    async fn draw_run(mut self) {
         loop {
             let mut c = self.ctxt.lock().await;
             self.buf.clear();

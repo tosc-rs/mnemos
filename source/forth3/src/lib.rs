@@ -69,7 +69,7 @@ pub enum Error {
     LQuoteMissingRQuote,
     LiteralStringTooLong,
     NullPointerInCFA,
-    BadStrLiteral,
+    BadStrLiteral(input::StrLiteralError),
     ForgetWithoutWordName,
     ForgetNotInDict,
     CantForgetBuiltins,

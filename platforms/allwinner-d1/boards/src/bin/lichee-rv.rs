@@ -33,7 +33,7 @@ fn main() -> ! {
     let dmac = Dmac::new(p.DMAC, &mut p.CCU);
     let plic = Plic::new(p.PLIC);
 
-    let d1 = D1::initialize(timers, uart, spim, dmac, plic, i2c0).unwrap();
+    let d1 = D1::initialize(timers, uart, spim, dmac, plic, i2c0);
 
     p.GPIO.pc_cfg0.modify(|_r, w| {
         w.pc1_select().output();

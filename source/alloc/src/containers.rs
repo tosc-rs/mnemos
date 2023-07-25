@@ -448,6 +448,7 @@ impl<T> FixedVec<T> {
     /// Returns an error if the slice would not fit in the capacity.
     /// If an error is returned, the contents of the FixedVec is unchanged
     #[inline]
+    #[allow(clippy::result_unit_err)]
     pub fn try_extend_from_slice(&mut self, sli: &[T]) -> Result<(), ()>
     where
         T: Clone,
