@@ -191,6 +191,9 @@ pub struct SingleThreadedLinkedListAllocator {
 }
 
 impl UnderlyingAllocator for SingleThreadedLinkedListAllocator {
+    // This constant is used as an initializer, so the interior mutability is
+    // not an issue.
+    #[allow(clippy::declare_interior_mutable_const)]
     const INIT: Self = SingleThreadedLinkedListAllocator {
         mlla: Mutex::new(Heap::empty()),
     };
