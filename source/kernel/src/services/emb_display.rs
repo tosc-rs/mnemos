@@ -113,7 +113,7 @@ impl EmbDisplayClient {
         let chunk = chunk.into();
         let resp = self
             .prod
-            .request_oneshot(Request::Draw(chunk.into()), &self.reply)
+            .request_oneshot(Request::Draw(chunk), &self.reply)
             .await
             .map_err(|_| FrameError::InternalError)?
             .body?;

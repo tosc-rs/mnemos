@@ -271,6 +271,7 @@ pub mod test {
     fn assert_send<T: Send>() {}
 
     #[test]
+    #[allow(clippy::identity_op)]
     fn sizes() {
         use core::mem::{align_of, size_of};
         assert_eq!(5 * size_of::<usize>(), size_of::<DictionaryEntry<()>>());
