@@ -574,8 +574,7 @@ impl BagOfHolding {
         let idx = self.next_idx();
         let tid = TypeId::of::<T>();
 
-        let _ = self
-            .inner
+        self.inner
             .try_push((
                 idx,
                 BohValue {

@@ -161,10 +161,10 @@ impl TryFrom<DescriptorConfig> for Descriptor {
         let source = value.source as usize;
         let destination = value.destination as usize;
 
-        if source as usize >= (1 << 34) {
+        if source >= (1 << 34) {
             return Err(());
         }
-        if destination as usize >= (1 << 34) {
+        if destination >= (1 << 34) {
             return Err(());
         }
         if value.byte_counter >= (1 << 25) {
