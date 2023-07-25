@@ -48,6 +48,9 @@ impl<T> LeakBox<T> {
         res
     }
 
+    // an `is_empty` doesn't make a ton of sense for this...maybe `len` should
+    // have been called `size`...
+    #[allow(clippy::len_without_is_empty)]
     pub fn len(&self) -> usize {
         self.len
     }
