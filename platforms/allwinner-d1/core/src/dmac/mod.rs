@@ -1,3 +1,6 @@
+// TODO: add docs to these methods...
+#![allow(clippy::missing_safety_doc)]
+
 use core::{
     ptr::NonNull,
     sync::atomic::{fence, Ordering},
