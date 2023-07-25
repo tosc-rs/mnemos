@@ -462,7 +462,7 @@ fn take_from_grant(buffer: &mut FixedVec<u8>, grant: GrantR) -> bool {
 /// Tries to decode a port and message from the given buffer
 ///
 /// Either way, you should probably clear the buffer when you are done.
-fn try_decode<'a>(buffer: &'a mut [u8]) -> Option<(u16, &'a [u8])> {
+fn try_decode(buffer: &mut [u8]) -> Option<(u16, &[u8])> {
     let used = match cobs::decode_in_place(buffer) {
         Ok(u) if u < 3 => {
             warn!("Cobs decode too short!");
