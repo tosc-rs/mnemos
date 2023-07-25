@@ -191,7 +191,7 @@ impl SpawnulatorSettings {
     pub const DEFAULT_CAPACITY: usize = 16;
 
     pub fn with_capacity(self, capacity: usize) -> Self {
-        Self { capacity, ..self }
+        Self { capacity }
     }
 }
 
