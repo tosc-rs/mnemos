@@ -18,7 +18,7 @@ use kernel::{
     },
     maitake::sync::WaitCell,
     mnemos_alloc::containers::Box,
-    registry::Message,
+    registry::{self, Message},
     services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     Kernel,
 };
@@ -179,7 +179,7 @@ impl D1Uart {
         cap_in: usize,
         cap_out: usize,
         tx_channel: Channel,
-    ) -> Result<(), ()> {
+    ) -> Result<(), registry::RegistrationError> {
         assert_eq!(tx_channel.channel_index(), 0);
 
         let (kprod, kcons) = KChannel::<Message<SimpleSerialService>>::new_async(4)
@@ -198,8 +198,7 @@ impl D1Uart {
         assert_eq!(old, null_mut());
 
         k.with_registry(|reg| reg.register_konly::<SimpleSerialService>(&kprod))
-            .await
-            .map_err(drop)?;
+            .await?;
 
         Ok(())
     }

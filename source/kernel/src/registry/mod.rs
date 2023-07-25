@@ -241,6 +241,12 @@ pub enum OneshotRequestError {
     Receive(ReusableError),
 }
 
+#[derive(Debug, Eq, PartialEq)]
+pub enum SendError {
+    /// The service on the other end of the [`KHandle`] has terminated!
+    Closed,
+}
+
 impl From<ReusableError> for ReplyError {
     fn from(err: ReusableError) -> Self {
         match err {
@@ -635,7 +641,7 @@ impl UserspaceHandle {
 // KernelHandle
 
 impl<RD: RegisteredDriver> KernelHandle<RD> {
-    pub async fn send(&mut self, msg: RD::Request, reply: ReplyTo<RD>) -> Result<(), ()> {
+    pub async fn send(&mut self, msg: RD::Request, reply: ReplyTo<RD>) -> Result<(), SendError> {
         let request_id = RequestResponseId::new(self.request_ctr, MessageKind::Request);
         self.request_ctr = self.request_ctr.wrapping_add(1);
         self.prod
@@ -649,7 +655,7 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
                 reply,
             })
             .await
-            .map_err(drop)?;
+            .map_err(|_| SendError::Closed)?;
         debug!(
             service_id = self.service_id.0,
             client_id = self.client_id.0,

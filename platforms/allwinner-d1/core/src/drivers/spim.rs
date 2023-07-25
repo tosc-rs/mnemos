@@ -13,7 +13,7 @@ use kernel::{
     comms::{kchannel::KChannel, oneshot::Reusable},
     maitake::sync::WaitCell,
     mnemos_alloc::containers::FixedVec,
-    registry::{uuid, Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo, Uuid},
+    registry::{self, uuid, Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo, Uuid},
     Kernel,
 };
 
@@ -97,7 +97,10 @@ pub struct SpiSender;
 pub struct SpiSenderServer;
 
 impl SpiSenderServer {
-    pub async fn register(kernel: &'static Kernel, queued: usize) -> Result<(), ()> {
+    pub async fn register(
+        kernel: &'static Kernel,
+        queued: usize,
+    ) -> Result<(), registry::RegistrationError> {
         let (kprod, kcons) = KChannel::new_async(queued).await.split();
 
         kernel
@@ -190,7 +193,7 @@ impl SpiSenderServer {
             .await;
 
         kernel
-            .with_registry(move |reg| reg.register_konly::<SpiSender>(&kprod).map_err(drop))
+            .with_registry(move |reg| reg.register_konly::<SpiSender>(&kprod))
             .await?;
 
         Ok(())
