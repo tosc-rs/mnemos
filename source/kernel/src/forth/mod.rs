@@ -47,6 +47,8 @@ struct Bufs {
     cstack: ArrayBuf<CallContext<MnemosContext>>,
     input: ArrayBuf<u8>,
     output: ArrayBuf<u8>,
+    #[cfg(debug_assertions)]
+    taken: bool,
 }
 
 impl Forth {
@@ -64,24 +66,14 @@ impl Forth {
         params: Params,
         stdio: bbq::BidiHandle,
     ) -> Result<Self, &'static str> {
-        let bufs = params.alloc_bufs().await;
+        let mut bufs = params.alloc_bufs().await;
         let dict = params.alloc_dict().await?;
-
-        let input = WordStrBuf::new(bufs.input.ptrlen().0.as_ptr().cast(), params.input_buf_size);
-        let output = OutputBuf::new(
-            bufs.output.ptrlen().0.as_ptr().cast(),
-            params.output_buf_size,
-        );
         let host_ctxt = MnemosContext::new(kernel, params).await;
 
         let forth = unsafe {
             AsyncForth::new(
-                (bufs.dstack.ptrlen().0.as_ptr().cast(), params.stack_size),
-                (bufs.rstack.ptrlen().0.as_ptr().cast(), params.stack_size),
-                (bufs.cstack.ptrlen().0.as_ptr().cast(), params.stack_size),
+                bufs.take_vm_bufs(),
                 dict,
-                input,
-                output,
                 host_ctxt,
                 forth3::Forth::FULL_BUILTINS,
                 Dispatcher,
@@ -245,6 +237,8 @@ impl Params {
             cstack: ArrayBuf::new_uninit(self.stack_size).await,
             input: ArrayBuf::new_uninit(self.input_buf_size).await,
             output: ArrayBuf::new_uninit(self.output_buf_size).await,
+            #[cfg(debug_assertions)]
+            taken: false,
         }
     }
 
@@ -286,6 +280,51 @@ impl MnemosContext {
                 )
                 .await
                 .expect("Spawnulator client timed out - is the spawnulator running?"),
+        }
+    }
+}
+
+impl Bufs {
+    /// # Safety
+    ///
+    /// Calling this twice on the same `Bufs` will mutably alias the buffers!
+    unsafe fn take_vm_bufs(&mut self) -> forth3::Buffers<MnemosContext> {
+        #[cfg(debug_assertions)]
+        {
+            assert!(
+                !self.taken,
+                "VM buffers already taken! doing this again would mutably alias them!"
+            );
+            self.taken = true;
+        }
+
+        let input = {
+            let (ptr, len) = self.input.ptrlen();
+            WordStrBuf::new(ptr.as_ptr().cast(), len)
+        };
+        let output = {
+            let (ptr, len) = self.output.ptrlen();
+            OutputBuf::new(ptr.as_ptr().cast(), len)
+        };
+        let dstack_buf = {
+            let (ptr, len) = self.dstack.ptrlen();
+            (ptr.as_ptr().cast(), len)
+        };
+        let rstack_buf = {
+            let (ptr, len) = self.rstack.ptrlen();
+            (ptr.as_ptr().cast(), len)
+        };
+        let cstack_buf = {
+            let (ptr, len) = self.cstack.ptrlen();
+            (ptr.as_ptr().cast(), len)
+        };
+
+        forth3::Buffers {
+            dstack_buf,
+            rstack_buf,
+            cstack_buf,
+            input,
+            output,
         }
     }
 }
@@ -391,7 +430,7 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     // TODO(eliza): store the child's stdio in the
     // parent's host context so we can actually do something with it...
     let (stdio, _streams) = params.alloc_stdio().await;
-    let bufs = params.alloc_bufs().await;
+    let mut bufs = params.alloc_bufs().await;
     let new_dict = params.alloc_dict().await.map_err(|error| {
         tracing::error!(?error, "Failed to allocate dictionary for child VM");
         forth3::Error::InternalError
@@ -405,28 +444,12 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     })?;
     let host_ctxt = MnemosContext::new(kernel, params).await;
     let child_id = host_ctxt.id;
-    let input = WordStrBuf::new(bufs.input.ptrlen().0.as_ptr().cast(), params.input_buf_size);
-    let output = OutputBuf::new(
-        bufs.output.ptrlen().0.as_ptr().cast(),
-        params.output_buf_size,
-    );
 
-    let mut child = unsafe {
-        forth.fork(
-            new_dict,
-            my_dict,
-            (bufs.dstack.ptrlen().0.as_ptr().cast(), params.stack_size),
-            (bufs.rstack.ptrlen().0.as_ptr().cast(), params.stack_size),
-            (bufs.cstack.ptrlen().0.as_ptr().cast(), params.stack_size),
-            input,
-            output,
-            host_ctxt,
-        )
-    }
-    .map_err(|error| {
-        tracing::error!(?error, "Failed to construct Forth VM");
-        forth3::Error::InternalError
-    })?;
+    let mut child = unsafe { forth.fork(bufs.take_vm_bufs(), new_dict, my_dict, host_ctxt) }
+        .map_err(|error| {
+            tracing::error!(?error, "Failed to construct Forth VM");
+            forth3::Error::InternalError
+        })?;
 
     // start the child running the popped execution token.
     child.data_stack.push(xt)?;
