@@ -232,9 +232,9 @@ impl TryFrom<DescriptorConfig> for Descriptor {
 
 impl SrcDrqType {
     #[inline(always)]
-    fn to_desc_bits(&self) -> u32 {
+    fn to_desc_bits(self) -> u32 {
         // 6 bits, no shift
-        ((*self as u8) & 0b11_1111) as u32
+        ((self as u8) & 0b11_1111) as u32
     }
 }
 
@@ -242,8 +242,8 @@ impl SrcDrqType {
 
 impl DestDrqType {
     #[inline(always)]
-    fn to_desc_bits(&self) -> u32 {
-        (((*self as u8) & 0b11_1111) as u32) << 16
+    fn to_desc_bits(self) -> u32 {
+        (((self as u8) & 0b11_1111) as u32) << 16
     }
 }
 
@@ -251,13 +251,13 @@ impl DestDrqType {
 
 impl BlockSize {
     #[inline(always)]
-    fn to_desc_bits_dest(&self) -> u32 {
-        (((*self as u8) & 0b11) as u32) << 22
+    fn to_desc_bits_dest(self) -> u32 {
+        (((self as u8) & 0b11) as u32) << 22
     }
 
     #[inline(always)]
-    fn to_desc_bits_src(&self) -> u32 {
-        (((*self as u8) & 0b11) as u32) << 6
+    fn to_desc_bits_src(self) -> u32 {
+        (((self as u8) & 0b11) as u32) << 6
     }
 }
 
@@ -265,13 +265,13 @@ impl BlockSize {
 
 impl AddressMode {
     #[inline(always)]
-    fn to_desc_bits_src(&self) -> u32 {
-        (((*self as u8) & 0b1) as u32) << 8
+    fn to_desc_bits_src(self) -> u32 {
+        (((self as u8) & 0b1) as u32) << 8
     }
 
     #[inline(always)]
-    fn to_desc_bits_dest(&self) -> u32 {
-        (((*self as u8) & 0b1) as u32) << 24
+    fn to_desc_bits_dest(self) -> u32 {
+        (((self as u8) & 0b1) as u32) << 24
     }
 }
 
@@ -279,13 +279,13 @@ impl AddressMode {
 
 impl DataWidth {
     #[inline(always)]
-    fn to_desc_bits_dest(&self) -> u32 {
-        (((*self as u8) & 0b11) as u32) << 25
+    fn to_desc_bits_dest(self) -> u32 {
+        (((self as u8) & 0b11) as u32) << 25
     }
 
     #[inline(always)]
-    fn to_desc_bits_src(&self) -> u32 {
-        (((*self as u8) & 0b11) as u32) << 9
+    fn to_desc_bits_src(self) -> u32 {
+        (((self as u8) & 0b11) as u32) << 9
     }
 }
 
@@ -293,7 +293,7 @@ impl DataWidth {
 
 impl BModeSel {
     #[inline(always)]
-    fn to_desc_bits(&self) -> u32 {
-        (((*self as u8) & 0b1) as u32) << 30
+    fn to_desc_bits(self) -> u32 {
+        (((self as u8) & 0b1) as u32) << 30
     }
 }
