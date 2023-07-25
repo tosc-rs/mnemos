@@ -531,6 +531,8 @@ impl<P> Envelope<P> {
 // Message
 
 impl<RD: RegisteredDriver> Message<RD> {
+    // Would adding type aliases really make this any better? Who cares.
+    #[allow(clippy::type_complexity)]
     pub fn split(
         self,
     ) -> (

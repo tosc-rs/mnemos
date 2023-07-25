@@ -1,3 +1,6 @@
+// TODO: add docs to these methods...
+#![allow(clippy::missing_safety_doc)]
+
 use core::{
     ptr::null_mut,
     sync::atomic::{AtomicPtr, Ordering},
@@ -263,7 +266,12 @@ const INTERRUPT_LIST: &[Interrupt] = &[
 ];
 
 const fn lister() -> [Vectored; INTERRUPT_LIST.len()] {
+    // This constant is used as an initializer. The fact that each time it's
+    // used, a new instance of the interior mutable value is created is the
+    // *correct* behavior here. I hate this clippy lint so goddamn much...
+    #[allow(clippy::declare_interior_mutable_const)]
     const ONE: Vectored = Vectored::new(0);
+
     let mut arr = [ONE; INTERRUPT_LIST.len()];
     let mut i = 0;
     while i < INTERRUPT_LIST.len() {
