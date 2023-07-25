@@ -9,6 +9,7 @@ use crate::{
     dictionary::{BuiltinEntry, Dictionary, DropDict, OwnedDict},
     input::WordStrBuf,
     output::OutputBuf,
+    vm,
     word::Word,
     CallContext, Forth,
 };
@@ -120,16 +121,17 @@ impl<T: 'static> LBForth<T> {
         let _input_buf: LeakBox<u8> = LeakBox::new(params.input_buf_elems);
         let _output_buf: LeakBox<u8> = LeakBox::new(params.output_buf_elems);
 
-        let input = WordStrBuf::new(_input_buf.ptr(), _input_buf.len());
-        let output = OutputBuf::new(_output_buf.ptr(), _output_buf.len());
+        let bufs = vm::Buffers {
+            dstack_buf: (_payload_dstack.ptr(), _payload_dstack.len()),
+            rstack_buf: (_payload_rstack.ptr(), _payload_rstack.len()),
+            cstack_buf: (_payload_cstack.ptr(), _payload_cstack.len()),
+            input: WordStrBuf::new(_input_buf.ptr(), _input_buf.len()),
+            output: OutputBuf::new(_output_buf.ptr(), _output_buf.len()),
+        };
         let forth = unsafe {
             Forth::<T>::new(
-                (_payload_dstack.ptr(), _payload_dstack.len()),
-                (_payload_rstack.ptr(), _payload_rstack.len()),
-                (_payload_cstack.ptr(), _payload_cstack.len()),
+                bufs,
                 alloc_dict::<T, LeakBoxDict>(params.dict_buf_elems),
-                input,
-                output,
                 host_ctxt,
                 builtins,
             )
@@ -163,20 +165,16 @@ impl<T: 'static> LBForth<T> {
         let my_new_dict = alloc_dict::<T, LeakBoxDict>(params.dict_buf_elems);
         let new_dict = alloc_dict::<T, LeakBoxDict>(params.dict_buf_elems);
 
-        let input = WordStrBuf::new(_input_buf.ptr(), _input_buf.len());
-        let output = OutputBuf::new(_output_buf.ptr(), _output_buf.len());
+        let bufs = vm::Buffers {
+            dstack_buf: (_payload_dstack.ptr(), _payload_dstack.len()),
+            rstack_buf: (_payload_rstack.ptr(), _payload_rstack.len()),
+            cstack_buf: (_payload_cstack.ptr(), _payload_cstack.len()),
+            input: WordStrBuf::new(_input_buf.ptr(), _input_buf.len()),
+            output: OutputBuf::new(_output_buf.ptr(), _output_buf.len()),
+        };
         let forth = unsafe {
             self.forth
-                .fork(
-                    my_new_dict,
-                    new_dict,
-                    (_payload_dstack.ptr(), _payload_dstack.len()),
-                    (_payload_rstack.ptr(), _payload_rstack.len()),
-                    (_payload_cstack.ptr(), _payload_cstack.len()),
-                    input,
-                    output,
-                    host_ctxt,
-                )
+                .fork(bufs, my_new_dict, new_dict, host_ctxt)
                 .unwrap()
         };
         Self {
@@ -208,16 +206,17 @@ where
         let _input_buf: LeakBox<u8> = LeakBox::new(params.input_buf_elems);
         let _output_buf: LeakBox<u8> = LeakBox::new(params.output_buf_elems);
 
-        let input = WordStrBuf::new(_input_buf.ptr(), _input_buf.len());
-        let output = OutputBuf::new(_output_buf.ptr(), _output_buf.len());
+        let bufs = vm::Buffers {
+            dstack_buf: (_payload_dstack.ptr(), _payload_dstack.len()),
+            rstack_buf: (_payload_rstack.ptr(), _payload_rstack.len()),
+            cstack_buf: (_payload_cstack.ptr(), _payload_cstack.len()),
+            input: WordStrBuf::new(_input_buf.ptr(), _input_buf.len()),
+            output: OutputBuf::new(_output_buf.ptr(), _output_buf.len()),
+        };
         let forth = unsafe {
             AsyncForth::<T, D>::new(
-                (_payload_dstack.ptr(), _payload_dstack.len()),
-                (_payload_rstack.ptr(), _payload_rstack.len()),
-                (_payload_cstack.ptr(), _payload_cstack.len()),
+                bufs,
                 alloc_dict::<T, LeakBoxDict>(params.dict_buf_elems),
-                input,
-                output,
                 host_ctxt,
                 sync_builtins,
                 dispatcher,
@@ -255,20 +254,16 @@ where
         let my_new_dict = alloc_dict::<T, LeakBoxDict>(params.dict_buf_elems);
         let new_dict = alloc_dict::<T, LeakBoxDict>(params.dict_buf_elems);
 
-        let input = WordStrBuf::new(_input_buf.ptr(), _input_buf.len());
-        let output = OutputBuf::new(_output_buf.ptr(), _output_buf.len());
+        let bufs = vm::Buffers {
+            dstack_buf: (_payload_dstack.ptr(), _payload_dstack.len()),
+            rstack_buf: (_payload_rstack.ptr(), _payload_rstack.len()),
+            cstack_buf: (_payload_cstack.ptr(), _payload_cstack.len()),
+            input: WordStrBuf::new(_input_buf.ptr(), _input_buf.len()),
+            output: OutputBuf::new(_output_buf.ptr(), _output_buf.len()),
+        };
         let forth = unsafe {
             self.forth
-                .fork(
-                    my_new_dict,
-                    new_dict,
-                    (_payload_dstack.ptr(), _payload_dstack.len()),
-                    (_payload_rstack.ptr(), _payload_rstack.len()),
-                    (_payload_cstack.ptr(), _payload_cstack.len()),
-                    input,
-                    output,
-                    host_ctxt,
-                )
+                .fork(bufs, my_new_dict, new_dict, host_ctxt)
                 .unwrap()
         };
         Self {

@@ -60,27 +60,13 @@ where
     }
 
     pub unsafe fn new(
-        dstack_buf: (*mut Word, usize),
-        rstack_buf: (*mut Word, usize),
-        cstack_buf: (*mut CallContext<T>, usize),
+        bufs: Buffers<T>,
         dict: OwnedDict<T>,
-        input: WordStrBuf,
-        output: OutputBuf,
         host_ctxt: T,
         sync_builtins: &'static [BuiltinEntry<T>],
         async_builtins: A,
     ) -> Result<Self, Error> {
-        let vm = Forth::new_async(
-            dstack_buf,
-            rstack_buf,
-            cstack_buf,
-            dict,
-            input,
-            output,
-            host_ctxt,
-            sync_builtins,
-            A::BUILTINS,
-        )?;
+        let vm = Forth::new_async(bufs, dict, host_ctxt, sync_builtins, A::BUILTINS)?;
         Ok(Self {
             vm,
             builtins: async_builtins,
@@ -107,21 +93,16 @@ where
     /// [`AsyncForth::new`].
     pub unsafe fn fork(
         &mut self,
+
+        bufs: Buffers<T>,
         new_dict: OwnedDict<T>,
         my_dict: OwnedDict<T>,
-        dstack_buf: (*mut Word, usize),
-        rstack_buf: (*mut Word, usize),
-        cstack_buf: (*mut CallContext<T>, usize),
-        input: WordStrBuf,
-        output: OutputBuf,
         host_ctxt: T,
     ) -> Result<Self, Error>
     where
         A: Clone,
     {
-        let vm = self.vm.fork(
-            new_dict, my_dict, dstack_buf, rstack_buf, cstack_buf, input, output, host_ctxt,
-        )?;
+        let vm = self.vm.fork(bufs, new_dict, my_dict, host_ctxt)?;
         Ok(Self {
             vm,
             builtins: self.builtins.clone(),

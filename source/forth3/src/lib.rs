@@ -26,7 +26,7 @@ use dictionary::AsyncBuiltinEntry;
 
 #[cfg(feature = "async")]
 pub use crate::vm::AsyncForth;
-pub use crate::vm::Forth;
+pub use crate::vm::{Buffers, Forth};
 use crate::{
     dictionary::{BumpError, DictionaryEntry},
     output::OutputError,

@@ -56,17 +56,29 @@ enum Step {
     NotDone,
 }
 
+/// Buffers provided to construct a new virtual machine.
+pub struct Buffers<T: 'static> {
+    pub dstack_buf: (*mut Word, usize),
+    pub rstack_buf: (*mut Word, usize),
+    pub cstack_buf: (*mut CallContext<T>, usize),
+    pub input: WordStrBuf,
+    pub output: OutputBuf,
+}
+
 impl<T> Forth<T> {
     pub unsafe fn new(
-        dstack_buf: (*mut Word, usize),
-        rstack_buf: (*mut Word, usize),
-        cstack_buf: (*mut CallContext<T>, usize),
+        bufs: Buffers<T>,
         dict: OwnedDict<T>,
-        input: WordStrBuf,
-        output: OutputBuf,
         host_ctxt: T,
         builtins: &'static [BuiltinEntry<T>],
     ) -> Result<Self, Error> {
+        let Buffers {
+            dstack_buf,
+            rstack_buf,
+            cstack_buf,
+            input,
+            output,
+        } = bufs;
         let data_stack = Stack::new(dstack_buf.0, dstack_buf.1);
         let return_stack = Stack::new(rstack_buf.0, rstack_buf.1);
         let call_stack = Stack::new(cstack_buf.0, cstack_buf.1);
@@ -92,16 +104,19 @@ impl<T> Forth<T> {
     /// queue is full.
     #[cfg(feature = "async")]
     unsafe fn new_async(
-        dstack_buf: (*mut Word, usize),
-        rstack_buf: (*mut Word, usize),
-        cstack_buf: (*mut CallContext<T>, usize),
+        bufs: Buffers<T>,
         dict: OwnedDict<T>,
-        input: WordStrBuf,
-        output: OutputBuf,
         host_ctxt: T,
         builtins: &'static [BuiltinEntry<T>],
         async_builtins: &'static [AsyncBuiltinEntry<T>],
     ) -> Result<Self, Error> {
+        let Buffers {
+            dstack_buf,
+            rstack_buf,
+            cstack_buf,
+            input,
+            output,
+        } = bufs;
         let data_stack = Stack::new(dstack_buf.0, dstack_buf.1);
         let return_stack = Stack::new(rstack_buf.0, rstack_buf.1);
         let call_stack = Stack::new(cstack_buf.0, cstack_buf.1);
@@ -139,27 +154,14 @@ impl<T> Forth<T> {
     /// This method requires the same invariants be upheld as [`Forth::new`].
     pub unsafe fn fork(
         &mut self,
+        bufs: Buffers<T>,
         mut new_dict: OwnedDict<T>,
         my_dict: OwnedDict<T>,
-        dstack_buf: (*mut Word, usize),
-        rstack_buf: (*mut Word, usize),
-        cstack_buf: (*mut CallContext<T>, usize),
-        input: WordStrBuf,
-        output: OutputBuf,
         host_ctxt: T,
     ) -> Result<Self, Error> {
         let shared_dict = self.dict.fork_onto(my_dict);
         new_dict.set_parent(shared_dict);
-        Self::new(
-            dstack_buf,
-            rstack_buf,
-            cstack_buf,
-            new_dict,
-            input,
-            output,
-            host_ctxt,
-            self.builtins,
-        )
+        Self::new(bufs, new_dict, host_ctxt, self.builtins)
     }
 
     pub fn add_builtin_static_name(
