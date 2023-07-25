@@ -204,6 +204,10 @@ impl D1Uart {
     }
 }
 
+/// # Safety
+///
+/// - The `UART0` register block must not be concurrently written to.
+/// - This function should be called only while running on an Allwinner D1.
 pub unsafe fn kernel_uart(ccu: &mut CCU, gpio: &mut GPIO, uart0: UART0) -> Uart {
     // Enable UART0 clock.
     ccu.uart_bgr

@@ -23,6 +23,10 @@ pub struct Spim1 {
     _x: (),
 }
 
+/// # Safety
+///
+/// - The `SPI_DBI``s register block must not be concurrently written to.
+/// - This function should be called only while running on an Allwinner D1.
 pub unsafe fn kernel_spim1(spi1: SPI_DBI, ccu: &mut CCU, gpio: &mut GPIO) -> Spim1 {
     // Set clock rate (fixed to 2MHz), and enable the SPI peripheral
     ccu.spi1_clk.write(|w| {
