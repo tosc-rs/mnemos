@@ -32,7 +32,6 @@ pub struct Params {
     pub stdout_capacity: usize,
     pub bag_of_holding_capacity: usize,
     pub spawnulator_timeout: Duration,
-    _priv: (),
 }
 
 pub struct Forth {
@@ -230,7 +229,6 @@ impl Params {
             stdout_capacity: 1024,
             bag_of_holding_capacity: 16,
             spawnulator_timeout: Duration::from_secs(5),
-            _priv: (),
         }
     }
 
@@ -295,26 +293,26 @@ impl MnemosContext {
 /// Temporary helper extension trait. Should probably be upstreamed
 /// into `forth3` at a later date.
 trait ConvertWord {
-    fn as_usize(self) -> Result<usize, forth3::Error>;
-    fn as_u16(self) -> Result<u16, forth3::Error>;
-    fn as_i32(self) -> i32;
+    fn into_usize(self) -> Result<usize, forth3::Error>;
+    fn into_u16(self) -> Result<u16, forth3::Error>;
+    fn into_i32(self) -> i32;
 }
 
 impl ConvertWord for Word {
-    fn as_usize(self) -> Result<usize, forth3::Error> {
+    fn into_usize(self) -> Result<usize, forth3::Error> {
         let data: i32 = unsafe { self.data };
         data.try_into()
             .map_err(|_| forth3::Error::WordToUsizeInvalid(data))
     }
 
-    fn as_u16(self) -> Result<u16, forth3::Error> {
+    fn into_u16(self) -> Result<u16, forth3::Error> {
         let data: i32 = unsafe { self.data };
         // TODO: not totally correct error type
         data.try_into()
             .map_err(|_| forth3::Error::WordToUsizeInvalid(data))
     }
 
-    fn as_i32(self) -> i32 {
+    fn into_i32(self) -> i32 {
         unsafe { self.data }
     }
 }
@@ -327,8 +325,8 @@ impl ConvertWord for Word {
 /// Errors on any invalid parameters. See [`BagOfHolding`] for details
 /// on bag of holding tokens
 async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<(), forth3::Error> {
-    let sz = forth.data_stack.try_pop()?.as_usize()?;
-    let port = forth.data_stack.try_pop()?.as_u16()?;
+    let sz = forth.data_stack.try_pop()?.into_usize()?;
+    let port = forth.data_stack.try_pop()?.into_u16()?;
 
     // TODO: These two steps could be considered "non-execeptional" if failed.
     // We could codify that zero is an invalid BOH_TOKEN, and put zero on the
@@ -366,7 +364,7 @@ async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
 async fn sermux_write_outbuf(
     forth: &mut forth3::Forth<MnemosContext>,
 ) -> Result<(), forth3::Error> {
-    let idx = forth.data_stack.try_pop()?.as_i32();
+    let idx = forth.data_stack.try_pop()?.into_i32();
     let port: &PortHandle = forth
         .host_ctxt
         .boh
@@ -482,7 +480,7 @@ async fn sleep(
     into_duration: impl FnOnce(u64) -> Duration,
 ) -> Result<(), forth3::Error> {
     let duration = {
-        let duration = forth.data_stack.try_pop()?.as_i32();
+        let duration = forth.data_stack.try_pop()?.into_i32();
         if duration.is_negative() {
             tracing::warn!(duration, "Cannot sleep for a negative duration!");
             return Err(forth3::Error::WordToUsizeInvalid(duration));
