@@ -218,8 +218,7 @@ impl UnderlyingAllocator for SingleThreadedLinkedListAllocator {
                 heap.deallocate(nn, layout);
             }
             None => {
-                debug_assert!(false, "Deallocating a null?");
-                return;
+                debug_assert!(false, "Deallocating a null?")
             }
         }
     }

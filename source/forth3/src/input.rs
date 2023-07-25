@@ -124,23 +124,23 @@ impl WordStrBuf {
 
     pub fn cur_str_literal(&self) -> Option<&str> {
         match &self.holding {
-            Holding::None => return None,
+            Holding::None => None,
             Holding::Str((start, len)) => Some(unsafe {
                 let u8_sli = core::slice::from_raw_parts(*start, *len);
                 core::str::from_utf8_unchecked(u8_sli)
             }),
-            Holding::Word(_) => return None,
+            Holding::Word(_) => None,
         }
     }
 
     pub fn cur_word(&self) -> Option<&str> {
         match &self.holding {
-            Holding::None => return None,
+            Holding::None => None,
             Holding::Word((start, len)) => Some(unsafe {
                 let u8_sli = core::slice::from_raw_parts(*start, *len);
                 core::str::from_utf8_unchecked(u8_sli)
             }),
-            Holding::Str(_) => return None,
+            Holding::Str(_) => None,
         }
     }
 }

@@ -397,9 +397,9 @@ impl<T> FixedVec<T> {
 
         unsafe {
             let ptr = NonNull::new(alloc::alloc::alloc(layout))?;
-            return Some(FixedVec {
+            Some(FixedVec {
                 inner: alloc::vec::Vec::from_raw_parts(ptr.cast().as_ptr(), 0, capacity),
-            });
+            })
         }
     }
 
@@ -414,9 +414,9 @@ impl<T> FixedVec<T> {
 
         unsafe {
             let ptr = alloc(layout).await;
-            return FixedVec {
+            FixedVec {
                 inner: alloc::vec::Vec::from_raw_parts(ptr.cast().as_ptr(), 0, capacity),
-            };
+            }
         }
     }
 
