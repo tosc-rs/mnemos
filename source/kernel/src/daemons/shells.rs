@@ -31,6 +31,7 @@ use crate::forth::Forth;
 
 /// Settings for the [sermux_shell] daemon
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct SermuxShellSettings {
     /// Sermux port to serve the shell on
     ///
@@ -44,8 +45,6 @@ pub struct SermuxShellSettings {
     ///
     /// Uses the default value of [Params]
     pub forth_settings: Params,
-    /// Hidden for forwards compat
-    _priv: (),
 }
 
 impl Default for SermuxShellSettings {
@@ -54,7 +53,6 @@ impl Default for SermuxShellSettings {
             port: WellKnown::ForthShell0.into(),
             capacity: 256,
             forth_settings: Default::default(),
-            _priv: (),
         }
     }
 }
@@ -66,7 +64,6 @@ pub async fn sermux_shell(k: &'static Kernel, settings: SermuxShellSettings) {
         port,
         capacity,
         forth_settings,
-        _priv,
     } = settings;
     let port = PortHandle::open(k, port, capacity).await.unwrap();
     let (task, tid_io) = Forth::new(k, forth_settings)
@@ -109,6 +106,7 @@ pub async fn sermux_shell(k: &'static Kernel, settings: SermuxShellSettings) {
 /// # drop(shell);
 /// ```
 #[derive(Debug)]
+#[non_exhaustive]
 pub struct GraphicalShellSettings {
     /// Number of bytes used for the sermux buffer
     ///
@@ -126,8 +124,6 @@ pub struct GraphicalShellSettings {
     ///
     /// Defaults to [PROFONT_12_POINT]
     pub font: MonoFont<'static>,
-    /// Hidden for forwards compat
-    _priv: (),
 }
 
 impl GraphicalShellSettings {
@@ -138,7 +134,6 @@ impl GraphicalShellSettings {
             disp_width_px: width_px,
             disp_height_px: height_px,
             font: PROFONT_12_POINT,
-            _priv: (),
         }
     }
 }
@@ -153,7 +148,6 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
         disp_width_px,
         disp_height_px,
         font,
-        _priv,
     } = settings;
 
     let mut keyboard = KeyClient::from_registry(k, Default::default()).await;
