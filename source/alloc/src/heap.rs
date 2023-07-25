@@ -105,7 +105,7 @@ static INHIBIT_ALLOC: AtomicBool = AtomicBool::new(false);
 pub async fn alloc(layout: Layout) -> NonNull<u8> {
     loop {
         unsafe {
-            match NonNull::new(alloc::alloc::alloc(layout.clone())) {
+            match NonNull::new(alloc::alloc::alloc(layout)) {
                 Some(nn) => return nn,
                 None => {
                     let _ = OOM_WAITER.wait().await;
