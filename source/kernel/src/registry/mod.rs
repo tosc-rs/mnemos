@@ -243,7 +243,7 @@ pub enum OneshotRequestError {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum SendError {
-    /// The service on the other end of the [`KHandle`] has terminated!
+    /// The service on the other end of the [`KernelHandle`] has terminated!
     Closed,
 }
 
