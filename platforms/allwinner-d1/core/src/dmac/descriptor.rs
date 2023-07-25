@@ -1,3 +1,7 @@
+// Unusual groupings are used in binary literals in this file in order to
+// separate the bits by which field they represent, rather than by their byte.
+#![allow(clippy::unusual_byte_groupings)]
+
 #[derive(Clone, Debug)]
 #[repr(C, align(4))]
 pub struct Descriptor {
