@@ -46,6 +46,18 @@ impl<U: UnderlyingAllocator> MnemosAlloc<U> {
         Self { allocator: U::INIT }
     }
 
+    /// Initialize the allocator, with a heap of size `len` starting at `start`.
+    ///
+    /// # Safety
+    ///
+    /// This function requires the caller to uphold the following invariants:
+    ///
+    /// - The memory region starting at `start` and ending at `start + len` may
+    ///   not be accessed except through pointers returned by this allocator.
+    /// - The end of the memory region (`start + len`) may not exceed the
+    ///   physical memory available on the device.
+    /// - The memory region must not contain memory regions used for
+    ///   memory-mapped IO.
     pub unsafe fn init(&self, start: NonNull<u8>, len: usize) {
         self.allocator.init(start, len)
     }
@@ -106,7 +118,9 @@ pub async fn alloc(layout: Layout) -> NonNull<u8> {
 
 /// Immediately deallocate the given ptr + [Layout]
 ///
-/// Safety: This has the same safety invariants as [alloc::alloc::dealloc()].
+/// # Safety
+///
+/// This has the same safety invariants as [alloc::alloc::dealloc()].
 #[inline(always)]
 pub unsafe fn dealloc(ptr: *mut u8, layout: Layout) {
     alloc::alloc::dealloc(ptr, layout)
@@ -132,17 +146,33 @@ pub trait UnderlyingAllocator {
     /// is actually ready for use.
     const INIT: Self;
 
-    /// Initialize the allocator, if it is necessary to populate with a region of memory.
+    /// Initialize the allocator, if it is necessary to populate with a region
+    /// of memory.
+    ///
+    /// # Safety
+    ///
+    /// This function requires the caller to uphold the following invariants:
+    ///
+    /// - The memory region starting at `start` and ending at `start + len` may
+    ///   not be accessed except through pointers returned by this allocator.
+    /// - The end of the memory region (`start + len`) may not exceed the
+    ///   physical memory available on the device.
+    /// - The memory region must not contain memory regions used for
+    ///   memory-mapped IO.
     unsafe fn init(&self, start: NonNull<u8>, len: usize);
 
     /// Allocate a region of memory
     ///
-    /// SAFETY: The same as [GlobalAlloc::alloc()].
+    /// # Safety
+    ///
+    /// The same as [GlobalAlloc::alloc()].
     unsafe fn alloc(&self, layout: core::alloc::Layout) -> *mut u8;
 
     /// Deallocate a region of memory
     ///
-    /// SAFETY: The same as [GlobalAlloc::dealloc()].
+    /// # Safety
+    ///
+    /// The same as [GlobalAlloc::dealloc()].
     unsafe fn dealloc(&self, ptr: *mut u8, layout: core::alloc::Layout);
 }
 

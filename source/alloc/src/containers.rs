@@ -60,8 +60,11 @@ impl<T> Arc<T> {
 
     /// Restore from a pointer
     ///
-    /// This does NOT change the strong reference count. This has the same
-    /// safety invariants as [alloc::sync::Arc].
+    /// This does NOT change the strong reference count.
+    ///
+    /// # Safety
+    ///
+    /// This has the same safety invariants as [alloc::sync::Arc].
     #[inline(always)]
     pub unsafe fn from_raw(nn: NonNull<T>) -> Self {
         Self {
@@ -70,6 +73,8 @@ impl<T> Arc<T> {
     }
 
     /// Increment the strong reference count
+    ///
+    /// # Safety
     ///
     /// This has the same afety invariants as [alloc::sync::Arc::increment_strong_count()].
     #[inline(always)]
@@ -142,6 +147,8 @@ impl<T> Box<T> {
     }
 
     /// Convert from a pointer
+    ///
+    /// # Safety
     ///
     /// This has the same safety invariants as [alloc::boxed::Box::from_raw()]
     pub unsafe fn from_raw(ptr: *mut T) -> Self {
@@ -466,7 +473,7 @@ impl<T> FixedVec<T> {
 
     /// Get inner mutable vec
     ///
-    /// SAFETY:
+    /// # Safety
     ///
     /// You must not do anything that could realloc or increase the capacity.
     /// We want an exact upper limit.
