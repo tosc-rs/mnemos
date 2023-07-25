@@ -5,7 +5,7 @@ use std::{
     collections::HashMap,
     fmt,
     io::{ErrorKind, Read, Write},
-    net::{TcpListener, TcpStream},
+    net::{SocketAddr, TcpListener, TcpStream},
     path::PathBuf,
     sync::mpsc::{channel, Receiver, Sender},
     thread::{sleep, spawn, JoinHandle},
@@ -150,7 +150,8 @@ impl std::io::Read for Connect {
 
 impl Connect {
     fn new_from_tcp(port: u16) -> Self {
-        let port = TcpStream::connect(&format!("127.0.0.1:{port}")).unwrap();
+        let addr = SocketAddr::from(([127, 0, 0, 1], port));
+        let port = TcpStream::connect(addr).unwrap();
         port.set_read_timeout(Some(Duration::from_millis(10))).ok();
 
         Connect::Tcp(port)
@@ -381,7 +382,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     // If the malformed frame is JUST a null terminator, this is probably
                     // a "frame flush" event, like we are just about to panic.
-                    if carry != &[0x00] {
+                    if carry != [0x00] {
                         println!("{tag} {dmux} {err} bonus data? {carry:#02x?}");
                     }
                 }
