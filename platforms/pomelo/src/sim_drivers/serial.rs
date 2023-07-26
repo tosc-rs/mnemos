@@ -11,7 +11,7 @@ use mnemos_kernel::{
         bbq::{new_bidi_channel, BidiHandle},
         kchannel::KChannel,
     },
-    registry::Message,
+    registry::{self, Message},
     services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     Kernel,
 };
@@ -30,7 +30,7 @@ impl Serial {
         irq_tx: mpsc::Sender<()>,
         recv: mpsc::Receiver<u8>,
         recv_callback: fn(String),
-    ) -> Result<(), ()> {
+    ) -> Result<(), registry::RegistrationError> {
         let (a_ring, b_ring) = new_bidi_channel(incoming_size, outgoing_size).await;
         let (prod, cons) = KChannel::<Message<SimpleSerialService>>::new_async(2)
             .await
@@ -72,7 +72,6 @@ impl Serial {
         kernel
             .with_registry(|reg| reg.register_konly::<SimpleSerialService>(&prod))
             .await
-            .map_err(drop)
     }
 }
 

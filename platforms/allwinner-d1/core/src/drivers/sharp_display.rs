@@ -88,7 +88,7 @@ impl SharpDisplay {
         }))
         .await;
 
-        let (cmd_prod, cmd_cons) = KChannel::new_async(1).await.split();
+        let (cmd_prod, cmd_cons) = KChannel::new_async(2).await.split();
         let commander = CommanderTask {
             cmd: cmd_cons,
             ctxt: ctxt.clone(),
@@ -211,7 +211,7 @@ struct Draw {
 
 impl Draw {
     #[tracing::instrument(skip(self))]
-    async fn draw_run(mut self) -> Result<(), ()> {
+    async fn draw_run(mut self) {
         loop {
             let mut c = self.ctxt.lock().await;
             self.buf.clear();

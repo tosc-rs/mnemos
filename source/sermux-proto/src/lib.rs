@@ -40,9 +40,9 @@ pub enum WellKnown {
     ForthShell3 = 13,
 }
 
-impl Into<u16> for WellKnown {
-    fn into(self) -> u16 {
-        self as u16
+impl From<WellKnown> for u16 {
+    fn from(port: WellKnown) -> Self {
+        port as u16
     }
 }
 

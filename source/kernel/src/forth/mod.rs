@@ -32,7 +32,6 @@ pub struct Params {
     pub stdout_capacity: usize,
     pub bag_of_holding_capacity: usize,
     pub spawnulator_timeout: Duration,
-    _priv: (),
 }
 
 pub struct Forth {
@@ -48,6 +47,8 @@ struct Bufs {
     cstack: ArrayBuf<CallContext<MnemosContext>>,
     input: ArrayBuf<u8>,
     output: ArrayBuf<u8>,
+    #[cfg(debug_assertions)]
+    taken: bool,
 }
 
 impl Forth {
@@ -65,24 +66,14 @@ impl Forth {
         params: Params,
         stdio: bbq::BidiHandle,
     ) -> Result<Self, &'static str> {
-        let bufs = params.alloc_bufs().await;
+        let mut bufs = params.alloc_bufs().await;
         let dict = params.alloc_dict().await?;
-
-        let input = WordStrBuf::new(bufs.input.ptrlen().0.as_ptr().cast(), params.input_buf_size);
-        let output = OutputBuf::new(
-            bufs.output.ptrlen().0.as_ptr().cast(),
-            params.output_buf_size,
-        );
         let host_ctxt = MnemosContext::new(kernel, params).await;
 
         let forth = unsafe {
             AsyncForth::new(
-                (bufs.dstack.ptrlen().0.as_ptr().cast(), params.stack_size),
-                (bufs.rstack.ptrlen().0.as_ptr().cast(), params.stack_size),
-                (bufs.cstack.ptrlen().0.as_ptr().cast(), params.stack_size),
+                bufs.take_vm_bufs(),
                 dict,
-                input,
-                output,
                 host_ctxt,
                 forth3::Forth::FULL_BUILTINS,
                 Dispatcher,
@@ -230,7 +221,6 @@ impl Params {
             stdout_capacity: 1024,
             bag_of_holding_capacity: 16,
             spawnulator_timeout: Duration::from_secs(5),
-            _priv: (),
         }
     }
 
@@ -247,6 +237,8 @@ impl Params {
             cstack: ArrayBuf::new_uninit(self.stack_size).await,
             input: ArrayBuf::new_uninit(self.input_buf_size).await,
             output: ArrayBuf::new_uninit(self.output_buf_size).await,
+            #[cfg(debug_assertions)]
+            taken: false,
         }
     }
 
@@ -292,29 +284,74 @@ impl MnemosContext {
     }
 }
 
+impl Bufs {
+    /// # Safety
+    ///
+    /// Calling this twice on the same `Bufs` will mutably alias the buffers!
+    unsafe fn take_vm_bufs(&mut self) -> forth3::Buffers<MnemosContext> {
+        #[cfg(debug_assertions)]
+        {
+            assert!(
+                !self.taken,
+                "VM buffers already taken! doing this again would mutably alias them!"
+            );
+            self.taken = true;
+        }
+
+        let input = {
+            let (ptr, len) = self.input.ptrlen();
+            WordStrBuf::new(ptr.as_ptr().cast(), len)
+        };
+        let output = {
+            let (ptr, len) = self.output.ptrlen();
+            OutputBuf::new(ptr.as_ptr().cast(), len)
+        };
+        let dstack_buf = {
+            let (ptr, len) = self.dstack.ptrlen();
+            (ptr.as_ptr().cast(), len)
+        };
+        let rstack_buf = {
+            let (ptr, len) = self.rstack.ptrlen();
+            (ptr.as_ptr().cast(), len)
+        };
+        let cstack_buf = {
+            let (ptr, len) = self.cstack.ptrlen();
+            (ptr.as_ptr().cast(), len)
+        };
+
+        forth3::Buffers {
+            dstack_buf,
+            rstack_buf,
+            cstack_buf,
+            input,
+            output,
+        }
+    }
+}
+
 /// Temporary helper extension trait. Should probably be upstreamed
 /// into `forth3` at a later date.
 trait ConvertWord {
-    fn as_usize(self) -> Result<usize, forth3::Error>;
-    fn as_u16(self) -> Result<u16, forth3::Error>;
-    fn as_i32(self) -> i32;
+    fn into_usize(self) -> Result<usize, forth3::Error>;
+    fn into_u16(self) -> Result<u16, forth3::Error>;
+    fn into_i32(self) -> i32;
 }
 
 impl ConvertWord for Word {
-    fn as_usize(self) -> Result<usize, forth3::Error> {
+    fn into_usize(self) -> Result<usize, forth3::Error> {
         let data: i32 = unsafe { self.data };
         data.try_into()
             .map_err(|_| forth3::Error::WordToUsizeInvalid(data))
     }
 
-    fn as_u16(self) -> Result<u16, forth3::Error> {
+    fn into_u16(self) -> Result<u16, forth3::Error> {
         let data: i32 = unsafe { self.data };
         // TODO: not totally correct error type
         data.try_into()
             .map_err(|_| forth3::Error::WordToUsizeInvalid(data))
     }
 
-    fn as_i32(self) -> i32 {
+    fn into_i32(self) -> i32 {
         unsafe { self.data }
     }
 }
@@ -327,8 +364,8 @@ impl ConvertWord for Word {
 /// Errors on any invalid parameters. See [`BagOfHolding`] for details
 /// on bag of holding tokens
 async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<(), forth3::Error> {
-    let sz = forth.data_stack.try_pop()?.as_usize()?;
-    let port = forth.data_stack.try_pop()?.as_u16()?;
+    let sz = forth.data_stack.try_pop()?.into_usize()?;
+    let port = forth.data_stack.try_pop()?.into_u16()?;
 
     // TODO: These two steps could be considered "non-execeptional" if failed.
     // We could codify that zero is an invalid BOH_TOKEN, and put zero on the
@@ -366,7 +403,7 @@ async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
 async fn sermux_write_outbuf(
     forth: &mut forth3::Forth<MnemosContext>,
 ) -> Result<(), forth3::Error> {
-    let idx = forth.data_stack.try_pop()?.as_i32();
+    let idx = forth.data_stack.try_pop()?.into_i32();
     let port: &PortHandle = forth
         .host_ctxt
         .boh
@@ -393,7 +430,7 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     // TODO(eliza): store the child's stdio in the
     // parent's host context so we can actually do something with it...
     let (stdio, _streams) = params.alloc_stdio().await;
-    let bufs = params.alloc_bufs().await;
+    let mut bufs = params.alloc_bufs().await;
     let new_dict = params.alloc_dict().await.map_err(|error| {
         tracing::error!(?error, "Failed to allocate dictionary for child VM");
         forth3::Error::InternalError
@@ -407,28 +444,12 @@ async fn spawn_forth_task(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     })?;
     let host_ctxt = MnemosContext::new(kernel, params).await;
     let child_id = host_ctxt.id;
-    let input = WordStrBuf::new(bufs.input.ptrlen().0.as_ptr().cast(), params.input_buf_size);
-    let output = OutputBuf::new(
-        bufs.output.ptrlen().0.as_ptr().cast(),
-        params.output_buf_size,
-    );
 
-    let mut child = unsafe {
-        forth.fork(
-            new_dict,
-            my_dict,
-            (bufs.dstack.ptrlen().0.as_ptr().cast(), params.stack_size),
-            (bufs.rstack.ptrlen().0.as_ptr().cast(), params.stack_size),
-            (bufs.cstack.ptrlen().0.as_ptr().cast(), params.stack_size),
-            input,
-            output,
-            host_ctxt,
-        )
-    }
-    .map_err(|error| {
-        tracing::error!(?error, "Failed to construct Forth VM");
-        forth3::Error::InternalError
-    })?;
+    let mut child = unsafe { forth.fork(bufs.take_vm_bufs(), new_dict, my_dict, host_ctxt) }
+        .map_err(|error| {
+            tracing::error!(?error, "Failed to construct Forth VM");
+            forth3::Error::InternalError
+        })?;
 
     // start the child running the popped execution token.
     child.data_stack.push(xt)?;
@@ -482,7 +503,7 @@ async fn sleep(
     into_duration: impl FnOnce(u64) -> Duration,
 ) -> Result<(), forth3::Error> {
     let duration = {
-        let duration = forth.data_stack.try_pop()?.as_i32();
+        let duration = forth.data_stack.try_pop()?.into_i32();
         if duration.is_negative() {
             tracing::warn!(duration, "Cannot sleep for a negative duration!");
             return Err(forth3::Error::WordToUsizeInvalid(duration));
@@ -576,8 +597,7 @@ impl BagOfHolding {
         let idx = self.next_idx();
         let tid = TypeId::of::<T>();
 
-        let _ = self
-            .inner
+        self.inner
             .try_push((
                 idx,
                 BohValue {

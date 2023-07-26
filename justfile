@@ -52,6 +52,22 @@ check:
     (cd {{ _d1_dir }}; {{ _cargo }} check --workspace {{ _fmt }})
     cd {{ _pomelo_dir }}; {{ _cargo }} check {{ _fmt }}
 
+# run Clippy checks for all packages, across workspaces.
+clippy:
+    {{ _cargo }} clippy check \
+        --workspace \
+        --lib --bins --examples --tests --benches --all-features \
+        {{ _fmt }}
+    cd {{ _d1_dir }}; {{ _cargo }} clippy check \
+        --lib --bins --workspace \
+        {{ _fmt }}
+    cd {{ _pomelo_dir }}; {{ _cargo }} clippy check \
+        --lib --bins --workspace \
+        {{ _fmt }}
+    cd {{ _melpo_dir }}; {{ _cargo }} clippy check \
+        --lib --bins --workspace \
+        {{ _fmt }}
+
 # test all packages, across workspaces
 test: (_get-nextest)
     {{ _cargo }} nextest run --workspace --all-features

@@ -58,7 +58,7 @@ impl D1 {
         dmac: Dmac,
         plic: Plic,
         i2c0: twi::I2c0,
-    ) -> Result<Self, ()> {
+    ) -> Self {
         let k_settings = KernelSettings {
             max_drivers: 16,
             // Note: The timers used will be configured to 3MHz, leading to (approximately)
@@ -66,7 +66,7 @@ impl D1 {
             timer_granularity: Duration::from_nanos(333),
         };
         let k = unsafe {
-            Box::into_raw(Kernel::new(k_settings).map_err(drop)?)
+            Box::into_raw(Kernel::new(k_settings).expect("cannot initialize kernel"))
                 .as_ref()
                 .unwrap()
         };
@@ -107,14 +107,14 @@ impl D1 {
 
         k.initialize_default_services(Default::default());
 
-        Ok(Self {
+        Self {
             kernel: k,
             _uart: uart,
             _spim: spim,
             timers,
             plic,
             i2c0_int,
-        })
+        }
     }
 
     /// Spawns a SHARP Memory Display driver and a graphical Forth REPL on the Sharp
@@ -264,11 +264,11 @@ impl D1 {
         dmac.dmac_irq_pend0.modify(|r, w| {
             tracing::trace!(dmac_irq_pend0 = ?format_args!("{:#b}", r.bits()), "DMAC interrupt");
             if r.dma0_queue_irq_pend().bit_is_set() {
-                D1Uart::tx_done_waker().wake_all();
+                D1Uart::tx_done_waker().wake();
             }
 
             if r.dma1_queue_irq_pend().bit_is_set() {
-                spim::SPI1_TX_DONE.wake_all();
+                spim::SPI1_TX_DONE.wake();
             }
 
             // Will write-back and high bits

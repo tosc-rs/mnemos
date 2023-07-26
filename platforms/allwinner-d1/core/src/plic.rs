@@ -1,3 +1,6 @@
+// TODO: add docs to these methods...
+#![allow(clippy::missing_safety_doc)]
+
 use core::{
     ptr::null_mut,
     sync::atomic::{AtomicPtr, Ordering},
@@ -11,6 +14,15 @@ pub type Priority = plic::prio::PRIORITY_A;
 #[doc = r" TryFromPrioritytError"]
 #[derive(Debug, Copy, Clone)]
 pub struct TryFromPriorityError(());
+
+/// Errors returned by [`Plic::activate`] and [`Plic::deactivate`].
+#[derive(Debug, Copy, Clone)]
+pub enum MaskError {
+    /// No such interrupt was found!
+    NotFound(Interrupt),
+    /// The interrupt did not have a handler.
+    NoHandler(Interrupt),
+}
 
 /// Platform-Level Interrupt Controller (PLIC) interface
 pub struct Plic {
@@ -86,27 +98,30 @@ impl Plic {
         }
     }
 
-    pub unsafe fn activate(&self, interrupt: Interrupt, prio: Priority) -> Result<(), ()> {
-        let v = INTERRUPT_ARRAY.iter().find(|v| v.id == interrupt as u16);
-        if let Some(v) = v {
-            if !v.handler.load(Ordering::SeqCst).is_null() {
-                self.set_priority(interrupt, prio);
-                self.unmask(interrupt);
-                return Ok(());
-            }
-        }
-        Err(())
+    pub unsafe fn activate(&self, interrupt: Interrupt, prio: Priority) -> Result<(), MaskError> {
+        self.can_mask(interrupt)?;
+        self.set_priority(interrupt, prio);
+        self.unmask(interrupt);
+        Ok(())
     }
 
-    pub fn deactivate(&self, interrupt: Interrupt) -> Result<(), ()> {
-        let v = INTERRUPT_ARRAY.iter().find(|v| v.id == interrupt as u16);
-        if let Some(v) = v {
-            if !v.handler.load(Ordering::SeqCst).is_null() {
-                self.mask(interrupt);
-                return Ok(());
-            }
+    pub fn deactivate(&self, interrupt: Interrupt) -> Result<(), MaskError> {
+        self.can_mask(interrupt)?;
+        self.mask(interrupt);
+        Ok(())
+    }
+
+    fn can_mask(&self, interrupt: Interrupt) -> Result<(), MaskError> {
+        let v = INTERRUPT_ARRAY
+            .iter()
+            .find(|v| v.id == interrupt as u16)
+            .ok_or(MaskError::NotFound(interrupt))?;
+
+        if v.handler.load(Ordering::SeqCst).is_null() {
+            Err(MaskError::NoHandler(interrupt))
+        } else {
+            Ok(())
         }
-        Err(())
     }
 }
 
@@ -251,7 +266,12 @@ const INTERRUPT_LIST: &[Interrupt] = &[
 ];
 
 const fn lister() -> [Vectored; INTERRUPT_LIST.len()] {
+    // This constant is used as an initializer. The fact that each time it's
+    // used, a new instance of the interior mutable value is created is the
+    // *correct* behavior here. I hate this clippy lint so goddamn much...
+    #[allow(clippy::declare_interior_mutable_const)]
     const ONE: Vectored = Vectored::new(0);
+
     let mut arr = [ONE; INTERRUPT_LIST.len()];
     let mut i = 0;
     while i < INTERRUPT_LIST.len() {

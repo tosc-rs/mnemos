@@ -26,7 +26,7 @@ use dictionary::AsyncBuiltinEntry;
 
 #[cfg(feature = "async")]
 pub use crate::vm::AsyncForth;
-pub use crate::vm::Forth;
+pub use crate::vm::{Buffers, Forth};
 use crate::{
     dictionary::{BumpError, DictionaryEntry},
     output::OutputError,
@@ -69,7 +69,7 @@ pub enum Error {
     LQuoteMissingRQuote,
     LiteralStringTooLong,
     NullPointerInCFA,
-    BadStrLiteral,
+    BadStrLiteral(input::StrLiteralError),
     ForgetWithoutWordName,
     ForgetNotInDict,
     CantForgetBuiltins,
@@ -271,6 +271,7 @@ pub mod test {
     fn assert_send<T: Send>() {}
 
     #[test]
+    #[allow(clippy::identity_op)]
     fn sizes() {
         use core::mem::{align_of, size_of};
         assert_eq!(5 * size_of::<usize>(), size_of::<DictionaryEntry<()>>());

@@ -214,12 +214,11 @@ struct Tokenized {
 }
 
 fn tokenize(contents: &str, allow_frontmatter: bool) -> Result<Tokenized, ()> {
-    let mut lines = contents.lines();
     let mut output = Tokenized::default();
     let mut frontmatter_done = !allow_frontmatter;
 
-    while let Some(line) = lines.next() {
-        let (tok, remain) = if let Some(t) = line.trim_start().split_once(" ") {
+    for line in contents.lines() {
+        let (tok, remain) = if let Some(t) = line.trim_start().split_once(' ') {
             t
         } else {
             continue;

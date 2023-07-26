@@ -1,3 +1,7 @@
+// Unusual groupings are used in binary literals in this file in order to
+// separate the bits by which field they represent, rather than by their byte.
+#![allow(clippy::unusual_byte_groupings)]
+
 #[derive(Clone, Debug)]
 #[repr(C, align(4))]
 pub struct Descriptor {
@@ -161,10 +165,10 @@ impl TryFrom<DescriptorConfig> for Descriptor {
         let source = value.source as usize;
         let destination = value.destination as usize;
 
-        if source as usize >= (1 << 34) {
+        if source >= (1 << 34) {
             return Err(());
         }
-        if destination as usize >= (1 << 34) {
+        if destination >= (1 << 34) {
             return Err(());
         }
         if value.byte_counter >= (1 << 25) {
@@ -232,9 +236,9 @@ impl TryFrom<DescriptorConfig> for Descriptor {
 
 impl SrcDrqType {
     #[inline(always)]
-    fn to_desc_bits(&self) -> u32 {
+    fn to_desc_bits(self) -> u32 {
         // 6 bits, no shift
-        ((*self as u8) & 0b11_1111) as u32
+        ((self as u8) & 0b11_1111) as u32
     }
 }
 
@@ -242,8 +246,8 @@ impl SrcDrqType {
 
 impl DestDrqType {
     #[inline(always)]
-    fn to_desc_bits(&self) -> u32 {
-        (((*self as u8) & 0b11_1111) as u32) << 16
+    fn to_desc_bits(self) -> u32 {
+        (((self as u8) & 0b11_1111) as u32) << 16
     }
 }
 
@@ -251,13 +255,13 @@ impl DestDrqType {
 
 impl BlockSize {
     #[inline(always)]
-    fn to_desc_bits_dest(&self) -> u32 {
-        (((*self as u8) & 0b11) as u32) << 22
+    fn to_desc_bits_dest(self) -> u32 {
+        (((self as u8) & 0b11) as u32) << 22
     }
 
     #[inline(always)]
-    fn to_desc_bits_src(&self) -> u32 {
-        (((*self as u8) & 0b11) as u32) << 6
+    fn to_desc_bits_src(self) -> u32 {
+        (((self as u8) & 0b11) as u32) << 6
     }
 }
 
@@ -265,13 +269,13 @@ impl BlockSize {
 
 impl AddressMode {
     #[inline(always)]
-    fn to_desc_bits_src(&self) -> u32 {
-        (((*self as u8) & 0b1) as u32) << 8
+    fn to_desc_bits_src(self) -> u32 {
+        (((self as u8) & 0b1) as u32) << 8
     }
 
     #[inline(always)]
-    fn to_desc_bits_dest(&self) -> u32 {
-        (((*self as u8) & 0b1) as u32) << 24
+    fn to_desc_bits_dest(self) -> u32 {
+        (((self as u8) & 0b1) as u32) << 24
     }
 }
 
@@ -279,13 +283,13 @@ impl AddressMode {
 
 impl DataWidth {
     #[inline(always)]
-    fn to_desc_bits_dest(&self) -> u32 {
-        (((*self as u8) & 0b11) as u32) << 25
+    fn to_desc_bits_dest(self) -> u32 {
+        (((self as u8) & 0b11) as u32) << 25
     }
 
     #[inline(always)]
-    fn to_desc_bits_src(&self) -> u32 {
-        (((*self as u8) & 0b11) as u32) << 9
+    fn to_desc_bits_src(self) -> u32 {
+        (((self as u8) & 0b11) as u32) << 9
     }
 }
 
@@ -293,7 +297,7 @@ impl DataWidth {
 
 impl BModeSel {
     #[inline(always)]
-    fn to_desc_bits(&self) -> u32 {
-        (((*self as u8) & 0b1) as u32) << 30
+    fn to_desc_bits(self) -> u32 {
+        (((self as u8) & 0b1) as u32) << 30
     }
 }
