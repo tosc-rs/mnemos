@@ -3,8 +3,7 @@
     "name": "MnemOS",
     "members": [
       {
-        "//": "This is called 'a' just to defeat project sorting",
-        "slug": "a",
+        "slug": "MnemosProjectOverview",
         "path": "."
       },
       {
