@@ -420,6 +420,16 @@ impl<T> FixedVec<T> {
         }
     }
 
+    pub async fn from_slice(slice: &[T]) -> Self
+    where
+        T: Clone,
+    {
+        let mut this = Self::new(slice.len()).await;
+        this.try_extend_from_slice(slice)
+            .expect("we just allocated the FixedVec with enough capacity for the desired length!");
+        this
+    }
+
     /// Attempt to push an item into the fixed vec.
     ///
     /// Returns an error if the fixed vec is full

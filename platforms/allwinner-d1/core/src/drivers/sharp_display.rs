@@ -103,7 +103,7 @@ impl SharpDisplay {
         let draw = Draw {
             kernel,
             buf: linebuf,
-            spim: SpiSenderClient::from_registry(kernel).await.unwrap(),
+            spim: SpiSenderClient::from_registry(kernel).await,
             ctxt,
         };
 

@@ -1,14 +1,14 @@
 // Spi Sender
 
-use core::ptr::NonNull;
-
+use super::gpio::{self, GpioClient, PinD};
 use crate::dmac::{
     descriptor::{
         AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType,
     },
     Channel, ChannelMode,
 };
-use d1_pac::{CCU, GPIO, SPI_DBI};
+use core::ptr::NonNull;
+use d1_pac::{CCU, SPI_DBI};
 use kernel::{
     comms::{kchannel::KChannel, oneshot::Reusable},
     maitake::sync::WaitCell,
@@ -27,7 +27,7 @@ pub struct Spim1 {
 ///
 /// - The `SPI_DBI``s register block must not be concurrently written to.
 /// - This function should be called only while running on an Allwinner D1.
-pub unsafe fn kernel_spim1(spi1: SPI_DBI, ccu: &mut CCU, gpio: &mut GPIO) -> Spim1 {
+pub unsafe fn kernel_spim1(spi1: SPI_DBI, ccu: &mut CCU) -> Spim1 {
     // Set clock rate (fixed to 2MHz), and enable the SPI peripheral
     ccu.spi1_clk.write(|w| {
         // Enable clock
@@ -35,29 +35,14 @@ pub unsafe fn kernel_spim1(spi1: SPI_DBI, ccu: &mut CCU, gpio: &mut GPIO) -> Spi
         // base:  24 MHz
         w.clk_src_sel().hosc();
         // /1:    24 MHz
-        w.factor_n().n1();
+        // /8:     3 MHz
+        w.factor_n().n8();
         // /12:    2 MHz
         w.factor_m().variant(11);
         w
     });
     ccu.spi_bgr.modify(|_r, w| {
         w.spi1_gating().pass().spi1_rst().deassert();
-        w
-    });
-
-    // Map the pins
-    gpio.pd_cfg1.write(|w| {
-        // Select SPI pin mode
-        w.pd10_select().spi1_cs_dbi_csx();
-        w.pd11_select().spi1_clk_dbi_sclk();
-        w.pd12_select().spi1_mosi_dbi_sdo();
-        w
-    });
-    gpio.pd_pull0.write(|w| {
-        // Disable pull up/downs
-        w.pd10_pull().pull_disable();
-        w.pd11_pull().pull_disable();
-        w.pd12_pull().pull_disable();
         w
     });
 
@@ -100,11 +85,41 @@ impl RegisteredDriver for SpiSender {
 pub struct SpiSender;
 pub struct SpiSenderServer;
 
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum RegistrationError {
+    Gpio(gpio::Error),
+    Registry(registry::RegistrationError),
+}
+
 impl SpiSenderServer {
-    pub async fn register(
-        kernel: &'static Kernel,
-        queued: usize,
-    ) -> Result<(), registry::RegistrationError> {
+    pub async fn register(kernel: &'static Kernel, queued: usize) -> Result<(), RegistrationError> {
+        let mut gpio = GpioClient::from_registry(kernel).await;
+        let pins = FixedVec::from_slice(&[
+            (PinD::D10.into(), "SPI1_CS_DBI_CSX"),
+            (PinD::D11.into(), "SPI1_CLK_DBI_SCLK"),
+            (PinD::D12.into(), "SPI1_MOSI_DBI_SDO"),
+        ])
+        .await;
+        gpio.claim_custom(pins, |gpio| {
+            // Map the pins
+            gpio.pd_cfg1.write(|w| {
+                // Select SPI pin mode
+                w.pd10_select().spi1_cs_dbi_csx();
+                w.pd11_select().spi1_clk_dbi_sclk();
+                w.pd12_select().spi1_mosi_dbi_sdo();
+                w
+            });
+            gpio.pd_pull0.write(|w| {
+                // Disable pull up/downs
+                w.pd10_pull().pull_disable();
+                w.pd11_pull().pull_disable();
+                w.pd12_pull().pull_disable();
+                w
+            });
+        })
+        .await
+        .map_err(RegistrationError::Gpio)?;
         let (kprod, kcons) = KChannel::new_async(queued).await.split();
 
         kernel
@@ -198,7 +213,8 @@ impl SpiSenderServer {
 
         kernel
             .with_registry(move |reg| reg.register_konly::<SpiSender>(&kprod))
-            .await?;
+            .await
+            .map_err(RegistrationError::Registry)?;
 
         Ok(())
     }
@@ -222,10 +238,32 @@ pub struct SpiSenderClient {
 }
 
 impl SpiSenderClient {
-    pub async fn from_registry(kernel: &'static Kernel) -> Result<SpiSenderClient, ()> {
-        let hdl = kernel.with_registry(|reg| reg.get()).await.ok_or(())?;
+    /// Obtain a `SpiSenderClient`
+    ///
+    /// If the [`SpiSender`] hasn't been registered yet, we will retry until it
+    /// has been registered.
+    pub async fn from_registry(kernel: &'static Kernel) -> Self {
+        loop {
+            match Self::from_registry_no_retry(kernel).await {
+                Some(port) => return port,
+                None => {
+                    // I2C probably isn't registered yet. Try again in a bit
+                    kernel.sleep(core::time::Duration::from_millis(10)).await;
+                }
+            }
+        }
+    }
 
-        Ok(SpiSenderClient {
+    /// Obtain a `SpiSenderClient`
+    ///
+    /// Does NOT attempt to get an [`SpiSender`] handle more than once.
+    ///
+    /// Prefer [`SpiSenderClient::from_registry`] unless you will not be spawning one
+    /// around the same time as obtaining a client.
+    pub async fn from_registry_no_retry(kernel: &'static Kernel) -> Option<Self> {
+        let hdl = kernel.with_registry(|reg| reg.get::<SpiSender>()).await?;
+
+        Some(Self {
             hdl,
             osc: Reusable::new_async().await,
         })

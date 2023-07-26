@@ -1,10 +1,11 @@
-use d1_pac::{CCU, GPIO, UART0};
+use d1_pac::{CCU, UART0};
 
 use core::{
     ptr::{null_mut, NonNull},
     sync::atomic::{AtomicPtr, Ordering},
 };
 
+use super::gpio::{self, GpioClient};
 use crate::dmac::{
     descriptor::{
         AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType,
@@ -17,7 +18,7 @@ use kernel::{
         kchannel::{KChannel, KConsumer},
     },
     maitake::sync::WaitCell,
-    mnemos_alloc::containers::Box,
+    mnemos_alloc::containers::{Box, FixedVec},
     registry::{self, Message},
     services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     Kernel,
@@ -48,6 +49,13 @@ static UART_RX: AtomicPtr<SpscProducer> = AtomicPtr::new(null_mut());
 
 pub struct D1Uart {
     _x: (),
+}
+
+#[derive(Debug)]
+#[non_exhaustive]
+pub enum RegistrationError {
+    Gpio(gpio::Error),
+    Registry(registry::RegistrationError),
 }
 
 impl D1Uart {
@@ -179,8 +187,25 @@ impl D1Uart {
         cap_in: usize,
         cap_out: usize,
         tx_channel: Channel,
-    ) -> Result<(), registry::RegistrationError> {
+    ) -> Result<(), RegistrationError> {
         assert_eq!(tx_channel.channel_index(), 0);
+
+        // set up GPIO pin mappings
+        let mut gpio = GpioClient::from_registry(k).await;
+        let pins = FixedVec::from_slice(&[
+            (gpio::PinB::B8.into(), "UART0_TX"),
+            (gpio::PinB::B9.into(), "UART0_RX"),
+        ])
+        .await;
+        gpio.claim_custom(pins, |gpio| {
+            // Set PB8 and PB9 to function 6, UART0, internal pullup.
+            gpio.pb_cfg1
+                .write(|w| w.pb8_select().uart0_tx().pb9_select().uart0_rx());
+            gpio.pb_pull0
+                .write(|w| w.pc8_pull().pull_up().pc9_pull().pull_up());
+        })
+        .await
+        .map_err(RegistrationError::Gpio)?;
 
         let (kprod, kcons) = KChannel::<Message<SimpleSerialService>>::new_async(4)
             .await
@@ -198,26 +223,17 @@ impl D1Uart {
         assert_eq!(old, null_mut());
 
         k.with_registry(|reg| reg.register_konly::<SimpleSerialService>(&kprod))
-            .await?;
+            .await
+            .map_err(RegistrationError::Registry)?;
 
         Ok(())
     }
 }
 
-/// # Safety
-///
-/// - The `UART0` register block must not be concurrently written to.
-/// - This function should be called only while running on an Allwinner D1.
-pub unsafe fn kernel_uart(ccu: &mut CCU, gpio: &mut GPIO, uart0: UART0) -> Uart {
+pub unsafe fn kernel_uart(ccu: &mut CCU, uart0: UART0) -> Uart {
     // Enable UART0 clock.
     ccu.uart_bgr
         .write(|w| w.uart0_gating().pass().uart0_rst().deassert());
-
-    // Set PB8 and PB9 to function 6, UART0, internal pullup.
-    gpio.pb_cfg1
-        .write(|w| w.pb8_select().uart0_tx().pb9_select().uart0_rx());
-    gpio.pb_pull0
-        .write(|w| w.pc8_pull().pull_up().pc9_pull().pull_up());
 
     // Configure UART0 for 115200 8n1.
     // By default APB1 is 24MHz, use divisor 13 for 115200.

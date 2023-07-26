@@ -3,13 +3,14 @@
 use bbq10kbd::{AsyncBbq10Kbd, CapsLockState, FifoCount, NumLockState};
 pub use bbq10kbd::{KeyRaw, KeyStatus, Version};
 use core::{fmt, time::Duration};
-use futures::TryFutureExt;
+use futures::{select_biased, FutureExt, TryFutureExt};
 use kernel::{
     comms::{
         kchannel::{KChannel, KConsumer, KProducer},
         oneshot::Reusable,
     },
     embedded_hal_async::i2c::{self, I2c},
+    maitake::sync::WaitQueue,
     mnemos_alloc::containers::FixedVec,
     registry::{self, Envelope, KernelHandle, RegisteredDriver},
     retry::{AlwaysRetry, ExpBackoff, Retry, WithMaxRetries},
@@ -343,7 +344,11 @@ impl I2cPuppetServer {
         kernel
             .spawn(
                 async move {
-                    if let Err(error) = this.run(kernel).await {
+                    let result = match this.settings.irq {
+                        Some(irq) => this.run_irq(irq).await,
+                        None => this.run_polling(kernel).await,
+                    };
+                    if let Err(error) = result {
                         tracing::error!(%error, "i2c_puppet server terminating on fatal error!");
                     }
                 }
@@ -358,151 +363,168 @@ impl I2cPuppetServer {
         Ok(())
     }
 
-    async fn run(mut self, kernel: &'static Kernel) -> Result<(), I2cError> {
+    async fn run_irq(mut self, irq: &WaitQueue) -> Result<(), I2cError> {
+        tracing::info!("i2c_puppet driver running in IRQ mode...");
         loop {
-            // TODO(eliza): this Sucks and we should instead get i2c_puppet to send
-            // us an interrupt...
-            if let Ok(dq) = kernel
+            select_biased! {
+                _ = irq.wait().fuse() => {
+                    tracing::trace!("i2c_puppet IRQ asserted");
+                    self.poll_keys().await?;
+                },
+                dq = self.rx.dequeue_async().fuse() => {
+                    if let Ok(msg) = dq {
+                        self.handle_msg(msg).await;
+                    }
+                }
+            }
+        }
+    }
+
+    async fn run_polling(mut self, kernel: &'static Kernel) -> Result<(), I2cError> {
+        tracing::info!("i2c_puppet driver running in polling mode...");
+        loop {
+            if let Ok(Ok(msg)) = kernel
                 .timer()
                 .timeout(self.settings.poll_interval, self.rx.dequeue_async())
                 .await
             {
-                let registry::Message { msg, reply } = match dq {
-                    Ok(msg) => msg,
-                    Err(_) => return Ok(()),
-                };
-                let send_reply = |rsp: Result<Response, Error>| {
-                    reply.reply_konly(msg.reply_with(rsp)).map_err(|error| {
-                        tracing::warn!(?error, "failed to reply to request!!");
-                        error
-                    })
-                };
-                match msg.body {
-                    Request::SubscribeToRawKeys => {
-                        let (sub_tx, sub_rx) =
-                            KChannel::new_async(self.settings.subscription_capacity)
-                                .await
-                                .split();
-                        match self.subscriptions.try_push(sub_tx) {
-                            Ok(()) => {
-                                tracing::debug!("new subscription to keys");
-                                let reply = send_reply(Ok(Response::SubscribeToKeys(
-                                    RawKeySubscription(sub_rx),
-                                )))
-                                .await;
-
-                                if reply.is_err() {
-                                    // if the client hung up, remove the
-                                    // subscriptions entry we created.
-                                    self.subscriptions.pop();
-                                }
-                            }
-                            Err(_) => {
-                                tracing::warn!("subscriptions at capacity");
-                                // if the reply fails, that's fine, because we
-                                // didn't do anything anyway.
-                                let _ = send_reply(Err(Error::AtMaxSubscriptions)).await;
-                            }
-                        }
-                    }
-                    Request::SetColor(color) => {
-                        let res = self.set_color(color).await;
-                        match res {
-                            Ok(color) => {
-                                tracing::trace!(?color, "set i2c_puppet LED color");
-                                let _ = send_reply(Ok(Response::SetColor(color))).await;
-                            }
-                            Err(error) => {
-                                tracing::warn!(%error, "failed to set i2c_puppet LED color");
-                                let _ = send_reply(Err(Error::I2c(error))).await;
-                            }
-                        }
-                    }
-
-                    Request::ToggleLed(on) => {
-                        tracing::trace!(on, "toggling i2c_puppet LED...");
-                        let res = self
-                            .i2c
-                            .write(ADDR, &[reg::LED_ON | reg::WRITE, on as u8])
-                            .await;
-                        match res {
-                            Ok(()) => {
-                                tracing::trace!(on, "toggled i2c_puppet LED");
-                                let _ = send_reply(Ok(Response::ToggleLed(on))).await;
-                            }
-                            Err(error) => {
-                                tracing::warn!(%error, "failed to toggle i2c_puppet LED");
-                                let _ = send_reply(Err(Error::I2c(error))).await;
-                            }
-                        }
-                    }
-
-                    Request::GetLedStatus => match self.get_led_status().await {
-                        Ok(led) => {
-                            tracing::trace!(?led.color, led.on, "got i2c_puppet LED status");
-                            let _ = send_reply(Ok(Response::GetLedStatus(led))).await;
-                        }
-                        Err(error) => {
-                            tracing::warn!(%error, "failed to get i2c_puppet LED status");
-                            let _ = send_reply(Err(Error::I2c(error))).await;
-                        }
-                    },
-
-                    Request::SetBacklight(brightness) => {
-                        tracing::trace!(brightness, "setting i2c_puppet backlight");
-                        match AsyncBbq10Kbd::new(&mut self.i2c)
-                            .set_backlight(brightness)
-                            .await
-                        {
-                            Ok(()) => {
-                                tracing::trace!(brightness, "set i2c_puppet backlight",);
-                                let _ = send_reply(Ok(Response::Backlight(brightness))).await;
-                            }
-                            Err(error) => {
-                                tracing::warn!(%error, "failed to set i2c_puppet backlight");
-                                let _ = send_reply(Err(Error::I2c(error))).await;
-                            }
-                        }
-                    }
-
-                    Request::GetBacklight => {
-                        tracing::trace!("getting i2c_puppet backlight");
-                        match AsyncBbq10Kbd::new(&mut self.i2c).get_backlight().await {
-                            Ok(brightness) => {
-                                tracing::trace!(brightness, "got i2c_puppet backlight",);
-                                let _ = send_reply(Ok(Response::Backlight(brightness))).await;
-                            }
-                            Err(error) => {
-                                tracing::warn!(%error, "failed to set i2c_puppet backlight");
-                                let _ = send_reply(Err(Error::I2c(error))).await;
-                            }
-                        }
-                    }
-
-                    Request::GetVersion => {
-                        tracing::debug!("getting i2c_puppet version");
-                        match AsyncBbq10Kbd::new(&mut self.i2c).get_version().await {
-                            Ok(version) => {
-                                tracing::debug!(
-                                    "i2c_puppet firmware version: v{}.{}",
-                                    version.major,
-                                    version.minor
-                                );
-                                let _ = send_reply(Ok(Response::GetVersion(version))).await;
-                            }
-                            Err(error) => {
-                                tracing::warn!(%error, "failed to get i2c_puppet version");
-                                let _ = send_reply(Err(Error::I2c(error))).await;
-                            }
-                        }
-                    }
-                }
+                self.handle_msg(msg).await;
             }
 
             if !self.subscriptions.is_empty() || self.keymux.is_some() {
                 tracing::trace!("polling keys...");
                 if let Err(error) = self.poll_keys().await {
                     tracing::warn!(%error, "i2c_puppet: error polling keys!");
+                }
+            }
+        }
+    }
+
+    async fn handle_msg(
+        &mut self,
+        registry::Message { msg, reply }: registry::Message<I2cPuppetService>,
+    ) {
+        let send_reply = |rsp: Result<Response, Error>| {
+            reply.reply_konly(msg.reply_with(rsp)).map_err(|error| {
+                tracing::warn!(?error, "failed to reply to request!!");
+                error
+            })
+        };
+        match msg.body {
+            Request::SubscribeToRawKeys => {
+                let (sub_tx, sub_rx) = KChannel::new_async(self.settings.subscription_capacity)
+                    .await
+                    .split();
+                match self.subscriptions.try_push(sub_tx) {
+                    Ok(()) => {
+                        tracing::debug!("new subscription to keys");
+                        let reply =
+                            send_reply(Ok(Response::SubscribeToKeys(RawKeySubscription(sub_rx))))
+                                .await;
+
+                        if reply.is_err() {
+                            // if the client hung up, remove the
+                            // subscriptions entry we created.
+                            self.subscriptions.pop();
+                        }
+                    }
+                    Err(_) => {
+                        tracing::warn!("subscriptions at capacity");
+                        // if the reply fails, that's fine, because we
+                        // didn't do anything anyway.
+                        let _ = send_reply(Err(Error::AtMaxSubscriptions)).await;
+                    }
+                }
+            }
+            Request::SetColor(color) => {
+                let res = self.set_color(color).await;
+                match res {
+                    Ok(color) => {
+                        tracing::trace!(?color, "set i2c_puppet LED color");
+                        let _ = send_reply(Ok(Response::SetColor(color))).await;
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "failed to set i2c_puppet LED color");
+                        let _ = send_reply(Err(Error::I2c(error))).await;
+                    }
+                }
+            }
+
+            Request::ToggleLed(on) => {
+                tracing::trace!(on, "toggling i2c_puppet LED...");
+                let res = self
+                    .i2c
+                    .write(ADDR, &[reg::LED_ON | reg::WRITE, on as u8])
+                    .await;
+                match res {
+                    Ok(()) => {
+                        tracing::trace!(on, "toggled i2c_puppet LED");
+                        let _ = send_reply(Ok(Response::ToggleLed(on))).await;
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "failed to toggle i2c_puppet LED");
+                        let _ = send_reply(Err(Error::I2c(error))).await;
+                    }
+                }
+            }
+
+            Request::GetLedStatus => match self.get_led_status().await {
+                Ok(led) => {
+                    tracing::trace!(?led.color, led.on, "got i2c_puppet LED status");
+                    let _ = send_reply(Ok(Response::GetLedStatus(led))).await;
+                }
+                Err(error) => {
+                    tracing::warn!(%error, "failed to get i2c_puppet LED status");
+                    let _ = send_reply(Err(Error::I2c(error))).await;
+                }
+            },
+
+            Request::SetBacklight(brightness) => {
+                tracing::trace!(brightness, "setting i2c_puppet backlight");
+                match AsyncBbq10Kbd::new(&mut self.i2c)
+                    .set_backlight(brightness)
+                    .await
+                {
+                    Ok(()) => {
+                        tracing::trace!(brightness, "set i2c_puppet backlight",);
+                        let _ = send_reply(Ok(Response::Backlight(brightness))).await;
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "failed to set i2c_puppet backlight");
+                        let _ = send_reply(Err(Error::I2c(error))).await;
+                    }
+                }
+            }
+
+            Request::GetBacklight => {
+                tracing::trace!("getting i2c_puppet backlight");
+                match AsyncBbq10Kbd::new(&mut self.i2c).get_backlight().await {
+                    Ok(brightness) => {
+                        tracing::trace!(brightness, "got i2c_puppet backlight",);
+                        let _ = send_reply(Ok(Response::Backlight(brightness))).await;
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "failed to set i2c_puppet backlight");
+                        let _ = send_reply(Err(Error::I2c(error))).await;
+                    }
+                }
+            }
+
+            Request::GetVersion => {
+                tracing::debug!("getting i2c_puppet version");
+                match AsyncBbq10Kbd::new(&mut self.i2c).get_version().await {
+                    Ok(version) => {
+                        tracing::debug!(
+                            "i2c_puppet firmware version: v{}.{}",
+                            version.major,
+                            version.minor
+                        );
+                        let _ = send_reply(Ok(Response::GetVersion(version))).await;
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error, "failed to get i2c_puppet version");
+                        let _ = send_reply(Err(Error::I2c(error))).await;
+                    }
                 }
             }
         }
@@ -636,6 +658,7 @@ pub struct I2cPuppetSettings {
     pub keymux: bool,
     pub min_backoff: Duration,
     pub max_retries: usize,
+    irq: Option<&'static WaitQueue>,
 }
 
 impl Default for I2cPuppetSettings {
@@ -648,6 +671,22 @@ impl Default for I2cPuppetSettings {
             keymux: true,
             max_retries: 10,
             min_backoff: Duration::from_micros(5),
+            irq: None,
+        }
+    }
+}
+
+impl I2cPuppetSettings {
+    /// Sets a [`WaitQueue`] which will be woken whenever the `i2c_puppet`
+    /// interrupt request line is asserted.
+    ///
+    /// If this is [`None`], then the `i2c_puppet` driver will poll the keyboard
+    /// periodically, rather than polling the keyboard when the IRQ line is
+    /// asserted.
+    pub fn with_irq_waker(self, irq: impl Into<Option<&'static WaitQueue>>) -> Self {
+        Self {
+            irq: irq.into(),
+            ..self
         }
     }
 }
