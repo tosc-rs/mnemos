@@ -2,7 +2,6 @@
 name = "mnemos-abi"
 version = "0.1.0"
 description = "A tiny embedded operating system common library"
-repository = "https://github.com/jamesmunns/pellegrino"
 authors = ["James Munns <james@onevariable.com>"]
 edition = "2021"
 readme = "./README.md"

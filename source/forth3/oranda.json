@@ -1,5 +1,8 @@
 {
   "components": {
     "mdbook": false
+  },
+  "project": {
+    "description": "lol is this a good one? <a href=\"https://google.com\">google</a>"
   }
 }
