@@ -30,13 +30,12 @@ fn main() -> ! {
 
     let mut ccu = Ccu::new(p.CCU);
     ccu.sys_clock_init();
-    p.CCU = ccu.release();
 
-    let uart = unsafe { kernel_uart(&mut p.CCU, &mut p.GPIO, p.UART0) };
-    let spim = unsafe { kernel_spim1(p.SPI_DBI, &mut p.CCU, &mut p.GPIO) };
-    let i2c0 = unsafe { twi::I2c0::lichee_rv_dock(p.TWI2, &mut p.CCU, &mut p.GPIO) };
+    let uart = unsafe { kernel_uart(&mut ccu, &mut p.GPIO, p.UART0) };
+    let spim = unsafe { kernel_spim1(p.SPI_DBI, &mut ccu, &mut p.GPIO) };
+    let i2c0 = unsafe { twi::I2c0::lichee_rv_dock(p.TWI2, &mut ccu, &mut p.GPIO) };
     let timers = Timers::new(p.TIMER);
-    let dmac = Dmac::new(p.DMAC, &mut p.CCU);
+    let dmac = Dmac::new(p.DMAC, &mut ccu);
     let plic = Plic::new(p.PLIC);
 
     let d1 = D1::initialize(timers, uart, spim, dmac, plic, i2c0);

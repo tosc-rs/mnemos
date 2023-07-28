@@ -9,8 +9,10 @@ use core::{
 use d1_pac::{
     dmac::{dmac_desc_addr::DMAC_DESC_ADDR_SPEC, dmac_en::DMAC_EN_SPEC, dmac_mode::DMAC_MODE_SPEC},
     generic::Reg,
-    CCU, DMAC,
+    DMAC,
 };
+
+use crate::ccu::Ccu;
 
 use self::descriptor::Descriptor;
 
@@ -24,8 +26,8 @@ pub struct Dmac {
 impl Dmac {
     pub const CHANNEL_COUNT: u8 = 16;
 
-    pub fn new(dmac: DMAC, ccu: &mut CCU) -> Self {
-        ccu.dma_bgr.write(|w| w.gating().pass().rst().deassert());
+    pub fn new(dmac: DMAC, ccu: &mut Ccu) -> Self {
+        ccu.enable_module::<DMAC>();
         Self {
             dmac,
             channels: [

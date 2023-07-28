@@ -53,7 +53,9 @@ use core::{
     ops::{Deref, DerefMut},
     task::{Poll, Waker},
 };
-use d1_pac::{twi, Interrupt, CCU, GPIO, TWI0, TWI1, TWI2, TWI3};
+
+use crate::ccu::Ccu;
+use d1_pac::{twi, Interrupt, GPIO, TWI0, TWI1, TWI2, TWI3};
 use kernel::{
     comms::kchannel::{KChannel, KConsumer},
     embedded_hal_async::i2c::{ErrorKind, NoAcknowledgeSource},
@@ -147,7 +149,7 @@ impl I2c0 {
     /// - The TWI register block must not be concurrently written to.
     /// - This function should be called only while running on a MangoPi MQ Pro
     ///   board.
-    pub unsafe fn mq_pro(_twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
+    pub unsafe fn mq_pro(_twi: TWI0, ccu: &mut Ccu, gpio: &mut GPIO) -> Self {
         // Step 1: Configure GPIO pin mappings.
         gpio.pg_cfg1.modify(|_r, w| {
             // on the Mango Pi MQ Pro, the pi header's I2C0 pins are mapped to
@@ -158,21 +160,9 @@ impl I2c0 {
             w
         });
 
-        ccu.twi_bgr.modify(|_r, w| {
-            // Step 2: Set TWI_BGR_REG[TWI(n)_GATING] to 0 to close TWI(n) clock.
-            w.twi0_gating().mask();
-            // Step 3: Set TWI_BGR_REG[TWI(n)_RST] to 0 to reset TWI(n) module.
-            w.twi0_rst().assert();
-            w
-        });
+        ccu.disable_module::<TWI0>();
 
-        ccu.twi_bgr.modify(|_r, w| {
-            // Step 3: Set TWI_BGR_REG[TWI(n)_RST] to 1 to reset TWI(n).
-            w.twi0_rst().deassert();
-            // Step 4: Set TWI_BGR_REG[TWI(n)_GATING] to 1 to open TWI(n) clock.
-            w.twi0_gating().pass();
-            w
-        });
+        ccu.enable_module::<TWI0>();
 
         Self::init(
             unsafe { &*TWI0::ptr() },
@@ -190,7 +180,7 @@ impl I2c0 {
     /// - The TWI register block must not be concurrently written to.
     /// - This function should be called only while running on a Lichee RV
     ///   board.
-    pub unsafe fn lichee_rv_dock(_twi: TWI2, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
+    pub unsafe fn lichee_rv_dock(_twi: TWI2, ccu: &mut Ccu, gpio: &mut GPIO) -> Self {
         // Step 1: Configure GPIO pin mappings.
         gpio.pb_cfg0.modify(|_r, w| {
             // on the Lichee RV Dock, the Pi header's I2C0 corresponds to TWI2, not
@@ -202,21 +192,9 @@ impl I2c0 {
             w
         });
 
-        ccu.twi_bgr.modify(|_r, w| {
-            // Step 2: Set TWI_BGR_REG[TWI(n)_GATING] to 0 to close TWI(n) clock.
-            w.twi2_gating().mask();
-            // Step 3: Set TWI_BGR_REG[TWI(n)_RST] to 0 to reset TWI(n) module.
-            w.twi2_rst().assert();
-            w
-        });
+        ccu.disable_module::<TWI2>();
 
-        ccu.twi_bgr.modify(|_r, w| {
-            // Step 3: Set TWI_BGR_REG[TWI(n)_RST] to 1 to reset TWI(n).
-            w.twi2_rst().deassert();
-            // Step 4: Set TWI_BGR_REG[TWI(n)_GATING] to 1 to open TWI(n) clock.
-            w.twi2_gating().pass();
-            w
-        });
+        ccu.enable_module::<TWI2>();
 
         Self::init(
             unsafe { &*TWI2::ptr() },
