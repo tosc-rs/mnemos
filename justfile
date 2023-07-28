@@ -49,7 +49,7 @@ default:
 check: && (_check-dir _pomelo_dir ) (_check-dir _melpo_dir) (_check-dir _espbuddy_dir)
     {{ _cargo }} check \
         --workspace \
-        --lib --bins --examples --tests --benches \
+        --lib --bins --examples --tests --benches --all-features \
         {{ _fmt }}
 
 # run Clippy checks for all packages, across workspaces.
