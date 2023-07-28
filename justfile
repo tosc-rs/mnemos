@@ -125,8 +125,8 @@ _get-cargo-command name pkg skip='':
 
 # run clippy for a subdirectory
 _clippy-dir dir:
-    cd {{ dir }}; {{ _cargo }} clippy --lib --bins --workspace {{ _fmt }}
+    cd {{ dir }}; {{ _cargo }} clippy --lib --bins {{ _fmt }}
 
 # run cargo check for a subdirectory
 _check-dir dir:
-    cd {{ dir }}; {{ _cargo }} check --lib --bins --workspace {{ _fmt }}
+    cd {{ dir }}; {{ _cargo }} check --lib --bins {{ _fmt }}
