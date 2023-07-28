@@ -55,7 +55,7 @@ check: && (_check-dir _pomelo_dir ) (_check-dir _melpo_dir) (_check-dir _espbudd
 # run Clippy checks for all packages, across workspaces.
 clippy: && (_clippy-dir _pomelo_dir ) (_clippy-dir _melpo_dir) (_clippy-dir _espbuddy_dir)
     {{ _cargo }} clippy --workspace \
-        --lib --bins --examples --tests --benches \
+        --lib --bins --examples --tests --benches --all-features \
         {{ _fmt }}
 
 # test all packages, across workspaces
