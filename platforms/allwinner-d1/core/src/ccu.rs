@@ -1,8 +1,21 @@
 //! This module provides a higher-level interface for the `Clock Controller Unit`.
 use d1_pac::CCU;
+use d1_pac::DMAC;
+use d1_pac::{SMHC0, SMHC1, SMHC2};
+use d1_pac::{SPI0, SPI_DBI};
+use d1_pac::{TWI0, TWI1, TWI2, TWI3};
+use d1_pac::{UART0, UART1, UART2, UART3, UART4, UART5};
 
 pub struct Ccu {
     ccu: CCU,
+}
+
+/// Trait to be implemented for module clocks that can be gated and reset
+pub trait BusGatingResetRegister {
+    /// Enable or disable the clock reset bit
+    fn gating(ccu: &mut CCU, pass: bool);
+    /// Enable or disable the clock gating bit
+    fn reset(ccu: &mut CCU, deassert: bool);
 }
 
 macro_rules! set_module {
@@ -26,10 +39,11 @@ macro_rules! set_module {
     };
 }
 
-// temporary
+// TODO: should this move into the `Clint`?
 fn sdelay(delay_us: usize) {
     let clint = unsafe { crate::clint::Clint::summon() };
     let t = clint.get_mtime();
+    // TODO: confirm clock source of mtime
     while clint.get_mtime() < (t + 24 * delay_us) {
         core::hint::spin_loop()
     }
@@ -44,14 +58,34 @@ impl Ccu {
         self.ccu
     }
 
-    /// This function is currently a copy from
-    /// [xboot](https://github.com/xboot/xboot/blob/master/src/arch/riscv64/mach-d1/sys-clock.c)
+    /// De-assert the reset bit and enable the clock gating bit for the given module
+    pub fn enable_module<MODULE: BusGatingResetRegister>(&mut self) {
+        MODULE::reset(&mut self.ccu, true);
+        sdelay(20);
+        MODULE::gating(&mut self.ccu, true);
+    }
+
+    /// Disable the clock gating bit and assert the reset bit for the given module
+    pub fn disable_module<MODULE: BusGatingResetRegister>(&mut self) {
+        MODULE::gating(&mut self.ccu, false);
+        // TODO: delay?
+        MODULE::reset(&mut self.ccu, false);
+    }
+
+    /// Allow modules to configure their own clock on a PAC level
+    // TODO: find a good abstraction so we don't need this anymore
+    pub fn borrow(&mut self) -> &mut CCU {
+        &mut self.ccu
+    }
+
+    /// Initialize the system clocks to the same default value that is also set by `xfel`
     pub fn sys_clock_init(&mut self) {
+        // The clock initialization functions are ported to Rust, based on the C implementation in
+        // [xboot](https://github.com/xboot/xboot/blob/master/src/arch/riscv64/mach-d1/sys-clock.c)
         self.set_pll_cpux_axi();
         self.set_pll_periph0();
         self.set_ahb();
         self.set_apb();
-        self.set_dma();
         self.set_mbus();
         set_module!(self, pll_peri_ctrl);
         set_module!(self, pll_video0_ctrl);
@@ -172,14 +206,6 @@ impl Ccu {
         sdelay(1);
     }
 
-    fn set_dma(&mut self) {
-        /* Dma reset */
-        self.ccu.dma_bgr.modify(|_, w| w.rst().deassert());
-        sdelay(20);
-        /* Enable gating clock for dma */
-        self.ccu.dma_bgr.modify(|_, w| w.gating().pass());
-    }
-
     fn set_mbus(&mut self) {
         /* Reset mbus domain */
         self.ccu.mbus_clk.modify(|_, w| w.mbus_rst().deassert());
@@ -196,4 +222,39 @@ impl Ccu {
             w
         });
     }
+}
+
+macro_rules! impl_bgr {
+    ($($MODULE:ident : ($reg:ident, $gating:ident, $reset:ident),)+) => {
+        $(
+            impl BusGatingResetRegister for $MODULE {
+                fn gating(ccu: &mut CCU, pass: bool) {
+                    ccu.$reg.modify(|_, w| w.$gating().bit(pass));
+                }
+
+                fn reset(ccu: &mut CCU, deassert: bool) {
+                    ccu.$reg.modify(|_, w| w.$reset().bit(deassert));
+                }
+            }
+        )+
+    }
+}
+
+impl_bgr! {
+    DMAC:    (dma_bgr, gating, rst),
+    SMHC0:   (smhc_bgr, smhc0_gating, smhc0_rst),
+    SMHC1:   (smhc_bgr, smhc1_gating, smhc1_rst),
+    SMHC2:   (smhc_bgr, smhc2_gating, smhc2_rst),
+    SPI0:    (spi_bgr, spi0_gating, spi0_rst),
+    SPI_DBI: (spi_bgr, spi1_gating, spi1_rst),
+    TWI0:    (twi_bgr, twi0_gating, twi0_rst),
+    TWI1:    (twi_bgr, twi1_gating, twi1_rst),
+    TWI2:    (twi_bgr, twi2_gating, twi2_rst),
+    TWI3:    (twi_bgr, twi3_gating, twi3_rst),
+    UART0:   (uart_bgr, uart0_gating, uart0_rst),
+    UART1:   (uart_bgr, uart1_gating, uart1_rst),
+    UART2:   (uart_bgr, uart2_gating, uart2_rst),
+    UART3:   (uart_bgr, uart3_gating, uart3_rst),
+    UART4:   (uart_bgr, uart4_gating, uart4_rst),
+    UART5:   (uart_bgr, uart5_gating, uart5_rst),
 }
