@@ -30,7 +30,7 @@ pub struct Spim1 {
 /// - This function should be called only while running on an Allwinner D1.
 pub unsafe fn kernel_spim1(spi1: SPI_DBI, ccu: &mut Ccu, gpio: &mut GPIO) -> Spim1 {
     // Set clock rate (fixed to 2MHz), and enable the SPI peripheral
-    ccu.borrow().spi1_clk.write(|w| {
+    ccu.borrow_raw().spi1_clk.write(|w| {
         // Enable clock
         w.clk_gating().on();
         // base:  24 MHz

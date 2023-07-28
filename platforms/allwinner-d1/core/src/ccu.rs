@@ -1,4 +1,4 @@
-//! This module provides a higher-level interface for the `Clock Controller Unit`.
+//! This module provides a higher-level interface for the Clock Controller Unit (CCU).
 use d1_pac::CCU;
 use d1_pac::DMAC;
 use d1_pac::{SMHC0, SMHC1, SMHC2};
@@ -18,27 +18,6 @@ pub trait BusGatingResetRegister {
     fn reset(ccu: &mut CCU, deassert: bool);
 }
 
-macro_rules! set_module {
-    ($self: ident, $module: ident) => {
-        if ($self.ccu.$module.read().pll_en().bit_is_clear()) {
-            $self.ccu.$module.modify(|_, w| {
-                w.pll_ldo_en().enable();
-                w.pll_en().enable();
-                w
-            });
-
-            $self.ccu.$module.modify(|_, w| w.lock_enable().enable());
-
-            while $self.ccu.$module.read().lock().bit_is_clear() {
-                core::hint::spin_loop();
-            }
-            sdelay(20);
-
-            $self.ccu.$module.modify(|_, w| w.lock_enable().disable());
-        }
-    };
-}
-
 // TODO: should this move into the `Clint`?
 fn sdelay(delay_us: usize) {
     let clint = unsafe { crate::clint::Clint::summon() };
@@ -50,10 +29,12 @@ fn sdelay(delay_us: usize) {
 }
 
 impl Ccu {
+    #[must_use]
     pub fn new(ccu: CCU) -> Self {
         Self { ccu }
     }
 
+    #[must_use]
     pub fn release(self) -> CCU {
         self.ccu
     }
@@ -74,7 +55,7 @@ impl Ccu {
 
     /// Allow modules to configure their own clock on a PAC level
     // TODO: find a good abstraction so we don't need this anymore
-    pub fn borrow(&mut self) -> &mut CCU {
+    pub fn borrow_raw(&mut self) -> &mut CCU {
         &mut self.ccu
     }
 
@@ -86,7 +67,32 @@ impl Ccu {
         self.set_pll_periph0();
         self.set_ahb();
         self.set_apb();
+        // This is where `xboot` resets and enables the DMA bus gating register.
+        // We don't do that, because this is performed by the DMAC driver's
+        // initialization function, instead.
         self.set_mbus();
+
+        macro_rules! set_module {
+            ($self: ident, $module: ident) => {
+                if ($self.ccu.$module.read().pll_en().bit_is_clear()) {
+                    $self.ccu.$module.modify(|_, w| {
+                        w.pll_ldo_en().enable();
+                        w.pll_en().enable();
+                        w
+                    });
+
+                    $self.ccu.$module.modify(|_, w| w.lock_enable().enable());
+
+                    while $self.ccu.$module.read().lock().bit_is_clear() {
+                        core::hint::spin_loop();
+                    }
+                    sdelay(20);
+
+                    $self.ccu.$module.modify(|_, w| w.lock_enable().disable());
+                }
+            };
+        }
+
         set_module!(self, pll_peri_ctrl);
         set_module!(self, pll_video0_ctrl);
         set_module!(self, pll_video1_ctrl);
@@ -96,7 +102,8 @@ impl Ccu {
     }
 
     fn set_pll_cpux_axi(&mut self) {
-        /* Select cpux clock src to osc24m, axi divide ratio is 3, system apb clk ratio is 4 */
+        // Select DCXO (24 MHz) as CPU clock source.
+        // AXI divide ratio is 3, system APB clock ratio is 4.
         self.ccu.riscv_clk.write(|w| {
             w.clk_src_sel().hosc();
             w.axi_div_cfg().variant(3);
@@ -105,16 +112,16 @@ impl Ccu {
         });
         sdelay(1);
 
-        /* Disable pll gating */
+        // Disable PLL gating
         self.ccu
             .pll_cpu_ctrl
             .modify(|_, w| w.pll_output_gate().disable());
 
-        /* Enable pll ldo */
+        // Enable PLL LDO
         self.ccu.pll_cpu_ctrl.modify(|_, w| w.pll_ldo_en().enable());
         sdelay(5);
 
-        /* Set default clk to 1008mhz */
+        // Set default clock to 1008 MHz
         self.ccu.pll_cpu_ctrl.modify(|r, w| {
             // undocumented part of register is cleared by xboot
             unsafe { w.bits(r.bits() & !(0x3 << 16)) };
@@ -123,32 +130,33 @@ impl Ccu {
             w
         });
 
-        /* Lock enable */
+        // Lock the CPU PLL
         self.ccu
             .pll_cpu_ctrl
             .modify(|_, w| w.lock_enable().enable());
 
-        /* Enable pll */
+        // Enable PLL
         self.ccu.pll_cpu_ctrl.modify(|_, w| w.pll_en().enable());
 
-        /* Wait pll stable */
+        // Wait until PLL is stable
         while self.ccu.pll_cpu_ctrl.read().lock().bit_is_clear() {
             core::hint::spin_loop();
         }
         sdelay(20);
 
-        /* Enable pll gating */
+        // Enable PLL gating
         self.ccu
             .pll_cpu_ctrl
             .modify(|_, w| w.pll_output_gate().enable());
 
-        /* Lock disable */
+        // Unlock the CPU PLL
         self.ccu
             .pll_cpu_ctrl
             .modify(|_, w| w.lock_enable().disable());
         sdelay(1);
 
-        /* Set and change cpu clk src */
+        // Change the CPU clock source to PLL_CPU.
+        // Sets the RISC-V clock to 1008 MHz and the RISC-V AXI clock to 504 MHz.
         self.ccu.riscv_clk.modify(|_, w| {
             w.clk_src_sel().pll_cpu();
             w.axi_div_cfg().variant(1);
@@ -159,38 +167,40 @@ impl Ccu {
     }
 
     fn set_pll_periph0(&mut self) {
-        /* Periph0 has been enabled */
+        // Check if PLL_PERI has already been enabled
         if self.ccu.pll_peri_ctrl.read().pll_en().bit_is_set() {
             return;
         }
 
-        /* Change psi src to osc24m */
+        // Change PSI source to DCXO (24 MHz)
         self.ccu.psi_clk.modify(|_, w| w.clk_src_sel().hosc());
 
-        /* Set default val */
+        // Set the default value for PLL_N
         self.ccu.pll_peri_ctrl.write(|w| w.pll_n().variant(0x63));
 
-        /* Lock enable */
+        // Lock the PLL
         self.ccu
             .pll_peri_ctrl
             .modify(|_, w| w.lock_enable().enable());
 
-        /* Enabe pll 600m(1x) 1200m(2x) */
+        // Enabe 'PLL_PERI(1X)', 'PLL_PERI(2X)' and 'PLL_PERI(800M)'
         self.ccu.pll_peri_ctrl.modify(|_, w| w.pll_en().enable());
 
-        /* Wait pll stable */
+        // Wait until the PLL is stable
         while self.ccu.pll_peri_ctrl.read().lock().bit_is_clear() {
             core::hint::spin_loop();
         }
         sdelay(20);
 
-        /* Lock disable */
+        // Unlock the PLL
         self.ccu
             .pll_peri_ctrl
             .modify(|_, w| w.lock_enable().disable());
     }
 
     fn set_ahb(&mut self) {
+        // This could potentially be done in a single write, but we follow
+        // the `xboot` implementation which also splits this in 2 operations.
         self.ccu
             .psi_clk
             .write(|w| w.factor_m().variant(2).factor_n().n1());
@@ -201,16 +211,18 @@ impl Ccu {
     }
 
     fn set_apb(&mut self) {
+        // This could potentially be done in a single write, but we follow
+        // the `xboot` implementation which also splits this in 2 operations.
         self.ccu.apb_clk[0].write(|w| w.factor_m().variant(2).factor_n().n2());
         self.ccu.apb_clk[0].modify(|_, w| w.clk_src_sel().pll_peri_1x());
         sdelay(1);
     }
 
     fn set_mbus(&mut self) {
-        /* Reset mbus domain */
+        // Reset the MBUS domain
         self.ccu.mbus_clk.modify(|_, w| w.mbus_rst().deassert());
         sdelay(1);
-        /* Enable mbus master clock gating */
+        // Enable MBUS master clock gating
         self.ccu.mbus_mat_clk_gating.write(|w| {
             w.dma_mclk_en().pass();
             w.ve_mclk_en().pass();
