@@ -22,7 +22,7 @@ members = [
     "platforms/melpomene",
 ]
 
-exclude = ["platforms/pomelo"]
+exclude = ["platforms/pomelo", "platforms/esp32c3-buddy"]
 
 [patch.crates-io.maitake]
 git = "https://github.com/hawkw/mycelium.git"
