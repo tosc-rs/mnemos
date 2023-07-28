@@ -11,7 +11,7 @@ use std::{
     thread::{sleep, spawn, JoinHandle},
     time::{Duration, Instant},
 };
-use tracing_02::level_filters::LevelFilter;
+use tracing::level_filters::LevelFilter;
 
 /// Unfortunately, the `serialport` crate seems to have some issues on M-series Macs.
 ///

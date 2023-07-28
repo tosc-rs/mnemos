@@ -1,5 +1,4 @@
 use crate::services::forth_spawnulator::SpawnulatorClient;
-use crate::tracing;
 use crate::{
     comms::bbq,
     services::serial_mux::{PortHandle, SerialMuxClient},
@@ -20,6 +19,7 @@ use mnemos_alloc::{
     heap::{alloc, dealloc},
 };
 use portable_atomic::{AtomicUsize, Ordering};
+use tracing;
 
 #[derive(Copy, Clone, Debug)]
 #[non_exhaustive]

@@ -467,8 +467,8 @@ dependencies = [
  "serde",
  "sermux-proto",
  "spitebuf",
- "tracing 0.2.0",
- "tracing-core 0.2.0",
+ "tracing 0.1.37",
+ "tracing-core 0.1.31",
  "tracing-serde-structured",
  "uuid",
  "vergen",
@@ -501,7 +501,7 @@ dependencies = [
  "futures",
  "mnemos",
  "mycelium-bitfield",
- "tracing 0.2.0",
+ "tracing 0.1.37",
  "uuid",
 ]
 
@@ -530,7 +530,7 @@ dependencies = [
  "futures",
  "mnemos",
  "riscv",
- "tracing 0.2.0",
+ "tracing 0.1.37",
 ]
 
 [[package]]
@@ -538,7 +538,7 @@ name = "mnemos-trace-proto"
 version = "0.1.0"
 dependencies = [
  "serde",
- "tracing-core 0.2.0",
+ "tracing-core 0.1.31",
  "tracing-serde-structured",
 ]
 
@@ -1057,12 +1057,12 @@ dependencies = [
 [[package]]
 name = "tracing-serde-structured"
 version = "0.2.0"
-source = "git+https://github.com/jamesmunns/tracing-serde-structured?branch=james/2trace2furious#44571d9c946ada78acddb0783317a659f836ddd7"
+source = "git+https://github.com/hawkw/tracing-serde-structured?branch=eliza/span-fields#d8c384a09f27eb06aaf31dd3f9bb9c69b33f7e66"
 dependencies = [
  "hash32 0.2.1",
  "heapless",
  "serde",
- "tracing-core 0.2.0",
+ "tracing-core 0.1.31",
 ]
 
 [[package]]

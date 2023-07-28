@@ -12,10 +12,10 @@ default-features = false
 features = ["derive"]
 
 [dependencies.tracing-serde-structured]
-git = "https://github.com/jamesmunns/tracing-serde-structured"
-branch = "james/2trace2furious"
+git = "https://github.com/hawkw/tracing-serde-structured"
+branch = "eliza/span-fields"
 default-features = false
 
 [dependencies.tracing-core]
-git = "https://github.com/tokio-rs/tracing"
+version = "0.1.31"
 default-features = false

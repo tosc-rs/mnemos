@@ -63,7 +63,7 @@ use kernel::{
         messages::{OpKind, Transfer},
         Addr, I2cService, Transaction,
     },
-    trace, Kernel,
+    tracing, Kernel,
 };
 
 /// A TWI mapped to the Raspberry Pi header's I²C0 pins.
@@ -322,7 +322,7 @@ impl I2c0 {
         let (tx, rx) = KChannel::new_async(queued).await.split();
 
         kernel.spawn(self.run(rx)).await;
-        trace::info!("TWI driver task spawned");
+        tracing::info!("TWI driver task spawned");
         kernel
             .with_registry(move |reg| reg.register_konly::<I2cService>(&tx).map_err(drop))
             .await?;

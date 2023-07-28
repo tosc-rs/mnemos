@@ -463,7 +463,7 @@ dependencies = [
  "tonic",
  "tracing 0.1.37",
  "tracing-core 0.1.31",
- "tracing-subscriber 0.3.17",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -582,9 +582,9 @@ dependencies = [
  "serialport 4.0.1",
  "serialport 4.2.1",
  "sermux-proto",
- "tracing 0.2.0",
+ "tracing 0.1.37",
  "tracing-serde-structured",
- "tracing-subscriber 0.3.0",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1366,7 +1366,7 @@ dependencies = [
  "generator",
  "scoped-tls",
  "tracing 0.1.37",
- "tracing-subscriber 0.3.17",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -1446,7 +1446,7 @@ dependencies = [
  "tokio",
  "tracing 0.1.37",
  "tracing-modality",
- "tracing-subscriber 0.3.17",
+ "tracing-subscriber",
  "uuid 1.3.4",
 ]
 
@@ -1576,8 +1576,7 @@ dependencies = [
  "sermux-proto",
  "spitebuf",
  "tracing 0.1.37",
- "tracing 0.2.0",
- "tracing-core 0.2.0",
+ "tracing-core 0.1.31",
  "tracing-serde-structured",
  "uuid 1.3.4",
  "vergen",
@@ -1610,7 +1609,7 @@ dependencies = [
  "futures",
  "mnemos",
  "mycelium-bitfield",
- "tracing 0.2.0",
+ "tracing 0.1.37",
  "uuid 1.3.4",
 ]
 
@@ -1624,7 +1623,7 @@ dependencies = [
  "futures",
  "mnemos",
  "riscv",
- "tracing 0.2.0",
+ "tracing 0.1.37",
 ]
 
 [[package]]
@@ -1645,7 +1644,7 @@ name = "mnemos-trace-proto"
 version = "0.1.0"
 dependencies = [
  "serde",
- "tracing-core 0.2.0",
+ "tracing-core 0.1.31",
  "tracing-serde-structured",
 ]
 
@@ -2987,9 +2986,6 @@ dependencies = [
 name = "tracing-core"
 version = "0.2.0"
 source = "git+https://github.com/tokio-rs/tracing#27f688efb72316a26f3ec1f952c82626692c08ff"
-dependencies = [
- "once_cell",
-]
 
 [[package]]
 name = "tracing-log"
@@ -3017,7 +3013,7 @@ dependencies = [
  "tokio",
  "tracing 0.1.37",
  "tracing-core 0.1.31",
- "tracing-subscriber 0.3.17",
+ "tracing-subscriber",
  "url",
  "uuid 1.3.4",
 ]
@@ -3025,20 +3021,12 @@ dependencies = [
 [[package]]
 name = "tracing-serde-structured"
 version = "0.2.0"
-source = "git+https://github.com/jamesmunns/tracing-serde-structured?branch=james/2trace2furious#44571d9c946ada78acddb0783317a659f836ddd7"
+source = "git+https://github.com/hawkw/tracing-serde-structured?branch=eliza/span-fields#d8c384a09f27eb06aaf31dd3f9bb9c69b33f7e66"
 dependencies = [
  "hash32 0.2.1",
  "heapless",
  "serde",
- "tracing-core 0.2.0",
-]
-
-[[package]]
-name = "tracing-subscriber"
-version = "0.3.0"
-source = "git+https://github.com/tokio-rs/tracing#27f688efb72316a26f3ec1f952c82626692c08ff"
-dependencies = [
- "tracing-core 0.2.0",
+ "tracing-core 0.1.31",
 ]
 
 [[package]]

@@ -46,8 +46,7 @@ features = ["async-await"]
 # kernel
 [dependencies.mnemos]
 path = "../../../source/kernel"
-default-features = false
-features = ["tracing-02"]
+features = ["serial-trace"]
 
 # tracing 0.2
 [dependencies.tracing]

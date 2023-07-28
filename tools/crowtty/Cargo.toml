@@ -37,8 +37,8 @@ version = "3.5"
 features = ["supports-colors"]
 
 [dependencies.tracing-serde-structured]
-git = "https://github.com/jamesmunns/tracing-serde-structured"
-branch = "james/2trace2furious"
+git = "https://github.com/hawkw/tracing-serde-structured"
+branch = "eliza/span-fields"
 default-features = true
 
 [dependencies.sermux-proto]
@@ -49,15 +49,11 @@ features = ["use-std"]
 path = "../../source/trace-proto"
 features = ["std"]
 
-[dependencies.tracing-02]
-package = "tracing"
-git = "https://github.com/tokio-rs/tracing"
-# branch = "master"
+[dependencies.tracing]
+version = "0.1.37"
 default-features = false
 
 [dependencies.tracing-subscriber]
-package = "tracing-subscriber"
-git = "https://github.com/tokio-rs/tracing"
-# branch = "master"
+version = "0.3.17"
 default-features = false
 features = ["std"]

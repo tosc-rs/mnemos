@@ -9,7 +9,6 @@
 use core::time::Duration;
 
 use crate::comms::bbq::GrantR;
-use crate::tracing::{self, debug, warn, Level};
 use crate::{
     comms::{
         bbq,
@@ -23,6 +22,7 @@ use crate::{
 use maitake::sync::Mutex;
 use mnemos_alloc::containers::{Arc, FixedVec};
 use sermux_proto::PortChunk;
+use tracing::{self, debug, warn, Level};
 use uuid::Uuid;
 
 // Well known ports live in the sermux_proto crate

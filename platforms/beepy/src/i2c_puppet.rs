@@ -20,7 +20,7 @@ use kernel::{
             mux::KeyboardMuxClient,
         },
     },
-    trace::{self, instrument, Instrument, Level},
+    tracing::{self, instrument, Instrument, Level},
     Kernel,
 };
 use uuid::{uuid, Uuid};
@@ -347,7 +347,7 @@ impl I2cPuppetServer {
                         tracing::error!(%error, "i2c_puppet server terminating on fatal error!");
                     }
                 }
-                .instrument(trace::info_span!("I2cPuppetServer")),
+                .instrument(tracing::info_span!("I2cPuppetServer")),
             )
             .await;
 
@@ -580,12 +580,12 @@ impl I2cPuppetServer {
                     (kbd, res)
                 })
                 .await?;
-            trace::debug!(?key);
+            tracing::debug!(?key);
 
             // TODO(eliza): remove dead subscriptions...
             for sub in self.subscriptions.as_slice_mut() {
                 if let Err(error) = sub.enqueue_async((status, key)).await {
-                    trace::warn!(?error, "subscription dropped...");
+                    tracing::warn!(?error, "subscription dropped...");
                 }
             }
 
