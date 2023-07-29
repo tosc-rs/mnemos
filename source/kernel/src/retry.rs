@@ -1,6 +1,6 @@
-use crate::tracing;
 use core::{fmt, future::Future};
 use maitake::time::{self, Duration};
+use tracing;
 
 /// An exponential backoff.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]

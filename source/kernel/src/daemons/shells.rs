@@ -12,7 +12,7 @@ use crate::{
         keyboard::{key_event, KeyClient},
         serial_mux::{PortHandle, WellKnown},
     },
-    tracing, Kernel,
+    Kernel,
 };
 use embedded_graphics::{
     mono_font::{MonoFont, MonoTextStyle},
