@@ -26,8 +26,12 @@ test = false
 bench = false
 
 [[bin]]
-name = "mnemos_esp32c3_buddy"
-path = "src/main.rs"
+name = "qtpy"
+test = false
+bench = false
+
+[[bin]]
+name = "xiao"
 test = false
 bench = false
 

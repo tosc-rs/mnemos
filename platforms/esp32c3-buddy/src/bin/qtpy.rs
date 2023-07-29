@@ -72,13 +72,32 @@ fn main() -> ! {
 
     // initialize SimpleSerial driver
     k.initialize({
+        use esp32c3_hal::uart::{
+            config::{Config, DataBits, Parity, StopBits},
+            TxRxPins, Uart,
+        };
 
-        let dev = esp32c3_hal::usb_serial_jtag::UsbSerialJtag::new(
-            peripherals.USB_DEVICE,
+        let config = Config {
+            baudrate: 115200,
+            data_bits: DataBits::DataBits8,
+            parity: Parity::ParityNone,
+            stop_bits: StopBits::STOP1,
+        };
+
+        let pins = TxRxPins::new_tx_rx(
+            io.pins.gpio1.into_push_pull_output(),
+            io.pins.gpio2.into_floating_input(),
+        );
+
+        let uart0 = Uart::new_with_config(
+            peripherals.UART0,
+            Some(config),
+            Some(pins),
+            &clocks,
             &mut system.peripheral_clock_control,
         );
 
-        drivers::usb_serial::UsbSerial::usb_serial(dev).register(k, 4096, 4096)
+        drivers::uart::C3Uart::uart0(uart0).register(k, 4096, 4096)
     })
     .unwrap();
 

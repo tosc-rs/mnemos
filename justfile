@@ -87,12 +87,19 @@ flash-d1 board='mq-pro': (build-d1 board)
     xfel exec {{ _d1_start_addr }}
 
 # build a MnemOS binary for the ESP32-C3
-build-c3:
-    cd {{ _espbuddy_dir }} && {{ _cargo }} build --release
+build-c3 board:
+    cd {{ _espbuddy_dir }} && \
+    {{ _cargo }} build \
+        --release \
+        --bin {{ board }}
 
 # flash an ESP32-C3 with the MnemOS WiFi Buddy firmware
-flash-c3: (_get-cargo-command "espflash" "cargo-espflash") build-c3
-    cd {{ _espbuddy_dir }} && {{ _cargo }} espflash flash --release --monitor
+flash-c3 board: (_get-cargo-command "espflash" "cargo-espflash") (build-c3 board)
+    cd {{ _espbuddy_dir }} && \
+        {{ _cargo }} espflash flash \
+            --release \
+            --bin {{ board }} \
+            --monitor
 
 # run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard)
 crowtty *FLAGS:

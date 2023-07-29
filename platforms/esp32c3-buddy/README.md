@@ -26,12 +26,35 @@ To build for the [ESP32-C3] platform, either build from within the
 `platforms/esp32c3-buddy` directory, or use the [`just build-c3` Just
 recipe][just].
 
+The two supported ESP32-C3 dev boards are pinout-compatible, but route different
+pins on the ESP32 to the pins on the dev board. Therefore, this crate contains
+separate Cargo bin targets for each supported dev board, which configure the I/O
+pin assignment to match the target devboard before calling into shared code:
+
+* `qtpy`: MnemOS for the [Adafruit QT Py ESP32-C3][qtpy]
+* `xiao`: MnemOS for the [Seeedstudio XIAO ESP32-C3][xiao]
+
+The `just build-c3` recipe takes a required argument to select which bin target
+is built. For example:
+
+```console
+$ just build-c3 qtpy   # builds MnemOS for the Adafruit QT Py ESP32-C3
+$ just build-c3 xiao   # builds MnemOS for the Seeedstudio XIAO ESP32-C3
+```
+
 ### Flashing & Running
 
 ESP32-C3 dev boards can be flashed over USB using [`cargo-espflash`]. To flash
 an ESP32-C3 board with the MnemOS firmware, either run `cargo espflash flash`
 from within this directory, or run the [`just flash-c3` Just recipe][just] from
 anywhere in the MnemOS repository.
+
+Like `just build-c3`, the target board must be provided:
+
+```console
+$ just flash-c3 qtpy   # build and flash the Adafruit QT Py ESP32-C3
+$ just flash-c3 xiao   # build and flash the Seeedstudio XIAO ESP32-C3
+```
 
 > **Note** In order to flash an ESP32-C3 board, the `cargo-espflash` executable
 > must be installed. The `just flash-c3` Just recipe will check if
@@ -40,7 +63,7 @@ anywhere in the MnemOS repository.
 If everything worked successfully, you should see output similar to this:
 
 ```console
-$ just flash-c3
+$ just flash-c3 qtpy
        Found cargo-espflash
 cd platforms/esp32c3-buddy && cargo build --release
     Finished release [optimized] target(s) in 0.04s
