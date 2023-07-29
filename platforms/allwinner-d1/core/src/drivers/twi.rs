@@ -149,7 +149,7 @@ impl I2c0 {
     /// - The TWI register block must not be concurrently written to.
     /// - This function should be called only while running on a MangoPi MQ Pro
     ///   board.
-    pub unsafe fn mq_pro(_twi: TWI0, ccu: &mut Ccu, gpio: &mut GPIO) -> Self {
+    pub unsafe fn mq_pro(mut twi: TWI0, ccu: &mut Ccu, gpio: &mut GPIO) -> Self {
         // Step 1: Configure GPIO pin mappings.
         gpio.pg_cfg1.modify(|_r, w| {
             // on the Mango Pi MQ Pro, the pi header's I2C0 pins are mapped to
@@ -160,9 +160,9 @@ impl I2c0 {
             w
         });
 
-        ccu.disable_module::<TWI0>();
+        ccu.disable_module(&mut twi);
 
-        ccu.enable_module::<TWI0>();
+        ccu.enable_module(&mut twi);
 
         Self::init(
             unsafe { &*TWI0::ptr() },
@@ -180,7 +180,7 @@ impl I2c0 {
     /// - The TWI register block must not be concurrently written to.
     /// - This function should be called only while running on a Lichee RV
     ///   board.
-    pub unsafe fn lichee_rv_dock(_twi: TWI2, ccu: &mut Ccu, gpio: &mut GPIO) -> Self {
+    pub unsafe fn lichee_rv_dock(mut twi: TWI2, ccu: &mut Ccu, gpio: &mut GPIO) -> Self {
         // Step 1: Configure GPIO pin mappings.
         gpio.pb_cfg0.modify(|_r, w| {
             // on the Lichee RV Dock, the Pi header's I2C0 corresponds to TWI2, not
@@ -192,9 +192,9 @@ impl I2c0 {
             w
         });
 
-        ccu.disable_module::<TWI2>();
+        ccu.disable_module(&mut twi);
 
-        ccu.enable_module::<TWI2>();
+        ccu.enable_module(&mut twi);
 
         Self::init(
             unsafe { &*TWI2::ptr() },

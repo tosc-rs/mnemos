@@ -1,4 +1,12 @@
 //! This module provides a higher-level interface for the Clock Controller Unit (CCU).
+//!
+//! ## Provenance
+//!
+//! Portions of this file were ported from the `xboot` project. These portions were used
+//! under the terms of the MIT license. Refer to `LICENSE-MIT` at top of this repo for
+//! full license text. `xboot` copyright information:
+//!
+//! Copyright(c) 2007-2022 Jianjun Jiang <8192542@qq.com>
 use d1_pac::CCU;
 use d1_pac::DMAC;
 use d1_pac::{SMHC0, SMHC1, SMHC2};
@@ -22,7 +30,7 @@ pub trait BusGatingResetRegister {
 fn sdelay(delay_us: usize) {
     let clint = unsafe { crate::clint::Clint::summon() };
     let t = clint.get_mtime();
-    // TODO: confirm clock source of mtime
+    // TODO: verify that mtime sourced directly from DXCO (24 MHz)
     while clint.get_mtime() < (t + 24 * delay_us) {
         core::hint::spin_loop()
     }
@@ -40,14 +48,14 @@ impl Ccu {
     }
 
     /// De-assert the reset bit and enable the clock gating bit for the given module
-    pub fn enable_module<MODULE: BusGatingResetRegister>(&mut self) {
+    pub fn enable_module<MODULE: BusGatingResetRegister>(&mut self, _mod: &mut MODULE) {
         MODULE::reset(&mut self.ccu, true);
         sdelay(20);
         MODULE::gating(&mut self.ccu, true);
     }
 
     /// Disable the clock gating bit and assert the reset bit for the given module
-    pub fn disable_module<MODULE: BusGatingResetRegister>(&mut self) {
+    pub fn disable_module<MODULE: BusGatingResetRegister>(&mut self, _mod: &mut MODULE) {
         MODULE::gating(&mut self.ccu, false);
         // TODO: delay?
         MODULE::reset(&mut self.ccu, false);
@@ -183,10 +191,10 @@ impl Ccu {
             .pll_peri_ctrl
             .modify(|_, w| w.lock_enable().enable());
 
-        // Enabe 'PLL_PERI(1X)', 'PLL_PERI(2X)' and 'PLL_PERI(800M)'
+        // Enable 'PLL_PERI(1X)', 'PLL_PERI(2X)' and 'PLL_PERI(800M)'
         self.ccu.pll_peri_ctrl.modify(|_, w| w.pll_en().enable());
 
-        // Wait until the PLL is stable
+        // Wait until PLL is stable
         while self.ccu.pll_peri_ctrl.read().lock().bit_is_clear() {
             core::hint::spin_loop();
         }

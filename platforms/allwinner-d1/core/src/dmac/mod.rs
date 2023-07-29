@@ -26,8 +26,8 @@ pub struct Dmac {
 impl Dmac {
     pub const CHANNEL_COUNT: u8 = 16;
 
-    pub fn new(dmac: DMAC, ccu: &mut Ccu) -> Self {
-        ccu.enable_module::<DMAC>();
+    pub fn new(mut dmac: DMAC, ccu: &mut Ccu) -> Self {
+        ccu.enable_module(&mut dmac);
         Self {
             dmac,
             channels: [
