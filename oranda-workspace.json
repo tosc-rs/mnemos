@@ -1,4 +1,7 @@
 {
+  "build": {
+    "static_dir": "assets"
+  },
   "workspace": {
     "name": "MnemOS",
     "members": [
@@ -11,16 +14,16 @@
         "path": "./source/kernel"
       },
       {
-        "slug": "abi",
-        "path": "source/abi"
+        "slug": "melpomene",
+        "path": "platforms/melpomene"
       },
       {
-        "slug": "mstd",
-        "path": "source/mstd"
+        "slug": "pomelo",
+        "path": "platforms/pomelo"
       },
       {
-        "slug": "spitebuf",
-        "path": "source/spitebuf"
+        "slug": "allwinner-core",
+        "path": "platforms/allwinner-d1/core"
       },
       {
         "slug": "alloc",
@@ -29,6 +32,14 @@
       {
         "slug": "forth3",
         "path": "source/forth3"
+      },
+      {
+        "slug": "abi",
+        "path": "source/abi"
+      },
+      {
+        "slug": "spitebuf",
+        "path": "source/spitebuf"
       },
       {
         "slug": "sermux-proto",
@@ -43,24 +54,16 @@
         "path": "tools/crowtty"
       },
       {
+        "slug": "beepy",
+        "path": "platforms/beepy"
+      },
+      {
         "slug": "dumbloader",
         "path": "tools/dumbloader"
       },
       {
         "slug": "f3repl",
         "path": "tools/f3repl"
-      },
-      {
-        "slug": "allwinner-core",
-        "path": "platforms/allwinner-d1/core"
-      },
-      {
-        "slug": "beepy",
-        "path": "platforms/beepy"
-      },
-      {
-        "slug": "melpomene",
-        "path": "platforms/melpomene"
       }
     ]
   }

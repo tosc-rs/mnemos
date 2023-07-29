@@ -1,7 +1,7 @@
 {
     "project": {
-        "name": "Mnemos",
-        "description": "Hello this is mnemos",
+        "name": "Mnemos Project Overview",
+        "description": "This page provides an overview of the entire MnemOS project. The other boxes on this page provide an overview of the individual crates that make up MnemOS.",
         "readme_path": "./README.md"
     }
 }
