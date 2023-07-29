@@ -1,9 +1,9 @@
 use core::{
-    ptr::{null_mut, NonNull},
+    ptr::{null_mut},
     sync::atomic::{AtomicPtr, Ordering},
 };
 
-use esp32c3_hal::{uart::{Uart, Instance}, interrupt, prelude::interrupt};
+use esp32c3_hal::{uart::{Uart, Instance}, prelude::interrupt, peripherals::UART0};
 
 use kernel::{
     comms::{
@@ -40,14 +40,14 @@ impl core::fmt::Write for GrantWriter {
 static UART0_TX_DONE: WaitCell = WaitCell::new();
 static UART_RX: AtomicPtr<SpscProducer> = AtomicPtr::new(null_mut());
 
-pub struct C3Uart<T> {
-    uart: Uart<Uart0>,
+pub struct C3Uart<T: 'static> {
+    uart: Uart<'static, T>,
     tx_done: &'static WaitCell,
 }
 
-impl C3Uart<Uart0> {
-    pub fn uart0(uart: Uart<'static, Uart0>) -> Self {
-        Self { uart, tx_done: UART0_TX_DONE }
+impl C3Uart<UART0> {
+    pub fn uart0(uart: Uart<'static, UART0>) -> Self {
+        Self { uart, tx_done: &UART0_TX_DONE }
     }
 
     pub fn handle_uart0_int() {
@@ -78,7 +78,7 @@ impl<T: Instance> C3Uart<T> {
         }
     }
 
-    async fn sending(&mut self, handle: BidiHandle, kcons: KConsumer<Message<SimpleSerialService>>) {
+    async fn sending(&mut self, cons: Consumer) {
         loop {
             let rx = cons.read_grant().await;
             let len = rx.len();
@@ -99,7 +99,7 @@ impl<T: Instance> C3Uart<T> {
     }
 
     pub async fn register(
-        self,
+        mut self,
         k: &'static Kernel,
         cap_in: usize,
         cap_out: usize,
@@ -110,10 +110,10 @@ impl<T: Instance> C3Uart<T> {
             .split();
         let (fifo_a, fifo_b) = new_bidi_channel(cap_in, cap_out).await;
 
-        let _server_hdl = k.spawn(D1Uart::serial_server(fifo_b, kcons)).await;
+        let _server_hdl = k.spawn(Self::serial_server(fifo_b, kcons)).await;
 
         let (prod, cons) = fifo_a.split();
-        let _send_hdl = k.spawn(D1Uart::sending(cons, tx_channel)).await;
+        let _send_hdl = k.spawn(async move { self.sending(cons).await }).await;
 
         let boxed_prod = Box::new(prod).await;
         let leaked_prod = Box::into_raw(boxed_prod);
@@ -129,14 +129,12 @@ impl<T: Instance> C3Uart<T> {
 
 #[interrupt]
 fn UART0() {
-    let uart = unsafe { Uart0::steal() };
+    let uart = unsafe { UART0::steal() };
 
     if uart.int_raw.read().tx_done_int_raw().bit_is_set() {
-        uart.int_clr
-        .write(|w| w.tx_done_int_clr().set_bit());
+        uart.int_clr.write(|w| w.tx_done_int_clr().set_bit());
         UART0_TX_DONE.wake();
     } else {
         panic!("unexpected UART interrupt!");
     }
-
 }

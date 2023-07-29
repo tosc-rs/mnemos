@@ -19,14 +19,29 @@ readme = "./README.md"
 test = false
 bench = false
 
-[lib]
+[[bin]]
+name = "mnemos_esp32c3_buddy"
+path = "src/main.rs"
 test = false
 bench = false
 
 [dependencies]
-esp32c3-hal = { version = "0.10.0" }
-esp-backtrace = { version = "0.7.0", features = ["esp32c3", "panic-handler", "exception-handler", "print-uart"] }
-esp-println = { version = "0.5.0", features = ["esp32c3"] }
+critical-section = "1"
+esp32c3-hal = "0.10.0"
+riscv = "0.10.1"
+
+[dependencies.esp-backtrace]
+version = "0.7.0"
+features = ["esp32c3", "panic-handler", "exception-handler", "print-uart"]
+
+[dependencies.esp-println]
+version = "0.5.0"
+features = ["esp32c3"]
+
+[dependencies.portable-atomic]
+version = "1.4"
+default-features = false
+features = ["critical-section"]
 
 # kernel
 [dependencies.mnemos]

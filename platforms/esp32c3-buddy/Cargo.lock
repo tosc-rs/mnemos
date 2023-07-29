@@ -673,10 +673,13 @@ dependencies = [
 name = "mnemos-esp32c3-buddy"
 version = "0.1.0"
 dependencies = [
+ "critical-section",
  "esp-backtrace",
  "esp-println",
  "esp32c3-hal",
  "mnemos",
+ "portable-atomic",
+ "riscv",
  "tracing 0.2.0",
 ]
 
@@ -803,6 +806,9 @@ name = "portable-atomic"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f32154ba0af3a075eefa1eda8bb414ee928f62303a54ea85b8d6638ff1a6ee9e"
+dependencies = [
+ "critical-section",
+]
 
 [[package]]
 name = "postcard"
