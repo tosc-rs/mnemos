@@ -18,7 +18,7 @@ use esp_println::println;
 use mnemos_esp32c3_buddy::drivers;
 
 use core::{cell::RefCell, time::Duration};
-use kernel::{mnemos_alloc::containers::Box, Kernel, KernelSettings};
+use kernel::{daemons, mnemos_alloc::containers::Box, services, Kernel, KernelSettings};
 
 static ALARM1: Mutex<RefCell<Option<Alarm<Target, 1>>>> = Mutex::new(RefCell::new(None));
 
@@ -101,9 +101,37 @@ fn main() -> ! {
     })
     .unwrap();
 
+    // Initialize the SerialMuxServer
+    let sermux_up = k
+        .initialize(services::serial_mux::SerialMuxServer::register(
+            k,
+            Default::default(),
+        ))
+        .expect("failed to spawn SerialMuxService initialization");
+
+    // Initialize Serial Mux daemons.
     k.initialize(async move {
-        k.sleep(Duration::from_secs(1)).await;
-        tracing::info!("i'm alive!");
+        sermux_up
+            .await
+            .expect("SerialMuxService initialization should not be cancelled")
+            .expect("SerialMuxService initialization failed");
+
+        kernel::serial_trace::SerialSubscriber::start(k, Default::default()).await;
+
+        k.spawn(daemons::sermux::loopback(k, Default::default()))
+            .await;
+        println!("SerMux loopback started");
+
+        k.spawn(daemons::sermux::hello(k, Default::default())).await;
+        tracing::debug!("SerMux Hello World started");
+    })
+    .expect("failed to spawn default serial mux service initialization");
+
+    k.initialize(async move {
+        loop {
+            k.sleep(Duration::from_secs(1)).await;
+            tracing::info!("i'm alive!");
+        }
     })
     .unwrap();
 
@@ -141,8 +169,12 @@ fn main() -> ! {
         let tick = k.tick();
 
         // Timer is downcounting
-        let elapsed = start.wrapping_sub(SystemTimer::now());
-        let turn = k.timer().force_advance_ticks(elapsed.into());
+        let elapsed = SystemTimer::now() - start;
+
+        println!("Start: {start:}, Elapsed: {elapsed:?}");
+        let turn = k.timer().force_advance_ticks(elapsed as u64 / 2u64);
+
+        println!("Tick: {tick:?}\nTurn: {turn:?}");
 
         // If there is nothing else scheduled, and we didn't just wake something up,
         // sleep for some amount of time
@@ -156,12 +188,12 @@ fn main() -> ! {
             let amount = turn.ticks_to_next_deadline().unwrap_or(800_000); // 100 ms / 125 ms ticks = 800,000
 
             // TODO(eliza): what is the max duration of the C3's timer?
-
+            println!("amount: {amount}");
             critical_section::with(|cs| {
                 let mut alarm1 = ALARM1.borrow_ref_mut(cs);
                 let alarm1 = alarm1.as_mut().unwrap();
                 alarm1.clear_interrupt();
-                alarm1.set_target(SystemTimer::now() + amount);
+                alarm1.set_target(SystemTimer::now() + (amount * 2));
                 alarm1.interrupt_enable(true);
             });
 
@@ -178,8 +210,11 @@ fn main() -> ! {
             });
 
             // Account for time slept
-            let elapsed = wfi_start.wrapping_sub(SystemTimer::now());
-            let _turn = k.timer().force_advance_ticks(elapsed.into());
+            let elapsed = SystemTimer::now() - wfi_start;
+
+            println!("WFI Start: {wfi_start:}, Elapsed: {elapsed:?}");
+            let turn = k.timer().force_advance_ticks(elapsed as u64 / 2u64);
+            println!("Turn: {turn:?}; elapsed = {elapsed:?}");
         }
     }
 }
