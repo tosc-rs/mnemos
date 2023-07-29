@@ -15,8 +15,9 @@ This directory contains code for running MnemOS on the supported hardware and si
 [`allwinner-d1/`]: ./allwinner-d1/
 [`allwinner-d1/boards/`]: ./allwinner-d1/boards/
 [`allwinner-d1/core/`]: ./allwinner-d1/core/
-[`esp32c3/`]: ./esp32c3
+[`esp32c3-buddy/`]: ./esp32c3-buddy/
 [`melpomene/`]: ./melpomene
+[`pomelo/`]: ./pomelo
 
 ## License
 
