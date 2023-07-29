@@ -31,6 +31,8 @@ _pomelo_dir := "platforms/pomelo"
 
 _melpo_dir := "platforms/melpomene"
 
+_espbuddy_dir := "platforms/esp32c3-buddy"
+
 # arguments to pass to all RustDoc invocations
 _rustdoc := _cargo + " doc --no-deps --all-features"
 
@@ -44,32 +46,20 @@ default:
     @just --list
 
 # check all packages, across workspaces
-check:
+check: && (_check-dir _pomelo_dir ) (_check-dir _melpo_dir) (_check-dir _espbuddy_dir)
     {{ _cargo }} check \
         --workspace \
         --lib --bins --examples --tests --benches --all-features \
         {{ _fmt }}
-    (cd {{ _d1_dir }}; {{ _cargo }} check --workspace {{ _fmt }})
-    cd {{ _pomelo_dir }}; {{ _cargo }} check {{ _fmt }}
 
 # run Clippy checks for all packages, across workspaces.
-clippy:
-    {{ _cargo }} clippy check \
-        --workspace \
+clippy: && (_clippy-dir _pomelo_dir ) (_clippy-dir _melpo_dir) (_clippy-dir _espbuddy_dir)
+    {{ _cargo }} clippy --workspace \
         --lib --bins --examples --tests --benches --all-features \
-        {{ _fmt }}
-    cd {{ _d1_dir }}; {{ _cargo }} clippy check \
-        --lib --bins --workspace \
-        {{ _fmt }}
-    cd {{ _pomelo_dir }}; {{ _cargo }} clippy check \
-        --lib --bins --workspace \
-        {{ _fmt }}
-    cd {{ _melpo_dir }}; {{ _cargo }} clippy check \
-        --lib --bins --workspace \
         {{ _fmt }}
 
 # test all packages, across workspaces
-test: (_get-nextest)
+test: (_get-cargo-command "nextest" "cargo-nextest" no-nextest)
     {{ _cargo }} nextest run --workspace --all-features
     # uncomment this if we actually add tests to the D1 platform
     # (cd {{ _d1_dir }}; {{ _cargo }} nextest run --workspace)
@@ -79,9 +69,8 @@ fmt:
     {{ _cargo }} fmt --all
     (cd {{ _d1_dir }}; {{ _cargo }} fmt --all)
 
-
 # build a Mnemos binary for the Allwinner D1
-build-d1 board='mq-pro': (_get-cargo-binutils)
+build-d1 board='mq-pro': (_get-cargo-command "objcopy" "cargo-binutils")
     cd {{ _d1_dir}} && {{ _cargo }} build --bin {{ board }} --release
     cd {{ _d1_dir}} && \
         {{ _cargo }} objcopy \
@@ -97,6 +86,14 @@ flash-d1 board='mq-pro': (build-d1 board)
     xfel write {{ _d1_start_addr }} {{ _d1_dir}}/{{ _d1_bin_path }}/mnemos-{{ board }}.bin
     xfel exec {{ _d1_start_addr }}
 
+# build a MnemOS binary for the ESP32-C3
+build-c3:
+    cd {{ _espbuddy_dir }} && {{ _cargo }} build --release
+
+# flash an ESP32-C3 with the MnemOS WiFi Buddy firmware
+flash-c3: (_get-cargo-command "espflash" "cargo-espflash") build-c3
+    cd {{ _espbuddy_dir }} && {{ _cargo }} espflash flash --monitor
+
 # run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard)
 crowtty *FLAGS:
     @{{ _cargo }} run --release --bin crowtty -- {{ FLAGS }}
@@ -106,37 +103,30 @@ melpomene *FLAGS:
     @cd {{ _melpo_dir }}; \
         cargo run --release --bin melpomene -- {{ FLAGS }}
 
-_get-cargo-binutils:
+_get-cargo-command name pkg skip='':
     #!/usr/bin/env bash
     set -euo pipefail
     source "./scripts/_util.sh"
 
-    if {{ _cargo }} --list | grep -q 'objcopy'; then
-        status "Found" "cargo objcopy"
+    if [ -n "{{ skip }}" ]; then
+        status "Configured" "not to use cargo-{{ name }}"
         exit 0
     fi
 
-    err "missing cargo-objcopy executable"
-    if confirm "      install it?"; then
-        cargo install cargo-binutils
-    fi
-
-_get-nextest:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source "./scripts/_util.sh"
-
-    if [ -n "{{ no-nextest }}" ]; then
-        status "Configured" "not to use cargo nextest"
+    if {{ _cargo }} --list | grep -q {{ name }}; then
+        status "Found" "cargo-{{ name }}"
         exit 0
     fi
 
-    if {{ _cargo }} --list | grep -q 'nextest'; then
-        status "Found" "cargo nextest"
-        exit 0
+    err "missing cargo-{{ name }} executable"
+    if confirm "       install it?"; then
+        cargo install {{ pkg }}
     fi
 
-    err "missing cargo-nextest executable"
-    if confirm "      install it?"; then
-        cargo install cargo-nextest
-    fi
+# run clippy for a subdirectory
+_clippy-dir dir:
+    cd {{ dir }}; {{ _cargo }} clippy --lib --bins {{ _fmt }}
+
+# run cargo check for a subdirectory
+_check-dir dir:
+    cd {{ dir }}; {{ _cargo }} check --lib --bins {{ _fmt }}

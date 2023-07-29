@@ -1,0 +1,25 @@
+[workspace]
+resolver = "2"
+members = [
+    "."
+]
+
+[package]
+name = "mnemos-esp32c3-buddy"
+version = "0.1.0"
+authors = [
+    "Eliza Weisman <eliza@elizas.website>",
+    "James Munns <james@onevariable.com>",
+]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+readme = "./README.md"
+
+[lib]
+test = false
+bench = false
+
+[dependencies]
+esp32c3-hal = { version = "0.10.0" }
+esp-backtrace = { version = "0.7.0", features = ["esp32c3", "panic-handler", "exception-handler", "print-uart"] }
+esp-println = { version = "0.5.0", features = ["esp32c3"] }
