@@ -1,6 +1,5 @@
 #![no_std]
 extern crate alloc;
-use riscv_atomic_emulation_trap as _;
 
 pub mod drivers;
 
