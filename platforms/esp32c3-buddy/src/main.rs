@@ -104,7 +104,8 @@ fn main() -> ! {
     k.initialize(async move {
         k.sleep(Duration::from_secs(1)).await;
         tracing::info!("i'm alive!");
-    }).unwrap();
+    })
+    .unwrap();
 
     // configure system timer
     let syst = SystemTimer::new(peripherals.SYSTIMER);

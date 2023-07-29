@@ -92,7 +92,7 @@ build-c3:
 
 # flash an ESP32-C3 with the MnemOS WiFi Buddy firmware
 flash-c3: (_get-cargo-command "espflash" "cargo-espflash") build-c3
-    cd {{ _espbuddy_dir }} && {{ _cargo }} espflash flash --monitor
+    cd {{ _espbuddy_dir }} && {{ _cargo }} espflash flash --release --monitor
 
 # run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard)
 crowtty *FLAGS:

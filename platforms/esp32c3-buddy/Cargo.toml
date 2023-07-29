@@ -15,6 +15,12 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 readme = "./README.md"
 
+[profile.release]
+# it turns out that we basically just "can't" build in debug mode (or our code
+# will fault), so just build in release mode all the time but keep debug
+# symbols.
+debug = true
+
 [lib]
 test = false
 bench = false
@@ -47,12 +53,10 @@ features = ["critical-section"]
 # kernel
 [dependencies.mnemos]
 path = "../../source/kernel"
-default-features = false
-features = ["tracing-02"]
+features = ["serial-trace"]
 
-# tracing 0.2
 [dependencies.tracing]
-git = "https://github.com/tokio-rs/tracing"
+version = "0.1.37"
 # branch = "master"
 features = ["attributes"]
 default-features = false
