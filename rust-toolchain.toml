@@ -6,5 +6,5 @@ targets = [
     # Allwinner D1
     "riscv64imac-unknown-none-elf",
     # ESP32-C3
-    "riscv32imc-unknown-none-elf",
+    "riscv32imac-unknown-none-elf",
 ]

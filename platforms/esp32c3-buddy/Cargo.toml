@@ -28,6 +28,7 @@ bench = false
 [dependencies]
 critical-section = "1"
 esp32c3-hal = "0.10.0"
+esp-alloc = "0.3"
 riscv = "0.10.1"
 
 [dependencies.esp-backtrace]

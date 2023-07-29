@@ -25,7 +25,7 @@ static ALARM1: Mutex<RefCell<Option<Alarm<Target, 1>>>> = Mutex::new(RefCell::ne
 #[entry]
 fn main() -> ! {
     unsafe {
-        mnemos_esp32c3_buddy::init_heap();
+        mnemos_esp32c3_buddy::heap::init();
     }
 
     let peripherals = Peripherals::take();
