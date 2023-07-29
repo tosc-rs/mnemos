@@ -16,8 +16,10 @@ This directory contains MnemOS platform support for the Allwinner D1 RISC-V SoC.
 
 ### Building
 
-> **Note** The `boards/` directory is its own Cargo workspace. This is in order
-> to avoid blowing away artifacts for host tools cached in the main workspace when
+> **Note**
+>
+> The `boards/` directory is its own Cargo workspace. This is in order  to avoid
+> blowing away artifacts for host tools cached in the main workspace when
 > building the MnemOS binary for a target.
 
 To build for the Allwinner D1 platform, either build from within the
@@ -68,6 +70,7 @@ xfel exec 0x40000000
 ```
 
 > **Note**
+>
 > When flashing the MangoPi MQ Pro using `just flash-d1`, ensure that the USB
 > cable is plugged in to the USB-C port on the board labeled as "OTG" on the
 > silkscreen, *not* the one labeled as "HOST".
@@ -93,6 +96,7 @@ building `xfel` from source for Linux, MacOS, and Windows can be found
 [here][xfel-win].
 
 > **Note**
+>
 > In addition to the official distribution channels, I (Eliza) have written [a
 > Nix derivation for `xfel`][xfel-nix]. Eventually, I'd like to upstream this to
 > Nixpkgs, but it can currently be used as a git dependency. Note that when
@@ -108,8 +112,8 @@ building `xfel` from source for Linux, MacOS, and Windows can be found
 [`rust-toolchain.toml`]: ./../../../rust-toolchain.toml
 [xfel-build]: https://xboot.org/xfel/#/?id=build-from-source
 [xfel-win]: https://xboot.org/xfel/#/?id=windows-platform
-[`xfel-nix`]: https://github.com/hawkw/dotfiles/blob/736d80487687b0610a1b17f5bbec6b22a501207c/nixos/pkgs/xfel.nix
-[`xfel-nix-udev`]: https://github.com/hawkw/dotfiles/blob/736d80487687b0610a1b17f5bbec6b22a501207c/nixos/machines/noctis.nix#L102-L104
+[xfel-nix]: https://github.com/hawkw/dotfiles/blob/736d80487687b0610a1b17f5bbec6b22a501207c/nixos/pkgs/xfel.nix
+[xfel-nix-udev]: https://github.com/hawkw/dotfiles/blob/736d80487687b0610a1b17f5bbec6b22a501207c/nixos/machines/noctis.nix#L102-L104
 
 ## Boot Procedure
 On reset, the D1 executes its internal *Boot ROM* (`BROM`), which either loads

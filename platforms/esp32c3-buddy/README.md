@@ -18,7 +18,9 @@ either board can be used interchangeably.
 
 ### Building
 
-> **Note** This crate is its own Cargo workspace. This is in order to avoid
+> **Note**
+>
+> This crate is its own Cargo workspace. This is in order to avoid
 > blowing away artifacts for host tools cached in the main workspace when
 > building the MnemOS binary for a target.
 
@@ -56,7 +58,9 @@ $ just flash-c3 qtpy   # build and flash the Adafruit QT Py ESP32-C3
 $ just flash-c3 xiao   # build and flash the Seeedstudio XIAO ESP32-C3
 ```
 
-> **Note** In order to flash an ESP32-C3 board, the `cargo-espflash` executable
+> **Note**
+>
+> In order to flash an ESP32-C3 board, the [`cargo-espflash`] executable
 > must be installed. The `just flash-c3` Just recipe will check if
 > `cargo-espflash` is present, and prompt to install it if it is not found.
 
