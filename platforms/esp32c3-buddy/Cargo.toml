@@ -1,3 +1,9 @@
+[workspace]
+resolver = "2"
+members = [
+    "."
+]
+
 [package]
 name = "mnemos-esp32c3-buddy"
 version = "0.1.0"
@@ -7,6 +13,11 @@ authors = [
 ]
 edition = "2021"
 license = "MIT OR Apache-2.0"
+readme = "./README.md"
+
+[lib]
+test = false
+bench = false
 
 [dependencies]
 esp32c3-hal = { version = "0.10.0" }
