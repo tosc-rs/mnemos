@@ -406,17 +406,32 @@ pub const fn u8_to_level(level: u8) -> tracing::metadata::LevelFilter {
     }
 }
 
+pub fn level_to_str(level: tracing::metadata::LevelFilter) -> &'static str {
+    match level {
+        tracing::metadata::LevelFilter::TRACE => "trace",
+        tracing::metadata::LevelFilter::DEBUG => "debug",
+        tracing::metadata::LevelFilter::INFO => "info",
+        tracing::metadata::LevelFilter::WARN => "warn",
+        tracing::metadata::LevelFilter::ERROR => "error",
+        tracing::metadata::LevelFilter::OFF => "off",
+    }
+}
+
+pub fn str_to_level(level: &str) -> Option<tracing::metadata::LevelFilter> {
+    level.parse().ok()
+}
+
 mod level_filter {
     use serde::{de::Visitor, Deserializer, Serializer};
 
-    use super::{level_to_u8, u8_to_level};
+    use super::{level_to_str, str_to_level};
 
     pub fn serialize<S>(lf: &tracing::metadata::LevelFilter, s: S) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        let lf_u8: u8 = level_to_u8(*lf);
-        s.serialize_u8(lf_u8)
+        let lf_str = level_to_str(*lf);
+        s.serialize_str(lf_str)
     }
 
     pub fn deserialize<'de, D>(d: D) -> Result<tracing::metadata::LevelFilter, D::Error>
@@ -431,15 +446,24 @@ mod level_filter {
                 formatter.write_str("a level filter as a u8 value")
             }
 
-            fn visit_u8<E>(self, v: u8) -> Result<Self::Value, E>
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
             where
                 E: serde::de::Error,
             {
-                Ok(u8_to_level(v))
+                str_to_level(v).ok_or_else(|| {
+                    E::unknown_variant(v, &[
+                        "trace",
+                        "debug",
+                        "info",
+                        "warn",
+                        "error",
+                        "off",
+                    ])
+                })
             }
         }
 
-        d.deserialize_u8(LFVisitor)
+        d.deserialize_str(LFVisitor)
     }
 }
 
