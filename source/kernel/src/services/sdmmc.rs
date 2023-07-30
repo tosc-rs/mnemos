@@ -27,7 +27,7 @@ impl RegisteredDriver for SdmmcService {
     type Response = Transaction;
     type Error = core::convert::Infallible;
 
-    const UUID: Uuid = known_uuids::kernel::I2C;
+    const UUID: Uuid = known_uuids::kernel::SDMMC;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

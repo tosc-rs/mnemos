@@ -44,6 +44,7 @@ pub mod known_uuids {
         pub const KEYBOARD: Uuid = uuid!("524d77b1-499c-440b-bd62-e63c0918efb5");
         pub const KEYBOARD_MUX: Uuid = uuid!("70861d1c-9f01-4e9b-89e6-ede77d8f26d8");
         pub const EMB_DISPLAY_V2: Uuid = uuid!("aa6a2af8-afd8-40e3-83c2-2c501c698aa8");
+        pub const SDMMC: Uuid = uuid!("9f4f8244-c986-4212-982e-d35890260de4");
     }
 
     // In case you need to iterate over every UUID
