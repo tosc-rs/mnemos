@@ -143,6 +143,9 @@ fn init_i2c_puppet_irq(gpio: &mut d1_pac::GPIO, plic: &mut Plic) -> &'static Wai
     //
     // according to the MangoPi MQ Pro schematic, that pin is routed to PB7 on
     // the D1: https://mangopi.org/_media/mq-pro-sch-v12.pdf
+    //
+    // we don't need to enable internal pullups, as the Beepy schematic
+    // indicates that the i2c_puppet board has a 10k pullup on the PI_INT line.
     gpio.pb_cfg0.modify(|_r, w| {
         // set PB7 to interrupt mode.
         w.pb7_select().pb_eint7()
