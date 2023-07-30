@@ -4,6 +4,8 @@
 
 use core::time::Duration;
 
+use serde::{Serialize, Deserialize};
+
 use crate::{
     services::serial_mux::{PortHandle, WellKnown},
     Kernel,
@@ -14,7 +16,7 @@ use crate::{
 //
 
 /// Loopback Settings
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct LoopbackSettings {
     /// Port number. Defaults to [WellKnown::Loopback]
@@ -56,20 +58,20 @@ pub async fn loopback(kernel: &'static Kernel, settings: LoopbackSettings) {
 //
 
 /// Hello Server Settings
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
-pub struct HelloSettings {
+pub struct HelloSettings<'a> {
     /// Port number. Defaults to [WellKnown::HelloWorld]
     pub port: u16,
     /// Buffer size, in bytes. Defaults to 32
     pub buffer_size: usize,
     /// Message to print. Defaults to `b"hello\r\n"`
-    pub message: &'static [u8],
+    pub message: &'a [u8],
     /// Interval between messages. Defaults to 1 second
     pub interval: Duration,
 }
 
-impl Default for HelloSettings {
+impl Default for HelloSettings<'static> {
     fn default() -> Self {
         Self {
             port: WellKnown::HelloWorld as u16,
@@ -84,7 +86,7 @@ impl Default for HelloSettings {
 ///
 /// Periodically prints a message as a sign of life
 #[tracing::instrument(skip(kernel))]
-pub async fn hello(kernel: &'static Kernel, settings: HelloSettings) {
+pub async fn hello(kernel: &'static Kernel, settings: HelloSettings<'_>) {
     let HelloSettings {
         port,
         buffer_size,

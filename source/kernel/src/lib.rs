@@ -90,7 +90,7 @@ use abi::{
     syscall::{KernelResponse, UserRequest},
 };
 use comms::kchannel::KChannel;
-use core::{future::Future, ptr::NonNull};
+use core::{future::Future, ptr::NonNull, convert::identity};
 pub use embedded_hal_async;
 pub use maitake;
 use maitake::{
@@ -102,6 +102,7 @@ use maitake::{
 pub use mnemos_alloc;
 use mnemos_alloc::containers::Box;
 use registry::Registry;
+use serde::{Deserialize, Serialize};
 use services::{
     forth_spawnulator::{SpawnulatorServer, SpawnulatorSettings},
     keyboard::mux::{KeyboardMuxServer, KeyboardMuxSettings},
@@ -143,17 +144,185 @@ pub struct KernelInner {
     timer: Timer,
 }
 
-/// Settings for all services spawned by default.
-#[derive(Debug, Default)]
-pub struct DefaultServiceSettings {
-    pub keyboard_mux: KeyboardMuxSettings,
-    pub serial_mux: SerialMuxSettings,
-    pub spawnulator: SpawnulatorSettings,
-    pub sermux_loopback: daemons::sermux::LoopbackSettings,
-    pub sermux_hello: daemons::sermux::HelloSettings,
+// TODO: This is a workaround because the SETTINGS should always exist, even
+// if the feature doesn't. I think.
+pub mod serial_trace_settings {
+    use serde::{Serialize, Deserialize};
+    use tracing::metadata::LevelFilter;
 
-    #[cfg(feature = "serial-trace")]
-    pub sermux_trace: serial_trace::SerialTraceSettings,
+    use crate::services;
+
+
+    #[derive(Debug, Serialize, Deserialize)]
+    #[non_exhaustive]
+    pub struct SerialTraceSettings {
+        /// SerialMux port for sermux tracing.
+        pub port: u16,
+
+        /// Capacity for the serial port's send buffer.
+        pub sendbuf_capacity: usize,
+
+        /// Capacity for the trace ring buffer.
+        ///
+        /// Note that *two* buffers of this size will be allocated. One buffer is
+        /// used for the normal trace ring buffer, and another is used for the
+        /// interrupt service routine trace ring buffer.
+        pub tracebuf_capacity: usize,
+
+        /// Initial level filter used if the debug host does not select a max level.
+        #[serde(with = "level_filter")]
+        pub initial_level: tracing::metadata::LevelFilter,
+    }
+
+    pub const fn level_to_u8(level: tracing::metadata::LevelFilter) -> u8 {
+        match level {
+            tracing::metadata::LevelFilter::TRACE => 0,
+            tracing::metadata::LevelFilter::DEBUG => 1,
+            tracing::metadata::LevelFilter::INFO => 2,
+            tracing::metadata::LevelFilter::WARN => 3,
+            tracing::metadata::LevelFilter::ERROR => 4,
+            tracing::metadata::LevelFilter::OFF => 5,
+        }
+    }
+
+    pub const fn u8_to_level(level: u8) -> tracing::metadata::LevelFilter {
+        match level {
+            0 => tracing::metadata::LevelFilter::TRACE,
+            1 => tracing::metadata::LevelFilter::DEBUG,
+            2 => tracing::metadata::LevelFilter::INFO,
+            3 => tracing::metadata::LevelFilter::WARN,
+            4 => tracing::metadata::LevelFilter::ERROR,
+            _ => tracing::metadata::LevelFilter::OFF,
+        }
+    }
+
+    mod level_filter {
+        use serde::{de::Visitor, Deserializer, Serializer};
+
+        use super::{level_to_u8, u8_to_level};
+
+        pub fn serialize<S>(lf: &tracing::metadata::LevelFilter, s: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let lf_u8: u8 = level_to_u8(*lf);
+            s.serialize_u8(lf_u8)
+        }
+
+        pub fn deserialize<'de, D>(d: D) -> Result<tracing::metadata::LevelFilter, D::Error>
+        where
+            D: Deserializer<'de>,
+        {
+            struct LFVisitor;
+            impl<'de> Visitor<'de> for LFVisitor {
+                type Value = tracing::metadata::LevelFilter;
+
+                fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                    formatter.write_str("a level filter as a u8 value")
+                }
+
+                fn visit_u8<E>(self, v: u8) -> Result<Self::Value, E>
+                where
+                    E: serde::de::Error,
+                {
+                    Ok(u8_to_level(v))
+                }
+            }
+
+            d.deserialize_u8(LFVisitor)
+        }
+    }
+
+    // === impl SermuxTraceSettings ===
+
+    impl SerialTraceSettings {
+        pub const DEFAULT_PORT: u16 = services::serial_mux::WellKnown::BinaryTracing as u16;
+        pub const DEFAULT_SENDBUF_CAPACITY: usize = 1024;
+        pub const DEFAULT_TRACEBUF_CAPACITY: usize = Self::DEFAULT_SENDBUF_CAPACITY * 64;
+        pub const DEFAULT_INITIAL_LEVEL: LevelFilter = LevelFilter::OFF;
+
+        #[must_use]
+        pub const fn new() -> Self {
+            Self {
+                port: Self::DEFAULT_PORT,
+                sendbuf_capacity: Self::DEFAULT_SENDBUF_CAPACITY,
+                tracebuf_capacity: Self::DEFAULT_TRACEBUF_CAPACITY,
+                initial_level: Self::DEFAULT_INITIAL_LEVEL,
+            }
+        }
+
+        /// Sets the [`serial_mux`] port on which the binary tracing service is
+        /// served.
+        ///
+        /// By default, this is [`Self::DEFAULT_PORT`] (the value of
+        /// [`serial_mux::WellKnown::BinaryTracing`]).
+        #[must_use]
+        pub fn with_port(self, port: impl Into<u16>) -> Self {
+            Self {
+                port: port.into(),
+                ..self
+            }
+        }
+
+        /// Sets the initial [`LevelFilter`] used when no trace client is connected
+        /// or when the trace client does not select a level.
+        ///
+        /// By default, this set to [`Self::DEFAULT_INITIAL_LEVEL`] ([`LevelFilter::OFF`]).
+        #[must_use]
+        pub fn with_initial_level(self, level: impl Into<LevelFilter>) -> Self {
+            Self {
+                initial_level: level.into(),
+                ..self
+            }
+        }
+
+        /// Sets the maximum capacity of the serial port send buffer (the buffer
+        /// used for communication between the trace service task and the serial mux
+        /// server).
+        ///
+        /// By default, this set to [`Self::DEFAULT_SENDBUF_CAPACITY`] (1 KB).
+        #[must_use]
+        pub const fn with_sendbuf_capacity(self, capacity: usize) -> Self {
+            Self {
+                sendbuf_capacity: capacity,
+                ..self
+            }
+        }
+
+        /// Sets the maximum capacity of the trace ring buffer (the buffer into
+        /// which new traces are serialized before being sent to the worker task).
+        ///
+        /// Note that *two* buffers of this size will be allocated. One buffer is
+        /// used for traces emitted by non-interrupt kernel code, and the other is
+        /// used for traces emitted inside of interrupt service routines (ISRs).
+        ///
+        /// By default, this set to [`Self::DEFAULT_TRACEBUF_CAPACITY`] (64 KB).
+        #[must_use]
+        pub const fn with_tracebuf_capacity(self, capacity: usize) -> Self {
+            Self {
+                tracebuf_capacity: capacity,
+                ..self
+            }
+        }
+    }
+
+    impl Default for SerialTraceSettings {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+}
+
+/// Settings for all services spawned by default.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct DefaultServiceSettings<'a> {
+    pub keyboard_mux: Option<KeyboardMuxSettings>,
+    pub serial_mux: Option<SerialMuxSettings>,
+    pub spawnulator: Option<SpawnulatorSettings>,
+    pub sermux_loopback: Option<daemons::sermux::LoopbackSettings>,
+    #[serde(borrow)]
+    pub sermux_hello: Option<daemons::sermux::HelloSettings<'a>>,
+    pub sermux_trace: Option<serial_trace_settings::SerialTraceSettings>,
 }
 
 impl Kernel {
@@ -294,43 +463,70 @@ impl Kernel {
     /// [`SerialMuxService`]: crate::services::serial_mux::SerialMuxService
     /// [`SpawnulatorService`]:
     ///     crate::services::forth_spawnulator::SpawnulatorService
-    pub fn initialize_default_services(&'static self, settings: DefaultServiceSettings) {
+    pub fn initialize_default_services(&'static self, settings: DefaultServiceSettings<'static>) {
         // Set the kernel timer as the global timer.
         // Disregard errors --- they just mean someone else has already set up
         // the global timer.
         let _ = self.set_global_timer();
 
         // Initialize the kernel keyboard mux service.
-        self.initialize(KeyboardMuxServer::register(self, settings.keyboard_mux))
-            .expect("failed to spawn KeyboardMuxService initialization");
+        if let Some(keyboard_mux) = settings.keyboard_mux {
+            self.initialize(KeyboardMuxServer::register(self, keyboard_mux))
+                .expect("failed to spawn KeyboardMuxService initialization");
+            }
 
         // Initialize the SerialMuxServer
-        let sermux_up = self
-            .initialize(SerialMuxServer::register(self, settings.serial_mux))
-            .expect("failed to spawn SerialMuxService initialization");
+        let sermux_up = if let Some(serial_mux) = settings.serial_mux {
+            Some(self
+                .initialize(SerialMuxServer::register(self, serial_mux))
+                .expect("failed to spawn SerialMuxService initialization"))
+        } else {
+            None
+        };
 
         // Initialize the Forth spawnulator.
-        self.initialize(SpawnulatorServer::register(self, settings.spawnulator))
-            .expect("failed to spawn SpawnulatorService initialization");
+        if let Some(spawnulator) = settings.spawnulator {
+            self.initialize(SpawnulatorServer::register(self, spawnulator))
+                .expect("failed to spawn SpawnulatorService initialization");
+        }
 
         // Initialize Serial Mux daemons.
-        self.initialize(async move {
-            sermux_up
-                .await
-                .expect("SerialMuxService initialization should not be cancelled")
-                .expect("SerialMuxService initialization failed");
+        if let Some(sermux_up) = sermux_up {
+            self.initialize(async move {
+                sermux_up
+                    .await
+                    .expect("SerialMuxService initialization should not be cancelled")
+                    .expect("SerialMuxService initialization failed");
 
-            #[cfg(feature = "serial-trace")]
-            crate::serial_trace::SerialSubscriber::start(self, settings.sermux_trace).await;
+                #[cfg(feature = "serial-trace")]
+                if let Some(sermux_trace) = settings.sermux_trace {
+                    crate::serial_trace::SerialSubscriber::start(self, sermux_trace).await;
+                }
 
-            self.spawn(daemons::sermux::loopback(self, settings.sermux_loopback))
-                .await;
-            tracing::debug!("SerMux loopback started");
+                if let Some(sermux_loopback) = settings.sermux_loopback {
+                    self.spawn(daemons::sermux::loopback(self, sermux_loopback))
+                        .await;
+                    tracing::debug!("SerMux loopback started");
+                }
 
-            self.spawn(daemons::sermux::hello(self, settings.sermux_hello))
-                .await;
-            tracing::debug!("SerMux Hello World started");
-        })
-        .expect("failed to spawn default serial mux service initialization");
+                if let Some(sermux_hello) = settings.sermux_hello {
+                    self.spawn(daemons::sermux::hello(self, sermux_hello))
+                        .await;
+                    tracing::debug!("SerMux Hello World started");
+                }
+            })
+            .expect("failed to spawn default serial mux service initialization");
+        } else {
+            let deps = [
+                #[cfg(feature = "serial-trace")]
+                settings.sermux_trace.is_some(),
+                settings.sermux_loopback.is_some(),
+                settings.sermux_hello.is_some()
+            ];
+
+            if deps.into_iter().any(identity) {
+                tracing::error!("Sermux services configured without sermux! Skipping.");
+            }
+        }
     }
 }

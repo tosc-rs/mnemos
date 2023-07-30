@@ -21,6 +21,7 @@ use crate::{
 };
 use maitake::sync::Mutex;
 use mnemos_alloc::containers::{Arc, FixedVec};
+use serde::{Serialize, Deserialize};
 use sermux_proto::PortChunk;
 use tracing::{self, debug, warn, Level};
 use uuid::Uuid;
@@ -173,7 +174,7 @@ impl PortHandle {
 /// Server implementation for the [`SerialMuxService`].
 pub struct SerialMuxServer;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct SerialMuxSettings {
     max_ports: u16,
     max_frame: usize,

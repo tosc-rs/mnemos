@@ -40,6 +40,7 @@
 
 use core::{convert::Infallible, time::Duration};
 
+use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
 use crate::{
@@ -133,7 +134,7 @@ pub enum RegistrationError {
     SpawnulatorAlreadyRegistered,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct SpawnulatorSettings {
     capacity: usize,
 }

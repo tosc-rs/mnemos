@@ -8,6 +8,8 @@ use tracing::subscriber::Interest;
 pub use tracing::*;
 use tracing_serde_structured::{AsSerde, SerializeRecordFields, SerializeSpanFields};
 
+use super::serial_trace_settings::*;
+
 pub struct SerialSubscriber {
     tx: bbq::SpscProducer,
     isr_tx: bbq::SpscProducer,
@@ -20,25 +22,6 @@ pub struct SerialSubscriber {
     in_send: AtomicBool,
 
     shared: &'static Shared,
-}
-
-#[derive(Debug)]
-pub struct SerialTraceSettings {
-    /// SerialMux port for sermux tracing.
-    port: u16,
-
-    /// Capacity for the serial port's send buffer.
-    sendbuf_capacity: usize,
-
-    /// Capacity for the trace ring buffer.
-    ///
-    /// Note that *two* buffers of this size will be allocated. One buffer is
-    /// used for the normal trace ring buffer, and another is used for the
-    /// interrupt service routine trace ring buffer.
-    tracebuf_capacity: usize,
-
-    /// Initial level filter used if the debug host does not select a max level.
-    initial_level: LevelFilter,
 }
 
 struct Shared {
@@ -375,106 +358,5 @@ impl Subscriber for SerialSubscriber {
                 .fetch_add(1, Ordering::Relaxed);
         }
         false
-    }
-}
-
-// === impl SermuxTraceSettings ===
-
-impl SerialTraceSettings {
-    pub const DEFAULT_PORT: u16 = serial_mux::WellKnown::BinaryTracing as u16;
-    pub const DEFAULT_SENDBUF_CAPACITY: usize = 1024;
-    pub const DEFAULT_TRACEBUF_CAPACITY: usize = Self::DEFAULT_SENDBUF_CAPACITY * 64;
-    pub const DEFAULT_INITIAL_LEVEL: LevelFilter = LevelFilter::OFF;
-
-    #[must_use]
-    pub const fn new() -> Self {
-        Self {
-            port: Self::DEFAULT_PORT,
-            sendbuf_capacity: Self::DEFAULT_SENDBUF_CAPACITY,
-            tracebuf_capacity: Self::DEFAULT_TRACEBUF_CAPACITY,
-            initial_level: Self::DEFAULT_INITIAL_LEVEL,
-        }
-    }
-
-    /// Sets the [`serial_mux`] port on which the binary tracing service is
-    /// served.
-    ///
-    /// By default, this is [`Self::DEFAULT_PORT`] (the value of
-    /// [`serial_mux::WellKnown::BinaryTracing`]).
-    #[must_use]
-    pub fn with_port(self, port: impl Into<u16>) -> Self {
-        Self {
-            port: port.into(),
-            ..self
-        }
-    }
-
-    /// Sets the initial [`LevelFilter`] used when no trace client is connected
-    /// or when the trace client does not select a level.
-    ///
-    /// By default, this set to [`Self::DEFAULT_INITIAL_LEVEL`] ([`LevelFilter::OFF`]).
-    #[must_use]
-    pub fn with_initial_level(self, level: impl Into<LevelFilter>) -> Self {
-        Self {
-            initial_level: level.into(),
-            ..self
-        }
-    }
-
-    /// Sets the maximum capacity of the serial port send buffer (the buffer
-    /// used for communication between the trace service task and the serial mux
-    /// server).
-    ///
-    /// By default, this set to [`Self::DEFAULT_SENDBUF_CAPACITY`] (1 KB).
-    #[must_use]
-    pub const fn with_sendbuf_capacity(self, capacity: usize) -> Self {
-        Self {
-            sendbuf_capacity: capacity,
-            ..self
-        }
-    }
-
-    /// Sets the maximum capacity of the trace ring buffer (the buffer into
-    /// which new traces are serialized before being sent to the worker task).
-    ///
-    /// Note that *two* buffers of this size will be allocated. One buffer is
-    /// used for traces emitted by non-interrupt kernel code, and the other is
-    /// used for traces emitted inside of interrupt service routines (ISRs).
-    ///
-    /// By default, this set to [`Self::DEFAULT_TRACEBUF_CAPACITY`] (64 KB).
-    #[must_use]
-    pub const fn with_tracebuf_capacity(self, capacity: usize) -> Self {
-        Self {
-            tracebuf_capacity: capacity,
-            ..self
-        }
-    }
-}
-
-impl Default for SerialTraceSettings {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-const fn level_to_u8(level: LevelFilter) -> u8 {
-    match level {
-        LevelFilter::TRACE => 0,
-        LevelFilter::DEBUG => 1,
-        LevelFilter::INFO => 2,
-        LevelFilter::WARN => 3,
-        LevelFilter::ERROR => 4,
-        LevelFilter::OFF => 5,
-    }
-}
-
-const fn u8_to_level(level: u8) -> LevelFilter {
-    match level {
-        0 => LevelFilter::TRACE,
-        1 => LevelFilter::DEBUG,
-        2 => LevelFilter::INFO,
-        3 => LevelFilter::WARN,
-        4 => LevelFilter::ERROR,
-        _ => LevelFilter::OFF,
     }
 }

@@ -10,6 +10,7 @@ members = [
     "source/forth3",
     "source/sermux-proto",
     "source/trace-proto",
+    "source/config",
 
     # tools
     "tools/crowtty",

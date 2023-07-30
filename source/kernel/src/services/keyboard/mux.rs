@@ -24,6 +24,7 @@ use crate::{
 };
 use core::{convert::Infallible, time::Duration};
 use futures::{future, FutureExt};
+use serde::{Serialize, Deserialize};
 use tracing::Level;
 use uuid::Uuid;
 
@@ -133,7 +134,7 @@ pub struct KeyboardMuxServer {
     sermux_port: Option<serial_mux::PortHandle>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct KeyboardMuxSettings {
     max_keyboards: usize,
     buffer_capacity: usize,
