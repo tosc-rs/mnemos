@@ -24,10 +24,23 @@ Beepy shield using pin headers (or potentially soldered onto the board).
 The following pins are broken out by the WiFi Buddy hardware and can be used for
 communication between the CPU and WiFi Buddy:
 
-- One SPI interface (`MOSI`, `MISO`, and `SCK`)
+- One SPI interface (`MOSI`, `MISO`, and `SCK`, and a GPIO as chip select)
 - One I²C interface (`SDA` and `SCL`)
 - One UART (`TX` and `RX`)
-- Four additional GPIO pins
+- Four additional GPIO pins (minus one if used as chip sel)
+
+For development, @jamesmunns has designed a [development jig PCB][jig] which
+marries a WiFi Buddy with a XIAO RP2040 board. This board will be used to
+develop WiFi Buddy firmware with Melpomene replacing the D1 as the "CPU".
+
+With the dev board, we'll be able to access:
+
+- 4-pin SPI
+- 2-pin UART
+- 2 signal GPIOs (or 4, if we don't use the UART pins for UART)
+
+This limits the number of potential IRQ pins in the Melpomene dev configuration,
+if the UART is used.
 
 ### Software
 
@@ -75,6 +88,8 @@ design questions for the WiFi Buddy interface:
   conceptually simpler, and has the advantage of a clear and obvious ordering
   between data and control messages. It also means that we don't necessarily
   need to implement drivers for all the interfaces available on the ESP32-C3.
+  Avoiding the need to synchronize between messages on two different
+  communication links is a significant advantage.
 
   Downsides of in-band control messages include that we must introduce some
   additional form of tagging of data sent on the SPI bus, in order  to indicate
@@ -91,6 +106,9 @@ design questions for the WiFi Buddy interface:
   host? Or, is using the WiFi Buddy SoM's onboard USB-serial hardware sufficient
   for debugging purposes?
 
+  * If we do forward `trace-proto` to the CPU, is this done over the same SPI
+    link as the modem data path? Or do we use the WiFi Buddy's UART pins?
+
 - **What control messages are necessary?** Eventually, we'll need to enumerate
   what control messages will need to be exchanged in order to implement the
   required functionality.
@@ -105,21 +123,25 @@ design questions for the WiFi Buddy interface:
   Therefore, the WiFi buddy will need to be able to raise an interrupt to the
   CPU to signal that data is ready and that an operation has completed.
 
-  The simplest design is a single interrupt line raised by the WiFi Buddy
-  whenever it wants the CPU's attention. Is this sufficient? Would there be a
-  benefit in having separate IRQ lines for "RX data is ready" and "TX
-  done"/"operation done"? The WiFi buddy hardware has 4 GPIO pins that could
-  potentially be used for interrupts. How many of the CPU's GPIO pins do we want
-  to use for WiFi Buddy IRQs?
+  * The simplest design is a single interrupt line raised by the WiFi Buddy
+    whenever it wants the CPU's attention. Is this sufficient? Or would there be a
+    benefit in having separate IRQ lines for "RX data is ready" and "TX
+    done"/"operation done"?
 
-- **What additional constraints are necessary if we want to support BLE in the
-  future?** A design for Bluetooth Low Energy support in the WiFi Buddy
-  interface is out of scope for this document. However, let's not paint
-  ourselves into a corner, if we can help it. Are there additional constraints
-  imposed on our design if we want to leave space for adding BLE in the future?
+  * The WiFi buddy hardware has 4 GPIO pins that could potentially be used for
+    interrupts. How many of the CPU's GPIO pins do we want to use for WiFi Buddy
+    IRQ lines?
+
+- **What additional constraints are necessary if we want to support BLE?** A
+  design for Bluetooth Low Energy support in the WiFi Buddy interface is out of
+  scope for this document. However, let's not paint ourselves into a corner, if
+  we can help it. Are there additional constraints imposed on our design if we
+  want to leave space for adding BLE in the future?
 
 [ESP32-C3]: https://www.espressif.com/en/products/socs/esp32-c3
 [#121]: https://github.com/tosc-rs/mnemos/issues/191
 [Seeedstudio XIAO]: https://www.seeedstudio.com/Seeed-XIAO-ESP32C3-p-5431.html
 [Adafruit QT Py]: https://www.adafruit.com/product/5405
 [802.3]: https://en.wikipedia.org/wiki/IEEE_802.3
+[jig]: https://github.com/tosc-rs/mnemos/tree/main/hardware/esp32c3-wifi-dev
+[`mnemos-trace-proto`]: https://github.com/tosc-rs/mnemos/tree/main/source/trace-proto
