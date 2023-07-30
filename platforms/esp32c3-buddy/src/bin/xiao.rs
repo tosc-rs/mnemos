@@ -5,11 +5,9 @@ extern crate alloc;
 
 use esp32c3_hal::{
     clock::ClockControl, peripherals::Peripherals, prelude::*, systimer::SystemTimer,
-    timer::TimerGroup, Rtc, IO,
+    timer::TimerGroup, Rtc,
 };
 use esp_backtrace as _;
-use esp_println::println;
-use mnemos_esp32c3_buddy::drivers;
 
 #[entry]
 fn main() -> ! {
@@ -39,8 +37,6 @@ fn main() -> ! {
     rtc.rwdt.disable();
     wdt0.disable();
     wdt1.disable();
-    // println!("Hello world!");
-
     let k = mnemos_esp32c3_buddy::init();
 
     mnemos_esp32c3_buddy::spawn_daemons(k);
@@ -52,9 +48,6 @@ fn main() -> ! {
 
     // configure system timer
     let syst = SystemTimer::new(peripherals.SYSTIMER);
-
-    // println!("SYSTIMER Current value = {}", SystemTimer::now());
-
     // Alarm 1 will be used to generate "sleep until" interrupts.
     let alarm1 = syst.alarm1;
 
