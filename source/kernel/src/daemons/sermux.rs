@@ -4,7 +4,7 @@
 
 use core::time::Duration;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     services::serial_mux::{PortHandle, WellKnown},

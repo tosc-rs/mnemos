@@ -21,7 +21,7 @@ use crate::{
 };
 use maitake::sync::Mutex;
 use mnemos_alloc::containers::{Arc, FixedVec};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use sermux_proto::PortChunk;
 use tracing::{self, debug, warn, Level};
 use uuid::Uuid;

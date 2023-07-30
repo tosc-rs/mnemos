@@ -40,7 +40,7 @@
 
 use core::{convert::Infallible, time::Duration};
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{

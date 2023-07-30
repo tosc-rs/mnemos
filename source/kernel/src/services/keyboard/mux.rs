@@ -24,7 +24,7 @@ use crate::{
 };
 use core::{convert::Infallible, time::Duration};
 use futures::{future, FutureExt};
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 use tracing::Level;
 use uuid::Uuid;
 

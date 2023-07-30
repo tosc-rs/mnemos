@@ -90,7 +90,7 @@ use abi::{
     syscall::{KernelResponse, UserRequest},
 };
 use comms::kchannel::KChannel;
-use core::{future::Future, ptr::NonNull, convert::identity};
+use core::{convert::identity, future::Future, ptr::NonNull};
 pub use embedded_hal_async;
 pub use maitake;
 use maitake::{
@@ -305,13 +305,14 @@ impl Kernel {
         if let Some(keyboard_mux) = settings.keyboard_mux {
             self.initialize(KeyboardMuxServer::register(self, keyboard_mux))
                 .expect("failed to spawn KeyboardMuxService initialization");
-            }
+        }
 
         // Initialize the SerialMuxServer
         let sermux_up = if let Some(serial_mux) = settings.serial_mux {
-            Some(self
-                .initialize(SerialMuxServer::register(self, serial_mux))
-                .expect("failed to spawn SerialMuxService initialization"))
+            Some(
+                self.initialize(SerialMuxServer::register(self, serial_mux))
+                    .expect("failed to spawn SerialMuxService initialization"),
+            )
         } else {
             None
         };
@@ -342,8 +343,7 @@ impl Kernel {
                 }
 
                 if let Some(sermux_hello) = settings.sermux_hello {
-                    self.spawn(daemons::sermux::hello(self, sermux_hello))
-                        .await;
+                    self.spawn(daemons::sermux::hello(self, sermux_hello)).await;
                     tracing::debug!("SerMux Hello World started");
                 }
             })
@@ -353,7 +353,7 @@ impl Kernel {
                 #[cfg(feature = "serial-trace")]
                 settings.sermux_trace.is_some(),
                 settings.sermux_loopback.is_some(),
-                settings.sermux_hello.is_some()
+                settings.sermux_hello.is_some(),
             ];
 
             if deps.into_iter().any(identity) {

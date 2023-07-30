@@ -2,7 +2,7 @@
 
 use core::marker::PhantomData;
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 pub struct MnemosConfig<'a, K, P>
 where

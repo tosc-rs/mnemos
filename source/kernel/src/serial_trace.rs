@@ -359,10 +359,9 @@ impl Subscriber for SerialSubscriber {
     }
 }
 
-use serde::{Serialize, Deserialize};
+use serde::{Deserialize, Serialize};
 
 use crate::services;
-
 
 #[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
