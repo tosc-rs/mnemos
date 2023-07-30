@@ -58,22 +58,12 @@ pub fn spawn_daemons(k: &'static Kernel) {
 
         k.spawn(daemons::sermux::hello(k, Default::default())).await;
 
-        serial_trace::SerialSubscriber::start(
-            k,
-            Default::default()
-        )
-        .await;
-        tracing::debug!("SerMux Hello World started");
+        let trace_settings = serial_trace::SerialTraceSettings::default()
+            // our heap is only 32KB, so allocate a much smaller trace buffer.
+            .with_tracebuf_capacity(2 * 1024);
+        serial_trace::SerialSubscriber::start(k, trace_settings).await;
     })
     .expect("failed to spawn default serial mux service initialization");
-
-    k.initialize(async move {
-        loop {
-            k.sleep(Duration::from_secs(1)).await;
-            tracing::info!("i'm alive!");
-        }
-    })
-    .unwrap();
 }
 
 pub fn spawn_serial(
@@ -84,7 +74,7 @@ pub fn spawn_serial(
     pcc.enable(system::Peripheral::Sha);
 
     // spawn SimpleSerial service
-    k.initialize(drivers::usb_serial::UsbSerialServer::new(dev).register(k, 4096, 4096))
+    k.initialize(drivers::usb_serial::UsbSerialServer::new(dev).register(k, 512, 512))
         .expect("failed to spawn UsbSerialServer!");
 
     interrupt::enable(Interrupt::USB_SERIAL_JTAG, interrupt::Priority::Priority1)

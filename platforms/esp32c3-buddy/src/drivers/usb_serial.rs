@@ -111,13 +111,19 @@ impl UsbSerialServer {
                     //     wr_addr - rd_addr
                     // };
 
-                    let mut wgr = tx.send_grant_exact(64).await;
-                    let mut i = 0;
-                    while self.dev.ep1_conf.read().serial_out_ep_data_avail().bit_is_set() {
-                        wgr[i] = self.dev.ep1.read().rdwr_byte().bits();
-                        i += 1;
+                    let mut wgr = tx.send_grant_max(FIFO_CAPACITY).await;
+                    let mut used = 0;
+                    for byte in &mut wgr[..] {
+                        if self.dev.ep1_conf.read().serial_out_ep_data_avail().bit_is_clear() {
+                            // we've read everything!
+                            break;
+                        }
+
+                        *byte = self.dev.ep1.read().rdwr_byte().bits();
+                        used += 1;
                     }
-                    wgr.commit(i);
+
+                    wgr.commit(used);
 
                     // re-subscribe to the interrupt
                     rx_ready = RX_READY.subscribe().await;

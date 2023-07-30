@@ -41,13 +41,12 @@ fn main() -> ! {
     // println!("Hello world!");
 
     let k = mnemos_esp32c3_buddy::init();
-
-    mnemos_esp32c3_buddy::spawn_daemons(k);
     mnemos_esp32c3_buddy::spawn_serial(
         &k,
         peripherals.USB_DEVICE,
         &mut system.peripheral_clock_control,
     );
+    mnemos_esp32c3_buddy::spawn_daemons(k);
 
     // configure system timer
     let syst = SystemTimer::new(peripherals.SYSTIMER);
