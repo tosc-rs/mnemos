@@ -53,14 +53,11 @@ pub fn spawn_daemons(k: &'static Kernel) {
             .expect("SerialMuxService initialization should not be cancelled")
             .expect("SerialMuxService initialization failed");
 
-        k.spawn(daemons::sermux::loopback(k, Default::default()))
-            .await;
-
         k.spawn(daemons::sermux::hello(k, Default::default())).await;
 
         let trace_settings = serial_trace::SerialTraceSettings::default()
             // our heap is only 32KB, so allocate a much smaller trace buffer.
-            .with_tracebuf_capacity(2 * 1024);
+            .with_tracebuf_capacity(1024);
         serial_trace::SerialSubscriber::start(k, trace_settings).await;
     })
     .expect("failed to spawn default serial mux service initialization");
@@ -96,6 +93,7 @@ pub fn run(k: &'static Kernel, alarm1: Alarm<Target, 1>) -> ! {
         .expect("failed to enable SYSTIMER_TARGET1 interrupt");
 
     loop {
+        tracing::debug!("tick");
         // Tick the scheduler
         let start = SystemTimer::now();
         let tick = k.tick();

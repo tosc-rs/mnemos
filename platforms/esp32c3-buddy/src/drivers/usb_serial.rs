@@ -88,8 +88,14 @@ impl UsbSerialServer {
     /// exclusively to this task.
     async fn worker(mut self, chan: BidiHandle) {
         // make sure crowtty is happy
-        self.dev.ep1.write(|w| unsafe { w.rdwr_byte().bits(0) });
-        self.dev.ep1_conf.write(|w| w.wr_done().set_bit());
+        self.dev.ep1.write(|w| unsafe { w.rdwr_byte().bits(b'\0') });
+        self.dev
+            .int_ena
+            .modify(|_, w| w.serial_in_empty_int_ena().set_bit());
+
+        if self.dev.jfifo_st.read().out_fifo_empty().bit_is_clear() {
+            self.flush().await;
+        }
 
         let (tx, rx) = chan.split();
         // preemptively subscribe to RX interrupts.
@@ -100,17 +106,8 @@ impl UsbSerialServer {
             .modify(|_, w| w.serial_out_recv_pkt_int_ena().set_bit());
         loop {
             futures::select_biased! {
+                // RX bytes available!
                 _ = (&mut rx_ready).fuse() => {
-                    // RX bytes available!
-                    // First, determine how many bytes are available to
-                    // determine the size of the write grant.
-                    // let wgr_sz = {
-                    //     let state = self.dev.in_ep1_st.read();
-                    //     let wr_addr = state.in_ep1_wr_addr().bits();
-                    //     let rd_addr = state.in_ep1_rd_addr().bits();
-                    //     wr_addr - rd_addr
-                    // };
-
                     let mut wgr = tx.send_grant_max(FIFO_CAPACITY).await;
                     let mut used = 0;
                     for byte in &mut wgr[..] {
@@ -127,41 +124,52 @@ impl UsbSerialServer {
 
                     // re-subscribe to the interrupt
                     rx_ready = RX_READY.subscribe().await;
-
-                    // re-enable the RX ready interrupt
-                    self.dev
-                        .int_ena
-                        .modify(|_, w| w.serial_out_recv_pkt_int_ena().set_bit());
                 },
                 rgr = rx.read_grant().fuse() => {
-                    let len = rgr.len();
-                    // Write the bytes in chunks of up to the FIFO's capacity.
-                    for chunk in rgr.chunks(FIFO_CAPACITY) {
-                        for &byte in chunk {
-                            self.dev.ep1.write(|w| unsafe { w.rdwr_byte().bits(byte) })
-                        }
+                    // disable the RX interrupt until we're done writing
+                    self.dev
+                        .int_ena
+                        .modify(|_, w| w.serial_out_recv_pkt_int_ena().clear_bit());
 
-                        // We've written 64 bytes (or less, if we're on the last 64-byte
-                        // chunk of the input). Signal that we're done.
-                        self.dev.ep1_conf.write(|w| w.wr_done().set_bit());
-                        // If the FIFO isn't already empty, wait for it to drain...
-                        if self.dev.jfifo_st.read().out_fifo_empty().bit_is_clear() {
-                            self.flush().await;
-                        }
+                    // we can write up to `FIFO_CAPACITY` bytes before we have
+                    // to yield until the fifo has flushed, so only consume that
+                    // much of the read grant.
+                    let len = core::cmp::min(rgr.len(), FIFO_CAPACITY);
+
+                    // actually write the bytes
+                    for &byte in rgr.iter().take(len) {
+                        self.dev.ep1.write(|w| unsafe { w.rdwr_byte().bits(byte) })
                     }
 
+                    // release the number of bytes we wrote prior to yielding.
                     rgr.release(len);
+
+                    // we've written 64 bytes (or less, if we're on the last 64-byte
+                    // chunk of the input). Signal that we're done.
+                    self.flush().await;
                 },
             }
+
+            // re-enable the RX ready interrupt --- it was either cleared
+            // when we started writing, or cleared by the ISR when we
+            // received an RX packet.
+            self.dev
+                .int_ena
+                .modify(|_, w| w.serial_out_recv_pkt_int_ena().set_bit());
         }
     }
 
     async fn flush(&mut self) {
         // subscribe to a wakeup *before* enabling the interrupt.
         let wait = TX_DONE.subscribe().await;
-        self.dev
-            .int_ena
-            .modify(|_, w| w.serial_in_empty_int_ena().set_bit());
+
+        self.dev.ep1_conf.write(|w| w.wr_done().set_bit());
+
+        if self.dev.jfifo_st.read().out_fifo_empty().bit_is_clear() {
+            // already cleared!
+            return;
+        }
+
         wait.await.expect("TX_DONE waitcell should never be closed")
     }
 
@@ -189,7 +197,9 @@ impl UsbSerialServer {
 
 #[interrupt]
 fn USB_SERIAL_JTAG() {
+    let _isr = kernel::isr::Isr::enter();
     let dev = unsafe { USB_DEVICE::steal() };
+
     let state = dev.int_st.read();
     if state.serial_out_recv_pkt_int_st().bit_is_set() {
         dev.int_ena
