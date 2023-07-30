@@ -713,6 +713,16 @@ impl I2cPuppetSettings {
     /// The default initial retry backoff for key status polling.
     pub const DEFAULT_MIN_BACKOFF: Duration = Duration::from_micros(5);
 
+    /// Configures the interval for polling `i2c_puppet` keyboard status.
+    ///
+    /// By default, this is [`Self::DEFAULT_POLL_INTERVAL`].
+    pub fn with_poll_interval(self, poll_interval: Duration) -> Self {
+        Self {
+            poll_interval,
+            ..self
+        }
+    }
+
     fn retry(&self) -> Retry<WithMaxRetries<AlwaysRetry>, ExpBackoff> {
         let backoff = ExpBackoff::new(self.min_backoff).with_max_backoff(self.poll_interval);
         Retry::new(AlwaysRetry, backoff).with_max_retries(self.max_retries)

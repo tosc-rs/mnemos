@@ -4,7 +4,7 @@
 extern crate alloc;
 
 use core::time::Duration;
-use mnemos_beepy::i2c_puppet::{HsvColor, I2cPuppetClient, I2cPuppetServer};
+use mnemos_beepy::i2c_puppet::{HsvColor, I2cPuppetClient, I2cPuppetServer, I2cPuppetSettings};
 use mnemos_d1_core::{
     ccu::Ccu,
     dmac::Dmac,
@@ -13,6 +13,7 @@ use mnemos_d1_core::{
     timer::Timers,
     Ram, D1,
 };
+use kernel::maitake::sync::WaitCell;
 
 const HEAP_SIZE: usize = 384 * 1024 * 1024;
 
@@ -37,7 +38,9 @@ fn main() -> ! {
     let i2c0 = unsafe { twi::I2c0::mq_pro(p.TWI0, &mut ccu, &mut p.GPIO) };
     let timers = Timers::new(p.TIMER);
     let dmac = Dmac::new(p.DMAC, &mut ccu);
-    let plic = Plic::new(p.PLIC);
+    let mut plic = Plic::new(p.PLIC);
+
+    let i2c_puppet_irq = init_i2c_puppet_irq(&mut p.GPIO, &mut plic);
 
     let d1 = D1::initialize(timers, uart, spim, dmac, plic, i2c0);
 
@@ -73,8 +76,10 @@ fn main() -> ! {
     let i2c_puppet_up = d1
         .kernel
         .initialize(async move {
+            let settings = I2cPuppetSettings::default()
+                .with_poll_interval(Duration::from_secs(2));
             d1.kernel.sleep(Duration::from_secs(2)).await;
-            I2cPuppetServer::register(d1.kernel, Default::default(), None)
+            I2cPuppetServer::register(d1.kernel, settings, i2c_puppet_irq)
                 .await
                 .expect("failed to register i2c_puppet driver!");
         })
@@ -122,4 +127,64 @@ fn main() -> ! {
         .unwrap();
 
     d1.run()
+}
+
+fn init_i2c_puppet_irq(gpio: &mut d1_pac::GPIO, plic: &mut Plic) -> &'static WaitCell {
+    use mnemos_d1_core::plic::Priority;
+    use d1_pac::Interrupt;
+
+    static I2C_PUPPET_IRQ: WaitCell = WaitCell::new();
+
+    // configure pin mappings:
+
+    // the i2c_puppet PI_INT line is on the GCLK0/GPIO4 pin on the Pi header,
+    // according to this schematic:
+    // https://github.com/sqfmi/beepy-hardware/blob/d051e65fd95fdadd83154378950b171a001125a8/KiCad/beepberry-schematic-v1.pdf
+    //
+    // according to the MangoPi MQ Pro schematic, that pin is routed to PB7 on
+    // the D1: https://mangopi.org/_media/mq-pro-sch-v12.pdf
+    gpio.pb_cfg0.modify(|_r, w| {
+        // set PB7 to interrupt mode.
+        w.pb7_select().pb_eint7()
+    });
+    // i2c_puppet triggers an IRQ by asserting the IRQ line low, according
+    // to https://github.com/solderparty/i2c_puppet#protocol
+    gpio.pb_eint_cfg0.modify(|_r, w| {
+        // set PB7 interrupts to negative edge triggered.
+        w.eint7_cfg().negative_edge()
+    });
+
+    gpio.pb_eint_ctl.modify(|_r, w| {
+        // enable PB7 interrupts.
+        w.eint7_ctl().enable()
+    });
+
+    // configure ISR
+    unsafe {
+        plic.register(Interrupt::GPIOB_NS, handle_pb_eint_irq);
+        plic.activate(Interrupt::GPIOB_NS, Priority::P1).expect("could not activate GPIOB_NS ISR");
+    }
+
+    // XXX(eliza): right now, this will *only* handle the i2c_puppet IRQ. this isn't
+    // going to scale well if we want to be able to handle other IRQs on PB7 pins,
+    // especially if we want those to be defined in cross-platform code...
+    fn handle_pb_eint_irq() {
+        let gpio = { unsafe { & *d1_pac::GPIO::ptr() } };
+        gpio.pb_eint_status.modify(|r, w| {
+            if r.eint7_status().is_pending() {
+                // wake the i2c_puppet waker.
+                I2C_PUPPET_IRQ.wake();
+            } else {
+                unreachable!("no other PB EINTs should be enabled, what the heck!")
+            }
+
+            // writing back the interrupt bit clears it.
+            w
+        });
+
+        // wait for the bit to clear to avoid spurious IRQs
+        while gpio.pb_eint_status.read().eint7_status().is_pending() {}
+    }
+
+    &I2C_PUPPET_IRQ
 }
