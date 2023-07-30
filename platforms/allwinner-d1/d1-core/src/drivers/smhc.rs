@@ -18,7 +18,9 @@ use d1_pac::{smhc, Interrupt, GPIO, SMHC0, SMHC1, SMHC2};
 use kernel::{
     comms::kchannel::{KChannel, KConsumer},
     mnemos_alloc::containers::FixedVec,
-    registry, Kernel,
+    registry,
+    services::sdmmc::{messages::Transfer, SdmmcService, Transaction},
+    tracing, Kernel,
 };
 
 /// TODO
@@ -141,7 +143,7 @@ impl Smhc {
         )
     }
 
-    /// This assumes the GPIO pin mappings are already configured.
+    /// This assumes the GPIO pin mappings and module clock are already configured.
     unsafe fn init(smhc: &'static smhc::RegisterBlock, int: Interrupt, isr: fn()) -> Self {
         // Closure to change the card clock
         let prg_clk = || {
@@ -203,6 +205,81 @@ impl Smhc {
     }
 
     fn handle_smhc0_interrupt() {
+        let _isr = kernel::isr::Isr::enter();
+        let smhc = unsafe { &*SMHC0::ptr() };
+        let data = unsafe { &mut (*SMHC0_ISR.data.get()) };
+
+        data.advance_isr(smhc, 0);
+    }
+
+    pub async fn register(self, kernel: &'static Kernel, queued: usize) -> Result<(), ()> {
+        let (tx, rx) = KChannel::new_async(queued).await.split();
+
+        kernel.spawn(self.run(rx)).await;
+        tracing::info!("SMHC driver task spawned");
+        kernel
+            .with_registry(move |reg| reg.register_konly::<SdmmcService>(&tx).map_err(drop))
+            .await?;
+
+        Ok(())
+    }
+
+    #[tracing::instrument(name = "SMHC", level = tracing::Level::INFO, skip(self, rx))]
+    async fn run(self, rx: KConsumer<registry::Message<SdmmcService>>) {
+        tracing::info!("starting SMHC driver task");
+        while let Ok(registry::Message { msg, reply }) = rx.dequeue_async().await {
+            todo!()
+        }
+    }
+
+    #[tracing::instrument(level = tracing::Level::DEBUG, skip(self, txn))]
+    async fn transaction(&self, txn: KConsumer<Transfer>) {
+        todo!()
+    }
+}
+
+impl IsrData {
+    #[must_use]
+    fn lock<'a>(&'a self, smhc: &'a smhc::RegisterBlock) -> SmhcDataGuard<'a> {
+        // disable interrupts while holding the guard.
+        smhc.smhc_ctrl.modify(|_, w| w.ine_enb().disable());
+        let data = unsafe { &mut *(self.data.get()) };
+        SmhcDataGuard { data, smhc }
+    }
+}
+
+impl Drop for SmhcDataGuard<'_> {
+    fn drop(&mut self) {
+        self.smhc.smhc_ctrl.modify(|_, w| w.ine_enb().enable());
+    }
+}
+
+impl SmhcDataGuard<'_> {
+    async fn wait_for_irq(&mut self) {
+        futures::future::poll_fn(|cx| {
+            // TODO
+            Poll::Ready(())
+        })
+        .await;
+    }
+}
+
+impl Deref for SmhcDataGuard<'_> {
+    type Target = SmhcData;
+
+    fn deref(&self) -> &Self::Target {
+        &*self.data
+    }
+}
+
+impl DerefMut for SmhcDataGuard<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.data
+    }
+}
+
+impl SmhcData {
+    fn advance_isr(&mut self, smhc: &smhc::RegisterBlock, num: u8) {
         todo!()
     }
 }
