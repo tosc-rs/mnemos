@@ -94,11 +94,12 @@ build-c3 board:
         --bin {{ board }}
 
 # flash an ESP32-C3 with the MnemOS WiFi Buddy firmware
-flash-c3 board: (_get-cargo-command "espflash" "cargo-espflash") (build-c3 board)
+flash-c3 board *espflash-args: (_get-cargo-command "espflash" "cargo-espflash") (build-c3 board)
     cd {{ _espbuddy_dir }} && \
         {{ _cargo }} espflash flash \
             --release \
-            --bin {{ board }}
+            --bin {{ board }} \
+            {{ espflash-args }}
 
 # run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard)
 crowtty *FLAGS:
