@@ -146,13 +146,12 @@ pub struct KernelInner {
 
 /// Settings for all services spawned by default.
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct DefaultServiceSettings<'a> {
+pub struct DefaultServiceSettings {
     pub keyboard_mux: Option<KeyboardMuxSettings>,
     pub serial_mux: Option<SerialMuxSettings>,
     pub spawnulator: Option<SpawnulatorSettings>,
     pub sermux_loopback: Option<daemons::sermux::LoopbackSettings>,
-    #[serde(borrow)]
-    pub sermux_hello: Option<daemons::sermux::HelloSettings<'a>>,
+    pub sermux_hello: Option<daemons::sermux::HelloSettings>,
     #[cfg(feature = "serial-trace")]
     pub sermux_trace: Option<serial_trace::SerialTraceSettings>,
 }
@@ -295,7 +294,7 @@ impl Kernel {
     /// [`SerialMuxService`]: crate::services::serial_mux::SerialMuxService
     /// [`SpawnulatorService`]:
     ///     crate::services::forth_spawnulator::SpawnulatorService
-    pub fn initialize_default_services(&'static self, settings: DefaultServiceSettings<'static>) {
+    pub fn initialize_default_services(&'static self, settings: DefaultServiceSettings) {
         // Set the kernel timer as the global timer.
         // Disregard errors --- they just mean someone else has already set up
         // the global timer.

@@ -356,7 +356,7 @@ dependencies = [
  "bitflags",
  "clap_derive 3.2.25",
  "clap_lex 0.2.4",
- "indexmap",
+ "indexmap 1.9.3",
  "once_cell",
  "strsim",
  "termcolor",
@@ -458,7 +458,9 @@ checksum = "acbf1af155f9b9ef647e42cdc158db4b64a1b61f743629225fde6f3e0be2a7c7"
 name = "config"
 version = "0.1.0"
 dependencies = [
+ "postcard 1.0.6",
  "serde",
+ "toml",
 ]
 
 [[package]]
@@ -608,7 +610,7 @@ dependencies = [
  "cobs",
  "mnemos-trace-proto",
  "owo-colors",
- "postcard 1.0.4",
+ "postcard 1.0.6",
  "serde",
  "serialport 4.0.1",
  "serialport 4.2.1",
@@ -764,6 +766,12 @@ checksum = "918285ec7b18edb024d4adc64f6f16cdc7c4d72eadfc85c3313d1e0ff40e0229"
 dependencies = [
  "embedded-hal 1.0.0-alpha.11",
 ]
+
+[[package]]
+name = "equivalent"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5443807d6dff69373d433ab9ef5378ad8df50ca6298caf15de6e52e24aaf54d5"
 
 [[package]]
 name = "errno"
@@ -1008,7 +1016,7 @@ dependencies = [
  "futures-sink",
  "futures-util",
  "http",
- "indexmap",
+ "indexmap 1.9.3",
  "slab",
  "tokio",
  "tokio-util",
@@ -1038,6 +1046,12 @@ name = "hashbrown"
 version = "0.12.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8a9ee70c43aaf417c914396645a0fa852624801b24ebb7ae78fe8272889ac888"
+
+[[package]]
+name = "hashbrown"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2c6201b9ff9fd90a5a3bac2e56a830d0caa509576f0e503818ee82c181b3437a"
 
 [[package]]
 name = "hdrhistogram"
@@ -1229,7 +1243,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd070e393353796e801d209ad339e89596eb4c8d430d18ede6a1cced8fafbd99"
 dependencies = [
  "autocfg 1.1.0",
- "hashbrown",
+ "hashbrown 0.12.3",
+]
+
+[[package]]
+name = "indexmap"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d5477fe2230a79769d8dc68e0eabf5437907c0457a5614a9e8dddb67f65eb65d"
+dependencies = [
+ "equivalent",
+ "hashbrown 0.14.0",
 ]
 
 [[package]]
@@ -1453,12 +1477,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b87248edafb776e59e6ee64a79086f65890d3510f2c656c000bf2a7e8a0aea40"
 
 [[package]]
+name = "melpo-config"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "melpomene"
 version = "0.1.0"
 dependencies = [
  "atty",
  "chrono",
  "clap 3.2.25",
+ "config",
  "console-subscriber",
  "embedded-graphics",
  "embedded-graphics-simulator",
@@ -1466,11 +1498,13 @@ dependencies = [
  "futures",
  "humantime",
  "maitake",
+ "melpo-config",
  "mnemos",
  "mnemos-abi",
  "mnemos-alloc",
  "mnemos-std",
- "postcard 1.0.4",
+ "postcard 1.0.6",
+ "serde",
  "tokio",
  "tracing 0.1.37",
  "tracing-modality",
@@ -1584,6 +1618,7 @@ name = "mnemos"
 version = "0.1.0"
 dependencies = [
  "cobs",
+ "config",
  "embedded-graphics",
  "embedded-hal-async",
  "forth3",
@@ -1597,7 +1632,7 @@ dependencies = [
  "mycelium-bitfield",
  "mycelium-util",
  "portable-atomic",
- "postcard 1.0.4",
+ "postcard 1.0.6",
  "profont",
  "ring-drawer",
  "serde",
@@ -1615,7 +1650,7 @@ name = "mnemos-abi"
 version = "0.1.0"
 dependencies = [
  "defmt",
- "postcard 1.0.4",
+ "postcard 1.0.6",
  "serde",
 ]
 
@@ -1664,7 +1699,7 @@ dependencies = [
  "maitake",
  "mnemos-abi",
  "mnemos-alloc",
- "postcard 1.0.4",
+ "postcard 1.0.6",
 ]
 
 [[package]]
@@ -2003,9 +2038,9 @@ dependencies = [
 
 [[package]]
 name = "postcard"
-version = "1.0.4"
+version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cfa512cd0d087cc9f99ad30a1bf64795b67871edbead083ffc3a4dfafa59aa00"
+checksum = "c9ee729232311d3cd113749948b689627618133b1c5012b77342c1950b25eaeb"
 dependencies = [
  "cobs",
  "const_format",
@@ -2569,6 +2604,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "96426c9936fd7a0124915f9185ea1d20aa9445cc9821142f0a73bc9207a2e186"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serialport"
 version = "4.0.1"
 source = "git+https://github.com/metta-systems/serialport-rs?rev=7fec572529ec35b82bd4e3636d897fe2f1c2233f#7fec572529ec35b82bd4e3636d897fe2f1c2233f"
@@ -2914,6 +2958,40 @@ dependencies = [
 ]
 
 [[package]]
+name = "toml"
+version = "0.7.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c17e963a819c331dcacd7ab957d80bc2b9a9c1e71c804826d2f283dd65306542"
+dependencies = [
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_edit",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cda73e2f1397b1262d6dfdcef8aafae14d1de7748d66822d3bfeeb6d03e5e4b"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+name = "toml_edit"
+version = "0.19.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f8123f27e969974a3dfba720fdb560be359f57b44302d280ba72e76a74480e8a"
+dependencies = [
+ "indexmap 2.0.0",
+ "serde",
+ "serde_spanned",
+ "toml_datetime",
+ "winnow",
+]
+
+[[package]]
 name = "tonic"
 version = "0.9.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2949,7 +3027,7 @@ checksum = "b8fa9be0de6cf49e536ce1851f987bd21a43b771b09473c3549a6c853db37c1c"
 dependencies = [
  "futures-core",
  "futures-util",
- "indexmap",
+ "indexmap 1.9.3",
  "pin-project",
  "pin-project-lite",
  "rand 0.8.5",
@@ -3403,3 +3481,12 @@ name = "windows_x86_64_msvc"
 version = "0.48.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1a515f5799fe4961cb532f983ce2b23082366b898e52ffbce459c86f67c8378a"
+
+[[package]]
+name = "winnow"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8bd122eb777186e60c3fdf765a58ac76e41c582f1f535fbf3314434c6b58f3f7"
+dependencies = [
+ "memchr",
+]

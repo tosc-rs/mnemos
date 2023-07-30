@@ -10,6 +10,7 @@ use crate::{
     services::serial_mux::{PortHandle, WellKnown},
     Kernel,
 };
+use config::ManagedBytes;
 
 //
 // Sermux Loopback
@@ -60,23 +61,23 @@ pub async fn loopback(kernel: &'static Kernel, settings: LoopbackSettings) {
 /// Hello Server Settings
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[non_exhaustive]
-pub struct HelloSettings<'a> {
+pub struct HelloSettings {
     /// Port number. Defaults to [WellKnown::HelloWorld]
     pub port: u16,
     /// Buffer size, in bytes. Defaults to 32
     pub buffer_size: usize,
     /// Message to print. Defaults to `b"hello\r\n"`
-    pub message: &'a [u8],
+    pub message: ManagedBytes<'static>,
     /// Interval between messages. Defaults to 1 second
     pub interval: Duration,
 }
 
-impl Default for HelloSettings<'static> {
+impl Default for HelloSettings {
     fn default() -> Self {
         Self {
             port: WellKnown::HelloWorld as u16,
             buffer_size: 32,
-            message: b"hello\r\n",
+            message: ManagedBytes::Borrowed(b"hello\r\n"),
             interval: Duration::from_secs(1),
         }
     }
@@ -86,7 +87,7 @@ impl Default for HelloSettings<'static> {
 ///
 /// Periodically prints a message as a sign of life
 #[tracing::instrument(skip(kernel))]
-pub async fn hello(kernel: &'static Kernel, settings: HelloSettings<'_>) {
+pub async fn hello(kernel: &'static Kernel, settings: HelloSettings) {
     let HelloSettings {
         port,
         buffer_size,
@@ -99,6 +100,6 @@ pub async fn hello(kernel: &'static Kernel, settings: HelloSettings<'_>) {
 
     loop {
         kernel.sleep(interval).await;
-        p1.send(message).await;
+        p1.send(message.as_slice()).await;
     }
 }

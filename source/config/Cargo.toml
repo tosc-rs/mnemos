@@ -6,7 +6,16 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+postcard = "1.0.6"
+
+[dependencies.toml]
+version = "0.7.6"
+optional = true
 
 [dependencies.serde]
 version = "1.0.178"
 default-features = false
+
+[features]
+default = ["use-std"] # todo
+use-std = ["dep:toml", "postcard/use-std"]
