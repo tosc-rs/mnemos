@@ -14,7 +14,7 @@ We would add a new `config` crate that provides helpers for loading configuratio
 
 This crate would also provide helpers for "baking" this data at compile time using the [databake] crate in a `build.rs` file, and compiling into the target as code.
 
-The `config` crate would also provide a `PlatformConfig` type that is generic over two types:
+The `config` crate would also provide a `MnemosConfig` type that is generic over two types:
 
 * A `KernelConfig` type, which contains all kernel-defined configuration, provided by the `kernel` crate
 * A `PlatformConfig` type, which contains all target- or family-specific configuration, expected to be provided by any of the defined `platforms` that mnemos supports
