@@ -290,10 +290,26 @@ mod reg {
 }
 
 impl I2cPuppetServer {
-    #[instrument(level = Level::DEBUG, skip(kernel))]
+    /// Registers a new [`I2cPuppetServer`].
+    ///
+    /// # Arguments
+    ///
+    /// * `kernel`: a reference to the [`Kernel`], used for spawning tasks and
+    ///   registering the driver.
+    /// * `settings`: [`I2cPuppetSettings`] to configure the driver's behavior.
+    /// * `irq_waker`: an optional [`WaitCell`] that will be notified when the
+    ///   `i2c_puppet` IRQ line is asserted.
+    ///
+    ///   If the [`WaitCell`] is [`Some`], the `i2c_puppet` driver will poll
+    ///   key status when the `WaitCell` is woken. If the [`WaitCell`] is
+    ///   [`None`], the driver will only poll the `i2c_puppet` device when
+    ///   [`settings.poll_interval`](I2cPuppetSettings#structfield.poll_interval)
+    ///   elapses.
+    #[instrument(level = Level::DEBUG, skip(kernel, irq_waker))]
     pub async fn register(
         kernel: &'static Kernel,
         settings: I2cPuppetSettings,
+        irq_waker: impl Into<Option<&'static WaitCell>>,
     ) -> Result<(), RegistrationError> {
         let keymux = if settings.keymux {
             let keymux = KeyboardMuxClient::from_registry(kernel).await;
@@ -344,7 +360,7 @@ impl I2cPuppetServer {
 
         let span = tracing::info_span!("I2cPuppetServer");
 
-        match this.settings.irq_waker {
+        match irq_waker.into() {
             Some(irq) => {
                 kernel
                     .spawn(this.run_with_irq(kernel, irq).instrument(span))
@@ -674,7 +690,6 @@ pub struct I2cPuppetSettings {
     pub max_retries: usize,
 
     pub poll_interval: Duration,
-    irq_waker: Option<&'static WaitCell>,
 }
 
 impl Default for I2cPuppetSettings {
@@ -687,7 +702,6 @@ impl Default for I2cPuppetSettings {
             keymux: true,
             max_retries: 10,
             min_backoff: Self::DEFAULT_MIN_BACKOFF,
-            irq_waker: None,
         }
     }
 }
@@ -698,22 +712,6 @@ impl I2cPuppetSettings {
 
     /// The default initial retry backoff for key status polling.
     pub const DEFAULT_MIN_BACKOFF: Duration = Duration::from_micros(5);
-
-    /// Provides a [`WaitCell`] that will be notified when the `i2c_puppet` IRQ
-    /// line is asserted.
-    ///
-    /// If the [`WaitCell`] is [`Some`], the `i2c_puppet` driver will poll key
-    /// status when the `WaitCell` is woken. If the [`WaitCell`] is [`None`], the
-    /// driver will only poll the `i2c_puppet` device when the poll interval
-    /// elapses.
-    ///
-    /// By default, this is [`None`].
-    pub fn with_irq_waker(self, irq_waker: impl Into<Option<&'static WaitCell>>) -> Self {
-        Self {
-            irq_waker: irq_waker.into(),
-            ..self
-        }
-    }
 
     fn retry(&self) -> Retry<WithMaxRetries<AlwaysRetry>, ExpBackoff> {
         let backoff = ExpBackoff::new(self.min_backoff).with_max_backoff(self.poll_interval);

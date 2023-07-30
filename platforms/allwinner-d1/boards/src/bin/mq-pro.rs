@@ -74,7 +74,7 @@ fn main() -> ! {
         .kernel
         .initialize(async move {
             d1.kernel.sleep(Duration::from_secs(2)).await;
-            I2cPuppetServer::register(d1.kernel, Default::default())
+            I2cPuppetServer::register(d1.kernel, Default::default(), None)
                 .await
                 .expect("failed to register i2c_puppet driver!");
         })
