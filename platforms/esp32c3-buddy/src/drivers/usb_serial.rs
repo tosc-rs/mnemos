@@ -1,21 +1,20 @@
-use core::{
-    ptr::{null_mut},
-    sync::atomic::{AtomicPtr, Ordering},
-};
-
-use esp32c3_hal::{usb_serial_jtag::{UsbSerialJtag}, prelude::interrupt, };
+use esp32c3_hal::{prelude::interrupt, peripherals::USB_DEVICE};
 
 use kernel::{
     comms::{
-        bbq::{new_bidi_channel, BidiHandle, Consumer, GrantW, SpscProducer},
+        bbq::{new_bidi_channel, BidiHandle, GrantW},
         kchannel::{KChannel, KConsumer},
     },
     maitake::sync::WaitCell,
-    mnemos_alloc::containers::Box,
     registry::{self, Message},
     services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     Kernel,
 };
+use futures::FutureExt;
+
+pub struct UsbSerialServer {
+    dev: USB_DEVICE,
+}
 
 struct GrantWriter {
     grant: GrantW,
@@ -38,16 +37,17 @@ impl core::fmt::Write for GrantWriter {
 }
 
 static TX_DONE: WaitCell = WaitCell::new();
-static RX: AtomicPtr<SpscProducer> = AtomicPtr::new(null_mut());
+static RX_READY: WaitCell = WaitCell::new();
 
-pub struct UsbSerial {
-    dev: UsbSerialJtag<'static>,
-    tx_done: &'static WaitCell,
-}
+/// Per [the datasheet][1], the USB serial FIFO has a capacity of up to 64
+/// bytes:
+///
+/// [1]: https://www.espressif.com/sites/default/files/documentation/esp32-c3_technical_reference_manual_en.pdf#usbserialjtag
+const FIFO_CAPACITY: usize = 64;
 
-impl UsbSerial {
-    pub fn new(dev: UsbSerialJtag<'static>) -> Self {
-        Self { dev, tx_done: &TX_DONE }
+impl UsbSerialServer {
+    pub fn new(dev: USB_DEVICE) -> Self {
+        Self { dev }
     }
 
     async fn serial_server(handle: BidiHandle, kcons: KConsumer<Message<SimpleSerialService>>) {
@@ -72,24 +72,60 @@ impl UsbSerial {
         }
     }
 
-    async fn sending(&mut self, cons: Consumer) {
+    /// The same MMIO register field (`EP1[RDWR_BYTE]`) is used for both data
+    /// read and data written, so ownership of that register must be assigned
+    /// exclusively to this task.
+    async fn worker(&mut self, chan: BidiHandle) {
+        let (tx, rx) = chan.split();
+        // preemptively subscribe to RX interrupts.
+        let mut rx_ready = RX_READY.subscribe().await.fuse();
+
         loop {
-            let rx = cons.read_grant().await;
-            let len = rx.len();
+            // re-enable the RX ready interrupt
+            self.dev
+                .int_ena
+                .modify(|_, w| w.serial_out_recv_pkt_int_ena().set_bit());
 
-            // pre-register wait future to ensure the waker is in place before
-            // starting thewrite.
-            let wait = self.tx_done.subscribe().await;
+            futures::select_biased! {
+                rgr = rx.read_grant().fuse() => {
+                    let len = rgr.len();
 
-            self.dev.listen_tx_done();
-            // TODO(eliza): what should we do if this errors?
-            self.uart.write_bytes(&rx).expect("UART write bytes should succeed?");
+                    // Write the bytes in chunks of up to the FIFO's capacity.
+                    for chunk in rgr.chunks(FIFO_CAPACITY) {
+                        for &byte in chunk {
+                            self.dev.ep1.write(|w| unsafe { w.rdwr_byte().bits(byte) })
+                        }
+                        // We've written 64 bytes (or less, if we're on the last 64-byte
+                        // chunk of the input). Wait for the FIFO to drain.
+                        self.flush().await;
+                    }
 
-            // wait for the write to complete
-            wait.await.expect("UART TX_DONE WaitCell is never closed!");
+                    rgr.release(len);
+                },
+                _ = &mut rx_ready => {
+                    let mut wgr = tx.send_grant_exact(FIFO_CAPACITY).await;
+                    let mut i = 0;
+                    while self.dev.ep1_conf.read().serial_out_ep_data_avail().bit_is_set() {
+                        wgr[i] = self.dev.ep1.read().rdwr_byte().bits();
+                        i += 1;
+                    }
+                    wgr.commit(i);
 
-            rx.release(len);
+                    // re-subscribe to the interrupt
+                    rx_ready = RX_READY.subscribe().await.fuse();
+                }
+            }
         }
+    }
+
+    async fn flush(&mut self) {
+        // subscribe to a wakeup *before* enabling the interrupt.
+        let wait = TX_DONE.subscribe().await;
+        self.dev.ep1_conf.modify(|_r, w| w.wr_done().set_bit());
+        self.dev
+            .int_ena
+            .modify(|_, w| w.serial_in_empty_int_ena().set_bit());
+        wait.await.expect("TX_DONE waitcell should never be closed")
     }
 
     pub async fn register(
@@ -104,15 +140,9 @@ impl UsbSerial {
             .split();
         let (fifo_a, fifo_b) = new_bidi_channel(cap_in, cap_out).await;
 
-        let _server_hdl = k.spawn(Self::serial_server(fifo_b, kcons)).await;
+        k.spawn(Self::serial_server(fifo_b, kcons)).await;
 
-        let (prod, cons) = fifo_a.split();
-        let _send_hdl = k.spawn(async move { self.sending(cons).await }).await;
-
-        let boxed_prod = Box::new(prod).await;
-        let leaked_prod = Box::into_raw(boxed_prod);
-        let old = UART_RX.swap(leaked_prod, Ordering::AcqRel);
-        assert_eq!(old, null_mut());
+        k.spawn(async move { self.worker(fifo_a).await }).await;
 
         k.with_registry(|reg| reg.register_konly::<SimpleSerialService>(&kprod))
             .await?;
@@ -122,13 +152,19 @@ impl UsbSerial {
 }
 
 #[interrupt]
-fn UART0() {
-    let uart = unsafe { UART0::steal() };
+fn USB_DEVICE() {
+    let dev = unsafe { USB_DEVICE::steal() };
+    dev.int_ena.modify(|r, w| {
+        if r.serial_in_empty_int_ena().bit_is_set() {
+            w.serial_in_empty_int_ena().clear_bit();
+            TX_DONE.wake();
+        }
 
-    if uart.int_raw.read().tx_done_int_raw().bit_is_set() {
-        uart.int_clr.write(|w| w.tx_done_int_clr().set_bit());
-        UART0_TX_DONE.wake();
-    } else {
-        panic!("unexpected UART interrupt!");
-    }
+        if r.serial_out_recv_pkt_int_ena().bit_is_set() {
+            w.serial_out_recv_pkt_int_ena().clear_bit();
+            RX_READY.wake();
+        }
+
+        w
+    });
 }

@@ -6,13 +6,13 @@ pub mod heap;
 
 use critical_section::Mutex;
 use esp32c3_hal::{
-    interrupt, peripherals,
+    interrupt, peripherals::{self,Interrupt},
     prelude::*,
     systimer::{Alarm, SystemTimer, Target},
     Cpu,
+    system,
 };
 use esp_backtrace as _;
-use esp_println::println;
 
 use core::{time::Duration, cell::RefCell};
 use kernel::{daemons, services, Kernel, KernelSettings, mnemos_alloc::containers::Box};
@@ -36,7 +36,6 @@ pub fn init() -> &'static Kernel {
 }
 
 pub fn spawn_daemons(k: &'static Kernel) {
-
     // Initialize the SerialMuxServer
     let sermux_up = k
         .initialize(services::serial_mux::SerialMuxServer::register(
@@ -56,7 +55,6 @@ pub fn spawn_daemons(k: &'static Kernel) {
 
         k.spawn(daemons::sermux::loopback(k, Default::default()))
             .await;
-        println!("SerMux loopback started");
 
         k.spawn(daemons::sermux::hello(k, Default::default())).await;
         tracing::debug!("SerMux Hello World started");
@@ -72,26 +70,35 @@ pub fn spawn_daemons(k: &'static Kernel) {
     .unwrap();
 }
 
+pub fn spawn_serial(k: &'static Kernel, dev: peripherals::USB_DEVICE, pcc: &mut system::PeripheralClockControl) {
+    pcc.enable(system::Peripheral::Sha);
+
+    // spawn SimpleSerial service
+    k.initialize(drivers::usb_serial::UsbSerialServer::new(dev).register(k, 4096, 4096))
+        .expect("failed to spawn UsbSerialServer!");
+
+    interrupt::enable(
+        Interrupt::USB_DEVICE,
+        interrupt::Priority::Priority1,
+    ).expect("failed to enable USB_DEVICE interrupt");
+}
+
 pub fn run(k: &'static Kernel, alarm1: Alarm<Target, 1>) -> ! {
+    // Alarm 1 will be used to generate "sleep until" interrupts.
     critical_section::with(|cs| {
         ALARM1.borrow_ref_mut(cs).replace(alarm1);
     });
 
-    interrupt::enable(
-        peripherals::Interrupt::UART0,
-        interrupt::Priority::Priority1,
-    )
-    .unwrap();
     interrupt::set_kind(
         Cpu::ProCpu,
         interrupt::CpuInterrupt::Interrupt1, // Interrupt 1 handles priority one interrupts
         interrupt::InterruptKind::Edge,
     );
     interrupt::enable(
-        peripherals::Interrupt::SYSTIMER_TARGET1,
+        Interrupt::SYSTIMER_TARGET1,
         interrupt::Priority::Priority1,
-    )
-    .unwrap();
+    ).expect("failed to enable SYSTIMER_TARGET1 interrupt");
+
 
     loop {
         // Tick the scheduler
@@ -101,10 +108,7 @@ pub fn run(k: &'static Kernel, alarm1: Alarm<Target, 1>) -> ! {
         // Timer is downcounting
         let elapsed = SystemTimer::now() - start;
 
-        println!("Start: {start:}, Elapsed: {elapsed:?}");
         let turn = k.timer().force_advance_ticks(elapsed as u64 / 2u64);
-
-        println!("Tick: {tick:?}\nTurn: {turn:?}");
 
         // If there is nothing else scheduled, and we didn't just wake something up,
         // sleep for some amount of time
@@ -118,7 +122,6 @@ pub fn run(k: &'static Kernel, alarm1: Alarm<Target, 1>) -> ! {
             let amount = turn.ticks_to_next_deadline().unwrap_or(800_000); // 100 ms / 125 ms ticks = 800,000
 
             // TODO(eliza): what is the max duration of the C3's timer?
-            println!("amount: {amount}");
             critical_section::with(|cs| {
                 let mut alarm1 = ALARM1.borrow_ref_mut(cs);
                 let alarm1 = alarm1.as_mut().unwrap();
@@ -142,9 +145,7 @@ pub fn run(k: &'static Kernel, alarm1: Alarm<Target, 1>) -> ! {
             // Account for time slept
             let elapsed = SystemTimer::now() - wfi_start;
 
-            println!("WFI Start: {wfi_start:}, Elapsed: {elapsed:?}");
-            let turn = k.timer().force_advance_ticks(elapsed as u64 / 2u64);
-            println!("Turn: {turn:?}; elapsed = {elapsed:?}");
+            let _turn = k.timer().force_advance_ticks(elapsed as u64 / 2u64);
         }
     }
 }
@@ -155,7 +156,6 @@ pub fn run(k: &'static Kernel, alarm1: Alarm<Target, 1>) -> ! {
 /// knock us out of WFI. Just disable the IRQ to prevent refires
 #[interrupt]
 fn SYSTIMER_TARGET1() {
-    println!("ALARM1");
     critical_section::with(|cs| {
         ALARM1
             .borrow_ref_mut(cs)

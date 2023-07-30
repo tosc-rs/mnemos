@@ -317,9 +317,6 @@ name = "esp-println"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "af6a511d37dba5fb8f01bf5485bc619a1a1959e1aaf666a7597df8fe615a0816"
-dependencies = [
- "critical-section",
-]
 
 [[package]]
 name = "esp-riscv-rt"
@@ -686,8 +683,8 @@ dependencies = [
  "critical-section",
  "esp-alloc",
  "esp-backtrace",
- "esp-println",
  "esp32c3-hal",
+ "futures",
  "mnemos",
  "portable-atomic",
  "riscv",

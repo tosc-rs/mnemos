@@ -45,9 +45,9 @@ riscv = "0.10.1"
 version = "0.7.0"
 features = ["esp32c3", "panic-handler", "exception-handler", "print-uart"]
 
-[dependencies.esp-println]
-version = "0.5.0"
-features = ["esp32c3"]
+# [dependencies.esp-println]
+# version = "0.5.0"
+# features = ["esp32c3"]
 
 [dependencies.portable-atomic]
 version = "1.4"
@@ -64,6 +64,11 @@ version = "0.1.37"
 # branch = "master"
 features = ["attributes"]
 default-features = false
+
+[dependencies.futures]
+version = "0.3.21"
+default-features = false
+features = ["async-await"]
 
 ### patches ###
 
