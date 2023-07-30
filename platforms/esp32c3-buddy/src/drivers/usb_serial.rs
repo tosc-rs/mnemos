@@ -1,5 +1,6 @@
-use esp32c3_hal::{prelude::interrupt, peripherals::USB_DEVICE};
+use esp32c3_hal::{peripherals::USB_DEVICE, prelude::*};
 
+use futures::FutureExt;
 use kernel::{
     comms::{
         bbq::{new_bidi_channel, BidiHandle, GrantW},
@@ -10,7 +11,6 @@ use kernel::{
     services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     Kernel,
 };
-use futures::FutureExt;
 
 pub struct UsbSerialServer {
     dev: USB_DEVICE,
@@ -47,11 +47,22 @@ const FIFO_CAPACITY: usize = 64;
 
 impl UsbSerialServer {
     pub fn new(dev: USB_DEVICE) -> Self {
+        dev.int_ena.modify(|_r, w| {
+            w.serial_in_empty_int_ena().clear_bit();
+            w.serial_out_recv_pkt_int_ena().clear_bit();
+            w
+        });
+        dev.int_clr.write(|w| {
+            w.serial_in_empty_int_clr().set_bit();
+            w.serial_out_recv_pkt_int_clr().set_bit();
+            w
+        });
         Self { dev }
     }
 
     async fn serial_server(handle: BidiHandle, kcons: KConsumer<Message<SimpleSerialService>>) {
         loop {
+            // esp_println::println!("get port");
             if let Ok(req) = kcons.dequeue_async().await {
                 let Request::GetPort = req.msg.body;
                 let resp = req.msg.reply_with(Ok(Response::PortHandle { handle }));
@@ -75,35 +86,32 @@ impl UsbSerialServer {
     /// The same MMIO register field (`EP1[RDWR_BYTE]`) is used for both data
     /// read and data written, so ownership of that register must be assigned
     /// exclusively to this task.
-    async fn worker(&mut self, chan: BidiHandle) {
+    async fn worker(mut self, chan: BidiHandle) {
+        // make sure crowtty is happy
+        self.dev.ep1.write(|w| unsafe { w.rdwr_byte().bits(0) });
+        self.dev.ep1_conf.write(|w| w.wr_done().set_bit());
+
         let (tx, rx) = chan.split();
         // preemptively subscribe to RX interrupts.
-        let mut rx_ready = RX_READY.subscribe().await.fuse();
-
+        let mut rx_ready = RX_READY.subscribe().await;
+        // enable the RX ready interrupt
+        self.dev
+            .int_ena
+            .modify(|_, w| w.serial_out_recv_pkt_int_ena().set_bit());
         loop {
-            // re-enable the RX ready interrupt
-            self.dev
-                .int_ena
-                .modify(|_, w| w.serial_out_recv_pkt_int_ena().set_bit());
-
             futures::select_biased! {
-                rgr = rx.read_grant().fuse() => {
-                    let len = rgr.len();
+                _ = (&mut rx_ready).fuse() => {
+                    // RX bytes available!
+                    // First, determine how many bytes are available to
+                    // determine the size of the write grant.
+                    // let wgr_sz = {
+                    //     let state = self.dev.in_ep1_st.read();
+                    //     let wr_addr = state.in_ep1_wr_addr().bits();
+                    //     let rd_addr = state.in_ep1_rd_addr().bits();
+                    //     wr_addr - rd_addr
+                    // };
 
-                    // Write the bytes in chunks of up to the FIFO's capacity.
-                    for chunk in rgr.chunks(FIFO_CAPACITY) {
-                        for &byte in chunk {
-                            self.dev.ep1.write(|w| unsafe { w.rdwr_byte().bits(byte) })
-                        }
-                        // We've written 64 bytes (or less, if we're on the last 64-byte
-                        // chunk of the input). Wait for the FIFO to drain.
-                        self.flush().await;
-                    }
-
-                    rgr.release(len);
-                },
-                _ = &mut rx_ready => {
-                    let mut wgr = tx.send_grant_exact(FIFO_CAPACITY).await;
+                    let mut wgr = tx.send_grant_exact(64).await;
                     let mut i = 0;
                     while self.dev.ep1_conf.read().serial_out_ep_data_avail().bit_is_set() {
                         wgr[i] = self.dev.ep1.read().rdwr_byte().bits();
@@ -112,8 +120,32 @@ impl UsbSerialServer {
                     wgr.commit(i);
 
                     // re-subscribe to the interrupt
-                    rx_ready = RX_READY.subscribe().await.fuse();
-                }
+                    rx_ready = RX_READY.subscribe().await;
+
+                    // re-enable the RX ready interrupt
+                    self.dev
+                        .int_ena
+                        .modify(|_, w| w.serial_out_recv_pkt_int_ena().set_bit());
+                },
+                rgr = rx.read_grant().fuse() => {
+                    let len = rgr.len();
+                    // Write the bytes in chunks of up to the FIFO's capacity.
+                    for chunk in rgr.chunks(FIFO_CAPACITY) {
+                        for &byte in chunk {
+                            self.dev.ep1.write(|w| unsafe { w.rdwr_byte().bits(byte) })
+                        }
+
+                        // We've written 64 bytes (or less, if we're on the last 64-byte
+                        // chunk of the input). Signal that we're done.
+                        self.dev.ep1_conf.write(|w| w.wr_done().set_bit());
+                        // If the FIFO isn't already empty, wait for it to drain...
+                        if self.dev.jfifo_st.read().out_fifo_empty().bit_is_clear() {
+                            self.flush().await;
+                        }
+                    }
+
+                    rgr.release(len);
+                },
             }
         }
     }
@@ -121,7 +153,6 @@ impl UsbSerialServer {
     async fn flush(&mut self) {
         // subscribe to a wakeup *before* enabling the interrupt.
         let wait = TX_DONE.subscribe().await;
-        self.dev.ep1_conf.modify(|_r, w| w.wr_done().set_bit());
         self.dev
             .int_ena
             .modify(|_, w| w.serial_in_empty_int_ena().set_bit());
@@ -129,12 +160,11 @@ impl UsbSerialServer {
     }
 
     pub async fn register(
-        mut self,
+        self,
         k: &'static Kernel,
         cap_in: usize,
         cap_out: usize,
     ) -> Result<(), registry::RegistrationError> {
-
         let (kprod, kcons) = KChannel::<Message<SimpleSerialService>>::new_async(4)
             .await
             .split();
@@ -142,7 +172,7 @@ impl UsbSerialServer {
 
         k.spawn(Self::serial_server(fifo_b, kcons)).await;
 
-        k.spawn(async move { self.worker(fifo_a).await }).await;
+        k.spawn(self.worker(fifo_a)).await;
 
         k.with_registry(|reg| reg.register_konly::<SimpleSerialService>(&kprod))
             .await?;
@@ -152,19 +182,21 @@ impl UsbSerialServer {
 }
 
 #[interrupt]
-fn USB_DEVICE() {
+fn USB_SERIAL_JTAG() {
     let dev = unsafe { USB_DEVICE::steal() };
-    dev.int_ena.modify(|r, w| {
-        if r.serial_in_empty_int_ena().bit_is_set() {
-            w.serial_in_empty_int_ena().clear_bit();
-            TX_DONE.wake();
-        }
+    let state = dev.int_st.read();
+    if state.serial_out_recv_pkt_int_st().bit_is_set() {
+        dev.int_ena
+            .modify(|_r, w| w.serial_out_recv_pkt_int_ena().clear_bit());
+        dev.int_clr
+            .write(|w| w.serial_out_recv_pkt_int_clr().set_bit());
+        RX_READY.wake();
+    }
 
-        if r.serial_out_recv_pkt_int_ena().bit_is_set() {
-            w.serial_out_recv_pkt_int_ena().clear_bit();
-            RX_READY.wake();
-        }
-
-        w
-    });
+    if state.serial_in_empty_int_st().bit_is_set() {
+        dev.int_ena
+            .modify(|_r, w| w.serial_out_recv_pkt_int_ena().clear_bit());
+        dev.int_clr.write(|w| w.serial_in_empty_int_clr().set_bit());
+        TX_DONE.wake();
+    }
 }

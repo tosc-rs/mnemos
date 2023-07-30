@@ -6,16 +6,17 @@ pub mod heap;
 
 use critical_section::Mutex;
 use esp32c3_hal::{
-    interrupt, peripherals::{self,Interrupt},
+    interrupt,
+    peripherals::{self, Interrupt},
     prelude::*,
+    system,
     systimer::{Alarm, SystemTimer, Target},
     Cpu,
-    system,
 };
 use esp_backtrace as _;
 
-use core::{time::Duration, cell::RefCell};
-use kernel::{daemons, services, Kernel, KernelSettings, mnemos_alloc::containers::Box};
+use core::{cell::RefCell, time::Duration};
+use kernel::{daemons, mnemos_alloc::containers::Box, services, Kernel, KernelSettings};
 
 static ALARM1: Mutex<RefCell<Option<Alarm<Target, 1>>>> = Mutex::new(RefCell::new(None));
 
@@ -46,17 +47,22 @@ pub fn spawn_daemons(k: &'static Kernel) {
 
     // Initialize Serial Mux daemons.
     k.initialize(async move {
+        use kernel::serial_trace;
         sermux_up
             .await
             .expect("SerialMuxService initialization should not be cancelled")
             .expect("SerialMuxService initialization failed");
 
-        kernel::serial_trace::SerialSubscriber::start(k, Default::default()).await;
-
         k.spawn(daemons::sermux::loopback(k, Default::default()))
             .await;
 
         k.spawn(daemons::sermux::hello(k, Default::default())).await;
+
+        serial_trace::SerialSubscriber::start(
+            k,
+            Default::default()
+        )
+        .await;
         tracing::debug!("SerMux Hello World started");
     })
     .expect("failed to spawn default serial mux service initialization");
@@ -70,17 +76,19 @@ pub fn spawn_daemons(k: &'static Kernel) {
     .unwrap();
 }
 
-pub fn spawn_serial(k: &'static Kernel, dev: peripherals::USB_DEVICE, pcc: &mut system::PeripheralClockControl) {
+pub fn spawn_serial(
+    k: &'static Kernel,
+    dev: peripherals::USB_DEVICE,
+    pcc: &mut system::PeripheralClockControl,
+) {
     pcc.enable(system::Peripheral::Sha);
 
     // spawn SimpleSerial service
     k.initialize(drivers::usb_serial::UsbSerialServer::new(dev).register(k, 4096, 4096))
         .expect("failed to spawn UsbSerialServer!");
 
-    interrupt::enable(
-        Interrupt::USB_DEVICE,
-        interrupt::Priority::Priority1,
-    ).expect("failed to enable USB_DEVICE interrupt");
+    interrupt::enable(Interrupt::USB_SERIAL_JTAG, interrupt::Priority::Priority1)
+        .expect("failed to enable USB_SERIAL_JTAG interrupt");
 }
 
 pub fn run(k: &'static Kernel, alarm1: Alarm<Target, 1>) -> ! {
@@ -94,11 +102,8 @@ pub fn run(k: &'static Kernel, alarm1: Alarm<Target, 1>) -> ! {
         interrupt::CpuInterrupt::Interrupt1, // Interrupt 1 handles priority one interrupts
         interrupt::InterruptKind::Edge,
     );
-    interrupt::enable(
-        Interrupt::SYSTIMER_TARGET1,
-        interrupt::Priority::Priority1,
-    ).expect("failed to enable SYSTIMER_TARGET1 interrupt");
-
+    interrupt::enable(Interrupt::SYSTIMER_TARGET1, interrupt::Priority::Priority1)
+        .expect("failed to enable SYSTIMER_TARGET1 interrupt");
 
     loop {
         // Tick the scheduler

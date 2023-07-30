@@ -98,8 +98,7 @@ flash-c3 board: (_get-cargo-command "espflash" "cargo-espflash") (build-c3 board
     cd {{ _espbuddy_dir }} && \
         {{ _cargo }} espflash flash \
             --release \
-            --bin {{ board }} \
-            --monitor
+            --bin {{ board }}
 
 # run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard)
 crowtty *FLAGS:
