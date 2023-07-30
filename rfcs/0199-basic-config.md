@@ -56,6 +56,11 @@ This approach is largely inspired by [ICU4X]'s [Data Provider] model, which aims
 [ICU4X]: https://github.com/unicode-org/icu4x
 [Data Provider]: https://github.com/unicode-org/icu4x/blob/main/docs/design/data_pipeline.md
 
+### Other potential inspirations
+
+* https://crates.io/crates/config
+* https://github.com/rust-osdev/bootloader#usage
+
 ## "Tomorrows Problems"
 
 This initial approach avoids many complexities by ignoring them completely. Some of these complexities are described below:
@@ -78,11 +83,15 @@ This might be mitigated by grouping these into a common "all spi drivers" config
 
 We may want to revisit how to support that in the future.
 
+### Layering of config
+
+Eventually we will probably want some kind of way to "layer" configs, for example providing a base level of defaults, and adding partial overlays when adding components.
+
 ### "demand based" configuration
 
-This configuration approach makes not attempt at addressing validation of configuration, particularly looking at the dependencies of each service to determine if the configuration is suitable.
+This configuration approach makes no attempt at addressing validation of configuration, particularly looking at the dependencies of each service to determine if the configuration is suitable, nor detecting whether the configured hardware actually exists.
 
-For example, a platform may configure the sermux service, but forget to provide a serial port for the sermux service to use.
+For example, a platform may configure the sermux service, but forget to provide a serial port for the sermux service to use, or a platform might configure a wifi adapter that isn't present on the target board.
 
 At the moment, this RFC just says "don't do that", or "catch that in testing", which will not scale past a certain complexity level
 
