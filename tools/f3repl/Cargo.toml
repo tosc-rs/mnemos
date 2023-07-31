@@ -6,6 +6,10 @@ description = """
 f3repl is a host tool that provides a REPL of the forth3 VM. It is
 used for testing and development of forth3.
 """
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
+readme = "./README.md"
+license = "MIT OR Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

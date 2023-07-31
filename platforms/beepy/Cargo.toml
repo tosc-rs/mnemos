@@ -5,6 +5,10 @@ edition = "2021"
 description = """
 Hardware support specific to the SQFMI Beepy development board
 """
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
+readme = "./README.md"
+license = "MIT OR Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

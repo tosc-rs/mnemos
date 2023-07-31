@@ -7,12 +7,13 @@ Data structures and definitions shared between the kernel and userspace.
 authors = ["James Munns <james@onevariable.com>"]
 edition = "2021"
 readme = "./README.md"
-
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
 categories = [
     "embedded",
     "no-std",
 ]
-license = "MIT OR Apache-2.0"
 
 [lib]
 name = "abi"

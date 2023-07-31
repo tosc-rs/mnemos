@@ -7,6 +7,10 @@ crowtty is a host tool, aimed at speaking the sermux protocol with a
 simulator or physical target. It allows for receiving tracing messages,
 as well as mapping multiplexed "ports" as TCP sockets on the host.
 """
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
+readme = "./README.md"
+license = "MIT OR Apache-2.0"
 
 ### See `main.rs::serial` comments for why these duplicate dependencies exit
 

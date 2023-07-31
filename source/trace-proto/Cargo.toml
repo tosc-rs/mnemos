@@ -7,6 +7,10 @@ Wire types used by the binary tracing subscriber used on hardware targets.
 Extracted as a separate crate to allow external decoders (like `crowtty`)
 to share protocol definitions.
 """
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
+readme = "./README.md"
+license = "MIT OR Apache-2.0"
 
 [features]
 std = ["tracing-serde-structured/std", "serde/std"]

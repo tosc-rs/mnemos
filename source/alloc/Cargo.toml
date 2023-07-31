@@ -6,12 +6,14 @@ for async handling of allocations, including turning allocation async.
 """
 version = "0.1.0"
 edition = "2021"
-
+readme = "./README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
 categories = [
     "embedded",
     "no-std",
 ]
-license = "MIT OR Apache-2.0"
 
 [dependencies.cordyceps]
 version = "0.3"
