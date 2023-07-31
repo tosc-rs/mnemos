@@ -12,7 +12,7 @@ use esp_backtrace as _;
 #[entry]
 fn main() -> ! {
     unsafe {
-        mnemos_esp32c3_buddy::heap::init();
+        mnemos_wifi_buddy::heap_init();
     }
 
     let peripherals = Peripherals::take();
@@ -38,18 +38,19 @@ fn main() -> ! {
     wdt0.disable();
     wdt1.disable();
 
-    let k = mnemos_esp32c3_buddy::init();
-    mnemos_esp32c3_buddy::spawn_serial(
+    let k = mnemos_wifi_buddy::init();
+
+    mnemos_wifi_buddy::spawn_serial(
         &k,
         peripherals.USB_DEVICE,
         &mut system.peripheral_clock_control,
     );
-    mnemos_esp32c3_buddy::spawn_daemons(k);
+    mnemos_wifi_buddy::spawn_daemons(k);
 
     // configure system timer
     let syst = SystemTimer::new(peripherals.SYSTIMER);
     // Alarm 1 will be used to generate "sleep until" interrupts.
     let alarm1 = syst.alarm1;
 
-    mnemos_esp32c3_buddy::run(&k, alarm1)
+    mnemos_wifi_buddy::run(&k, alarm1)
 }

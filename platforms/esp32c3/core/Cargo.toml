@@ -1,0 +1,46 @@
+[package]
+name = "mnemos-esp32c3-core"
+version = "0.1.0"
+authors = [
+    "Eliza Weisman <eliza@elizas.website>",
+    "James Munns <james@onevariable.com>",
+]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+readme = "./README.md"
+
+[lib]
+test = false
+bench = false
+
+[dependencies]
+critical-section = "1"
+esp-alloc = "0.3"
+riscv = "0.10.1"
+
+[dependencies.esp32c3-hal]
+version = "0.10.0"
+# disable the `rt` feature, which enables a `critical-section` impl that
+# conflicts with others in the workspace.
+default-features = false
+features = ["vectored"]
+
+[dependencies.portable-atomic]
+version = "1.4"
+default-features = false
+features = ["critical-section"]
+
+# kernel
+[dependencies.mnemos]
+path = "../../../source/kernel"
+features = ["serial-trace"]
+
+[dependencies.tracing]
+version = "0.1.37"
+features = ["attributes"]
+default-features = false
+
+[dependencies.futures]
+version = "0.3.21"
+default-features = false
+features = ["async-await"]

@@ -13,7 +13,6 @@ use esp32c3_hal::{
     systimer::{Alarm, SystemTimer, Target},
     Cpu,
 };
-use esp_backtrace as _;
 
 use core::{cell::RefCell, time::Duration};
 use kernel::{daemons, mnemos_alloc::containers::Box, services, Kernel, KernelSettings};

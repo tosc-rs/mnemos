@@ -19,10 +19,11 @@ members = [
     # platforms
     "platforms/allwinner-d1/core",
     "platforms/beepy",
+    "platforms/esp32c3/core",
     "platforms/melpomene",
 ]
 
-exclude = ["platforms/pomelo", "platforms/esp32c3-buddy"]
+exclude = ["platforms/pomelo", "platforms/esp32c3/wifi-buddy"]
 
 [patch.crates-io.maitake]
 git = "https://github.com/hawkw/mycelium.git"

@@ -29,4 +29,6 @@ default-features = false
 
 [dependencies.riscv]
 version = "0.10"
-features =[ "critical-section-single-hart"]
+# disable the `rt` feature, which enables a `critical-section` impl that
+# conflicts with others in the workspace.
+default-features = false

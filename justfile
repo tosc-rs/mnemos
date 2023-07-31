@@ -31,7 +31,7 @@ _pomelo_dir := "platforms/pomelo"
 
 _melpo_dir := "platforms/melpomene"
 
-_espbuddy_dir := "platforms/esp32c3-buddy"
+_espbuddy_dir := "platforms/esp32c3/wifi-buddy"
 
 # arguments to pass to all RustDoc invocations
 _rustdoc := _cargo + " doc --no-deps --all-features"

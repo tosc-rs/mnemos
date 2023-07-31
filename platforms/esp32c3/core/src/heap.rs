@@ -13,19 +13,7 @@ pub const HEAP_SIZE: usize = 1024 * 32;
 /// # Safety
 ///
 /// Only call this once!
-pub unsafe fn init() {
-    extern "C" {
-        // Note: this symbol is provided by `esp32c3-hal`'s linker script.
-        static mut _heap_start: u32;
-    }
-
-    let heap_start = {
-        let ptr = &_heap_start as *const _ as *mut u8;
-        NonNull::new(ptr).expect(
-            "why would the heap start address, given to us by the linker script, ever be null?",
-        )
-    };
-
+pub unsafe fn init(heap_start: NonNull<u8>) {
     unsafe {
         AHEAP.init(heap_start, HEAP_SIZE);
     }

@@ -2,6 +2,16 @@
 
 This directory contains the MnemOS firmware for the [ESP32-C3] WiFi Buddy.
 
+## Folder Layout
+
+* [`wifi-buddy/`]: Platform implementation for the ESP32-C3 WiFi Buddy
+    firmware. This crate contains the actual bin targets for building the WiFi
+    Buddy firmware for ESP32-C3 boards.
+* [`core/`]: Core platform implementation shared by all [ESP32-C3] boards
+
+[`boards/`]: ./wifi-buddy/
+[`core/`]: ./core/
+
 ## Target Boards
 
 The currently targeted [ESP32-C3] development boards are the [Seeedstudio XIAO
@@ -18,14 +28,15 @@ either board can be used interchangeably.
 
 ### Building
 
-> **Note**
+
+> [!NOTE]
 >
-> This crate is its own Cargo workspace. This is in order to avoid
-> blowing away artifacts for host tools cached in the main workspace when
+> The [`wifi-buddy/`] directory is its own Cargo workspace. This is in order to
+> avoid blowing away artifacts for host tools cached in the main workspace when
 > building the MnemOS binary for a target.
 
 To build for the [ESP32-C3] platform, either build from within the
-`platforms/esp32c3-buddy` directory, or use the [`just build-c3` Just
+`platforms/esp32c3/wifi-buddy` directory, or use the [`just build-c3` Just
 recipe][just].
 
 The two supported ESP32-C3 dev boards are pinout-compatible, but route different
@@ -58,7 +69,7 @@ $ just flash-c3 qtpy   # build and flash the Adafruit QT Py ESP32-C3
 $ just flash-c3 xiao   # build and flash the Seeedstudio XIAO ESP32-C3
 ```
 
-> **Note**
+> [!IMPORTANT]
 >
 > In order to flash an ESP32-C3 board, the [`cargo-espflash`] executable
 > must be installed. The `just flash-c3` Just recipe will check if

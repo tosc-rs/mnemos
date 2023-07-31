@@ -5,7 +5,7 @@ members = [
 ]
 
 [package]
-name = "mnemos-esp32c3-buddy"
+name = "mnemos-wifi-buddy"
 version = "0.1.0"
 authors = [
     "Eliza Weisman <eliza@elizas.website>",
@@ -35,29 +35,25 @@ name = "xiao"
 test = false
 bench = false
 
-[dependencies]
-critical-section = "1"
-esp32c3-hal = "0.10.0"
-esp-alloc = "0.3"
-riscv = "0.10.1"
+
+[dependencies.esp32c3-hal]
+version = "0.10.0"
+features = [
+    "rt",
+    "vectored",
+]
 
 [dependencies.esp-backtrace]
 version = "0.7.0"
 features = ["esp32c3", "panic-handler", "exception-handler", "print-uart"]
 
-[dependencies.esp-println]
-version = "0.5.0"
-features = ["esp32c3"]
-
-[dependencies.portable-atomic]
-version = "1.4"
-default-features = false
-features = ["critical-section"]
-
 # kernel
 [dependencies.mnemos]
-path = "../../source/kernel"
+path = "../../../source/kernel"
 features = ["serial-trace"]
+
+[dependencies.mnemos-esp32c3-core]
+path = "../core"
 
 [dependencies.tracing]
 version = "0.1.37"
@@ -65,10 +61,10 @@ version = "0.1.37"
 features = ["attributes"]
 default-features = false
 
-[dependencies.futures]
-version = "0.3.21"
+[dependencies.portable-atomic]
+version = "1.4"
 default-features = false
-features = ["async-await"]
+features = ["critical-section"]
 
 ### patches ###
 
@@ -96,4 +92,4 @@ git = "https://github.com/hawkw/mycelium.git"
 rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
 
 [patch.crates-io.mnemos-alloc]
-path = "../../source/alloc"
+path = "../../../source/alloc"
