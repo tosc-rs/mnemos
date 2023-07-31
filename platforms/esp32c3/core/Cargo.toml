@@ -7,7 +7,7 @@ authors = [
 ]
 edition = "2021"
 license = "MIT OR Apache-2.0"
-readme = "./README.md"
+readme = "../README.md"
 
 [lib]
 test = false
@@ -28,7 +28,6 @@ features = ["vectored"]
 [dependencies.portable-atomic]
 version = "1.4"
 default-features = false
-features = ["critical-section"]
 
 # kernel
 [dependencies.mnemos]

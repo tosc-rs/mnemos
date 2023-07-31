@@ -2184,9 +2184,6 @@ name = "portable-atomic"
 version = "1.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f32154ba0af3a075eefa1eda8bb414ee928f62303a54ea85b8d6638ff1a6ee9e"
-dependencies = [
- "critical-section",
-]
 
 [[package]]
 name = "postcard"
