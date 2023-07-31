@@ -14,6 +14,9 @@ authors = [
 edition = "2021"
 license = "MIT OR Apache-2.0"
 readme = "../README.md"
+description = """
+MnemOS ESP32-C3 WiFi Buddy binary targets.
+"""
 
 [profile.release]
 # it turns out that we basically just "can't" build in debug mode (or our code
