@@ -26,6 +26,10 @@
         "path": "platforms/allwinner-d1/core"
       },
       {
+        "slug": "crowtty",
+        "path": "tools/crowtty"
+      },
+      {
         "slug": "alloc",
         "path": "source/alloc"
       },
@@ -50,16 +54,8 @@
         "path": "source/trace-proto"
       },
       {
-        "slug": "crowtty",
-        "path": "tools/crowtty"
-      },
-      {
         "slug": "beepy",
         "path": "platforms/beepy"
-      },
-      {
-        "slug": "dumbloader",
-        "path": "tools/dumbloader"
       },
       {
         "slug": "f3repl",
