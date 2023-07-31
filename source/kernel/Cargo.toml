@@ -23,6 +23,12 @@ build = "build.rs"
 [lib]
 name = "kernel"
 
+[features]
+# enables the serial port trace protocol.
+# this is feature flagged so that it can be disabled in the simulator platforms
+# (melpomene and pomelo), which provide their own native tracing subscribers.
+serial-trace = ["mnemos-trace-proto", "tracing-core", "tracing-serde-structured"]
+
 [dependencies]
 
 [dependencies.futures]
@@ -39,31 +45,19 @@ features = ["serde"]
 version = "0.2.3"
 default-features = false
 
-[dependencies.tracing-01]
-package = "tracing"
+[dependencies.tracing]
 version = "0.1.35"
 features = ["attributes"]
 default-features = false
-optional = true
 
-[dependencies.tracing-02]
-package = "tracing"
-git = "https://github.com/tokio-rs/tracing"
-# branch = "master"
-features = ["attributes"]
-default-features = false
-optional = true
-
-[dependencies.tracing-core-02]
-package = "tracing-core"
-git = "https://github.com/tokio-rs/tracing"
-# branch = "master"
+[dependencies.tracing-core]
+version = "0.1.31"
 default-features = false
 optional = true
 
 [dependencies.tracing-serde-structured]
-git = "https://github.com/jamesmunns/tracing-serde-structured"
-branch = "james/2trace2furious"
+git = "https://github.com/hawkw/tracing-serde-structured"
+branch = "eliza/span-fields"
 default-features = false
 optional = true
 
@@ -116,7 +110,9 @@ path = "../forth3"
 features = ["async"]
 
 [dependencies.portable-atomic]
-version = "1"
+version = "1.3"
+default-features = false
+features = ["require-cas"]
 
 [dependencies.input-mgr]
 git = "https://github.com/tosc-rs/teletype/"
@@ -143,15 +139,3 @@ vergen = { version = "8.0.0", features = ["cargo", "git", "gitcl", "rustc",] }
 version = "0.3.21"
 features = ["async-await", "executor"]
 default-features = false
-
-[features]
-default = ["tracing-01"]
-tracing-02 = ["dep:tracing-02", "tracing-core-02", "tracing-serde-structured", "mnemos-trace-proto"]
-
-# The `_oops_all_tracing_features` feature is a "trap" for when the package is built
-# with `--all-features`, which is usually just for docs and testing.
-#
-# In that case, the other feature settings (`tracing-01` and `tracing-02`) are ignored
-# and JUST `tracing-01` is enabled. This is an unfortunate hack that works too well
-# not to use for now.
-_oops_all_tracing_features = []

@@ -6,7 +6,7 @@ use core::time::Duration;
 
 use crate::{
     services::serial_mux::{PortHandle, WellKnown},
-    tracing, Kernel,
+    Kernel,
 };
 
 //

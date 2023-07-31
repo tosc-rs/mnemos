@@ -1,8 +1,10 @@
 [toolchain]
 channel = "nightly-2023-05-29"
 profile = "minimal"
-components = ["rustfmt", "llvm-tools-preview"]
+components = ["rustfmt", "llvm-tools-preview", "rust-src"]
 targets = [
     # Allwinner D1
     "riscv64imac-unknown-none-elf",
+    # ESP32-C3
+    "riscv32imac-unknown-none-elf",
 ]

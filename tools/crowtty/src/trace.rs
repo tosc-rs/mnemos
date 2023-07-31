@@ -7,12 +7,12 @@ use std::{
     sync::mpsc,
     time::Instant,
 };
-use tracing_02::{collect::NoCollector, level_filters::LevelFilter, Level};
+use tracing::{level_filters::LevelFilter, subscriber::NoSubscriber, Level};
 use tracing_serde_structured::{
     CowString, SerializeLevel, SerializeMetadata, SerializeRecordFields, SerializeSpanFields,
     SerializeValue,
 };
-use tracing_subscriber::{filter::Targets, subscribe::Subscribe};
+use tracing_subscriber::{filter::Targets, layer::Layer};
 
 use crate::LogTag;
 use owo_colors::{OwoColorize, Stream};
@@ -44,17 +44,16 @@ impl TraceWorker {
         rx: mpsc::Receiver<Vec<u8>>,
         tag: LogTag,
     ) -> Self {
-        let ser_max_level =
-            <Targets as Subscribe<NoCollector>>::max_level_hint(&filter).and_then(|level| {
-                match level {
-                    LevelFilter::OFF => None,
-                    LevelFilter::ERROR => Some(SerializeLevel::Error),
-                    LevelFilter::WARN => Some(SerializeLevel::Warn),
-                    LevelFilter::INFO => Some(SerializeLevel::Info),
-                    LevelFilter::DEBUG => Some(SerializeLevel::Debug),
-                    LevelFilter::TRACE => Some(SerializeLevel::Trace),
-                }
-            });
+        let ser_max_level = <Targets as Layer<NoSubscriber>>::max_level_hint(&filter).and_then(
+            |level| match level {
+                LevelFilter::OFF => None,
+                LevelFilter::ERROR => Some(SerializeLevel::Error),
+                LevelFilter::WARN => Some(SerializeLevel::Warn),
+                LevelFilter::INFO => Some(SerializeLevel::Info),
+                LevelFilter::DEBUG => Some(SerializeLevel::Debug),
+                LevelFilter::TRACE => Some(SerializeLevel::Trace),
+            },
+        );
         Self {
             tx,
             rx,

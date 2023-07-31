@@ -51,7 +51,7 @@ use crate::{
     registry::{
         known_uuids::kernel::FORTH_SPAWNULATOR, Envelope, KernelHandle, Message, RegisteredDriver,
     },
-    tracing, Kernel,
+    Kernel,
 };
 
 ////////////////////////////////////////////////////////////////////////////////

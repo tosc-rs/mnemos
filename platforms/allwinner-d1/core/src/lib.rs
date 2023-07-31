@@ -2,6 +2,8 @@
 
 extern crate alloc;
 
+pub mod ccu;
+pub mod clint;
 pub mod dmac;
 pub mod drivers;
 pub mod plic;
@@ -17,7 +19,7 @@ use core::{
 use d1_pac::{Interrupt, DMAC, TIMER};
 use kernel::{
     mnemos_alloc::containers::Box,
-    trace::{self, Instrument},
+    tracing::{self, Instrument},
     Kernel, KernelSettings,
 };
 
@@ -143,18 +145,18 @@ impl D1 {
         // spawn Forth shell
         self.kernel
             .initialize(async move {
-                trace::debug!("waiting for SHARP display driver...");
+                tracing::debug!("waiting for SHARP display driver...");
                 sharp_display
                     .await
                     .expect("display driver task isn't cancelled")
                     .expect("display driver must come up");
-                trace::debug!("display driver ready!");
+                tracing::debug!("display driver ready!");
                 let settings = shells::GraphicalShellSettings::with_display_size(
                     SharpDisplay::WIDTH as u32,
                     SharpDisplay::HEIGHT as u32,
                 );
                 k.spawn(shells::graphical_shell_mono(k, settings)).await;
-                trace::info!("graphical shell running.");
+                tracing::info!("graphical shell running.");
             })
             .expect("failed to spawn graphical forth shell");
     }

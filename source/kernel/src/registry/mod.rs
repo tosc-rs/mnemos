@@ -1,13 +1,11 @@
 use core::{any::TypeId, marker::PhantomData};
 
-use crate::{
-    comms::oneshot::Reusable,
-    tracing::{self, debug, info},
-};
+use crate::comms::oneshot::Reusable;
 use mnemos_alloc::containers::FixedVec;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use spitebuf::EnqueueError;
+use tracing::{self, debug, info};
 pub use uuid::{uuid, Uuid};
 
 use crate::comms::{

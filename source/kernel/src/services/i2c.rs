@@ -399,7 +399,7 @@ where
         let n_ops = operations.len();
         for (n, op) in operations.iter_mut().enumerate() {
             let end = n == n_ops - 1;
-            crate::tracing::trace!(n, n_ops, ?op, ?end);
+            tracing::trace!(n, n_ops, ?op, ?end);
             buf.clear();
             match op {
                 i2c::Operation::Read(dest) => {

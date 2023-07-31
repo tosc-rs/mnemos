@@ -5,58 +5,70 @@ members = [
 ]
 
 [package]
-name = "mnemos-d1"
+name = "mnemos-esp32c3-buddy"
 version = "0.1.0"
+authors = [
+    "Eliza Weisman <eliza@elizas.website>",
+    "James Munns <james@onevariable.com>",
+]
 edition = "2021"
+license = "MIT OR Apache-2.0"
+readme = "./README.md"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[profile.release]
+# it turns out that we basically just "can't" build in debug mode (or our code
+# will fault), so just build in release mode all the time but keep debug
+# symbols.
+debug = true
 
-### bin targets for each board ###
 [lib]
 test = false
 bench = false
 
 [[bin]]
-name = "lichee-rv"
+name = "qtpy"
 test = false
 bench = false
 
 [[bin]]
-name = "mq-pro"
+name = "xiao"
 test = false
 bench = false
 
-### deps ###
-
 [dependencies]
-# D1 core
-mnemos-d1-core = { path = "../core" }
+critical-section = "1"
+esp32c3-hal = "0.10.0"
+esp-alloc = "0.3"
+riscv = "0.10.1"
 
-# rust-embedded crates
-riscv = "0.10"
-riscv-rt = "0.11.0"
-d1-pac = "0.0.31"
-embedded-hal = "0.2.7"
+[dependencies.esp-backtrace]
+version = "0.7.0"
+features = ["esp32c3", "panic-handler", "exception-handler", "print-uart"]
+
+[dependencies.esp-println]
+version = "0.5.0"
+features = ["esp32c3"]
+
+[dependencies.portable-atomic]
+version = "1.4"
+default-features = false
+features = ["critical-section"]
+
+# kernel
+[dependencies.mnemos]
+path = "../../source/kernel"
+features = ["serial-trace"]
+
+[dependencies.tracing]
+version = "0.1.37"
+# branch = "master"
+features = ["attributes"]
+default-features = false
 
 [dependencies.futures]
 version = "0.3.21"
 default-features = false
 features = ["async-await"]
-
-# kernel
-[dependencies.mnemos]
-path = "../../../source/kernel"
-features = ["serial-trace"]
-
-# tracing 0.2
-[dependencies.tracing]
-git = "https://github.com/tokio-rs/tracing"
-# branch = "master"
-features = ["attributes"]
-default-features = false
-
-[dependencies.mnemos-beepy]
-path = "../../beepy"
 
 ### patches ###
 
@@ -84,9 +96,4 @@ git = "https://github.com/hawkw/mycelium.git"
 rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
 
 [patch.crates-io.mnemos-alloc]
-path = "../../../source/alloc"
-
-# NOTE: keep this patch in sync with the one in the main kernel workspace!
-[patch.crates-io.bbq10kbd]
-git = "https://github.com/hawkw/bbq10kbd"
-branch = "eliza/async"
+path = "../../source/alloc"

@@ -20,11 +20,11 @@ use crate::{
         RegistrationError,
     },
     services::serial_mux,
-    tracing::{self, Level},
     Kernel,
 };
 use core::{convert::Infallible, time::Duration};
 use futures::{future, FutureExt};
+use tracing::Level;
 use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
