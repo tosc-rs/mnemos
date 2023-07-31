@@ -8,6 +8,8 @@ mkdir -p ./target
 # Install docs deps
 rustup toolchain install stable
 
-# Install mdbook deps
-curl -L https://github.com/rust-lang/mdBook/releases/download/v0.4.17/mdbook-v0.4.17-x86_64-unknown-linux-gnu.tar.gz | tar xvz
-mv ./mdbook ./target
+# Install Oranda
+# TODO: switch to curlbash once they release a prerelease binary!
+cargo install oranda -f \
+    --git https://github.com/axodotdev/oranda \
+    --rev ec4b0b8360b0adc1aa5240e213bf275b262670e2
