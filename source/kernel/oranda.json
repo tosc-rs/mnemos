@@ -1,0 +1,8 @@
+{
+  "project": {
+    "name": "kernel"
+  },
+  "components": {
+    "mdbook": false
+  }
+}

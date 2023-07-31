@@ -2,6 +2,10 @@
 name = "mnemos-d1-core"
 version = "0.1.0"
 edition = "2021"
+description = """
+A hardware abstraction library for the Allwinner D1, targeted
+at use in the mnemos operating system.
+"""
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

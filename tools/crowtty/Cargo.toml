@@ -2,7 +2,11 @@
 name = "crowtty"
 version = "0.1.0"
 edition = "2021"
-
+description = """
+crowtty is a host tool, aimed at speaking the sermux protocol with a
+simulator or physical target. It allows for receiving tracing messages,
+as well as mapping multiplexed "ports" as TCP sockets on the host.
+"""
 
 ### See `main.rs::serial` comments for why these duplicate dependencies exit
 

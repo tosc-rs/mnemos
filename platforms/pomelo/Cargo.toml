@@ -2,6 +2,10 @@
 name = "pomelo"
 version = "0.1.0"
 edition = "2021"
+description = """
+Pomelo is a browser-based simulator for MnemOS, compiled as
+a WASM binary.
+"""
 
 [dependencies]
 chrono = { version = "0.4.26", features = ["wasmbind"] }
