@@ -1,13 +1,11 @@
-use core::any::TypeId;
+use core::{any::TypeId, marker::PhantomData};
 
-use crate::{
-    comms::oneshot::Reusable,
-    tracing::{self, debug, info},
-};
+use crate::comms::oneshot::Reusable;
 use mnemos_alloc::containers::FixedVec;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use spitebuf::EnqueueError;
+use tracing::{self, debug, info};
 pub use uuid::{uuid, Uuid};
 
 use crate::comms::{
@@ -26,14 +24,17 @@ pub mod known_uuids {
 
         pub const SERIAL_MUX: Uuid = uuid!("54c983fa-736f-4223-b90d-c4360a308647");
         pub const SIMPLE_SERIAL_PORT: Uuid = uuid!("f06aac01-2773-4266-8681-583ffe756554");
+        #[deprecated(note = "Use EMB_DISPLAY_V2 instead")]
         pub const EMB_DISPLAY: Uuid = uuid!("b54db574-3eb7-4c89-8bfb-1a20890be68e");
         pub const FORTH_SPAWNULATOR: Uuid = uuid!("4ae4a406-005a-4bde-be91-afc1900f76fa");
         pub const I2C: Uuid = uuid!("011ebd3e-1b14-4bfd-b581-6138239b82f3");
         pub const KEYBOARD: Uuid = uuid!("524d77b1-499c-440b-bd62-e63c0918efb5");
         pub const KEYBOARD_MUX: Uuid = uuid!("70861d1c-9f01-4e9b-89e6-ede77d8f26d8");
+        pub const EMB_DISPLAY_V2: Uuid = uuid!("aa6a2af8-afd8-40e3-83c2-2c501c698aa8");
     }
 
     // In case you need to iterate over every UUID
+    #[allow(deprecated)]
     pub static ALL: &[Uuid] = &[
         kernel::SERIAL_MUX,
         kernel::SIMPLE_SERIAL_PORT,
@@ -42,6 +43,7 @@ pub mod known_uuids {
         kernel::I2C,
         kernel::KEYBOARD,
         kernel::KEYBOARD_MUX,
+        kernel::EMB_DISPLAY_V2,
     ];
 }
 
@@ -167,6 +169,13 @@ pub struct Envelope<P> {
     request_id: RequestResponseId,
 }
 
+pub struct OpenEnvelope<P> {
+    body: PhantomData<fn() -> P>,
+    service_id: ServiceId,
+    client_id: ClientId,
+    request_id: RequestResponseId,
+}
+
 /// The [Message] kind represents a full reply/response sequence to
 /// a driver service. This is the concrete type received by the driver
 /// service.
@@ -228,6 +237,12 @@ pub enum OneshotRequestError {
     Send,
     /// An error occurred while receiving the response.
     Receive(ReusableError),
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum SendError {
+    /// The service on the other end of the [`KernelHandle`] has terminated!
+    Closed,
 }
 
 impl From<ReusableError> for ReplyError {
@@ -455,7 +470,29 @@ impl Registry {
 
 // Envelope
 
+impl<P> OpenEnvelope<P> {
+    pub fn fill(self, contents: P) -> Envelope<P> {
+        Envelope {
+            body: contents,
+            service_id: self.service_id,
+            client_id: self.client_id,
+            request_id: self.request_id,
+        }
+    }
+}
+
 impl<P> Envelope<P> {
+    // NOTE: proper types are constrained by [Message::split]
+    fn split_reply<R>(self) -> (P, OpenEnvelope<R>) {
+        let env = OpenEnvelope {
+            body: PhantomData,
+            service_id: self.service_id,
+            client_id: self.client_id,
+            request_id: RequestResponseId::new(self.request_id.id(), MessageKind::Response),
+        };
+        (self.body, env)
+    }
+
     /// Create a response Envelope from a given request Envelope.
     ///
     /// Maintains the same Service ID and Client ID, and increments the
@@ -490,6 +527,22 @@ impl<P> Envelope<P> {
 }
 
 // Message
+
+impl<RD: RegisteredDriver> Message<RD> {
+    // Would adding type aliases really make this any better? Who cares.
+    #[allow(clippy::type_complexity)]
+    pub fn split(
+        self,
+    ) -> (
+        RD::Request,
+        OpenEnvelope<Result<RD::Response, RD::Error>>,
+        ReplyTo<RD>,
+    ) {
+        let Self { msg, reply } = self;
+        let (req, env) = msg.split_reply();
+        (req, env, reply)
+    }
+}
 
 // ReplyTo
 
@@ -588,7 +641,7 @@ impl UserspaceHandle {
 // KernelHandle
 
 impl<RD: RegisteredDriver> KernelHandle<RD> {
-    pub async fn send(&mut self, msg: RD::Request, reply: ReplyTo<RD>) -> Result<(), ()> {
+    pub async fn send(&mut self, msg: RD::Request, reply: ReplyTo<RD>) -> Result<(), SendError> {
         let request_id = RequestResponseId::new(self.request_ctr, MessageKind::Request);
         self.request_ctr = self.request_ctr.wrapping_add(1);
         self.prod
@@ -602,7 +655,7 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
                 reply,
             })
             .await
-            .map_err(drop)?;
+            .map_err(|_| SendError::Closed)?;
         debug!(
             service_id = self.service_id.0,
             client_id = self.client_id.0,

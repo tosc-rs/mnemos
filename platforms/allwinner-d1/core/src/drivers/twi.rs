@@ -53,7 +53,9 @@ use core::{
     ops::{Deref, DerefMut},
     task::{Poll, Waker},
 };
-use d1_pac::{twi, Interrupt, CCU, GPIO, TWI0, TWI1, TWI2, TWI3};
+
+use crate::ccu::Ccu;
+use d1_pac::{twi, Interrupt, GPIO, TWI0, TWI1, TWI2, TWI3};
 use kernel::{
     comms::kchannel::{KChannel, KConsumer},
     embedded_hal_async::i2c::{ErrorKind, NoAcknowledgeSource},
@@ -63,7 +65,7 @@ use kernel::{
         messages::{OpKind, Transfer},
         Addr, I2cService, Transaction,
     },
-    trace, Kernel,
+    tracing, Kernel,
 };
 
 /// A TWI mapped to the Raspberry Pi header's I²C0 pins.
@@ -147,7 +149,7 @@ impl I2c0 {
     /// - The TWI register block must not be concurrently written to.
     /// - This function should be called only while running on a MangoPi MQ Pro
     ///   board.
-    pub unsafe fn mq_pro(_twi: TWI0, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
+    pub unsafe fn mq_pro(mut twi: TWI0, ccu: &mut Ccu, gpio: &mut GPIO) -> Self {
         // Step 1: Configure GPIO pin mappings.
         gpio.pg_cfg1.modify(|_r, w| {
             // on the Mango Pi MQ Pro, the pi header's I2C0 pins are mapped to
@@ -158,21 +160,9 @@ impl I2c0 {
             w
         });
 
-        ccu.twi_bgr.modify(|_r, w| {
-            // Step 2: Set TWI_BGR_REG[TWI(n)_GATING] to 0 to close TWI(n) clock.
-            w.twi0_gating().mask();
-            // Step 3: Set TWI_BGR_REG[TWI(n)_RST] to 0 to reset TWI(n) module.
-            w.twi0_rst().assert();
-            w
-        });
+        ccu.disable_module(&mut twi);
 
-        ccu.twi_bgr.modify(|_r, w| {
-            // Step 3: Set TWI_BGR_REG[TWI(n)_RST] to 1 to reset TWI(n).
-            w.twi0_rst().deassert();
-            // Step 4: Set TWI_BGR_REG[TWI(n)_GATING] to 1 to open TWI(n) clock.
-            w.twi0_gating().pass();
-            w
-        });
+        ccu.enable_module(&mut twi);
 
         Self::init(
             unsafe { &*TWI0::ptr() },
@@ -190,7 +180,7 @@ impl I2c0 {
     /// - The TWI register block must not be concurrently written to.
     /// - This function should be called only while running on a Lichee RV
     ///   board.
-    pub unsafe fn lichee_rv_dock(_twi: TWI2, ccu: &mut CCU, gpio: &mut GPIO) -> Self {
+    pub unsafe fn lichee_rv_dock(mut twi: TWI2, ccu: &mut Ccu, gpio: &mut GPIO) -> Self {
         // Step 1: Configure GPIO pin mappings.
         gpio.pb_cfg0.modify(|_r, w| {
             // on the Lichee RV Dock, the Pi header's I2C0 corresponds to TWI2, not
@@ -202,21 +192,9 @@ impl I2c0 {
             w
         });
 
-        ccu.twi_bgr.modify(|_r, w| {
-            // Step 2: Set TWI_BGR_REG[TWI(n)_GATING] to 0 to close TWI(n) clock.
-            w.twi2_gating().mask();
-            // Step 3: Set TWI_BGR_REG[TWI(n)_RST] to 0 to reset TWI(n) module.
-            w.twi2_rst().assert();
-            w
-        });
+        ccu.disable_module(&mut twi);
 
-        ccu.twi_bgr.modify(|_r, w| {
-            // Step 3: Set TWI_BGR_REG[TWI(n)_RST] to 1 to reset TWI(n).
-            w.twi2_rst().deassert();
-            // Step 4: Set TWI_BGR_REG[TWI(n)_GATING] to 1 to open TWI(n) clock.
-            w.twi2_gating().pass();
-            w
-        });
+        ccu.enable_module(&mut twi);
 
         Self::init(
             unsafe { &*TWI2::ptr() },
@@ -322,7 +300,7 @@ impl I2c0 {
         let (tx, rx) = KChannel::new_async(queued).await.split();
 
         kernel.spawn(self.run(rx)).await;
-        trace::debug!("TWI driver task spawned");
+        tracing::info!("TWI driver task spawned");
         kernel
             .with_registry(move |reg| reg.register_konly::<I2cService>(&tx).map_err(drop))
             .await?;
@@ -332,7 +310,7 @@ impl I2c0 {
 
     #[tracing::instrument(name = "TWI", level = tracing::Level::INFO, skip(self, rx))]
     async fn run(self, rx: KConsumer<registry::Message<I2cService>>) {
-        tracing::debug!("starting TWI driver task");
+        tracing::info!("starting TWI driver task");
         while let Ok(registry::Message { msg, reply }) = rx.dequeue_async().await {
             let addr = msg.body.addr;
             let (txn, rx) = Transaction::new(msg.body).await;
@@ -411,7 +389,7 @@ impl I2c0 {
             }
         }
         // transaction ended!
-        tracing::debug!("I2C transaction ended");
+        tracing::trace!("I2C transaction ended");
     }
 }
 
@@ -487,41 +465,49 @@ impl TwiData {
             }
         };
         let mut needs_wake = false;
-        tracing::debug!(?status, state = ?self.state, twi = num, "TWI{num} interrupt");
+        tracing::trace!(?status, state = ?self.state, twi = num, "TWI{num} interrupt");
         twi.twi_cntr.modify(|_cntr_r, cntr_w| {
             self.state = match (self.state, status)  {
                 (State::Idle, _) => {
                     cntr_w.m_stp().set_bit();
                     State::Idle
                 }
-                (State::WaitForStart(addr), Status::StartTransmitted) | (State::WaitForRestart(addr), Status::RepeatedStartTransmitted) =>
-                {
+                (State::WaitForStart(addr), Status::StartTransmitted) |
+                (State::WaitForRestart(addr), Status::RepeatedStartTransmitted) => {
                     let bits = {
                         // lowest bit is 1 if reading, 0 if writing.
                         let dir = match self.op {
                             TwiOp::Read { .. } => 0b1,
                             _ => 0b0,
                         };
-                        match addr {
-                            Addr::SevenBit(addr) => ((addr & 0x7f) << 1) | dir,
-                            Addr::TenBit(_) => todo!("eliza: implement ten bit addrs"),
-                        }
+                        let addr = match addr {
+                            Addr::SevenBit(addr) => (addr & 0x7f) << 1,
+                            Addr::TenBit(addr) => 0xf0 | ((addr & 0x300) >> 7) as u8,
+                        };
+                        addr | dir
                     };
                     // send the address
                     twi.twi_data.write(|w| w.data().variant(bits));
                     State::WaitForAddr1Ack(addr)
                 }
-                (State::WaitForAddr1Ack(Addr::SevenBit(addr)), Status::Addr1WriteAcked) =>
-                // TODO(eliza): handle 10 bit addr...
+                // Write address byte 2.
+                (State::WaitForAddr1Ack(Addr::TenBit(addr)), Status::Addr1ReadAcked) |
+                (State::WaitForAddr1Ack(Addr::TenBit(addr)), Status::Addr1WriteAcked) => {
+                    twi.twi_data.write(|w| w.data().variant(addr as u8));
+                    State::WaitForAddr2Ack(Addr::TenBit(addr))
+                }
+                // Last address byte was ACKed (write), so we can start sending data.
+                (State::WaitForAddr1Ack(addr @ Addr::SevenBit(_)), Status::Addr1WriteAcked) |
+                (State::WaitForAddr2Ack(addr @ Addr::TenBit(_)), Status::Addr2WriteAcked) =>
                 {
                     match &mut self.op {
                         TwiOp::Write { buf, ref mut pos, .. } => {
                             // send the first byte of data
                             let byte = buf.as_slice()[0];
-                            tracing::debug!(twi = num, data = ?format_args!("{byte:#x}"), "TWI{num} write data");
+                            tracing::trace!(twi = num, data = ?format_args!("{byte:#x}"), "TWI{num} write data");
                             twi.twi_data.write(|w| w.data().variant(byte));
                             *pos += 1;
-                            State::WaitForAck(Addr::SevenBit(addr))
+                            State::WaitForAck(addr)
                         },
                         TwiOp::Read { .. } => unreachable!(
                             "if we sent an address with a write bit, we should be in a write state (was Read)"
@@ -531,7 +517,10 @@ impl TwiData {
                         ),
                     }
                 }
-                (State::WaitForAddr1Ack(Addr::SevenBit(addr)), Status::Addr1ReadAcked) =>
+
+                // Last address byte was ACKed (read), so we can start reading data.
+                (State::WaitForAddr1Ack(addr @ Addr::SevenBit(_)), Status::Addr1ReadAcked) |
+                (State::WaitForAddr2Ack(addr @ Addr::TenBit(_)), Status::Addr2ReadAcked) =>
                 // TODO(eliza): handle 10 bit addr...
                 {
                     match self.op {
@@ -545,7 +534,7 @@ impl TwiData {
                                 // final byte.
                                 cntr_w.a_ack().set_bit();
                             }
-                            State::WaitForData(Addr::SevenBit(addr))
+                            State::WaitForData(addr)
                         }
                         TwiOp::None => unreachable!(
                             "if we sent an address with a read bit, we should be in a read state (was None)"
@@ -781,6 +770,24 @@ enum_try_from! {
         Addr2WriteAcked = 0xD0,
         /// 0xD8: Second Address byte + Write bit transmitted, ACK not received
         Addr2WriteNacked = 0xD8,
+        /// 0xE0: Address 2 + Read bit received, ACK transmitted
+        ///
+        /// Note that the D1 manual neglects to mention this state (and the
+        /// corresponding NACK state), but [it's in the Linux driver][linux], so
+        /// I presume it's real.alloc
+        ///
+        /// [linux]:
+        ///     https://github.com/torvalds/linux/blob/46670259519f4ee4ab378dc014798aabe77c5057/drivers/i2c/busses/i2c-mv64xxx.c#L57
+        Addr2ReadAcked = 0xE0,
+        /// 0xE8: Address 2 + Read bit received, ACK transmitted
+        ///
+        /// Note that the D1 manual neglects to mention this state (and the
+        /// corresponding NACK state), but [it's in the Linux driver][linux], so
+        /// I presume it's real.alloc
+        ///
+        /// [linux]:
+        ///     https://github.com/torvalds/linux/blob/46670259519f4ee4ab378dc014798aabe77c5057/drivers/i2c/busses/i2c-mv64xxx.c#L58
+        Addr2ReadNacked = 0xE8,
         /// 0xF8: No relevant status information, `INT_FLAG` = 0
         None = 0xF8,
     }
@@ -789,14 +796,18 @@ enum_try_from! {
 impl Status {
     fn into_error(self) -> ErrorKind {
         match self {
+            // Arbitration Lost errors
             Self::ArbitrationLost
             | Self::ArbitrationLostGeneralCall
             | Self::ArbitrationLostTargetRead
             | Self::ArbitrationLostTargetWrite => ErrorKind::ArbitrationLoss,
             Self::BusError => ErrorKind::Bus,
-            Self::Addr1WriteNacked | Self::Addr1ReadNacked | Self::Addr2WriteNacked => {
-                ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address)
-            }
+            // Address NACKed errors
+            Self::Addr1WriteNacked
+            | Self::Addr1ReadNacked
+            | Self::Addr2WriteNacked
+            | Self::Addr2ReadNacked => ErrorKind::NoAcknowledge(NoAcknowledgeSource::Address),
+            // Send data NACKed errors
             Self::TxDataNacked | Self::TargetTxDataNacked => {
                 ErrorKind::NoAcknowledge(NoAcknowledgeSource::Data)
             }

@@ -80,9 +80,10 @@ pub(crate) mod fmt;
 pub mod forth;
 pub mod isr;
 pub mod registry;
+pub mod retry;
+#[cfg(feature = "serial-trace")]
+pub mod serial_trace;
 pub mod services;
-#[cfg(feature = "tracing-02")]
-pub mod trace;
 
 use abi::{
     bbqueue_ipc::BBBuffer,
@@ -101,41 +102,12 @@ use maitake::{
 pub use mnemos_alloc;
 use mnemos_alloc::containers::Box;
 use registry::Registry;
-
-/// Shim to handle tracing v0.1 vs v0.2
-///
-/// ## NOTE for features used
-///
-/// Unfortunately, we can't support the case where tracing 0.1 and 0.2 are both selected
-/// yet. This might be changed in the future. The following truth table shows the outcome
-/// when you select various feature flags.
-///
-/// The `_oops_all_tracing_features` feature is a "trap" for when the package is built
-/// with `--all-features`, which is usually just for docs and testing. In that case, the
-/// feature then ignores the other feature settings, and just picks tracing-01. This is
-/// an unfortunate hack that works too well not to use for now.
-///
-/// | `_oops_all_tracing_features`  | `tracing-01`  | `tracing-02`  | Outcome           |
-/// | :---:                         | :---:         | :---:         | :---:             |
-/// | true                          | don't care    | don't care    | `tracing-01` used |
-/// | false                         | false         | false         | Compile Error     |
-/// | false                         | false         | true          | `tracing-02` used |
-/// | false                         | true          | false         | `tracing-01` used |
-/// | false                         | true          | true          | Compile Error     |
-///
-pub(crate) mod tracing {
-    #[cfg(all(
-        not(feature = "_oops_all_tracing_features"),
-        all(feature = "tracing-01", feature = "tracing-02")
-    ))]
-    compile_error!("Must select one of 'tracing-01' or 'tracing-02' features!");
-
-    #[cfg(any(feature = "_oops_all_tracing_features", feature = "tracing-01"))]
-    pub use tracing_01::*;
-
-    #[cfg(all(not(feature = "_oops_all_tracing_features"), feature = "tracing-02"))]
-    pub use tracing_02::*;
-}
+use services::{
+    forth_spawnulator::{SpawnulatorServer, SpawnulatorSettings},
+    keyboard::mux::{KeyboardMuxServer, KeyboardMuxSettings},
+    serial_mux::{SerialMuxServer, SerialMuxSettings},
+};
+pub use tracing;
 
 pub struct Rings {
     pub u2k: NonNull<BBBuffer>,
@@ -169,6 +141,19 @@ pub struct KernelInner {
 
     /// Maitake timer wheel.
     timer: Timer,
+}
+
+/// Settings for all services spawned by default.
+#[derive(Debug, Default)]
+pub struct DefaultServiceSettings {
+    pub keyboard_mux: KeyboardMuxSettings,
+    pub serial_mux: SerialMuxSettings,
+    pub spawnulator: SpawnulatorSettings,
+    pub sermux_loopback: daemons::sermux::LoopbackSettings,
+    pub sermux_hello: daemons::sermux::HelloSettings,
+
+    #[cfg(feature = "serial-trace")]
+    pub sermux_trace: serial_trace::SerialTraceSettings,
 }
 
 impl Kernel {
@@ -220,6 +205,7 @@ impl Kernel {
         maitake::time::set_global_timer(self.timer())
     }
 
+    #[track_caller]
     pub fn initialize<F>(&'static self, fut: F) -> Result<JoinHandle<F::Output>, &'static str>
     where
         F: Future + 'static,
@@ -245,6 +231,7 @@ impl Kernel {
         f(&mut guard)
     }
 
+    #[track_caller]
     pub fn spawn_allocated<F>(
         &'static self,
         task: <BoxStorage as Storage<LocalScheduler, F>>::StoredTask,
@@ -266,5 +253,84 @@ impl Kernel {
     #[inline]
     pub fn timeout<F: Future>(&'static self, duration: Duration, f: F) -> Timeout<'static, F> {
         self.inner.timer.timeout(duration, f)
+    }
+
+    /// Initialize the default set of cross-platform kernel [`services`] that
+    /// are spawned on all hardware platforms.
+    ///
+    /// Calling this method is not *mandatory* for a hardware platform
+    /// implementation. The platform implementation may manually spawn these
+    /// services individually, or choose not to spawn them at all. However, this
+    /// method is provided to ensure that a consistent set of cross-platform
+    /// services are initialized on all hardware platforms *if they are
+    /// desired*.
+    ///
+    /// Services spawned by this method include:
+    ///
+    /// - The [`KeyboardMuxService`], which multiplexes keyboard input from
+    ///   multiple keyboards to tasks that depend on keyboard input,
+    /// - The [`SerialMuxService`], which multiplexes serial I/O to virtual
+    ///   serial ports
+    /// - The [`SpawnulatorService`], which is responsible for spawning
+    ///   new Forth tasks
+    ///
+    /// In addition, this method will initialize the following non-service
+    /// daemons:
+    ///
+    /// - [`daemons::sermux::loopback`], which serves a loopback service on a
+    ///   configured loopback port
+    /// - [`daemons::sermux::hello`], which sends periodic "hello world" pings
+    ///   to a configured serial mux port
+    /// - If the "serial-trace" feature flag is enabled, the
+    ///   [`serial_trace::SerialSubscriber`] worker task, which sends `tracing`
+    ///   events over the serial port.
+    ///
+    /// If the kernel's [`maitake::time::Timer`] has not been set as the global
+    /// timer, this method will also ensure that the global timer is set as the
+    /// default.
+    ///
+    /// [`KeyboardMuxService`]:
+    ///     crate::services::keyboard::mux::KeyboardMuxService
+    /// [`SerialMuxService`]: crate::services::serial_mux::SerialMuxService
+    /// [`SpawnulatorService`]:
+    ///     crate::services::forth_spawnulator::SpawnulatorService
+    pub fn initialize_default_services(&'static self, settings: DefaultServiceSettings) {
+        // Set the kernel timer as the global timer.
+        // Disregard errors --- they just mean someone else has already set up
+        // the global timer.
+        let _ = self.set_global_timer();
+
+        // Initialize the kernel keyboard mux service.
+        self.initialize(KeyboardMuxServer::register(self, settings.keyboard_mux))
+            .expect("failed to spawn KeyboardMuxService initialization");
+
+        // Initialize the SerialMuxServer
+        let sermux_up = self
+            .initialize(SerialMuxServer::register(self, settings.serial_mux))
+            .expect("failed to spawn SerialMuxService initialization");
+
+        // Initialize the Forth spawnulator.
+        self.initialize(SpawnulatorServer::register(self, settings.spawnulator))
+            .expect("failed to spawn SpawnulatorService initialization");
+
+        // Initialize Serial Mux daemons.
+        self.initialize(async move {
+            sermux_up
+                .await
+                .expect("SerialMuxService initialization should not be cancelled")
+                .expect("SerialMuxService initialization failed");
+
+            #[cfg(feature = "serial-trace")]
+            crate::serial_trace::SerialSubscriber::start(self, settings.sermux_trace).await;
+
+            self.spawn(daemons::sermux::loopback(self, settings.sermux_loopback))
+                .await;
+            tracing::debug!("SerMux loopback started");
+
+            self.spawn(daemons::sermux::hello(self, settings.sermux_hello))
+                .await;
+            tracing::debug!("SerMux Hello World started");
+        })
+        .expect("failed to spawn default serial mux service initialization");
     }
 }

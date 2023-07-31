@@ -2,13 +2,15 @@
 name = "mnemos-beepy"
 version = "0.1.0"
 edition = "2021"
+description = """
+Hardware support specific to the SQFMI Beepy development board
+"""
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies.mnemos]
 path = "../../source/kernel"
 default-features = false
-features = ["tracing-02"]
 
 [dependencies.bbq10kbd]
 version = "0.1.0"
@@ -19,10 +21,8 @@ version = "1.1.2"
 default-features = false
 features = ["serde"]
 
-# tracing 0.2
 [dependencies.tracing]
-git = "https://github.com/tokio-rs/tracing"
-# branch = "master"
+version = "0.1.37"
 features = ["attributes"]
 default-features = false
 

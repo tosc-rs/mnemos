@@ -1,10 +1,10 @@
 //! Kernel Channels
 //!
 //! Kernel Channels are an async/await, MPSC queue, with a fixed backing storage (e.g. they are bounded).
-
 use core::{cell::UnsafeCell, ops::Deref, ptr::NonNull};
 use mnemos_alloc::containers::{Arc, ArrayBuf};
 use spitebuf::{DequeueError, EnqueueError, MpScQueue};
+use tracing;
 
 /// A Kernel Channel
 pub struct KChannel<T> {
@@ -55,11 +55,34 @@ impl<T> Deref for KChannel<T> {
     }
 }
 
+fn right_size(mut cap: usize) -> usize {
+    if cap < 2 {
+        tracing::warn!(
+            was = cap,
+            now = 2,
+            "Increasing KChannel size to minimum size of two!"
+        );
+    }
+    let npot = cap.next_power_of_two();
+    if npot != cap {
+        tracing::warn!(
+            was = cap,
+            now = npot,
+            "Increasing KChannel size to a power of two!",
+        );
+        cap = npot;
+    }
+    cap
+}
+
 impl<T> KChannel<T> {
     /// Create a new `KChannel<T>` with room for `count` elements on the given
     /// Kernel's allocator.
+    ///
+    /// `count` should be a power of two >= 2, or the capacity will be increased
+    /// automatically.
     pub async fn new_async(count: usize) -> Self {
-        let ba = ArrayBuf::new_uninit(count).await;
+        let ba = ArrayBuf::new_uninit(right_size(count)).await;
         let q = MpScQueue::new(sealed::SpiteData { data: ba });
         Self {
             q: Arc::new(q).await,
@@ -68,8 +91,11 @@ impl<T> KChannel<T> {
 
     /// Create a new `KChannel<T>` with room for `count` elements on the given
     /// Kernel's allocator. Used for pre-async initialization steps
+    ///
+    /// `count` should be a power of two >= 2, or the capacity will be increased
+    /// automatically.
     pub fn new(count: usize) -> Self {
-        let ba = ArrayBuf::try_new_uninit(count).unwrap();
+        let ba = ArrayBuf::try_new_uninit(right_size(count)).unwrap();
         let q = MpScQueue::new(sealed::SpiteData { data: ba });
         Self {
             q: Arc::try_new(q).map_err(drop).unwrap(),

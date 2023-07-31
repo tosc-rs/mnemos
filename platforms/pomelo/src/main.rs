@@ -10,12 +10,9 @@ use gloo::timers::future::TimeoutFuture;
 use gloo_utils::format::JsValueSerdeExt;
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
-    daemons::sermux::{loopback, LoopbackSettings},
     forth::{self, Forth},
     services::{
-        forth_spawnulator::SpawnulatorServer,
-        keyboard::mux::KeyboardMuxServer,
-        serial_mux::{PortHandle, SerialMuxServer, WellKnown},
+        serial_mux::{PortHandle,WellKnown},
     },
     Kernel, KernelSettings,
 };
@@ -83,31 +80,6 @@ async fn kernel_entry() {
     const SERIAL_FRAME_SIZE: usize = 512;
     let (tx, rx) = mpsc::channel::<u8>(64);
     SERMUX_TX.set(tx.clone()).unwrap();
-    kernel
-        .initialize(
-            async {
-                debug!("initializing SerialMuxServer...");
-                SerialMuxServer::register(kernel, Default::default())
-                    .await
-                    .unwrap();
-                info!("SerialMuxServer initialized!");
-            }
-            .instrument(tracing::info_span!("SerialMuxServer")),
-        )
-        .unwrap();
-
-    kernel
-        .initialize(
-            async {
-                debug!("initializing KeyboardMux...");
-                KeyboardMuxServer::register(kernel, Default::default())
-                    .await
-                    .unwrap();
-                info!("KeyboardMux initialized!");
-            }
-            .instrument(tracing::info_span!("SerialMuxServer")),
-        )
-        .unwrap();
 
     // Initialize a loopback UART
     kernel
@@ -130,16 +102,7 @@ async fn kernel_entry() {
         })
         .unwrap();
 
-    // Spawn a loopback port
-    let loopback_settings = LoopbackSettings::default();
-    kernel
-        .initialize(loopback(kernel, loopback_settings))
-        .unwrap();
-
-    // Spawn the spawnulator
-    kernel
-        .initialize(SpawnulatorServer::register(kernel, 16))
-        .unwrap();
+    kernel.initialize_default_services(Default::default());
 
     // go forth and replduce
     spawn_local(async move {

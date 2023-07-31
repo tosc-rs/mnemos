@@ -2,6 +2,11 @@
 name = "mnemos-trace-proto"
 version = "0.1.0"
 edition = "2021"
+description = """
+Wire types used by the binary tracing subscriber used on hardware targets.
+Extracted as a separate crate to allow external decoders (like `crowtty`)
+to share protocol definitions.
+"""
 
 [features]
 std = ["tracing-serde-structured/std", "serde/std"]
@@ -12,10 +17,10 @@ default-features = false
 features = ["derive"]
 
 [dependencies.tracing-serde-structured]
-git = "https://github.com/jamesmunns/tracing-serde-structured"
-branch = "james/2trace2furious"
+git = "https://github.com/hawkw/tracing-serde-structured"
+branch = "eliza/span-fields"
 default-features = false
 
 [dependencies.tracing-core]
-git = "https://github.com/tokio-rs/tracing"
+version = "0.1.31"
 default-features = false

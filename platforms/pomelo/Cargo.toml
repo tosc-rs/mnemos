@@ -2,6 +2,10 @@
 name = "pomelo"
 version = "0.1.0"
 edition = "2021"
+description = """
+Pomelo is a browser-based simulator for MnemOS, compiled as
+a WASM binary.
+"""
 
 [dependencies]
 chrono = { version = "0.4.26", features = ["wasmbind"] }
@@ -72,12 +76,12 @@ features = ["unstable"]
 
 [patch.crates-io.maitake]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
+rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
 
 [patch.crates-io.mycelium-util]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
+rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
 
 [patch.crates-io.cordyceps]
 git = "https://github.com/hawkw/mycelium.git"
-rev = "cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
+rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"

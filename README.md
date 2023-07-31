@@ -2,13 +2,6 @@
 
 This repository is for the MnemOS Operating System.
 
-## Stable Docs
-
-Currently, MnemOS is being rewritten as part of the v0.2 version. The current source may not
-match the currently published documentation!
-
-[hosted mnemOS v0.1 documentation](https://mnemos.jamesmunns.com)
-
 ## Development and API Docs
 
 `rustdoc` output for the current `main` branch can be built locally with `cargo doc --open`.
@@ -32,8 +25,8 @@ The project layout contains the following folders:
 
 * [`assets/`] - images and files used for READMEs and other documentation
 * [`book/`] - This is the source of "the mnemOS book"
-* [`source/`] - This folder contains the source code of the cross-platform kernel, userspace, simulator, and related libraries
-* [`platforms/`] - This folder contains code specific to each targeted hardware platform
+* [`source/`] - This folder contains the source code of the cross-platform kernel, userspace, and related libraries
+* [`platforms/`] - This folder contains code specific to each targeted hardware and simulation platform
 * [`tools/`] - This folder contains desktop tools used for working with MnemOS
 
 [`assets/`]: ./assets/
@@ -52,10 +45,12 @@ If you don't have access to a supported D1 board, or want a quicker development
 workflow for testing cross-platform changes, MnemOS also has a software
 simulator, called [Melpomene]. Melpomene runs as a userspace application binary on
 a development machine, and runs the MnemOS kernel with simulated hardware.
-Melpomene can be run using the `cargo melpomene` Cargo alias.
+Melpomene can be run using the `just melpomene` [`just` recipe], or using
+`cargo run --bin melpomene`.
 
 [`platforms/allwinner-d1/README.md`]: ./platforms/allwinner-d1/README.md
-[Melpomene]: ./source/melpomene
+[Melpomene]: ./platforms/melpomene
+[`just` recipe]: ./justfile
 
 ## Getting Involved
 

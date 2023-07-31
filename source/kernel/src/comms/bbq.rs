@@ -7,12 +7,12 @@
 use core::ops::{Deref, DerefMut};
 
 use crate::fmt;
-use crate::tracing::{self, info, trace};
 use abi::bbqueue_ipc::{BBBuffer, Consumer as InnerConsumer, Producer as InnerProducer};
 use abi::bbqueue_ipc::{GrantR as InnerGrantR, GrantW as InnerGrantW};
 use maitake::sync::Mutex;
 use maitake::sync::WaitCell;
 use mnemos_alloc::containers::{Arc, ArrayBuf};
+use tracing::{self, info, trace};
 
 struct BBQStorage {
     commit_waitcell: WaitCell,
@@ -198,6 +198,7 @@ async fn producer_send_grant_max(
     storage: &Arc<BBQStorage>,
 ) -> GrantW {
     loop {
+        let wait = storage.release_waitcell.subscribe().await;
         match producer.grant_max_remaining(max) {
             Ok(wgr) => {
                 trace!(size = wgr.len(), "Got bbqueue max write grant");
@@ -210,7 +211,7 @@ async fn producer_send_grant_max(
                 trace!("awaiting bbqueue max write grant");
                 // Uh oh! Couldn't get a send grant. We need to wait for the reader
                 // to release some bytes first.
-                storage.release_waitcell.wait().await.unwrap();
+                wait.await.unwrap();
 
                 trace!("awoke for bbqueue max write grant");
             }
@@ -224,6 +225,7 @@ async fn producer_send_grant_exact(
     storage: &Arc<BBQStorage>,
 ) -> GrantW {
     loop {
+        let wait = storage.release_waitcell.subscribe().await;
         match producer.grant_exact(size) {
             Ok(wgr) => {
                 trace!("Got bbqueue exact write grant",);
@@ -236,7 +238,7 @@ async fn producer_send_grant_exact(
                 trace!("awaiting bbqueue exact write grant");
                 // Uh oh! Couldn't get a send grant. We need to wait for the reader
                 // to release some bytes first.
-                storage.release_waitcell.wait().await.unwrap();
+                wait.await.unwrap();
                 trace!("awoke for bbqueue exact write grant");
             }
         }
@@ -301,6 +303,7 @@ impl Consumer {
     )]
     pub async fn read_grant(&self) -> GrantR {
         loop {
+            let wait = self.storage.commit_waitcell.subscribe().await;
             match self.consumer.read() {
                 Ok(rgr) => {
                     trace!(size = rgr.len(), "Got bbqueue read grant",);
@@ -313,7 +316,7 @@ impl Consumer {
                     trace!("awaiting bbqueue read grant");
                     // Uh oh! Couldn't get a read grant. We need to wait for the writer
                     // to commit some bytes first.
-                    self.storage.commit_waitcell.wait().await.unwrap();
+                    wait.await.unwrap();
                     trace!("awoke for bbqueue read grant");
                 }
             }

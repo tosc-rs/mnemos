@@ -123,6 +123,7 @@ impl<T> Reusable<T> {
     /// return an error after the sender has been dropped.
     pub async fn receive(&self) -> Result<T, ReusableError> {
         loop {
+            let wait = self.inner.wait.subscribe().await;
             let swap = self.inner.state.compare_exchange(
                 ROSC_READY,
                 ROSC_READING,
@@ -151,7 +152,7 @@ impl<T> Reusable<T> {
                     // NOTE: it's impossible for the wait to fail here, as we only
                     // close the channel when dropping the Reusable, which can't be
                     // done while the borrow of self is active in this function.
-                    self.inner.wait.wait().await?;
+                    wait.await?;
                 }
                 Err(ROSC_IDLE) => {
                     // We are currently idle, i.e. no sender has been created,

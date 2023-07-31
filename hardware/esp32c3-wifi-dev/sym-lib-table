@@ -1,0 +1,5 @@
+(sym_lib_table
+  (version 7)
+  (lib (name "Seeed_Studio_XIAO_Series")(type "KiCad")(uri "${KIPRJMOD}/parts/Seeed_Studio_XIAO_Series.kicad_sym")(options "")(descr ""))
+  (lib (name "esp32c3-wifi-dev")(type "KiCad")(uri "${KIPRJMOD}/parts/esp32c3-wifi-dev.kicad_sym")(options "")(descr ""))
+)

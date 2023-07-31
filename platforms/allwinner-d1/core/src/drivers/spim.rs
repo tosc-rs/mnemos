@@ -2,18 +2,19 @@
 
 use core::ptr::NonNull;
 
+use crate::ccu::Ccu;
 use crate::dmac::{
     descriptor::{
         AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType,
     },
     Channel, ChannelMode,
 };
-use d1_pac::{CCU, GPIO, SPI_DBI};
+use d1_pac::{GPIO, SPI_DBI};
 use kernel::{
     comms::{kchannel::KChannel, oneshot::Reusable},
     maitake::sync::WaitCell,
     mnemos_alloc::containers::FixedVec,
-    registry::{uuid, Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo, Uuid},
+    registry::{self, uuid, Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo, Uuid},
     Kernel,
 };
 
@@ -23,9 +24,14 @@ pub struct Spim1 {
     _x: (),
 }
 
-pub unsafe fn kernel_spim1(spi1: SPI_DBI, ccu: &mut CCU, gpio: &mut GPIO) -> Spim1 {
+/// # Safety
+///
+/// - The `SPI_DBI``s register block must not be concurrently written to.
+/// - This function should be called only while running on an Allwinner D1.
+pub unsafe fn kernel_spim1(mut spi1: SPI_DBI, ccu: &mut Ccu, gpio: &mut GPIO) -> Spim1 {
     // Set clock rate (fixed to 2MHz), and enable the SPI peripheral
-    ccu.spi1_clk.write(|w| {
+    // TODO: ccu should provide a higher-level abstraction for this
+    ccu.borrow_raw().spi1_clk.write(|w| {
         // Enable clock
         w.clk_gating().on();
         // base:  24 MHz
@@ -36,10 +42,7 @@ pub unsafe fn kernel_spim1(spi1: SPI_DBI, ccu: &mut CCU, gpio: &mut GPIO) -> Spi
         w.factor_m().variant(11);
         w
     });
-    ccu.spi_bgr.modify(|_r, w| {
-        w.spi1_gating().pass().spi1_rst().deassert();
-        w
-    });
+    ccu.enable_module(&mut spi1);
 
     // Map the pins
     gpio.pd_cfg1.write(|w| {
@@ -97,7 +100,10 @@ pub struct SpiSender;
 pub struct SpiSenderServer;
 
 impl SpiSenderServer {
-    pub async fn register(kernel: &'static Kernel, queued: usize) -> Result<(), ()> {
+    pub async fn register(
+        kernel: &'static Kernel,
+        queued: usize,
+    ) -> Result<(), registry::RegistrationError> {
         let (kprod, kcons) = KChannel::new_async(queued).await.split();
 
         kernel
@@ -154,16 +160,24 @@ impl SpiSenderServer {
                         src_drq_type: SrcDrqType::Dram,
                     };
                     let descriptor = d_cfg.try_into().map_err(drop)?;
+
+                    // pre-register wait future to ensure the waker is in place before
+                    // starting the DMA transfer.
+                    let wait = SPI1_TX_DONE.subscribe().await;
+
+                    // start the DMA transfer.
                     let mut chan;
                     unsafe {
                         chan = Channel::summon_channel(1);
                         chan.set_channel_modes(ChannelMode::Wait, ChannelMode::Wait);
                         chan.start_descriptor(NonNull::from(&descriptor));
                     }
-                    SPI1_TX_DONE
-                        .wait()
-                        .await
+
+                    // wait for the DMA transfer to complete.
+                    wait.await
                         .expect("SPI1_TX_DONE WaitCell should never be closed");
+
+                    // stop the DMA transfer.
                     unsafe {
                         chan.stop_dma();
                     }
@@ -182,7 +196,7 @@ impl SpiSenderServer {
             .await;
 
         kernel
-            .with_registry(move |reg| reg.register_konly::<SpiSender>(&kprod).map_err(drop))
+            .with_registry(move |reg| reg.register_konly::<SpiSender>(&kprod))
             .await?;
 
         Ok(())

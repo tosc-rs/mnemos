@@ -49,10 +49,17 @@ pub enum DequeueError {
 
 impl<T, STO: Storage<T>> MpScQueue<T, STO> {
     /// Creates an empty queue
+    ///
+    /// The capacity of `storage` must be >= 2 and a power of two, or this code will panic.
     #[track_caller]
     pub fn new(storage: STO) -> Self {
         let (ptr, len) = storage.buf();
-        assert_eq!(len, len.next_power_of_two());
+        assert_eq!(
+            len,
+            len.next_power_of_two(),
+            "Capacity must be a power of two!"
+        );
+        assert!(len > 1, "Capacity must be larger than 1!");
         let sli = unsafe { core::slice::from_raw_parts(ptr, len) };
         sli.iter().enumerate().for_each(|(i, slot)| unsafe {
             slot.get().write(Cell {
@@ -128,11 +135,14 @@ impl<T, STO: Storage<T>> MpScQueue<T, STO> {
 
     pub async fn dequeue_async(&self) -> Result<T, DequeueError> {
         loop {
+            // note: this future always completes immediately, it's awaited just
+            // to grab the wait future with a preregistered waker.
+            let wait = self.cons_wait.subscribe().await;
             match self.dequeue_sync() {
                 Some(t) => return Ok(t),
 
                 // Note: if we have been closed, this wait will fail.
-                None => match self.cons_wait.wait().await {
+                None => match wait.await {
                     Ok(()) => {}
                     Err(_) => return Err(DequeueError::Closed),
                 },

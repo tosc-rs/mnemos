@@ -111,8 +111,8 @@ dependencies = [
 
 [[package]]
 name = "cordyceps"
-version = "0.3.1"
-source = "git+https://github.com/hawkw/mycelium.git?rev=cbcfc62a6ea3646fb43f2c159cfdc19b3d932004#cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
+version = "0.3.2"
+source = "git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064#101a4abaa19afdd131b334a16d92c9fb4909c064"
 dependencies = [
  "loom",
  "tracing 0.1.37",
@@ -413,7 +413,7 @@ dependencies = [
 [[package]]
 name = "maitake"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=cbcfc62a6ea3646fb43f2c159cfdc19b3d932004#cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
+source = "git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064#101a4abaa19afdd131b334a16d92c9fb4909c064"
 dependencies = [
  "cordyceps",
  "mycelium-bitfield",
@@ -467,8 +467,8 @@ dependencies = [
  "serde",
  "sermux-proto",
  "spitebuf",
- "tracing 0.2.0",
- "tracing-core 0.2.0",
+ "tracing 0.1.37",
+ "tracing-core 0.1.31",
  "tracing-serde-structured",
  "uuid",
  "vergen",
@@ -501,7 +501,7 @@ dependencies = [
  "futures",
  "mnemos",
  "mycelium-bitfield",
- "tracing 0.2.0",
+ "tracing 0.1.37",
  "uuid",
 ]
 
@@ -530,7 +530,7 @@ dependencies = [
  "futures",
  "mnemos",
  "riscv",
- "tracing 0.2.0",
+ "tracing 0.1.37",
 ]
 
 [[package]]
@@ -538,19 +538,19 @@ name = "mnemos-trace-proto"
 version = "0.1.0"
 dependencies = [
  "serde",
- "tracing-core 0.2.0",
+ "tracing-core 0.1.31",
  "tracing-serde-structured",
 ]
 
 [[package]]
 name = "mycelium-bitfield"
-version = "0.1.2"
-source = "git+https://github.com/hawkw/mycelium.git?rev=cbcfc62a6ea3646fb43f2c159cfdc19b3d932004#cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
+version = "0.1.3"
+source = "git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064#101a4abaa19afdd131b334a16d92c9fb4909c064"
 
 [[package]]
 name = "mycelium-util"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=cbcfc62a6ea3646fb43f2c159cfdc19b3d932004#cbcfc62a6ea3646fb43f2c159cfdc19b3d932004"
+source = "git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064#101a4abaa19afdd131b334a16d92c9fb4909c064"
 dependencies = [
  "cordyceps",
  "loom",
@@ -1000,7 +1000,7 @@ dependencies = [
 [[package]]
 name = "tracing"
 version = "0.2.0"
-source = "git+https://github.com/tokio-rs/tracing#c6e8a8f679f40d2528008918e2d636e0b48b8107"
+source = "git+https://github.com/tokio-rs/tracing#27f688efb72316a26f3ec1f952c82626692c08ff"
 dependencies = [
  "pin-project-lite",
  "tracing-attributes 0.2.0",
@@ -1021,7 +1021,7 @@ dependencies = [
 [[package]]
 name = "tracing-attributes"
 version = "0.2.0"
-source = "git+https://github.com/tokio-rs/tracing#c6e8a8f679f40d2528008918e2d636e0b48b8107"
+source = "git+https://github.com/tokio-rs/tracing#27f688efb72316a26f3ec1f952c82626692c08ff"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1041,7 +1041,7 @@ dependencies = [
 [[package]]
 name = "tracing-core"
 version = "0.2.0"
-source = "git+https://github.com/tokio-rs/tracing#c6e8a8f679f40d2528008918e2d636e0b48b8107"
+source = "git+https://github.com/tokio-rs/tracing#27f688efb72316a26f3ec1f952c82626692c08ff"
 
 [[package]]
 name = "tracing-log"
@@ -1057,12 +1057,12 @@ dependencies = [
 [[package]]
 name = "tracing-serde-structured"
 version = "0.2.0"
-source = "git+https://github.com/jamesmunns/tracing-serde-structured?branch=james/2trace2furious#44571d9c946ada78acddb0783317a659f836ddd7"
+source = "git+https://github.com/hawkw/tracing-serde-structured?branch=eliza/span-fields#d8c384a09f27eb06aaf31dd3f9bb9c69b33f7e66"
 dependencies = [
  "hash32 0.2.1",
  "heapless",
  "serde",
- "tracing-core 0.2.0",
+ "tracing-core 0.1.31",
 ]
 
 [[package]]
