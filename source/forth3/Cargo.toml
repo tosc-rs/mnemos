@@ -7,6 +7,10 @@ forth3 is a forth-inspired scripting language runtime. It can be used
 on targets without an allocator, and supports native builtins written
 in Rust, either as async or blocking functions.
 """
+readme = "./README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

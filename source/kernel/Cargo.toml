@@ -8,15 +8,17 @@ no_std library crate.
 """
 authors = [
     "James Munns <james@onevariable.com>",
+    "Eliza Weisman <eliza@elizas.website>",
 ]
 edition = "2021"
 readme = "./README.md"
-
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
 categories = [
     "embedded",
     "no-std",
 ]
-license = "MIT OR Apache-2.0"
 
 build = "build.rs"
 
