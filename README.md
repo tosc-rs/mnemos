@@ -62,3 +62,7 @@ Join us on Matrix: [#mnemos-dev:beeper.com](https://matrix.to/#/#mnemos-dev:beep
 
 [MIT]: ./LICENSE-MIT
 [Apache 2.0]: ./LICENSE-APACHE
+
+## Code of Conduct
+
+The MnemOS project follows the [Contributor Covenant Code of Conduct](./code_of_conduct.md).
