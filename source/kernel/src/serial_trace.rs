@@ -455,14 +455,7 @@ mod level_filter {
                 E: serde::de::Error,
             {
                 str_to_level(v).ok_or_else(|| {
-                    E::unknown_variant(v, &[
-                        "trace",
-                        "debug",
-                        "info",
-                        "warn",
-                        "error",
-                        "off",
-                    ])
+                    E::unknown_variant(v, &["trace", "debug", "info", "warn", "error", "off"])
                 })
             }
         }

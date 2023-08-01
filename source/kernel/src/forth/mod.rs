@@ -19,9 +19,10 @@ use mnemos_alloc::{
     heap::{alloc, dealloc},
 };
 use portable_atomic::{AtomicUsize, Ordering};
+use serde::{Deserialize, Serialize};
 use tracing;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Params {
     pub stack_size: usize,

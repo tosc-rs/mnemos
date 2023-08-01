@@ -1,1 +1,35 @@
-{ kernel_cfg = {}, platform_cfg = { lol = 0 } }
+[kernel_cfg]
+
+[kernel_svc_cfg]
+keyboard_mux = { max_keyboards = 8, buffer_capacity = 32, sermux_port = 2 }
+serial_mux = { max_ports = 16, max_frame = 512 }
+spawnulator = { capacity = 16 }
+sermux_loopback = { port = 0, buffer_size = 128 }
+
+[kernel_svc_cfg.sermux_hello]
+port = 1
+buffer_size = 32
+message = [ # this sucks
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+    0, 0, 0, 0, 0, 0, 0, 0,
+]
+interval =  { secs = 1, nanos = 0 }
+
+[platform_cfg]
+tcp_uart = { incoming_size = 4096, outgoing_size = 4096 }
+display = { kchannel_depth = 2 }
+
+[platform_cfg.forth_shell]
+capacity = 1024
+
+[platform_cfg.forth_shell.params]
+stack_size = 256
+input_buf_size = 256
+output_buf_size = 256
+dictionary_size = 4096
+stdin_capacity = 1024
+stdout_capacity = 1024
+bag_of_holding_capacity = 16
+spawnulator_timeout = { secs = 5, nanos = 0 }

@@ -361,3 +361,7 @@ impl Kernel {
         }
     }
 }
+
+// TODO: this should really be KernelSettings
+#[derive(Default, Debug, Serialize, Deserialize)]
+pub struct KernelConfig {}

@@ -2,6 +2,7 @@ use std::{alloc::System, sync::Arc};
 
 use clap::Parser;
 use futures::FutureExt;
+use melpo_config::PlatformConfig;
 use melpomene::{
     cli::{self, MelpomeneOptions},
     sim_drivers::{emb_display::SimDisplay, tcp_serial::TcpSerial},
@@ -9,7 +10,7 @@ use melpomene::{
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
     daemons::shells::{graphical_shell_mono, GraphicalShellSettings},
-    Kernel, KernelSettings,
+    DefaultServiceSettings, Kernel, KernelConfig, KernelSettings,
 };
 use tokio::{
     task,
@@ -18,6 +19,8 @@ use tokio::{
 
 const DISPLAY_WIDTH_PX: u32 = 400;
 const DISPLAY_HEIGHT_PX: u32 = 240;
+
+const MELPO_CFG: &[u8] = include_bytes!(env!("MNEMOS_CONFIG"));
 
 fn main() {
     let args = cli::Args::parse();
@@ -55,6 +58,17 @@ async fn run_melpomene(opts: cli::MelpomeneOptions) {
 
 #[tracing::instrument(name = "Kernel", level = "info", skip(opts))]
 async fn kernel_entry(opts: MelpomeneOptions) {
+    let config =
+        config::runtime::from_postcard::<KernelConfig, DefaultServiceSettings, PlatformConfig>(
+            MELPO_CFG,
+        )
+        .unwrap();
+
+    tracing::warn!(
+        settings = ?config,
+        "Loaded settings",
+    );
+
     let settings = KernelSettings {
         max_drivers: 16,
         // TODO(eliza): chosen totally arbitrarily
@@ -71,37 +85,62 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     let irq = Arc::new(tokio::sync::Notify::new());
 
     // Initialize the UART
-    k.initialize({
-        let irq = irq.clone();
-        async move {
-            // Set up the bidirectional, async bbqueue channel between the TCP port
-            // (acting as a serial port) and the virtual serial port mux.
-            //
-            // Create the buffer, and spawn the worker task, giving it one of the
-            // queue handles
-            tracing::debug!("initializing simulated UART ({})", opts.serial_addr);
-            TcpSerial::register(k, opts.serial_addr, 4096, 4096, irq)
+    if let Some(tcp_uart) = config.platform_cfg.tcp_uart {
+        k.initialize({
+            let irq = irq.clone();
+            async move {
+                // Set up the bidirectional, async bbqueue channel between the TCP port
+                // (acting as a serial port) and the virtual serial port mux.
+                //
+                // Create the buffer, and spawn the worker task, giving it one of the
+                // queue handles
+                tracing::debug!("initializing simulated UART ({})", opts.serial_addr);
+                TcpSerial::register(
+                    k,
+                    opts.serial_addr,
+                    tcp_uart.incoming_size,
+                    tcp_uart.outgoing_size,
+                    irq,
+                )
                 .await
                 .unwrap();
-            tracing::info!("simulated UART ({}) initialized!", opts.serial_addr);
-        }
-    })
-    .unwrap();
+                tracing::info!("simulated UART ({}) initialized!", opts.serial_addr);
+            }
+        })
+        .unwrap();
+    } else {
+        tracing::warn!("Not spawning TCP UART server!");
+    }
 
     // Spawn the graphics driver
-    k.initialize(async move {
-        SimDisplay::register(k, 4, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
+    if let Some(display) = config.platform_cfg.display {
+        k.initialize(async move {
+            SimDisplay::register(
+                k,
+                display.kchannel_depth,
+                DISPLAY_WIDTH_PX,
+                DISPLAY_HEIGHT_PX,
+            )
             .await
             .unwrap();
-    })
-    .unwrap();
+        })
+        .unwrap();
+    } else {
+        tracing::warn!("Not spawning graphics driver!");
+    }
 
-    k.initialize_default_services(Default::default());
+    k.initialize_default_services(config.kernel_svc_cfg);
 
     // Spawn a graphical shell
-    let mut guish = GraphicalShellSettings::with_display_size(DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX);
-    guish.capacity = 1024;
-    k.initialize(graphical_shell_mono(k, guish)).unwrap();
+    if let Some(forth_shell) = config.platform_cfg.forth_shell {
+        let mut guish =
+            GraphicalShellSettings::with_display_size(DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX);
+        guish.capacity = 1024;
+        guish.forth_settings = forth_shell.params;
+        k.initialize(graphical_shell_mono(k, guish)).unwrap();
+    } else {
+        tracing::warn!("Not spawning forth GUI shell!");
+    }
 
     loop {
         // Tick the scheduler

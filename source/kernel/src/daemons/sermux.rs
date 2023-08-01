@@ -10,7 +10,6 @@ use crate::{
     services::serial_mux::{PortHandle, WellKnown},
     Kernel,
 };
-use config::ManagedBytes;
 
 //
 // Sermux Loopback
@@ -67,17 +66,21 @@ pub struct HelloSettings {
     /// Buffer size, in bytes. Defaults to 32
     pub buffer_size: usize,
     /// Message to print. Defaults to `b"hello\r\n"`
-    pub message: ManagedBytes<'static>,
+    pub message: [u8; 32],
     /// Interval between messages. Defaults to 1 second
     pub interval: Duration,
 }
 
 impl Default for HelloSettings {
     fn default() -> Self {
+        let mut buf = [0u8; 32];
+        const MSG: &[u8] = b"hello\r\n";
+        let len = buf.len().min(MSG.len());
+        buf[..len].copy_from_slice(&MSG[..len]);
         Self {
             port: WellKnown::HelloWorld as u16,
             buffer_size: 32,
-            message: ManagedBytes::Borrowed(b"hello\r\n"),
+            message: buf,
             interval: Duration::from_secs(1),
         }
     }
@@ -97,9 +100,14 @@ pub async fn hello(kernel: &'static Kernel, settings: HelloSettings) {
     tracing::debug!("Starting SerMux 'hello world'...");
     let p1 = PortHandle::open(kernel, port, buffer_size).await.unwrap();
     tracing::info!("SerMux 'hello world' running!");
+    let len = message
+        .iter()
+        .position(|b| *b == 0)
+        .unwrap_or(message.len());
+    let msg = &message[..len];
 
     loop {
         kernel.sleep(interval).await;
-        p1.send(message.as_slice()).await;
+        p1.send(msg).await;
     }
 }

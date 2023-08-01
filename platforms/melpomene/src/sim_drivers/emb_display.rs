@@ -60,13 +60,13 @@ impl SimDisplay {
     #[tracing::instrument(skip(kernel))]
     pub async fn register(
         kernel: &'static Kernel,
-        max_frames: usize,
+        channel_depth: usize,
         width: u32,
         height: u32,
     ) -> Result<(), FrameError> {
         tracing::debug!("initializing SimDisplay server ({width}x{height})...");
 
-        let (cmd_prod, cmd_cons) = KChannel::new_async(2).await.split();
+        let (cmd_prod, cmd_cons) = KChannel::new_async(channel_depth).await.split();
         let commander = CommanderTask {
             kernel,
             cmd: cmd_cons,
