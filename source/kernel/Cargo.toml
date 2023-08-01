@@ -33,9 +33,6 @@ serial-trace = ["mnemos-trace-proto", "tracing-core", "tracing-serde-structured"
 
 [dependencies]
 
-[dependencies.config]
-path = "../config"
-
 [dependencies.futures]
 version = "0.3.21"
 features = ["async-await"]

@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 postcard = "1.0.6"
+mnemos-kernel = { package = "mnemos", path = "../kernel" }
 
 [dependencies.toml]
 version = "0.7.6"
@@ -16,6 +17,11 @@ optional = true
 version = "1.0.178"
 default-features = false
 
+[dependencies.miette]
+version = "5.10"
+features = ["fancy"]
+optional = true
+
 [features]
 default = ["use-std"] # todo
-use-std = ["dep:toml", "postcard/use-std"]
+use-std = ["dep:toml", "postcard/use-std", "dep:miette"]

@@ -10,7 +10,7 @@ use melpomene::{
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
     daemons::shells::{graphical_shell_mono, GraphicalShellSettings},
-    DefaultServiceSettings, Kernel, KernelConfig, KernelSettings,
+    Kernel, KernelSettings,
 };
 use tokio::{
     task,
@@ -20,7 +20,6 @@ use tokio::{
 const DISPLAY_WIDTH_PX: u32 = 400;
 const DISPLAY_HEIGHT_PX: u32 = 240;
 
-const MELPO_CFG: &[u8] = include_bytes!(env!("MNEMOS_CONFIG"));
 
 fn main() {
     let args = cli::Args::parse();
@@ -58,11 +57,7 @@ async fn run_melpomene(opts: cli::MelpomeneOptions) {
 
 #[tracing::instrument(name = "Kernel", level = "info", skip(opts))]
 async fn kernel_entry(opts: MelpomeneOptions) {
-    let config =
-        config::runtime::from_postcard::<KernelConfig, DefaultServiceSettings, PlatformConfig>(
-            MELPO_CFG,
-        )
-        .unwrap();
+    let config = config::load_configuration!(PlatformConfig).unwrap();
 
     tracing::warn!(
         settings = ?config,
