@@ -62,5 +62,10 @@
         "path": "tools/f3repl"
       }
     ]
+  },
+  "styles": {
+    "additional_css": [
+      "assets/mnemos.css"
+    ]
   }
 }
