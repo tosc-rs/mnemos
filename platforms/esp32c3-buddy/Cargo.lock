@@ -688,6 +688,7 @@ dependencies = [
  "esp-backtrace",
  "esp-println",
  "esp32c3-hal",
+ "futures",
  "mnemos",
  "portable-atomic",
  "riscv",

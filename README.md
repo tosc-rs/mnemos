@@ -2,13 +2,6 @@
 
 This repository is for the MnemOS Operating System.
 
-## Stable Docs
-
-Currently, MnemOS is being rewritten as part of the v0.2 version. The current source may not
-match the currently published documentation!
-
-[hosted mnemOS v0.1 documentation](https://mnemos.jamesmunns.com)
-
 ## Development and API Docs
 
 `rustdoc` output for the current `main` branch can be built locally with `cargo doc --open`.
@@ -32,15 +25,19 @@ The project layout contains the following folders:
 
 * [`assets/`] - images and files used for READMEs and other documentation
 * [`book/`] - This is the source of "the mnemOS book"
+* [`hardware/`] - Hardware designs for MnemOS systems, including CAD files and documentation
 * [`source/`] - This folder contains the source code of the cross-platform kernel, userspace, and related libraries
 * [`platforms/`] - This folder contains code specific to each targeted hardware and simulation platform
+* [`rfcs/`] - MnemOS design RFCs
 * [`tools/`] - This folder contains desktop tools used for working with MnemOS
 
 [`assets/`]: ./assets/
 [`book/`]: ./book/
+[`hardware/`]: ./hardware/
 [`source/`]: ./source/
 [`platforms/`]: .platforms/
 [`tools/`]: ./tools/
+[`rfcs/`]: ./rfcs/
 
 ## Getting Started
 
@@ -69,3 +66,7 @@ Join us on Matrix: [#mnemos-dev:beeper.com](https://matrix.to/#/#mnemos-dev:beep
 
 [MIT]: ./LICENSE-MIT
 [Apache 2.0]: ./LICENSE-APACHE
+
+## Code of Conduct
+
+The MnemOS project follows the [Contributor Covenant Code of Conduct](./code_of_conduct.md).

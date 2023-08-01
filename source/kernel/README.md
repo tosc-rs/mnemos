@@ -1,6 +1,12 @@
 # MnemOS Kernel
 
-This is the kernel for the MnemOS general purpose operating system.
+The MnemOS Kernel. Built around asynchronous kernel tasks which use message passing as the primary means of interaction. Provided as a `no_std` library crate.
+
+## Development Documentation
+
+Please see [the development docs](https://mnemos-dev.jamesmunns.com/doc/kernel/index.html) for documentation of the current `main` branch.
+
+Docs can be built locally with `cargo doc`.
 
 ## License
 

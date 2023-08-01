@@ -12,8 +12,10 @@ authors = [
     "James Munns <james@onevariable.com>",
 ]
 edition = "2021"
-license = "MIT OR Apache-2.0"
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
 readme = "./README.md"
+license = "MIT OR Apache-2.0"
 
 [profile.release]
 # it turns out that we basically just "can't" build in debug mode (or our code
@@ -64,6 +66,11 @@ version = "0.1.37"
 # branch = "master"
 features = ["attributes"]
 default-features = false
+
+[dependencies.futures]
+version = "0.3.21"
+default-features = false
+features = ["async-await"]
 
 ### patches ###
 

@@ -2,6 +2,14 @@
 name = "melpomene"
 version = "0.1.0"
 edition = "2021"
+description = """
+A desktop simulator, suitable for experimenting with MnemOS without
+any external hardware requirements.
+"""
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
+readme = "./README.md"
+license = "MIT OR Apache-2.0"
 
 [build-dependencies]
 melpo-config = { path = "./melpo-config" }

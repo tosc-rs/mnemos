@@ -118,7 +118,7 @@ impl SerialSubscriber {
         use maitake::time;
         use postcard::accumulator::{CobsAccumulator, FeedResult};
 
-        // we probably won't use 256 whole bytes of cobs yet since all the host
+        // we probably won't use 16 whole bytes of cobs yet since all the host
         // -> target messages are quite small
         let mut cobs_buf: CobsAccumulator<16> = CobsAccumulator::new();
         let mut read_level = |rgr: bbq::GrantR| {
@@ -158,15 +158,15 @@ impl SerialSubscriber {
             rgr.release(len);
         };
 
+        let mut encode_buf = [0u8; 32];
         loop {
             'idle: loop {
-                let mut heartbeat = [0u8; 8];
                 let heartbeat = {
                     let level = u8_to_level(shared.max_level.load(Ordering::Acquire))
                         .into_level()
                         .as_ref()
                         .map(AsSerde::as_serde);
-                    postcard::to_slice_cobs(&TraceEvent::Heartbeat(level), &mut heartbeat[..])
+                    postcard::to_slice_cobs(&TraceEvent::Heartbeat(level), &mut encode_buf[..])
                         .expect("failed to encode heartbeat msg")
                 };
                 port.send(heartbeat).await;
@@ -178,13 +178,12 @@ impl SerialSubscriber {
                     read_level(rgr);
 
                     // ack the new max level
-                    let mut ack = [0u8; 8];
                     let ack = {
                         let level = u8_to_level(shared.max_level.load(Ordering::Acquire))
                             .into_level()
                             .as_ref()
                             .map(AsSerde::as_serde);
-                        postcard::to_slice_cobs(&TraceEvent::Heartbeat(level), &mut ack[..])
+                        postcard::to_slice_cobs(&TraceEvent::Heartbeat(level), &mut encode_buf[..])
                             .expect("failed to encode heartbeat msg")
                     };
                     port.send(ack).await;
@@ -216,7 +215,6 @@ impl SerialSubscriber {
                         let span_activity = shared.dropped_events.swap(0, Ordering::Relaxed);
                         let metas = shared.dropped_metas.swap(0, Ordering::Relaxed);
                         if new_spans + events + span_activity + metas > 0 {
-                            let mut buf = [0u8; 256];
                             let buf = {
                                 let ev = TraceEvent::Discarded {
                                     new_spans,
@@ -224,7 +222,7 @@ impl SerialSubscriber {
                                     span_activity,
                                     metas,
                                 };
-                                postcard::to_slice_cobs(&ev, &mut buf[..])
+                                postcard::to_slice_cobs(&ev, &mut encode_buf[..])
                                     .expect("failed to encode dropped msg")
                             };
                             port.send(buf).await;
@@ -244,6 +242,12 @@ impl SerialSubscriber {
     }
 }
 
+// send grant size for "big" messages (e.g. metadata, spans, and events)
+const BIGMSG_GRANT_SZ: usize = 256;
+
+// send grant size for tiny messages (e.g. enter, exit, and close)
+const TINYMSG_GRANT_SZ: usize = 8;
+
 impl Subscriber for SerialSubscriber {
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
         self.level_enabled(metadata) && !self.in_send.load(Ordering::Acquire)
@@ -257,7 +261,7 @@ impl Subscriber for SerialSubscriber {
         let id = metadata.callsite();
 
         // TODO(eliza): if we can't write a metadata, that's bad news...
-        let sent = self.send_event(1024, || TraceEvent::RegisterMeta {
+        let sent = self.send_event(BIGMSG_GRANT_SZ, || TraceEvent::RegisterMeta {
             id: mnemos_trace_proto::MetaId::from(id),
             meta: metadata.as_serde(),
         });
@@ -293,7 +297,7 @@ impl Subscriber for SerialSubscriber {
             span::Id::from_u64(id)
         };
 
-        if !self.send_event(1024, || TraceEvent::NewSpan {
+        if !self.send_event(BIGMSG_GRANT_SZ, || TraceEvent::NewSpan {
             id: id.as_serde(),
             meta: span.metadata().callsite().into(),
             parent: span.parent().map(AsSerde::as_serde),
@@ -311,7 +315,7 @@ impl Subscriber for SerialSubscriber {
     }
 
     fn enter(&self, span: &span::Id) {
-        if !self.send_event(16, || TraceEvent::Enter(span.as_serde())) {
+        if !self.send_event(TINYMSG_GRANT_SZ, || TraceEvent::Enter(span.as_serde())) {
             self.shared
                 .dropped_span_activity
                 .fetch_add(1, Ordering::Relaxed);
@@ -319,7 +323,7 @@ impl Subscriber for SerialSubscriber {
     }
 
     fn exit(&self, span: &span::Id) {
-        if !self.send_event(16, || TraceEvent::Exit(span.as_serde())) {
+        if !self.send_event(TINYMSG_GRANT_SZ, || TraceEvent::Exit(span.as_serde())) {
             self.shared
                 .dropped_span_activity
                 .fetch_add(1, Ordering::Relaxed);
@@ -331,7 +335,7 @@ impl Subscriber for SerialSubscriber {
     }
 
     fn event(&self, event: &Event<'_>) {
-        if !self.send_event(1024, || TraceEvent::Event {
+        if !self.send_event(BIGMSG_GRANT_SZ, || TraceEvent::Event {
             meta: event.metadata().callsite().into(),
             fields: SerializeRecordFields::Ser(event),
             parent: event.parent().map(AsSerde::as_serde),
@@ -341,7 +345,7 @@ impl Subscriber for SerialSubscriber {
     }
 
     fn clone_span(&self, span: &span::Id) -> span::Id {
-        if !self.send_event(16, || TraceEvent::CloneSpan(span.as_serde())) {
+        if !self.send_event(TINYMSG_GRANT_SZ, || TraceEvent::CloneSpan(span.as_serde())) {
             self.shared
                 .dropped_span_activity
                 .fetch_add(1, Ordering::Relaxed);
@@ -350,7 +354,7 @@ impl Subscriber for SerialSubscriber {
     }
 
     fn try_close(&self, span: span::Id) -> bool {
-        if !self.send_event(16, || TraceEvent::DropSpan(span.as_serde())) {
+        if !self.send_event(TINYMSG_GRANT_SZ, || TraceEvent::DropSpan(span.as_serde())) {
             self.shared
                 .dropped_span_activity
                 .fetch_add(1, Ordering::Relaxed);
@@ -470,9 +474,9 @@ mod level_filter {
 // === impl SermuxTraceSettings ===
 
 impl SerialTraceSettings {
-    pub const DEFAULT_PORT: u16 = services::serial_mux::WellKnown::BinaryTracing as u16;
-    pub const DEFAULT_SENDBUF_CAPACITY: usize = 1024;
-    pub const DEFAULT_TRACEBUF_CAPACITY: usize = Self::DEFAULT_SENDBUF_CAPACITY * 64;
+    pub const DEFAULT_PORT: u16 = serial_mux::WellKnown::BinaryTracing as u16;
+    pub const DEFAULT_SENDBUF_CAPACITY: usize = BIGMSG_GRANT_SZ * 4;
+    pub const DEFAULT_TRACEBUF_CAPACITY: usize = Self::DEFAULT_SENDBUF_CAPACITY * 4;
     pub const DEFAULT_INITIAL_LEVEL: LevelFilter = LevelFilter::OFF;
 
     #[must_use]

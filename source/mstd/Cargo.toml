@@ -2,16 +2,16 @@
 name = "mnemos-std"
 version = "0.1.0"
 description = "A tiny embedded operating system userspace library"
-repository = "https://github.com/jamesmunns/pellegrino"
 authors = ["James Munns <james@onevariable.com>"]
 edition = "2021"
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
 readme = "./README.md"
-
+license = "MIT OR Apache-2.0"
 categories = [
     "embedded",
     "no-std",
 ]
-license = "MIT OR Apache-2.0"
 
 [lib]
 name = "mstd"

@@ -1,9 +1,13 @@
 use core::{
-    ptr::{null_mut},
+    ptr::null_mut,
     sync::atomic::{AtomicPtr, Ordering},
 };
 
-use esp32c3_hal::{uart::{Uart, Instance}, prelude::interrupt, peripherals::UART0};
+use esp32c3_hal::{
+    peripherals::UART0,
+    prelude::interrupt,
+    uart::{Instance, Uart},
+};
 
 use kernel::{
     comms::{
@@ -47,7 +51,10 @@ pub struct C3Uart<T: 'static> {
 
 impl C3Uart<UART0> {
     pub fn uart0(uart: Uart<'static, UART0>) -> Self {
-        Self { uart, tx_done: &UART0_TX_DONE }
+        Self {
+            uart,
+            tx_done: &UART0_TX_DONE,
+        }
     }
 
     pub fn handle_uart0_int() {
@@ -89,7 +96,9 @@ impl<T: Instance> C3Uart<T> {
 
             self.uart.listen_tx_done();
             // TODO(eliza): what should we do if this errors?
-            self.uart.write_bytes(&rx).expect("UART write bytes should succeed?");
+            self.uart
+                .write_bytes(&rx)
+                .expect("UART write bytes should succeed?");
 
             // wait for the write to complete
             wait.await.expect("UART TX_DONE WaitCell is never closed!");
@@ -104,7 +113,6 @@ impl<T: Instance> C3Uart<T> {
         cap_in: usize,
         cap_out: usize,
     ) -> Result<(), registry::RegistrationError> {
-
         let (kprod, kcons) = KChannel::<Message<SimpleSerialService>>::new_async(4)
             .await
             .split();

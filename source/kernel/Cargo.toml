@@ -1,17 +1,24 @@
 [package]
 name = "mnemos"
 version = "0.1.0"
-description = "A tiny embedded operating system kernel"
-repository = "https://github.com/jamesmunns/pellegrino"
-authors = ["James Munns <james@onevariable.com>"]
+description = """
+The MnemOS Kernel. Built around asynchronous kernel tasks which use
+message passing as the primary means of interaction. Provided as a
+no_std library crate.
+"""
+authors = [
+    "James Munns <james@onevariable.com>",
+    "Eliza Weisman <eliza@elizas.website>",
+]
 edition = "2021"
 readme = "./README.md"
-
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
 categories = [
     "embedded",
     "no-std",
 ]
-license = "MIT OR Apache-2.0"
 
 build = "build.rs"
 

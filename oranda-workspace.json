@@ -1,0 +1,66 @@
+{
+  "build": {
+    "static_dir": "assets"
+  },
+  "workspace": {
+    "name": "MnemOS",
+    "members": [
+      {
+        "slug": "MnemosProjectOverview",
+        "path": "."
+      },
+      {
+        "slug": "kernel",
+        "path": "./source/kernel"
+      },
+      {
+        "slug": "melpomene",
+        "path": "platforms/melpomene"
+      },
+      {
+        "slug": "pomelo",
+        "path": "platforms/pomelo"
+      },
+      {
+        "slug": "allwinner-core",
+        "path": "platforms/allwinner-d1/core"
+      },
+      {
+        "slug": "crowtty",
+        "path": "tools/crowtty"
+      },
+      {
+        "slug": "alloc",
+        "path": "source/alloc"
+      },
+      {
+        "slug": "forth3",
+        "path": "source/forth3"
+      },
+      {
+        "slug": "abi",
+        "path": "source/abi"
+      },
+      {
+        "slug": "spitebuf",
+        "path": "source/spitebuf"
+      },
+      {
+        "slug": "sermux-proto",
+        "path": "source/sermux-proto"
+      },
+      {
+        "slug": "trace-proto",
+        "path": "source/trace-proto"
+      },
+      {
+        "slug": "beepy",
+        "path": "platforms/beepy"
+      },
+      {
+        "slug": "f3repl",
+        "path": "tools/f3repl"
+      }
+    ]
+  }
+}
