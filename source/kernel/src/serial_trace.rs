@@ -1,11 +1,10 @@
 use crate::{comms::bbq, services::serial_mux};
 use core::time::Duration;
-use level_filters::LevelFilter;
 use mnemos_trace_proto::{HostRequest, TraceEvent};
 use portable_atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
-use tracing::subscriber::Interest;
 pub use tracing::*;
+use tracing::{metadata::LevelFilter, subscriber::Interest};
 use tracing_serde_structured::{AsSerde, SerializeRecordFields, SerializeSpanFields};
 
 pub struct SerialSubscriber {
@@ -20,25 +19,6 @@ pub struct SerialSubscriber {
     in_send: AtomicBool,
 
     shared: &'static Shared,
-}
-
-#[derive(Debug)]
-pub struct SerialTraceSettings {
-    /// SerialMux port for sermux tracing.
-    port: u16,
-
-    /// Capacity for the serial port's send buffer.
-    sendbuf_capacity: usize,
-
-    /// Capacity for the trace ring buffer.
-    ///
-    /// Note that *two* buffers of this size will be allocated. One buffer is
-    /// used for the normal trace ring buffer, and another is used for the
-    /// interrupt service routine trace ring buffer.
-    tracebuf_capacity: usize,
-
-    /// Initial level filter used if the debug host does not select a max level.
-    initial_level: LevelFilter,
 }
 
 struct Shared {
@@ -382,6 +362,112 @@ impl Subscriber for SerialSubscriber {
     }
 }
 
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SerialTraceSettings {
+    /// Should the serial trace be enabled?
+    #[serde(default)]
+    pub enabled: bool,
+    /// SerialMux port for sermux tracing.
+    #[serde(default = "SerialTraceSettings::default_port")]
+    pub port: u16,
+
+    /// Capacity for the serial port's send buffer.
+    #[serde(default = "SerialTraceSettings::default_sendbuf_capacity")]
+    pub sendbuf_capacity: usize,
+
+    /// Capacity for the trace ring buffer.
+    ///
+    /// Note that *two* buffers of this size will be allocated. One buffer is
+    /// used for the normal trace ring buffer, and another is used for the
+    /// interrupt service routine trace ring buffer.
+    #[serde(default = "SerialTraceSettings::default_tracebuf_capacity")]
+    pub tracebuf_capacity: usize,
+
+    /// Initial level filter used if the debug host does not select a max level.
+    #[serde(with = "level_filter")]
+    #[serde(default = "SerialTraceSettings::default_initial_level")]
+    pub initial_level: LevelFilter,
+}
+
+pub const fn level_to_u8(level: LevelFilter) -> u8 {
+    match level {
+        LevelFilter::TRACE => 0,
+        LevelFilter::DEBUG => 1,
+        LevelFilter::INFO => 2,
+        LevelFilter::WARN => 3,
+        LevelFilter::ERROR => 4,
+        LevelFilter::OFF => 5,
+    }
+}
+
+pub const fn u8_to_level(level: u8) -> LevelFilter {
+    match level {
+        0 => LevelFilter::TRACE,
+        1 => LevelFilter::DEBUG,
+        2 => LevelFilter::INFO,
+        3 => LevelFilter::WARN,
+        4 => LevelFilter::ERROR,
+        _ => LevelFilter::OFF,
+    }
+}
+
+pub fn level_to_str(level: LevelFilter) -> &'static str {
+    match level {
+        LevelFilter::TRACE => "trace",
+        LevelFilter::DEBUG => "debug",
+        LevelFilter::INFO => "info",
+        LevelFilter::WARN => "warn",
+        LevelFilter::ERROR => "error",
+        LevelFilter::OFF => "off",
+    }
+}
+
+pub fn str_to_level(level: &str) -> Option<LevelFilter> {
+    level.parse().ok()
+}
+
+mod level_filter {
+    use serde::{de::Visitor, Deserializer, Serializer};
+
+    use super::{level_to_str, str_to_level};
+
+    pub fn serialize<S>(lf: &tracing::metadata::LevelFilter, s: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let lf_str = level_to_str(*lf);
+        s.serialize_str(lf_str)
+    }
+
+    pub fn deserialize<'de, D>(d: D) -> Result<tracing::metadata::LevelFilter, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        struct LFVisitor;
+        impl<'de> Visitor<'de> for LFVisitor {
+            type Value = tracing::metadata::LevelFilter;
+
+            fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+                formatter.write_str("a level filter as a u8 value")
+            }
+
+            fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                str_to_level(v).ok_or_else(|| {
+                    E::unknown_variant(v, &["trace", "debug", "info", "warn", "error", "off"])
+                })
+            }
+        }
+
+        d.deserialize_str(LFVisitor)
+    }
+}
+
 // === impl SermuxTraceSettings ===
 
 impl SerialTraceSettings {
@@ -390,9 +476,23 @@ impl SerialTraceSettings {
     pub const DEFAULT_TRACEBUF_CAPACITY: usize = Self::DEFAULT_SENDBUF_CAPACITY * 4;
     pub const DEFAULT_INITIAL_LEVEL: LevelFilter = LevelFilter::OFF;
 
+    const fn default_port() -> u16 {
+        Self::DEFAULT_PORT
+    }
+    const fn default_sendbuf_capacity() -> usize {
+        Self::DEFAULT_SENDBUF_CAPACITY
+    }
+    const fn default_tracebuf_capacity() -> usize {
+        Self::DEFAULT_TRACEBUF_CAPACITY
+    }
+    const fn default_initial_level() -> LevelFilter {
+        Self::DEFAULT_INITIAL_LEVEL
+    }
+
     #[must_use]
     pub const fn new() -> Self {
         Self {
+            enabled: true, // Should this default to false?
             port: Self::DEFAULT_PORT,
             sendbuf_capacity: Self::DEFAULT_SENDBUF_CAPACITY,
             tracebuf_capacity: Self::DEFAULT_TRACEBUF_CAPACITY,
@@ -458,27 +558,5 @@ impl SerialTraceSettings {
 impl Default for SerialTraceSettings {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-const fn level_to_u8(level: LevelFilter) -> u8 {
-    match level {
-        LevelFilter::TRACE => 0,
-        LevelFilter::DEBUG => 1,
-        LevelFilter::INFO => 2,
-        LevelFilter::WARN => 3,
-        LevelFilter::ERROR => 4,
-        LevelFilter::OFF => 5,
-    }
-}
-
-const fn u8_to_level(level: u8) -> LevelFilter {
-    match level {
-        0 => LevelFilter::TRACE,
-        1 => LevelFilter::DEBUG,
-        2 => LevelFilter::INFO,
-        3 => LevelFilter::WARN,
-        4 => LevelFilter::ERROR,
-        _ => LevelFilter::OFF,
     }
 }

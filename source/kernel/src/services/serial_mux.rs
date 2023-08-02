@@ -21,6 +21,7 @@ use crate::{
 };
 use maitake::sync::Mutex;
 use mnemos_alloc::containers::{Arc, FixedVec};
+use serde::{Deserialize, Serialize};
 use sermux_proto::PortChunk;
 use tracing::{self, debug, warn, Level};
 use uuid::Uuid;
@@ -173,10 +174,14 @@ impl PortHandle {
 /// Server implementation for the [`SerialMuxService`].
 pub struct SerialMuxServer;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct SerialMuxSettings {
-    max_ports: u16,
-    max_frame: usize,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "SerialMuxSettings::default_max_ports")]
+    pub max_ports: u16,
+    #[serde(default = "SerialMuxSettings::default_max_frame")]
+    pub max_frame: usize,
 }
 
 impl SerialMuxServer {
@@ -224,6 +229,7 @@ impl SerialMuxServer {
         SerialMuxSettings {
             max_ports,
             max_frame,
+            ..
         }: SerialMuxSettings,
     ) -> Result<(), RegistrationError> {
         let max_ports = max_ports as usize;
@@ -274,6 +280,13 @@ impl SerialMuxSettings {
     pub const DEFAULT_MAX_PORTS: u16 = 16;
     pub const DEFAULT_MAX_FRAME: usize = 512;
 
+    const fn default_max_ports() -> u16 {
+        Self::DEFAULT_MAX_PORTS
+    }
+    const fn default_max_frame() -> usize {
+        Self::DEFAULT_MAX_FRAME
+    }
+
     pub fn with_max_ports(self, max_ports: u16) -> Self {
         Self { max_ports, ..self }
     }
@@ -286,6 +299,7 @@ impl SerialMuxSettings {
 impl Default for SerialMuxSettings {
     fn default() -> Self {
         Self {
+            enabled: true, // Should this default to false?
             max_ports: Self::DEFAULT_MAX_PORTS,
             max_frame: Self::DEFAULT_MAX_FRAME,
         }

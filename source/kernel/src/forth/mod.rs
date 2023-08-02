@@ -19,18 +19,27 @@ use mnemos_alloc::{
     heap::{alloc, dealloc},
 };
 use portable_atomic::{AtomicUsize, Ordering};
+use serde::{Deserialize, Serialize};
 use tracing;
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct Params {
+    #[serde(default = "Params::default_stack_size")]
     pub stack_size: usize,
+    #[serde(default = "Params::default_input_buf_size")]
     pub input_buf_size: usize,
+    #[serde(default = "Params::default_output_buf_size")]
     pub output_buf_size: usize,
+    #[serde(default = "Params::default_dictionary_size")]
     pub dictionary_size: usize,
+    #[serde(default = "Params::default_stdin_capacity")]
     pub stdin_capacity: usize,
+    #[serde(default = "Params::default_stdout_capacity")]
     pub stdout_capacity: usize,
+    #[serde(default = "Params::default_bag_of_holding_capacity")]
     pub bag_of_holding_capacity: usize,
+    #[serde(default = "Params::default_spawnulator_timeout")]
     pub spawnulator_timeout: Duration,
 }
 
@@ -211,16 +220,50 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
 }
 
 impl Params {
+    pub const DEFAULT_STACK_SIZE: usize = 256;
+    pub const DEFAULT_INPUT_BUF_SIZE: usize = 256;
+    pub const DEFAULT_OUTPUT_BUF_SIZE: usize = 256;
+    pub const DEFAULT_DICTIONARY_SIZE: usize = 4096;
+    pub const DEFAULT_STDIN_CAPACITY: usize = 1024;
+    pub const DEFAULT_STDOUT_CAPACITY: usize = 1024;
+    pub const DEFAULT_BAG_OF_HOLDING_CAPACITY: usize = 16;
+    pub const DEFAULT_SPAWNULATOR_TIMEOUT: Duration = Duration::from_secs(5);
+
+    const fn default_stack_size() -> usize {
+        Self::DEFAULT_STACK_SIZE
+    }
+    const fn default_input_buf_size() -> usize {
+        Self::DEFAULT_INPUT_BUF_SIZE
+    }
+    const fn default_output_buf_size() -> usize {
+        Self::DEFAULT_OUTPUT_BUF_SIZE
+    }
+    const fn default_dictionary_size() -> usize {
+        Self::DEFAULT_DICTIONARY_SIZE
+    }
+    const fn default_stdin_capacity() -> usize {
+        Self::DEFAULT_STDIN_CAPACITY
+    }
+    const fn default_stdout_capacity() -> usize {
+        Self::DEFAULT_STDOUT_CAPACITY
+    }
+    const fn default_bag_of_holding_capacity() -> usize {
+        Self::DEFAULT_BAG_OF_HOLDING_CAPACITY
+    }
+    const fn default_spawnulator_timeout() -> Duration {
+        Self::DEFAULT_SPAWNULATOR_TIMEOUT
+    }
+
     pub const fn new() -> Self {
         Self {
-            stack_size: 256,
-            input_buf_size: 256,
-            output_buf_size: 256,
-            dictionary_size: 4096,
-            stdin_capacity: 1024,
-            stdout_capacity: 1024,
-            bag_of_holding_capacity: 16,
-            spawnulator_timeout: Duration::from_secs(5),
+            stack_size: Self::DEFAULT_STACK_SIZE,
+            input_buf_size: Self::DEFAULT_INPUT_BUF_SIZE,
+            output_buf_size: Self::DEFAULT_OUTPUT_BUF_SIZE,
+            dictionary_size: Self::DEFAULT_DICTIONARY_SIZE,
+            stdin_capacity: Self::DEFAULT_STDIN_CAPACITY,
+            stdout_capacity: Self::DEFAULT_STDOUT_CAPACITY,
+            bag_of_holding_capacity: Self::DEFAULT_BAG_OF_HOLDING_CAPACITY,
+            spawnulator_timeout: Self::DEFAULT_SPAWNULATOR_TIMEOUT,
         }
     }
 

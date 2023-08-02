@@ -24,6 +24,7 @@ use crate::{
 };
 use core::{convert::Infallible, time::Duration};
 use futures::{future, FutureExt};
+use serde::{Deserialize, Serialize};
 use tracing::Level;
 use uuid::Uuid;
 
@@ -133,11 +134,16 @@ pub struct KeyboardMuxServer {
     sermux_port: Option<serial_mux::PortHandle>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct KeyboardMuxSettings {
-    max_keyboards: usize,
-    buffer_capacity: usize,
-    sermux_port: Option<u16>,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "KeyboardMuxSettings::default_buffer_capacity")]
+    pub max_keyboards: usize,
+    #[serde(default = "KeyboardMuxSettings::default_max_keyboards")]
+    pub buffer_capacity: usize,
+    #[serde(default = "KeyboardMuxSettings::default_sermux_port")]
+    pub sermux_port: Option<u16>,
 }
 
 impl KeyboardMuxServer {
@@ -269,6 +275,16 @@ impl KeyboardMuxSettings {
     pub const DEFAULT_MAX_KEYBOARDS: usize = 8;
     pub const DEFAULT_SERMUX_PORT: Option<u16> = Some(serial_mux::WellKnown::PseudoKeyboard as u16);
 
+    const fn default_buffer_capacity() -> usize {
+        Self::DEFAULT_BUFFER_CAPACITY
+    }
+    const fn default_max_keyboards() -> usize {
+        Self::DEFAULT_MAX_KEYBOARDS
+    }
+    const fn default_sermux_port() -> Option<u16> {
+        Self::DEFAULT_SERMUX_PORT
+    }
+
     /// Sets a [serial mux](crate::services::serial_mux) port to use as a
     /// virtual keyboard input.
     ///
@@ -287,6 +303,7 @@ impl KeyboardMuxSettings {
 impl Default for KeyboardMuxSettings {
     fn default() -> Self {
         Self {
+            enabled: true, // Should this default to false?
             max_keyboards: Self::DEFAULT_MAX_KEYBOARDS,
             buffer_capacity: Self::DEFAULT_BUFFER_CAPACITY,
             sermux_port: Self::DEFAULT_SERMUX_PORT,

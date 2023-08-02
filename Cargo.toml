@@ -10,6 +10,7 @@ members = [
     "source/forth3",
     "source/sermux-proto",
     "source/trace-proto",
+    "source/config",
 
     # tools
     "tools/crowtty",
@@ -20,6 +21,7 @@ members = [
     "platforms/allwinner-d1/core",
     "platforms/beepy",
     "platforms/melpomene",
+    "platforms/melpomene/melpo-config",
 ]
 
 exclude = ["platforms/pomelo", "platforms/esp32c3-buddy"]

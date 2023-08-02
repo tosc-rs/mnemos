@@ -40,6 +40,7 @@
 
 use core::{convert::Infallible, time::Duration};
 
+use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
@@ -133,9 +134,12 @@ pub enum RegistrationError {
     SpawnulatorAlreadyRegistered,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct SpawnulatorSettings {
-    capacity: usize,
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "SpawnulatorSettings::default_capacity")]
+    pub capacity: usize,
 }
 
 impl SpawnulatorServer {
@@ -190,14 +194,22 @@ impl SpawnulatorServer {
 impl SpawnulatorSettings {
     pub const DEFAULT_CAPACITY: usize = 16;
 
+    const fn default_capacity() -> usize {
+        Self::DEFAULT_CAPACITY
+    }
+
     pub fn with_capacity(self, capacity: usize) -> Self {
-        Self { capacity }
+        Self {
+            enabled: true, // Should this default to false?
+            capacity,
+        }
     }
 }
 
 impl Default for SpawnulatorSettings {
     fn default() -> Self {
         Self {
+            enabled: true, // Should this default to false?
             capacity: Self::DEFAULT_CAPACITY,
         }
     }

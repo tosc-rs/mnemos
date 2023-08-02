@@ -90,7 +90,7 @@ use abi::{
     syscall::{KernelResponse, UserRequest},
 };
 use comms::kchannel::KChannel;
-use core::{future::Future, ptr::NonNull};
+use core::{convert::identity, future::Future, ptr::NonNull};
 pub use embedded_hal_async;
 pub use maitake;
 use maitake::{
@@ -102,6 +102,7 @@ use maitake::{
 pub use mnemos_alloc;
 use mnemos_alloc::containers::Box;
 use registry::Registry;
+use serde::{Deserialize, Serialize};
 use services::{
     forth_spawnulator::{SpawnulatorServer, SpawnulatorSettings},
     keyboard::mux::{KeyboardMuxServer, KeyboardMuxSettings},
@@ -114,6 +115,7 @@ pub struct Rings {
     pub k2u: NonNull<BBBuffer>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct KernelSettings {
     pub max_drivers: usize,
     pub timer_granularity: Duration,
@@ -144,14 +146,13 @@ pub struct KernelInner {
 }
 
 /// Settings for all services spawned by default.
-#[derive(Debug, Default)]
-pub struct DefaultServiceSettings {
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct KernelServiceSettings {
     pub keyboard_mux: KeyboardMuxSettings,
     pub serial_mux: SerialMuxSettings,
     pub spawnulator: SpawnulatorSettings,
     pub sermux_loopback: daemons::sermux::LoopbackSettings,
     pub sermux_hello: daemons::sermux::HelloSettings,
-
     #[cfg(feature = "serial-trace")]
     pub sermux_trace: serial_trace::SerialTraceSettings,
 }
@@ -294,43 +295,71 @@ impl Kernel {
     /// [`SerialMuxService`]: crate::services::serial_mux::SerialMuxService
     /// [`SpawnulatorService`]:
     ///     crate::services::forth_spawnulator::SpawnulatorService
-    pub fn initialize_default_services(&'static self, settings: DefaultServiceSettings) {
+    pub fn initialize_default_services(&'static self, settings: KernelServiceSettings) {
         // Set the kernel timer as the global timer.
         // Disregard errors --- they just mean someone else has already set up
         // the global timer.
         let _ = self.set_global_timer();
 
         // Initialize the kernel keyboard mux service.
-        self.initialize(KeyboardMuxServer::register(self, settings.keyboard_mux))
-            .expect("failed to spawn KeyboardMuxService initialization");
+        if settings.keyboard_mux.enabled {
+            self.initialize(KeyboardMuxServer::register(self, settings.keyboard_mux))
+                .expect("failed to spawn KeyboardMuxService initialization");
+        }
 
         // Initialize the SerialMuxServer
-        let sermux_up = self
-            .initialize(SerialMuxServer::register(self, settings.serial_mux))
-            .expect("failed to spawn SerialMuxService initialization");
+        let sermux_up = if settings.serial_mux.enabled {
+            Some(
+                self.initialize(SerialMuxServer::register(self, settings.serial_mux))
+                    .expect("failed to spawn SerialMuxService initialization"),
+            )
+        } else {
+            None
+        };
 
         // Initialize the Forth spawnulator.
-        self.initialize(SpawnulatorServer::register(self, settings.spawnulator))
-            .expect("failed to spawn SpawnulatorService initialization");
+        if settings.spawnulator.enabled {
+            self.initialize(SpawnulatorServer::register(self, settings.spawnulator))
+                .expect("failed to spawn SpawnulatorService initialization");
+        }
 
         // Initialize Serial Mux daemons.
-        self.initialize(async move {
-            sermux_up
-                .await
-                .expect("SerialMuxService initialization should not be cancelled")
-                .expect("SerialMuxService initialization failed");
+        if let Some(sermux_up) = sermux_up {
+            self.initialize(async move {
+                sermux_up
+                    .await
+                    .expect("SerialMuxService initialization should not be cancelled")
+                    .expect("SerialMuxService initialization failed");
 
-            #[cfg(feature = "serial-trace")]
-            crate::serial_trace::SerialSubscriber::start(self, settings.sermux_trace).await;
+                #[cfg(feature = "serial-trace")]
+                if settings.sermux_trace.enabled {
+                    crate::serial_trace::SerialSubscriber::start(self, settings.sermux_trace).await;
+                }
 
-            self.spawn(daemons::sermux::loopback(self, settings.sermux_loopback))
-                .await;
-            tracing::debug!("SerMux loopback started");
+                if settings.sermux_loopback.enabled {
+                    self.spawn(daemons::sermux::loopback(self, settings.sermux_loopback))
+                        .await;
+                    tracing::debug!("SerMux loopback started");
+                }
 
-            self.spawn(daemons::sermux::hello(self, settings.sermux_hello))
-                .await;
-            tracing::debug!("SerMux Hello World started");
-        })
-        .expect("failed to spawn default serial mux service initialization");
+                if settings.sermux_hello.enabled {
+                    self.spawn(daemons::sermux::hello(self, settings.sermux_hello))
+                        .await;
+                    tracing::debug!("SerMux Hello World started");
+                }
+            })
+            .expect("failed to spawn default serial mux service initialization");
+        } else {
+            let deps = [
+                #[cfg(feature = "serial-trace")]
+                settings.sermux_trace.enabled,
+                settings.sermux_loopback.enabled,
+                settings.sermux_hello.enabled,
+            ];
+
+            if deps.into_iter().any(identity) {
+                tracing::error!("Sermux services configured without sermux! Skipping.");
+            }
+        }
     }
 }

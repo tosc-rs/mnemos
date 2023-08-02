@@ -11,7 +11,16 @@ homepage = "https://mnemos.dev"
 readme = "./README.md"
 license = "MIT OR Apache-2.0"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[build-dependencies]
+melpo-config = { path = "./melpo-config" }
+serde = { version = "1.0.178", features = ["derive"] }
+mnemos-config = { path = "../../source/config", features = ["use-std"] }
+mnemos-kernel = { package = "mnemos", path = "../../source/kernel" }
+
+[dependencies]
+serde = { version = "1.0.178", features = ["derive"] }
+melpo-config = { path = "./melpo-config" }
+mnemos-config = { path = "../../source/config" }
 
 [dependencies.tracing]
 version = "0.1.35"
@@ -103,14 +112,5 @@ trace-console = ["console-subscriber", "humantime"]
 trace-fmt = ["tracing-subscriber/fmt", "atty"]
 # Note, the "trace-modality" feature requires the use of the Auxon modality tool.
 # More information: https://auxon.io/products/modality
-trace-modality = [
-    "tracing-modality",
-    # Note, works around a missing feature set in tracing-modality, can
-    # be changed later
-    "tokio/net",
-    "tokio/sync",
-]
-default = [
-    "trace-console",
-    "trace-fmt",
-]
+trace-modality = ["tracing-modality", "tokio/net", "tokio/sync"]
+default = ["trace-console", "trace-fmt"]

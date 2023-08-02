@@ -4,6 +4,7 @@
 extern crate alloc;
 
 use core::time::Duration;
+use kernel::maitake::sync::WaitCell;
 use mnemos_beepy::i2c_puppet::{HsvColor, I2cPuppetClient, I2cPuppetServer, I2cPuppetSettings};
 use mnemos_d1_core::{
     ccu::Ccu,
@@ -13,7 +14,6 @@ use mnemos_d1_core::{
     timer::Timers,
     Ram, D1,
 };
-use kernel::maitake::sync::WaitCell;
 
 const HEAP_SIZE: usize = 384 * 1024 * 1024;
 
@@ -76,8 +76,7 @@ fn main() -> ! {
     let i2c_puppet_up = d1
         .kernel
         .initialize(async move {
-            let settings = I2cPuppetSettings::default()
-                .with_poll_interval(Duration::from_secs(2));
+            let settings = I2cPuppetSettings::default().with_poll_interval(Duration::from_secs(2));
             d1.kernel.sleep(Duration::from_secs(2)).await;
             I2cPuppetServer::register(d1.kernel, settings, i2c_puppet_irq)
                 .await
@@ -130,8 +129,8 @@ fn main() -> ! {
 }
 
 fn init_i2c_puppet_irq(gpio: &mut d1_pac::GPIO, plic: &mut Plic) -> &'static WaitCell {
-    use mnemos_d1_core::plic::Priority;
     use d1_pac::Interrupt;
+    use mnemos_d1_core::plic::Priority;
 
     static I2C_PUPPET_IRQ: WaitCell = WaitCell::new();
 
@@ -165,14 +164,15 @@ fn init_i2c_puppet_irq(gpio: &mut d1_pac::GPIO, plic: &mut Plic) -> &'static Wai
     // configure ISR
     unsafe {
         plic.register(Interrupt::GPIOB_NS, handle_pb_eint_irq);
-        plic.activate(Interrupt::GPIOB_NS, Priority::P1).expect("could not activate GPIOB_NS ISR");
+        plic.activate(Interrupt::GPIOB_NS, Priority::P1)
+            .expect("could not activate GPIOB_NS ISR");
     }
 
     // XXX(eliza): right now, this will *only* handle the i2c_puppet IRQ. this isn't
     // going to scale well if we want to be able to handle other IRQs on PB7 pins,
     // especially if we want those to be defined in cross-platform code...
     fn handle_pb_eint_irq() {
-        let gpio = { unsafe { & *d1_pac::GPIO::ptr() } };
+        let gpio = { unsafe { &*d1_pac::GPIO::ptr() } };
         gpio.pb_eint_status.modify(|r, w| {
             if r.eint7_status().is_pending() {
                 // wake the i2c_puppet waker.

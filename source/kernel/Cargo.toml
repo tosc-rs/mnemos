@@ -85,12 +85,10 @@ path = "../alloc"
 
 [dependencies.heapless]
 version = "0.7.10"
-features = ["defmt-impl"]
 
 [dependencies.mnemos-abi]
 version = "0.1.0"
 path = "../abi"
-features = ["use-defmt"]
 
 [dependencies.serde]
 version = "1.0.136"

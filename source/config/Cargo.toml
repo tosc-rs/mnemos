@@ -1,0 +1,33 @@
+[package]
+name = "mnemos-config"
+version = "0.1.0"
+edition = "2021"
+description = """
+Compile time configuration library. Intended to be used by platform crates
+and their build scripts
+"""
+readme = "./README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
+
+[dependencies]
+postcard = "1.0.6"
+mnemos-kernel = { package = "mnemos", path = "../kernel" }
+
+[dependencies.toml]
+version = "0.7.6"
+optional = true
+
+[dependencies.serde]
+version = "1.0.178"
+default-features = false
+
+[dependencies.miette]
+version = "5.10"
+features = ["fancy"]
+optional = true
+
+[features]
+default = []
+use-std = ["dep:toml", "postcard/use-std", "dep:miette"]
