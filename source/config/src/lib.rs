@@ -15,7 +15,7 @@
 //!
 //! ```rust,skip
 //! # #![allow(clippy::needless_doctest_main)]
-//! use config::buildtime::render_project;
+//! use mnemos_config::buildtime::render_project;
 //! fn main() {
 //!     render_project::<YOUR_CONFIG_TYPE>("YOUR_PLATFORM.toml").unwrap();
 //! }
@@ -33,7 +33,7 @@
 //! And then you can use this in your main function:
 //!
 //! ```rust,skip
-//! let config = config::load_configuration!(YOUR_CONFIG_TYPE).unwrap();
+//! let config = mnemos_config::load_configuration!(YOUR_CONFIG_TYPE).unwrap();
 //! ```
 //!
 //! ## Make an external config crate
@@ -53,9 +53,9 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MnemosConfig<Platform> {
-    pub kernel_cfg: KernelSettings,
-    pub kernel_svc_cfg: KernelServiceSettings,
-    pub platform_cfg: Platform,
+    pub kernel: KernelSettings,
+    pub services: KernelServiceSettings,
+    pub platform: Platform,
 }
 
 /// Tools intended for use in build.rs scripts
@@ -130,7 +130,7 @@ pub mod runtime {
 #[macro_export]
 macro_rules! load_configuration {
     ($platform: ty) => {{
-        const MELPO_CFG: &[u8] = include_bytes!(env!("MNEMOS_CONFIG"));
-        ::config::runtime::from_postcard::<$platform>(MELPO_CFG)
+        const MNEMOS_CONFIG: &[u8] = include_bytes!(env!("MNEMOS_CONFIG"));
+        $crate::runtime::from_postcard::<$platform>(MNEMOS_CONFIG)
     }};
 }

@@ -136,9 +136,37 @@ pub struct KeyboardMuxServer {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct KeyboardMuxSettings {
-    max_keyboards: usize,
-    buffer_capacity: usize,
-    sermux_port: Option<u16>,
+    pub max_keyboards: usize,
+    pub buffer_capacity: usize,
+    pub sermux_port: Option<u16>,
+}
+
+#[derive(Default, Debug, Serialize, Deserialize)]
+pub struct KeyboardMuxSettingsOverrides {
+    pub enabled: bool,
+    pub max_keyboards: Option<usize>,
+    pub buffer_capacity: Option<usize>,
+    pub sermux_port_enabled: bool,
+    pub sermux_port: Option<u16>,
+}
+
+impl KeyboardMuxSettingsOverrides {
+    pub fn into_settings(self) -> KeyboardMuxSettings {
+        KeyboardMuxSettings {
+            max_keyboards: self
+                .max_keyboards
+                .unwrap_or(KeyboardMuxSettings::DEFAULT_MAX_KEYBOARDS),
+            buffer_capacity: self
+                .buffer_capacity
+                .unwrap_or(KeyboardMuxSettings::DEFAULT_BUFFER_CAPACITY),
+            sermux_port: if self.sermux_port_enabled {
+                self.sermux_port
+                    .or(KeyboardMuxSettings::DEFAULT_SERMUX_PORT)
+            } else {
+                None
+            },
+        }
+    }
 }
 
 impl KeyboardMuxServer {

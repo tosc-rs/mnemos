@@ -1,11 +1,10 @@
 use crate::{comms::bbq, services::serial_mux};
 use core::time::Duration;
-use level_filters::LevelFilter;
 use mnemos_trace_proto::{HostRequest, TraceEvent};
 use portable_atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
-use tracing::subscriber::Interest;
 pub use tracing::*;
+use tracing::{metadata::LevelFilter, subscriber::Interest};
 use tracing_serde_structured::{AsSerde, SerializeRecordFields, SerializeSpanFields};
 
 pub struct SerialSubscriber {
@@ -365,8 +364,6 @@ impl Subscriber for SerialSubscriber {
 
 use serde::{Deserialize, Serialize};
 
-use crate::services;
-
 #[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SerialTraceSettings {
@@ -385,43 +382,93 @@ pub struct SerialTraceSettings {
 
     /// Initial level filter used if the debug host does not select a max level.
     #[serde(with = "level_filter")]
-    pub initial_level: tracing::metadata::LevelFilter,
+    pub initial_level: LevelFilter,
 }
 
-pub const fn level_to_u8(level: tracing::metadata::LevelFilter) -> u8 {
-    match level {
-        tracing::metadata::LevelFilter::TRACE => 0,
-        tracing::metadata::LevelFilter::DEBUG => 1,
-        tracing::metadata::LevelFilter::INFO => 2,
-        tracing::metadata::LevelFilter::WARN => 3,
-        tracing::metadata::LevelFilter::ERROR => 4,
-        tracing::metadata::LevelFilter::OFF => 5,
+#[derive(Debug, Serialize, Deserialize)]
+#[non_exhaustive]
+pub struct SerialTraceSettingsOverrides {
+    /// Should the serial trace be enabled?
+    pub enabled: bool,
+    /// SerialMux port for sermux tracing.
+    pub port: Option<u16>,
+
+    /// Capacity for the serial port's send buffer.
+    pub sendbuf_capacity: Option<usize>,
+
+    /// Capacity for the trace ring buffer.
+    ///
+    /// Note that *two* buffers of this size will be allocated. One buffer is
+    /// used for the normal trace ring buffer, and another is used for the
+    /// interrupt service routine trace ring buffer.
+    pub tracebuf_capacity: Option<usize>,
+
+    /// Initial level filter used if the debug host does not select a max level.
+    #[serde(with = "level_filter")]
+    pub initial_level: LevelFilter,
+}
+
+impl Default for SerialTraceSettingsOverrides {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            port: None,
+            sendbuf_capacity: None,
+            tracebuf_capacity: None,
+            initial_level: LevelFilter::OFF,
+        }
     }
 }
 
-pub const fn u8_to_level(level: u8) -> tracing::metadata::LevelFilter {
-    match level {
-        0 => tracing::metadata::LevelFilter::TRACE,
-        1 => tracing::metadata::LevelFilter::DEBUG,
-        2 => tracing::metadata::LevelFilter::INFO,
-        3 => tracing::metadata::LevelFilter::WARN,
-        4 => tracing::metadata::LevelFilter::ERROR,
-        _ => tracing::metadata::LevelFilter::OFF,
+impl SerialTraceSettingsOverrides {
+    pub fn into_settings(self) -> SerialTraceSettings {
+        SerialTraceSettings {
+            port: self.port.unwrap_or(SerialTraceSettings::DEFAULT_PORT),
+            sendbuf_capacity: self
+                .sendbuf_capacity
+                .unwrap_or(SerialTraceSettings::DEFAULT_SENDBUF_CAPACITY),
+            tracebuf_capacity: self
+                .tracebuf_capacity
+                .unwrap_or(SerialTraceSettings::DEFAULT_TRACEBUF_CAPACITY),
+            initial_level: self.initial_level,
+        }
     }
 }
 
-pub fn level_to_str(level: tracing::metadata::LevelFilter) -> &'static str {
+pub const fn level_to_u8(level: LevelFilter) -> u8 {
     match level {
-        tracing::metadata::LevelFilter::TRACE => "trace",
-        tracing::metadata::LevelFilter::DEBUG => "debug",
-        tracing::metadata::LevelFilter::INFO => "info",
-        tracing::metadata::LevelFilter::WARN => "warn",
-        tracing::metadata::LevelFilter::ERROR => "error",
-        tracing::metadata::LevelFilter::OFF => "off",
+        LevelFilter::TRACE => 0,
+        LevelFilter::DEBUG => 1,
+        LevelFilter::INFO => 2,
+        LevelFilter::WARN => 3,
+        LevelFilter::ERROR => 4,
+        LevelFilter::OFF => 5,
     }
 }
 
-pub fn str_to_level(level: &str) -> Option<tracing::metadata::LevelFilter> {
+pub const fn u8_to_level(level: u8) -> LevelFilter {
+    match level {
+        0 => LevelFilter::TRACE,
+        1 => LevelFilter::DEBUG,
+        2 => LevelFilter::INFO,
+        3 => LevelFilter::WARN,
+        4 => LevelFilter::ERROR,
+        _ => LevelFilter::OFF,
+    }
+}
+
+pub fn level_to_str(level: LevelFilter) -> &'static str {
+    match level {
+        LevelFilter::TRACE => "trace",
+        LevelFilter::DEBUG => "debug",
+        LevelFilter::INFO => "info",
+        LevelFilter::WARN => "warn",
+        LevelFilter::ERROR => "error",
+        LevelFilter::OFF => "off",
+    }
+}
+
+pub fn str_to_level(level: &str) -> Option<LevelFilter> {
     level.parse().ok()
 }
 

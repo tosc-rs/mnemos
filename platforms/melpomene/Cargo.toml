@@ -14,13 +14,13 @@ license = "MIT OR Apache-2.0"
 [build-dependencies]
 melpo-config = { path = "./melpo-config" }
 serde = { version = "1.0.178", features = ["derive"] }
-config = { path = "../../source/config", features = ["use-std"] }
+mnemos-config = { path = "../../source/config", features = ["use-std"] }
 mnemos-kernel = { package = "mnemos", path = "../../source/kernel" }
 
 [dependencies]
 serde = { version = "1.0.178", features = ["derive"] }
 melpo-config = { path = "./melpo-config" }
-config = { path = "../../source/config" }
+mnemos-config = { path = "../../source/config" }
 
 [dependencies.tracing]
 version = "0.1.35"

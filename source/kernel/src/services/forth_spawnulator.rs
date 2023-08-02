@@ -136,7 +136,23 @@ pub enum RegistrationError {
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct SpawnulatorSettings {
-    capacity: usize,
+    pub capacity: usize,
+}
+
+#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
+pub struct SpawnulatorSettingsOverrides {
+    pub enabled: bool,
+    pub capacity: Option<usize>,
+}
+
+impl SpawnulatorSettingsOverrides {
+    pub fn into_settings(self) -> SpawnulatorSettings {
+        SpawnulatorSettings {
+            capacity: self
+                .capacity
+                .unwrap_or(SpawnulatorSettings::DEFAULT_CAPACITY),
+        }
+    }
 }
 
 impl SpawnulatorServer {

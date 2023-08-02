@@ -176,8 +176,28 @@ pub struct SerialMuxServer;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct SerialMuxSettings {
-    max_ports: u16,
-    max_frame: usize,
+    pub max_ports: u16,
+    pub max_frame: usize,
+}
+
+#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize)]
+pub struct SerialMuxSettingsOverrides {
+    pub enabled: bool,
+    pub max_ports: Option<u16>,
+    pub max_frame: Option<usize>,
+}
+
+impl SerialMuxSettingsOverrides {
+    pub fn into_settings(self) -> SerialMuxSettings {
+        SerialMuxSettings {
+            max_ports: self
+                .max_ports
+                .unwrap_or(SerialMuxSettings::DEFAULT_MAX_PORTS),
+            max_frame: self
+                .max_frame
+                .unwrap_or(SerialMuxSettings::DEFAULT_MAX_FRAME),
+        }
+    }
 }
 
 impl SerialMuxServer {

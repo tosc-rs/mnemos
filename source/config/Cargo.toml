@@ -1,13 +1,15 @@
 [package]
-name = "config"
+name = "mnemos-config"
 version = "0.1.0"
 edition = "2021"
 description = """
 Compile time configuration library. Intended to be used by platform crates
 and their build scripts
 """
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+readme = "./README.md"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
 
 [dependencies]
 postcard = "1.0.6"

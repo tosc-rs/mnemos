@@ -56,7 +56,7 @@ async fn run_melpomene() {
 
 #[tracing::instrument(name = "Kernel", level = "info")]
 async fn kernel_entry() {
-    let config = config::load_configuration!(PlatformConfig).unwrap();
+    let config = mnemos_config::load_configuration!(PlatformConfig).unwrap();
 
     tracing::info!(
         settings = ?config,
@@ -64,7 +64,7 @@ async fn kernel_entry() {
     );
 
     let k = unsafe {
-        mnemos_alloc::containers::Box::into_raw(Kernel::new(config.kernel_cfg).unwrap())
+        mnemos_alloc::containers::Box::into_raw(Kernel::new(config.kernel).unwrap())
             .as_ref()
             .unwrap()
     };
@@ -73,9 +73,10 @@ async fn kernel_entry() {
     let irq = Arc::new(tokio::sync::Notify::new());
 
     // Initialize the UART
-    if let Some(tcp_uart) = config.platform_cfg.tcp_uart {
+    if config.platform.tcp_uart.enabled {
         k.initialize({
             let irq = irq.clone();
+            let tcp_uart = config.platform.tcp_uart.into_settings();
             let socket_addr = tcp_uart.socket_addr.clone();
             async move {
                 // Set up the bidirectional, async bbqueue channel between the TCP port
@@ -94,23 +95,29 @@ async fn kernel_entry() {
     }
 
     // Spawn the graphics driver
-    if let Some(display) = config.platform_cfg.display {
+    if config.platform.display.enabled {
         k.initialize(async move {
-            SimDisplay::register(k, display, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
-                .await
-                .unwrap();
+            SimDisplay::register(
+                k,
+                config.platform.display.into_settings(),
+                DISPLAY_WIDTH_PX,
+                DISPLAY_HEIGHT_PX,
+            )
+            .await
+            .unwrap();
         })
         .unwrap();
     } else {
         tracing::warn!("Not spawning graphics driver!");
     }
 
-    k.initialize_default_services(config.kernel_svc_cfg);
+    k.initialize_default_services(config.services);
 
     // Spawn a graphical shell
-    if let Some(forth_shell) = config.platform_cfg.forth_shell {
+    if config.platform.forth_shell.enabled {
         let mut guish =
             GraphicalShellSettings::with_display_size(DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX);
+        let forth_shell = config.platform.forth_shell.into_settings();
         guish.capacity = forth_shell.capacity;
         guish.forth_settings = forth_shell.params;
         k.initialize(graphical_shell_mono(k, guish)).unwrap();
@@ -118,7 +125,11 @@ async fn kernel_entry() {
         tracing::warn!("Not spawning forth GUI shell!");
     }
 
-    let sleep_cap = config.platform_cfg.sleep_cap.as_micros() as u64;
+    let sleep_cap = config
+        .platform
+        .sleep_cap
+        .unwrap_or_else(|| PlatformConfig::default_sleep_cap())
+        .as_micros() as u64;
     loop {
         // Tick the scheduler
         let t0 = tokio::time::Instant::now();

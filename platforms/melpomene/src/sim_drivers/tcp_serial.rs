@@ -79,7 +79,7 @@ impl TcpSerial {
                     };
                 }
             }
-            .instrument(info_span!("TCP Serial", socket_addr)),
+            .instrument(info_span!("TCP Serial", ?socket_addr)),
         );
 
         kernel
