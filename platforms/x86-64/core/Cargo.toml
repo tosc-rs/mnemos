@@ -1,0 +1,34 @@
+[package]
+name = "mnemos-x86-64-core"
+version = "0.1.0"
+edition = "2021"
+
+# kernel
+[dependencies.mnemos]
+path = "../../../source/kernel"
+default-features = false
+
+[dependencies.tracing]
+version = "0.1.37"
+features = ["attributes"]
+default-features = false
+
+[dependencies.embedded-graphics]
+version = "0.7.1"
+
+[dependencies.hal-core]
+git = "https://github.com/hawkw/mycelium"
+
+[dependencies.hal-x86_64]
+git = "https://github.com/hawkw/mycelium"
+
+[dependencies.mycelium-util]
+git = "https://github.com/hawkw/mycelium"
+
+[dependencies.acpi]
+version = "4.1.1"
+
+[dependencies.futures]
+version = "0.3.21"
+features = ["async-await"]
+default-features = false

@@ -24,6 +24,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "acpi"
+version = "4.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "654f48ab3178632ea535be1765073b990895cb62f70a7e5671975d7150c26d15"
+dependencies = [
+ "bit_field",
+ "log",
+ "rsdp",
+]
+
+[[package]]
 name = "addr2line"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -703,6 +714,15 @@ dependencies = [
 name = "cordyceps"
 version = "0.3.2"
 source = "git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064#101a4abaa19afdd131b334a16d92c9fb4909c064"
+dependencies = [
+ "loom",
+ "tracing 0.1.37",
+]
+
+[[package]]
+name = "cordyceps"
+version = "0.3.2"
+source = "git+https://github.com/hawkw/mycelium#1f125194902cd4970b72eab0aa1d85d1b6ec1489"
 dependencies = [
  "loom",
  "tracing 0.1.37",
@@ -1551,6 +1571,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "hal-core"
+version = "0.1.0"
+source = "git+https://github.com/hawkw/mycelium#1f125194902cd4970b72eab0aa1d85d1b6ec1489"
+dependencies = [
+ "embedded-graphics-core",
+ "mycelium-util 0.1.0 (git+https://github.com/hawkw/mycelium)",
+ "tracing 0.2.0",
+]
+
+[[package]]
+name = "hal-x86_64"
+version = "0.1.0"
+source = "git+https://github.com/hawkw/mycelium#1f125194902cd4970b72eab0aa1d85d1b6ec1489"
+dependencies = [
+ "acpi",
+ "hal-core",
+ "mycelium-trace",
+ "mycelium-util 0.1.0 (git+https://github.com/hawkw/mycelium)",
+ "mycotest",
+ "raw-cpuid",
+ "tracing 0.2.0",
+ "volatile",
+]
+
+[[package]]
 name = "hash32"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1998,9 +2043,9 @@ name = "maitake"
 version = "0.1.0"
 source = "git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064#101a4abaa19afdd131b334a16d92c9fb4909c064"
 dependencies = [
- "cordyceps",
- "mycelium-bitfield",
- "mycelium-util",
+ "cordyceps 0.3.2 (git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064)",
+ "mycelium-bitfield 0.1.3 (git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064)",
+ "mycelium-util 0.1.0 (git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064)",
  "pin-project",
  "portable-atomic",
  "tracing 0.1.37",
@@ -2206,8 +2251,8 @@ dependencies = [
  "mnemos-abi",
  "mnemos-alloc",
  "mnemos-trace-proto",
- "mycelium-bitfield",
- "mycelium-util",
+ "mycelium-bitfield 0.1.3 (git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064)",
+ "mycelium-util 0.1.0 (git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064)",
  "portable-atomic",
  "postcard 1.0.6",
  "profont",
@@ -2235,7 +2280,7 @@ dependencies = [
 name = "mnemos-alloc"
 version = "0.1.0"
 dependencies = [
- "cordyceps",
+ "cordyceps 0.3.2 (git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064)",
  "heapless",
  "linked_list_allocator",
  "maitake",
@@ -2248,7 +2293,7 @@ dependencies = [
  "bbq10kbd",
  "futures",
  "mnemos",
- "mycelium-bitfield",
+ "mycelium-bitfield 0.1.3 (git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064)",
  "tracing 0.1.37",
  "uuid 1.3.4",
 ]
@@ -2312,7 +2357,7 @@ dependencies = [
 name = "mnemos-std"
 version = "0.1.0"
 dependencies = [
- "cordyceps",
+ "cordyceps 0.3.2 (git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064)",
  "futures-util",
  "heapless",
  "maitake",
@@ -2328,6 +2373,20 @@ dependencies = [
  "serde",
  "tracing-core 0.1.31",
  "tracing-serde-structured",
+]
+
+[[package]]
+name = "mnemos-x86-64-core"
+version = "0.1.0"
+dependencies = [
+ "acpi",
+ "embedded-graphics",
+ "futures",
+ "hal-core",
+ "hal-x86_64",
+ "mnemos",
+ "mycelium-util 0.1.0 (git+https://github.com/hawkw/mycelium)",
+ "tracing 0.1.37",
 ]
 
 [[package]]
@@ -2351,14 +2410,50 @@ version = "0.1.3"
 source = "git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064#101a4abaa19afdd131b334a16d92c9fb4909c064"
 
 [[package]]
+name = "mycelium-bitfield"
+version = "0.1.3"
+source = "git+https://github.com/hawkw/mycelium#1f125194902cd4970b72eab0aa1d85d1b6ec1489"
+
+[[package]]
+name = "mycelium-trace"
+version = "0.1.0"
+source = "git+https://github.com/hawkw/mycelium#1f125194902cd4970b72eab0aa1d85d1b6ec1489"
+dependencies = [
+ "embedded-graphics",
+ "hal-core",
+ "mycelium-util 0.1.0 (git+https://github.com/hawkw/mycelium)",
+ "tracing 0.2.0",
+ "tracing-core 0.2.0",
+]
+
+[[package]]
 name = "mycelium-util"
 version = "0.1.0"
 source = "git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064#101a4abaa19afdd131b334a16d92c9fb4909c064"
 dependencies = [
- "cordyceps",
+ "cordyceps 0.3.2 (git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064)",
  "loom",
- "mycelium-bitfield",
+ "mycelium-bitfield 0.1.3 (git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064)",
  "tracing 0.2.0",
+]
+
+[[package]]
+name = "mycelium-util"
+version = "0.1.0"
+source = "git+https://github.com/hawkw/mycelium#1f125194902cd4970b72eab0aa1d85d1b6ec1489"
+dependencies = [
+ "cordyceps 0.3.2 (git+https://github.com/hawkw/mycelium)",
+ "loom",
+ "mycelium-bitfield 0.1.3 (git+https://github.com/hawkw/mycelium)",
+ "tracing 0.2.0",
+]
+
+[[package]]
+name = "mycotest"
+version = "0.1.0"
+source = "git+https://github.com/hawkw/mycelium#1f125194902cd4970b72eab0aa1d85d1b6ec1489"
+dependencies = [
+ "tracing 0.1.37",
 ]
 
 [[package]]
@@ -3019,6 +3114,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "raw-cpuid"
+version = "10.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6c297679cb867470fa8c9f67dbba74a78d78e3e98d7cf2b08d6d71540f797332"
+dependencies = [
+ "bitflags",
+]
+
+[[package]]
 name = "rayon"
 version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3168,6 +3272,15 @@ checksum = "88aa938cda42a0cf62a20cfe8d139ff1af20c2e681212b5b34adb5a58333f222"
 dependencies = [
  "lazy_static",
  "regex",
+]
+
+[[package]]
+name = "rsdp"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "66d3add2fc55ef37511bcf81a08ee7a09eff07b23aae38b06a29024a38c604b1"
+dependencies = [
+ "log",
 ]
 
 [[package]]
@@ -4164,6 +4277,12 @@ name = "void"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a02e4885ed3bc0f2de90ea6dd45ebcbb66dacffe03547fadbb0eeae2770887d"
+
+[[package]]
+name = "volatile"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "442887c63f2c839b346c192d047a7c87e73d0689c9157b00b53dcc27dd5ea793"
 
 [[package]]
 name = "wait-timeout"
