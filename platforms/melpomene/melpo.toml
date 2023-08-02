@@ -11,12 +11,7 @@ sermux_loopback = { port = 0, buffer_size = 128 }
 [kernel_svc_cfg.sermux_hello]
 port = 1
 buffer_size = 32
-message = [ # this sucks
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0,
-]
+message = "hello\r\n"
 interval =  { secs = 1, nanos = 0 }
 
 [platform_cfg]
