@@ -20,12 +20,12 @@ pub fn enable_exceptions() {
 
 #[tracing::instrument(skip(acpi))]
 pub fn enable_hardware_interrupts(acpi: Option<&acpi::InterruptModel>) {
-    let controller =
-        Controller::enable_hardware_interrupts(acpi, todo!("figure out frame allocator..."));
-    controller
-        .start_periodic_timer(TIMER_INTERVAL)
-        .expect("10ms should be a reasonable interval for the PIT or local APIC timer...");
-    tracing::info!(granularity = ?TIMER_INTERVAL, "global timer initialized")
+    todo!("figure out frame allocator...")
+    // let controller = Controller::enable_hardware_interrupts(acpi, FRAME_ALLOCATOR);
+    // controller
+    //     .start_periodic_timer(TIMER_INTERVAL)
+    //     .expect("10ms should be a reasonable interval for the PIT or local APIC timer...");
+    // tracing::info!(granularity = ?TIMER_INTERVAL, "global timer initialized")
 }
 
 /// Wait for an interrupt in a spin loop.

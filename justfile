@@ -29,6 +29,8 @@ _d1_pkg := "mnemos-d1"
 
 _espbuddy_pkg := "mnemos-esp32c3-buddy"
 
+_x86_dir := "platforms/x86_64/platform"
+
 # arguments to pass to all RustDoc invocations
 _rustdoc := _cargo + " doc --no-deps --all-features"
 
@@ -109,6 +111,14 @@ flash-c3 board *espflash-args: (_get-cargo-command "espflash" "cargo-espflash") 
         --package {{ _espbuddy_pkg }} \
         --bin {{ board }} \
         {{ espflash-args }}
+
+# build a bootable x86_64 disk image.
+build-x86 target="bootloader":
+    cd {{ _x86_dir }}/{{ target }} && {{ _cargo }} build --release
+
+# run an x86_64 MnemOS image in QEMU
+run-x86 target="bootloader": (build-x86 target)
+    cd {{ _x86_dir }}/{{ target }} && {{ _cargo }} run --release
 
 # run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard)
 crowtty *FLAGS:

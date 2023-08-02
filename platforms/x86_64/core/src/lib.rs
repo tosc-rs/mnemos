@@ -51,17 +51,17 @@ pub fn run(bootinfo: &impl BootInfo, k: &'static Kernel) -> ! {
     loop {
         // Tick the scheduler
         // TODO(eliza): do we use the PIT or the local APIC timer?
-        let start = todo!("current value of freewheeling timer");
+        let start: Duration = todo!("current value of freewheeling timer");
         let tick = k.tick();
 
         // Timer is downcounting
-        let elapsed = start.wrapping_sub(todo!("timer current value"));
-        let turn = k.timer().force_advance_ticks(elapsed.into());
+        let elapsed = start - todo!("timer current value");
+        let turn = k.timer().force_advance(elapsed);
 
         // If there is nothing else scheduled, and we didn't just wake something up,
         // sleep for some amount of time
         if turn.expired == 0 && !tick.has_remaining {
-            let wfi_start = todo!("timer current value");
+            let wfi_start: Duration = todo!("timer current value");
 
             // TODO(AJM): Sometimes there is no "next" in the timer wheel, even though there should
             // be. Don't take lack of timer wheel presence as the ONLY heuristic of whether we
@@ -80,8 +80,8 @@ pub fn run(bootinfo: &impl BootInfo, k: &'static Kernel) -> ! {
             todo!("clear timer irq");
 
             // Account for time slept
-            let elapsed = wfi_start.wrapping_sub(todo!("current timer value"););
-            let _turn = k.timer().force_advance_ticks(elapsed.into());
+            let elapsed = wfi_start - todo!("current timer value");
+            let _turn = k.timer().force_advance(elapsed);
         }
     }
 }

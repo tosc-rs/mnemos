@@ -2376,7 +2376,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "mnemos-x86-64-core"
+name = "mnemos-x86_64-core"
 version = "0.1.0"
 dependencies = [
  "acpi",
