@@ -1,4 +1,6 @@
 [kernel_cfg]
+max_drivers = 16
+timer_granularity = { secs = 0, nanos = 1000 } # 1us
 
 [kernel_svc_cfg]
 keyboard_mux = { max_keyboards = 8, buffer_capacity = 32, sermux_port = 2 }
@@ -18,8 +20,14 @@ message = [ # this sucks
 interval =  { secs = 1, nanos = 0 }
 
 [platform_cfg]
-tcp_uart = { incoming_size = 4096, outgoing_size = 4096 }
-display = { kchannel_depth = 2 }
+display = { kchannel_depth = 2, frames_per_second = 20 }
+sleep_cap = { secs = 0, nanos = 100_000_000 } # 100ms
+
+[platform_cfg.tcp_uart]
+socket_addr = "127.0.0.1:9999"
+incoming_size = 4096
+outgoing_size = 4096
+kchannel_depth = 2
 
 [platform_cfg.forth_shell]
 capacity = 1024

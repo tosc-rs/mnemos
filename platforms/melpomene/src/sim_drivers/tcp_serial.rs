@@ -1,3 +1,4 @@
+use melpo_config::TcpUartConfig;
 use mnemos_kernel::{
     comms::{
         bbq::{new_bidi_channel, BidiHandle},
@@ -7,7 +8,7 @@ use mnemos_kernel::{
     services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     Kernel,
 };
-use std::{net::SocketAddr, sync::Arc};
+use std::sync::Arc;
 use tokio::{
     io::{self, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -22,18 +23,21 @@ pub struct TcpSerial {
 impl TcpSerial {
     pub async fn register(
         kernel: &'static Kernel,
-        ip: SocketAddr,
-        incoming_size: usize,
-        outgoing_size: usize,
+        settings: TcpUartConfig,
         irq: Arc<Notify>,
     ) -> Result<(), registry::RegistrationError> {
-        let (a_ring, b_ring) = new_bidi_channel(incoming_size, outgoing_size).await;
-        let (prod, cons) = KChannel::<Message<SimpleSerialService>>::new_async(2)
-            .await
-            .split();
-
-        let listener = TcpListener::bind(ip).await.unwrap();
-        tracing::info!("TCP serial port driver listening on {ip}");
+        let (a_ring, b_ring) =
+            new_bidi_channel(settings.incoming_size, settings.outgoing_size).await;
+        let (prod, cons) =
+            KChannel::<Message<SimpleSerialService>>::new_async(settings.kchannel_depth)
+                .await
+                .split();
+        let socket_addr = &settings.socket_addr;
+        let listener = TcpListener::bind(socket_addr).await.unwrap();
+        tracing::info!(
+            "TCP serial port driver listening on {}",
+            settings.socket_addr
+        );
 
         kernel
             .spawn(async move {
@@ -75,17 +79,13 @@ impl TcpSerial {
                     };
                 }
             }
-            .instrument(info_span!("TCP Serial", ?ip)),
+            .instrument(info_span!("TCP Serial", socket_addr)),
         );
 
         kernel
             .with_registry(|reg| reg.register_konly::<SimpleSerialService>(&prod))
             .await
     }
-}
-
-pub(crate) fn default_addr() -> SocketAddr {
-    SocketAddr::from(([127, 0, 0, 1], 9999))
 }
 
 async fn process_stream(handle: &mut BidiHandle, mut stream: TcpStream, irq: Arc<Notify>) {

@@ -4,13 +4,13 @@ use clap::Parser;
 use futures::FutureExt;
 use melpo_config::PlatformConfig;
 use melpomene::{
-    cli::{self, MelpomeneOptions},
+    cli,
     sim_drivers::{emb_display::SimDisplay, tcp_serial::TcpSerial},
 };
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
     daemons::shells::{graphical_shell_mono, GraphicalShellSettings},
-    Kernel, KernelSettings,
+    Kernel,
 };
 use tokio::{
     task,
@@ -20,24 +20,23 @@ use tokio::{
 const DISPLAY_WIDTH_PX: u32 = 400;
 const DISPLAY_HEIGHT_PX: u32 = 240;
 
-
 fn main() {
     let args = cli::Args::parse();
     args.tracing.setup_tracing();
     let _span = tracing::info_span!("Melpo").entered();
-    run_melpomene(args.melpomene);
+    run_melpomene();
 }
 
 #[global_allocator]
 static AHEAP: MnemosAlloc<System> = MnemosAlloc::new();
 
 #[tokio::main(flavor = "current_thread")]
-async fn run_melpomene(opts: cli::MelpomeneOptions) {
+async fn run_melpomene() {
     let local = tokio::task::LocalSet::new();
     println!("========================================");
     local
         .run_until(async move {
-            let kernel = task::spawn_local(kernel_entry(opts));
+            let kernel = task::spawn_local(kernel_entry());
             tracing::info!("Kernel started.");
 
             println!("========================================");
@@ -55,8 +54,8 @@ async fn run_melpomene(opts: cli::MelpomeneOptions) {
     tracing::error!("You've met with a terrible fate, haven't you?");
 }
 
-#[tracing::instrument(name = "Kernel", level = "info", skip(opts))]
-async fn kernel_entry(opts: MelpomeneOptions) {
+#[tracing::instrument(name = "Kernel", level = "info")]
+async fn kernel_entry() {
     let config = config::load_configuration!(PlatformConfig).unwrap();
 
     tracing::warn!(
@@ -64,14 +63,8 @@ async fn kernel_entry(opts: MelpomeneOptions) {
         "Loaded settings",
     );
 
-    let settings = KernelSettings {
-        max_drivers: 16,
-        // TODO(eliza): chosen totally arbitrarily
-        timer_granularity: maitake::time::Duration::from_micros(1),
-    };
-
     let k = unsafe {
-        mnemos_alloc::containers::Box::into_raw(Kernel::new(settings).unwrap())
+        mnemos_alloc::containers::Box::into_raw(Kernel::new(config.kernel_cfg).unwrap())
             .as_ref()
             .unwrap()
     };
@@ -83,23 +76,22 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     if let Some(tcp_uart) = config.platform_cfg.tcp_uart {
         k.initialize({
             let irq = irq.clone();
+            let socket_addr = tcp_uart.socket_addr.clone();
             async move {
                 // Set up the bidirectional, async bbqueue channel between the TCP port
                 // (acting as a serial port) and the virtual serial port mux.
                 //
                 // Create the buffer, and spawn the worker task, giving it one of the
                 // queue handles
-                tracing::debug!("initializing simulated UART ({})", opts.serial_addr);
+                tracing::debug!("initializing simulated UART ({})", socket_addr);
                 TcpSerial::register(
                     k,
-                    opts.serial_addr,
-                    tcp_uart.incoming_size,
-                    tcp_uart.outgoing_size,
+                    tcp_uart,
                     irq,
                 )
                 .await
                 .unwrap();
-                tracing::info!("simulated UART ({}) initialized!", opts.serial_addr);
+                tracing::info!("simulated UART ({}) initialized!", socket_addr);
             }
         })
         .unwrap();
@@ -112,7 +104,7 @@ async fn kernel_entry(opts: MelpomeneOptions) {
         k.initialize(async move {
             SimDisplay::register(
                 k,
-                display.kchannel_depth,
+                display,
                 DISPLAY_WIDTH_PX,
                 DISPLAY_HEIGHT_PX,
             )
@@ -130,13 +122,14 @@ async fn kernel_entry(opts: MelpomeneOptions) {
     if let Some(forth_shell) = config.platform_cfg.forth_shell {
         let mut guish =
             GraphicalShellSettings::with_display_size(DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX);
-        guish.capacity = 1024;
+        guish.capacity = forth_shell.capacity;
         guish.forth_settings = forth_shell.params;
         k.initialize(graphical_shell_mono(k, guish)).unwrap();
     } else {
         tracing::warn!("Not spawning forth GUI shell!");
     }
 
+    let sleep_cap = config.platform_cfg.sleep_cap.as_micros() as u64;
     loop {
         // Tick the scheduler
         let t0 = tokio::time::Instant::now();
@@ -156,11 +149,9 @@ async fn kernel_entry(opts: MelpomeneOptions) {
             // hardware platform waiting for an interrupt.
             tracing::trace!("waiting for an interrupt...");
 
-            // Cap out at 100ms, just in case sim services aren't using the IRQ
-
-            // 1 ticks per us, 1000 us per ms, 100ms sleep
-            const CAP: u64 = 100 * 1000;
-            let amount = turn.ticks_to_next_deadline().unwrap_or(CAP);
+            let amount = turn
+                .ticks_to_next_deadline()
+                .unwrap_or(sleep_cap);
             tracing::trace!("next timer expires in {amount:?}us");
             // wait for an "interrupt"
             futures::select! {

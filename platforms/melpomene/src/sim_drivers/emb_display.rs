@@ -30,6 +30,7 @@ use embedded_graphics_simulator::{
     BinaryColorTheme, OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
 };
 use maitake::sync::Mutex;
+use melpo_config::DisplayConfig;
 use mnemos_alloc::containers::{Arc, HeapArray};
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
@@ -60,13 +61,13 @@ impl SimDisplay {
     #[tracing::instrument(skip(kernel))]
     pub async fn register(
         kernel: &'static Kernel,
-        channel_depth: usize,
+        settings: DisplayConfig,
         width: u32,
         height: u32,
     ) -> Result<(), FrameError> {
         tracing::debug!("initializing SimDisplay server ({width}x{height})...");
 
-        let (cmd_prod, cmd_cons) = KChannel::new_async(channel_depth).await.split();
+        let (cmd_prod, cmd_cons) = KChannel::new_async(settings.kchannel_depth).await.split();
         let commander = CommanderTask {
             kernel,
             cmd: cmd_cons,
@@ -74,7 +75,7 @@ impl SimDisplay {
             height,
         };
 
-        kernel.spawn(commander.run(width, height)).await;
+        kernel.spawn(commander.run(width, height, settings.frames_per_second)).await;
 
         kernel
             .with_registry(|reg| reg.register_konly::<EmbDisplayService>(&cmd_prod))
@@ -110,7 +111,7 @@ struct Context {
 
 impl CommanderTask {
     /// The entrypoint for the driver execution
-    async fn run(self, width: u32, height: u32) {
+    async fn run(self, width: u32, height: u32, frames_per_second: usize) {
         let output_settings = OutputSettingsBuilder::new()
             .theme(BinaryColorTheme::OledBlue)
             .build();
@@ -143,7 +144,7 @@ impl CommanderTask {
         self.kernel
             .spawn({
                 let mutex = mutex.clone();
-                render_loop(self.kernel, mutex)
+                render_loop(self.kernel, mutex, frames_per_second)
             })
             .await;
 
@@ -238,13 +239,13 @@ async fn handle_key_event(kmc: &mut KeyboardMuxClient, evt: SimulatorEvent) -> b
     }
 }
 
-async fn render_loop(kernel: &'static Kernel, mutex: Arc<Mutex<Option<Context>>>) {
+async fn render_loop(kernel: &'static Kernel, mutex: Arc<Mutex<Option<Context>>>, frames_per_second: usize) {
     let mut idle_ticks = 0;
-
     let mut keymux = KeyboardMuxClient::from_registry(kernel).await;
     let mut first_done = false;
+    let sleep_time = Duration::from_micros(1_000_000 / (frames_per_second as u64));
     loop {
-        kernel.sleep(Duration::from_micros(1_000_000 / 20)).await;
+        kernel.sleep(sleep_time).await;
         let mut guard = mutex.lock().await;
         let mut done = false;
         if let Some(Context {

@@ -115,6 +115,7 @@ pub struct Rings {
     pub k2u: NonNull<BBBuffer>,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
 pub struct KernelSettings {
     pub max_drivers: usize,
     pub timer_granularity: Duration,
@@ -146,7 +147,7 @@ pub struct KernelInner {
 
 /// Settings for all services spawned by default.
 #[derive(Debug, Default, Serialize, Deserialize)]
-pub struct DefaultServiceSettings {
+pub struct KernelServiceSettings {
     pub keyboard_mux: Option<KeyboardMuxSettings>,
     pub serial_mux: Option<SerialMuxSettings>,
     pub spawnulator: Option<SpawnulatorSettings>,
@@ -294,7 +295,7 @@ impl Kernel {
     /// [`SerialMuxService`]: crate::services::serial_mux::SerialMuxService
     /// [`SpawnulatorService`]:
     ///     crate::services::forth_spawnulator::SpawnulatorService
-    pub fn initialize_default_services(&'static self, settings: DefaultServiceSettings) {
+    pub fn initialize_default_services(&'static self, settings: KernelServiceSettings) {
         // Set the kernel timer as the global timer.
         // Disregard errors --- they just mean someone else has already set up
         // the global timer.
@@ -362,6 +363,3 @@ impl Kernel {
     }
 }
 
-// TODO: this should really be KernelSettings
-#[derive(Default, Debug, Serialize, Deserialize)]
-pub struct KernelConfig {}

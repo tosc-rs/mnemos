@@ -2,6 +2,10 @@
 name = "config"
 version = "0.1.0"
 edition = "2021"
+description = """
+Compile time configuration library. Intended to be used by platform crates
+and their build scripts
+"""
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -23,5 +27,5 @@ features = ["fancy"]
 optional = true
 
 [features]
-default = ["use-std"] # todo
+default = []
 use-std = ["dep:toml", "postcard/use-std", "dep:miette"]
