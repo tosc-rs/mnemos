@@ -104,9 +104,9 @@ use mnemos_alloc::containers::Box;
 use registry::Registry;
 use serde::{Deserialize, Serialize};
 use services::{
-    forth_spawnulator::{SpawnulatorServer, SpawnulatorSettingsOverrides},
-    keyboard::mux::{KeyboardMuxServer, KeyboardMuxSettingsOverrides},
-    serial_mux::{SerialMuxServer, SerialMuxSettingsOverrides},
+    forth_spawnulator::{SpawnulatorServer, SpawnulatorSettings},
+    keyboard::mux::{KeyboardMuxServer, KeyboardMuxSettings},
+    serial_mux::{SerialMuxServer, SerialMuxSettings},
 };
 pub use tracing;
 
@@ -148,13 +148,13 @@ pub struct KernelInner {
 /// Settings for all services spawned by default.
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct KernelServiceSettings {
-    pub keyboard_mux: KeyboardMuxSettingsOverrides,
-    pub serial_mux: SerialMuxSettingsOverrides,
-    pub spawnulator: SpawnulatorSettingsOverrides,
-    pub sermux_loopback: daemons::sermux::LoopbackSettingsOverrides,
-    pub sermux_hello: daemons::sermux::HelloSettingsOverrides,
+    pub keyboard_mux: KeyboardMuxSettings,
+    pub serial_mux: SerialMuxSettings,
+    pub spawnulator: SpawnulatorSettings,
+    pub sermux_loopback: daemons::sermux::LoopbackSettings,
+    pub sermux_hello: daemons::sermux::HelloSettings,
     #[cfg(feature = "serial-trace")]
-    pub sermux_trace: serial_trace::SerialTraceSettingsOverrides,
+    pub sermux_trace: serial_trace::SerialTraceSettings,
 }
 
 impl Kernel {
@@ -303,21 +303,15 @@ impl Kernel {
 
         // Initialize the kernel keyboard mux service.
         if settings.keyboard_mux.enabled {
-            self.initialize(KeyboardMuxServer::register(
-                self,
-                settings.keyboard_mux.into_settings(),
-            ))
-            .expect("failed to spawn KeyboardMuxService initialization");
+            self.initialize(KeyboardMuxServer::register(self, settings.keyboard_mux))
+                .expect("failed to spawn KeyboardMuxService initialization");
         }
 
         // Initialize the SerialMuxServer
         let sermux_up = if settings.serial_mux.enabled {
             Some(
-                self.initialize(SerialMuxServer::register(
-                    self,
-                    settings.serial_mux.into_settings(),
-                ))
-                .expect("failed to spawn SerialMuxService initialization"),
+                self.initialize(SerialMuxServer::register(self, settings.serial_mux))
+                    .expect("failed to spawn SerialMuxService initialization"),
             )
         } else {
             None
@@ -325,11 +319,8 @@ impl Kernel {
 
         // Initialize the Forth spawnulator.
         if settings.spawnulator.enabled {
-            self.initialize(SpawnulatorServer::register(
-                self,
-                settings.spawnulator.into_settings(),
-            ))
-            .expect("failed to spawn SpawnulatorService initialization");
+            self.initialize(SpawnulatorServer::register(self, settings.spawnulator))
+                .expect("failed to spawn SpawnulatorService initialization");
         }
 
         // Initialize Serial Mux daemons.
@@ -342,28 +333,18 @@ impl Kernel {
 
                 #[cfg(feature = "serial-trace")]
                 if settings.sermux_trace.enabled {
-                    crate::serial_trace::SerialSubscriber::start(
-                        self,
-                        settings.sermux_trace.into_settings(),
-                    )
-                    .await;
+                    crate::serial_trace::SerialSubscriber::start(self, settings.sermux_trace).await;
                 }
 
                 if settings.sermux_loopback.enabled {
-                    self.spawn(daemons::sermux::loopback(
-                        self,
-                        settings.sermux_loopback.into_settings(),
-                    ))
-                    .await;
+                    self.spawn(daemons::sermux::loopback(self, settings.sermux_loopback))
+                        .await;
                     tracing::debug!("SerMux loopback started");
                 }
 
                 if settings.sermux_hello.enabled {
-                    self.spawn(daemons::sermux::hello(
-                        self,
-                        settings.sermux_hello.into_settings(),
-                    ))
-                    .await;
+                    self.spawn(daemons::sermux::hello(self, settings.sermux_hello))
+                        .await;
                     tracing::debug!("SerMux Hello World started");
                 }
             })

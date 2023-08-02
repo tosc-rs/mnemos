@@ -136,37 +136,14 @@ pub struct KeyboardMuxServer {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct KeyboardMuxSettings {
-    pub max_keyboards: usize,
-    pub buffer_capacity: usize,
-    pub sermux_port: Option<u16>,
-}
-
-#[derive(Default, Debug, Serialize, Deserialize)]
-pub struct KeyboardMuxSettingsOverrides {
+    #[serde(default)]
     pub enabled: bool,
-    pub max_keyboards: Option<usize>,
-    pub buffer_capacity: Option<usize>,
-    pub sermux_port_enabled: bool,
+    #[serde(default = "KeyboardMuxSettings::default_buffer_capacity")]
+    pub max_keyboards: usize,
+    #[serde(default = "KeyboardMuxSettings::default_max_keyboards")]
+    pub buffer_capacity: usize,
+    #[serde(default = "KeyboardMuxSettings::default_sermux_port")]
     pub sermux_port: Option<u16>,
-}
-
-impl KeyboardMuxSettingsOverrides {
-    pub fn into_settings(self) -> KeyboardMuxSettings {
-        KeyboardMuxSettings {
-            max_keyboards: self
-                .max_keyboards
-                .unwrap_or(KeyboardMuxSettings::DEFAULT_MAX_KEYBOARDS),
-            buffer_capacity: self
-                .buffer_capacity
-                .unwrap_or(KeyboardMuxSettings::DEFAULT_BUFFER_CAPACITY),
-            sermux_port: if self.sermux_port_enabled {
-                self.sermux_port
-                    .or(KeyboardMuxSettings::DEFAULT_SERMUX_PORT)
-            } else {
-                None
-            },
-        }
-    }
 }
 
 impl KeyboardMuxServer {
@@ -298,6 +275,16 @@ impl KeyboardMuxSettings {
     pub const DEFAULT_MAX_KEYBOARDS: usize = 8;
     pub const DEFAULT_SERMUX_PORT: Option<u16> = Some(serial_mux::WellKnown::PseudoKeyboard as u16);
 
+    const fn default_buffer_capacity() -> usize {
+        Self::DEFAULT_BUFFER_CAPACITY
+    }
+    const fn default_max_keyboards() -> usize {
+        Self::DEFAULT_MAX_KEYBOARDS
+    }
+    const fn default_sermux_port() -> Option<u16> {
+        Self::DEFAULT_SERMUX_PORT
+    }
+
     /// Sets a [serial mux](crate::services::serial_mux) port to use as a
     /// virtual keyboard input.
     ///
@@ -316,6 +303,7 @@ impl KeyboardMuxSettings {
 impl Default for KeyboardMuxSettings {
     fn default() -> Self {
         Self {
+            enabled: true, // Should this default to false?
             max_keyboards: Self::DEFAULT_MAX_KEYBOARDS,
             buffer_capacity: Self::DEFAULT_BUFFER_CAPACITY,
             sermux_port: Self::DEFAULT_SERMUX_PORT,

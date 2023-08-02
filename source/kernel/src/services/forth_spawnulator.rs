@@ -136,23 +136,10 @@ pub enum RegistrationError {
 
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct SpawnulatorSettings {
-    pub capacity: usize,
-}
-
-#[derive(Default, Debug, Copy, Clone, Serialize, Deserialize)]
-pub struct SpawnulatorSettingsOverrides {
+    #[serde(default)]
     pub enabled: bool,
-    pub capacity: Option<usize>,
-}
-
-impl SpawnulatorSettingsOverrides {
-    pub fn into_settings(self) -> SpawnulatorSettings {
-        SpawnulatorSettings {
-            capacity: self
-                .capacity
-                .unwrap_or(SpawnulatorSettings::DEFAULT_CAPACITY),
-        }
-    }
+    #[serde(default = "SpawnulatorSettings::default_capacity")]
+    pub capacity: usize,
 }
 
 impl SpawnulatorServer {
@@ -207,14 +194,22 @@ impl SpawnulatorServer {
 impl SpawnulatorSettings {
     pub const DEFAULT_CAPACITY: usize = 16;
 
+    const fn default_capacity() -> usize {
+        Self::DEFAULT_CAPACITY
+    }
+
     pub fn with_capacity(self, capacity: usize) -> Self {
-        Self { capacity }
+        Self {
+            enabled: true, // Should this default to false?
+            capacity,
+        }
     }
 }
 
 impl Default for SpawnulatorSettings {
     fn default() -> Self {
         Self {
+            enabled: true, // Should this default to false?
             capacity: Self::DEFAULT_CAPACITY,
         }
     }

@@ -176,28 +176,12 @@ pub struct SerialMuxServer;
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
 pub struct SerialMuxSettings {
-    pub max_ports: u16,
-    pub max_frame: usize,
-}
-
-#[derive(Default, Copy, Clone, Debug, Serialize, Deserialize)]
-pub struct SerialMuxSettingsOverrides {
+    #[serde(default)]
     pub enabled: bool,
-    pub max_ports: Option<u16>,
-    pub max_frame: Option<usize>,
-}
-
-impl SerialMuxSettingsOverrides {
-    pub fn into_settings(self) -> SerialMuxSettings {
-        SerialMuxSettings {
-            max_ports: self
-                .max_ports
-                .unwrap_or(SerialMuxSettings::DEFAULT_MAX_PORTS),
-            max_frame: self
-                .max_frame
-                .unwrap_or(SerialMuxSettings::DEFAULT_MAX_FRAME),
-        }
-    }
+    #[serde(default = "SerialMuxSettings::default_max_ports")]
+    pub max_ports: u16,
+    #[serde(default = "SerialMuxSettings::default_max_frame")]
+    pub max_frame: usize,
 }
 
 impl SerialMuxServer {
@@ -245,6 +229,7 @@ impl SerialMuxServer {
         SerialMuxSettings {
             max_ports,
             max_frame,
+            ..
         }: SerialMuxSettings,
     ) -> Result<(), RegistrationError> {
         let max_ports = max_ports as usize;
@@ -295,6 +280,13 @@ impl SerialMuxSettings {
     pub const DEFAULT_MAX_PORTS: u16 = 16;
     pub const DEFAULT_MAX_FRAME: usize = 512;
 
+    const fn default_max_ports() -> u16 {
+        Self::DEFAULT_MAX_PORTS
+    }
+    const fn default_max_frame() -> usize {
+        Self::DEFAULT_MAX_FRAME
+    }
+
     pub fn with_max_ports(self, max_ports: u16) -> Self {
         Self { max_ports, ..self }
     }
@@ -307,6 +299,7 @@ impl SerialMuxSettings {
 impl Default for SerialMuxSettings {
     fn default() -> Self {
         Self {
+            enabled: true, // Should this default to false?
             max_ports: Self::DEFAULT_MAX_PORTS,
             max_frame: Self::DEFAULT_MAX_FRAME,
         }

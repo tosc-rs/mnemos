@@ -367,10 +367,15 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SerialTraceSettings {
+    /// Should the serial trace be enabled?
+    #[serde(default)]
+    pub enabled: bool,
     /// SerialMux port for sermux tracing.
+    #[serde(default = "SerialTraceSettings::default_port")]
     pub port: u16,
 
     /// Capacity for the serial port's send buffer.
+    #[serde(default = "SerialTraceSettings::default_sendbuf_capacity")]
     pub sendbuf_capacity: usize,
 
     /// Capacity for the trace ring buffer.
@@ -378,61 +383,13 @@ pub struct SerialTraceSettings {
     /// Note that *two* buffers of this size will be allocated. One buffer is
     /// used for the normal trace ring buffer, and another is used for the
     /// interrupt service routine trace ring buffer.
+    #[serde(default = "SerialTraceSettings::default_tracebuf_capacity")]
     pub tracebuf_capacity: usize,
 
     /// Initial level filter used if the debug host does not select a max level.
     #[serde(with = "level_filter")]
+    #[serde(default = "SerialTraceSettings::default_initial_level")]
     pub initial_level: LevelFilter,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-#[non_exhaustive]
-pub struct SerialTraceSettingsOverrides {
-    /// Should the serial trace be enabled?
-    pub enabled: bool,
-    /// SerialMux port for sermux tracing.
-    pub port: Option<u16>,
-
-    /// Capacity for the serial port's send buffer.
-    pub sendbuf_capacity: Option<usize>,
-
-    /// Capacity for the trace ring buffer.
-    ///
-    /// Note that *two* buffers of this size will be allocated. One buffer is
-    /// used for the normal trace ring buffer, and another is used for the
-    /// interrupt service routine trace ring buffer.
-    pub tracebuf_capacity: Option<usize>,
-
-    /// Initial level filter used if the debug host does not select a max level.
-    #[serde(with = "level_filter")]
-    pub initial_level: LevelFilter,
-}
-
-impl Default for SerialTraceSettingsOverrides {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            port: None,
-            sendbuf_capacity: None,
-            tracebuf_capacity: None,
-            initial_level: LevelFilter::OFF,
-        }
-    }
-}
-
-impl SerialTraceSettingsOverrides {
-    pub fn into_settings(self) -> SerialTraceSettings {
-        SerialTraceSettings {
-            port: self.port.unwrap_or(SerialTraceSettings::DEFAULT_PORT),
-            sendbuf_capacity: self
-                .sendbuf_capacity
-                .unwrap_or(SerialTraceSettings::DEFAULT_SENDBUF_CAPACITY),
-            tracebuf_capacity: self
-                .tracebuf_capacity
-                .unwrap_or(SerialTraceSettings::DEFAULT_TRACEBUF_CAPACITY),
-            initial_level: self.initial_level,
-        }
-    }
 }
 
 pub const fn level_to_u8(level: LevelFilter) -> u8 {
@@ -519,9 +476,23 @@ impl SerialTraceSettings {
     pub const DEFAULT_TRACEBUF_CAPACITY: usize = Self::DEFAULT_SENDBUF_CAPACITY * 4;
     pub const DEFAULT_INITIAL_LEVEL: LevelFilter = LevelFilter::OFF;
 
+    const fn default_port() -> u16 {
+        Self::DEFAULT_PORT
+    }
+    const fn default_sendbuf_capacity() -> usize {
+        Self::DEFAULT_SENDBUF_CAPACITY
+    }
+    const fn default_tracebuf_capacity() -> usize {
+        Self::DEFAULT_TRACEBUF_CAPACITY
+    }
+    const fn default_initial_level() -> LevelFilter {
+        Self::DEFAULT_INITIAL_LEVEL
+    }
+
     #[must_use]
     pub const fn new() -> Self {
         Self {
+            enabled: true, // Should this default to false?
             port: Self::DEFAULT_PORT,
             sendbuf_capacity: Self::DEFAULT_SENDBUF_CAPACITY,
             tracebuf_capacity: Self::DEFAULT_TRACEBUF_CAPACITY,

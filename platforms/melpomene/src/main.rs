@@ -76,8 +76,8 @@ async fn kernel_entry() {
     if config.platform.tcp_uart.enabled {
         k.initialize({
             let irq = irq.clone();
-            let tcp_uart = config.platform.tcp_uart.into_settings();
-            let socket_addr = tcp_uart.socket_addr.clone();
+            let tcp_uart = config.platform.tcp_uart;
+            let socket_addr = tcp_uart.socket_addr;
             async move {
                 // Set up the bidirectional, async bbqueue channel between the TCP port
                 // (acting as a serial port) and the virtual serial port mux.
@@ -99,7 +99,7 @@ async fn kernel_entry() {
         k.initialize(async move {
             SimDisplay::register(
                 k,
-                config.platform.display.into_settings(),
+                config.platform.display,
                 DISPLAY_WIDTH_PX,
                 DISPLAY_HEIGHT_PX,
             )
@@ -117,7 +117,7 @@ async fn kernel_entry() {
     if config.platform.forth_shell.enabled {
         let mut guish =
             GraphicalShellSettings::with_display_size(DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX);
-        let forth_shell = config.platform.forth_shell.into_settings();
+        let forth_shell = config.platform.forth_shell;
         guish.capacity = forth_shell.capacity;
         guish.forth_settings = forth_shell.params;
         k.initialize(graphical_shell_mono(k, guish)).unwrap();
@@ -128,7 +128,7 @@ async fn kernel_entry() {
     let sleep_cap = config
         .platform
         .sleep_cap
-        .unwrap_or_else(|| PlatformConfig::default_sleep_cap())
+        .unwrap_or_else(PlatformConfig::default_sleep_cap)
         .as_micros() as u64;
     loop {
         // Tick the scheduler
