@@ -62,7 +62,7 @@ impl TcpSerial {
             })
             .await;
 
-        let _ = tokio::spawn(
+        let _hdl = tokio::spawn(
             async move {
                 let mut handle = a_ring;
                 loop {

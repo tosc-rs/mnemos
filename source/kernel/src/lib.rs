@@ -308,14 +308,10 @@ impl Kernel {
         }
 
         // Initialize the SerialMuxServer
-        let sermux_up = if let Some(serial_mux) = settings.serial_mux {
-            Some(
-                self.initialize(SerialMuxServer::register(self, serial_mux))
-                    .expect("failed to spawn SerialMuxService initialization"),
-            )
-        } else {
-            None
-        };
+        let sermux_up = settings.serial_mux.map(|serial_mux| {
+            self.initialize(SerialMuxServer::register(self, serial_mux))
+                .expect("failed to spawn SerialMuxService initialization")
+        });
 
         // Initialize the Forth spawnulator.
         if let Some(spawnulator) = settings.spawnulator {
@@ -362,4 +358,3 @@ impl Kernel {
         }
     }
 }
-

@@ -75,7 +75,9 @@ impl SimDisplay {
             height,
         };
 
-        kernel.spawn(commander.run(width, height, settings.frames_per_second)).await;
+        kernel
+            .spawn(commander.run(width, height, settings.frames_per_second))
+            .await;
 
         kernel
             .with_registry(|reg| reg.register_konly::<EmbDisplayService>(&cmd_prod))
@@ -185,7 +187,7 @@ impl CommanderTask {
     /// Draw the given MonoChunk to the persistent framebuffer
     async fn draw_mono(&self, fc: &MonoChunk, mutex: &Mutex<Option<Context>>) -> Result<(), ()> {
         let mut guard = mutex.lock().await;
-        let ctx = if let Some(c) = (&mut *guard).as_mut() {
+        let ctx = if let Some(c) = (*guard).as_mut() {
             c
         } else {
             return Err(());
@@ -239,7 +241,11 @@ async fn handle_key_event(kmc: &mut KeyboardMuxClient, evt: SimulatorEvent) -> b
     }
 }
 
-async fn render_loop(kernel: &'static Kernel, mutex: Arc<Mutex<Option<Context>>>, frames_per_second: usize) {
+async fn render_loop(
+    kernel: &'static Kernel,
+    mutex: Arc<Mutex<Option<Context>>>,
+    frames_per_second: usize,
+) {
     let mut idle_ticks = 0;
     let mut keymux = KeyboardMuxClient::from_registry(kernel).await;
     let mut first_done = false;
@@ -253,14 +259,14 @@ async fn render_loop(kernel: &'static Kernel, mutex: Arc<Mutex<Option<Context>>>
             window,
             dirty,
             ..
-        }) = (&mut *guard).as_mut()
+        }) = (*guard).as_mut()
         {
             // We can't poll the events until the first draw, or we'll panic.
             // But once we have: we want to always process events, even if there
             // is nothing to draw, to potentially feed the keymux or catch
             // a "time to die" event.
             if first_done {
-                for evt in window.events().into_iter() {
+                for evt in window.events() {
                     if handle_key_event(&mut keymux, evt).await {
                         done = true;
                     }
@@ -272,7 +278,7 @@ async fn render_loop(kernel: &'static Kernel, mutex: Arc<Mutex<Option<Context>>>
             if *dirty || idle_ticks >= 4 {
                 idle_ticks = 0;
                 *dirty = false;
-                window.update(&sdisp);
+                window.update(sdisp);
                 first_done = true;
             } else {
                 idle_ticks += 1;
@@ -349,11 +355,9 @@ fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u32) {
 /// On a physical display, the raw pixel data can be sent over to the display directly
 /// Using the display's device interface
 fn frame_display(fc: &HeapArray<u8>, width: u32) -> Result<ImageRaw<Gray8>, ()> {
-    let raw_image: ImageRaw<Gray8>;
     // TODO: We use Gray8 instead of BinaryColor here because BinaryColor bitpacks to 1bpp,
     // while we are currently doing 8bpp.
-    raw_image = ImageRaw::<Gray8>::new(&fc, width);
-    Ok(raw_image)
+    Ok(ImageRaw::<Gray8>::new(fc, width))
 }
 
 fn sim_key_to_key_event(

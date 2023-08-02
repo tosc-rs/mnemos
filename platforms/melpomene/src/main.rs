@@ -58,7 +58,7 @@ async fn run_melpomene() {
 async fn kernel_entry() {
     let config = config::load_configuration!(PlatformConfig).unwrap();
 
-    tracing::warn!(
+    tracing::info!(
         settings = ?config,
         "Loaded settings",
     );
@@ -84,13 +84,7 @@ async fn kernel_entry() {
                 // Create the buffer, and spawn the worker task, giving it one of the
                 // queue handles
                 tracing::debug!("initializing simulated UART ({})", socket_addr);
-                TcpSerial::register(
-                    k,
-                    tcp_uart,
-                    irq,
-                )
-                .await
-                .unwrap();
+                TcpSerial::register(k, tcp_uart, irq).await.unwrap();
                 tracing::info!("simulated UART ({}) initialized!", socket_addr);
             }
         })
@@ -102,14 +96,9 @@ async fn kernel_entry() {
     // Spawn the graphics driver
     if let Some(display) = config.platform_cfg.display {
         k.initialize(async move {
-            SimDisplay::register(
-                k,
-                display,
-                DISPLAY_WIDTH_PX,
-                DISPLAY_HEIGHT_PX,
-            )
-            .await
-            .unwrap();
+            SimDisplay::register(k, display, DISPLAY_WIDTH_PX, DISPLAY_HEIGHT_PX)
+                .await
+                .unwrap();
         })
         .unwrap();
     } else {
@@ -149,23 +138,21 @@ async fn kernel_entry() {
             // hardware platform waiting for an interrupt.
             tracing::trace!("waiting for an interrupt...");
 
-            let amount = turn
-                .ticks_to_next_deadline()
-                .unwrap_or(sleep_cap);
+            let amount = turn.ticks_to_next_deadline().unwrap_or(sleep_cap);
             tracing::trace!("next timer expires in {amount:?}us");
             // wait for an "interrupt"
             futures::select! {
                 _ = irq.notified().fuse() => {
                     tracing::trace!("...woken by I/O interrupt");
                },
-               _ = tokio::time::sleep(Duration::from_micros(amount.into())).fuse() => {
+               _ = tokio::time::sleep(Duration::from_micros(amount)).fuse() => {
                     tracing::trace!("woken by timer");
                }
             }
 
             // Account for time slept
             let elapsed = wfi_start.elapsed().as_micros() as u64;
-            let _turn = k.timer().force_advance_ticks(elapsed.into());
+            let _turn = k.timer().force_advance_ticks(elapsed);
         } else {
             // let other tokio tasks (simulated hardware devices) run.
             tokio::task::yield_now().await;
