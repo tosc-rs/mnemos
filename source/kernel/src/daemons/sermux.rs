@@ -31,8 +31,8 @@ pub struct LoopbackSettings {
 }
 
 impl LoopbackSettings {
-    const DEFAULT_PORT: u16 = WellKnown::Loopback as u16;
-    const DEFAULT_BUFFER_SIZE: usize = 128;
+    pub const DEFAULT_PORT: u16 = WellKnown::Loopback as u16;
+    pub const DEFAULT_BUFFER_SIZE: usize = 128;
 
     const fn default_port() -> u16 {
         Self::DEFAULT_PORT
@@ -99,10 +99,10 @@ pub struct HelloSettings {
 }
 
 impl HelloSettings {
-    const DEFAULT_PORT: u16 = WellKnown::HelloWorld as u16;
-    const DEFAULT_BUFFER_SIZE: usize = 32;
-    const DEFAULT_MESSAGE_STR: &str = "hello\r\n";
-    const DEFAULT_INTERVAL: Duration = Duration::from_secs(1);
+    pub const DEFAULT_PORT: u16 = WellKnown::HelloWorld as u16;
+    pub const DEFAULT_BUFFER_SIZE: usize = 32;
+    pub const DEFAULT_MESSAGE_STR: &str = "hello\r\n";
+    pub const DEFAULT_INTERVAL: Duration = Duration::from_secs(1);
 
     const fn default_port() -> u16 {
         Self::DEFAULT_PORT

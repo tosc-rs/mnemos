@@ -220,14 +220,14 @@ impl<'forth> AsyncBuiltins<'forth, MnemosContext> for Dispatcher {
 }
 
 impl Params {
-    const DEFAULT_STACK_SIZE: usize = 256;
-    const DEFAULT_INPUT_BUF_SIZE: usize = 256;
-    const DEFAULT_OUTPUT_BUF_SIZE: usize = 256;
-    const DEFAULT_DICTIONARY_SIZE: usize = 4096;
-    const DEFAULT_STDIN_CAPACITY: usize = 1024;
-    const DEFAULT_STDOUT_CAPACITY: usize = 1024;
-    const DEFAULT_BAG_OF_HOLDING_CAPACITY: usize = 16;
-    const DEFAULT_SPAWNULATOR_TIMEOUT: Duration = Duration::from_secs(5);
+    pub const DEFAULT_STACK_SIZE: usize = 256;
+    pub const DEFAULT_INPUT_BUF_SIZE: usize = 256;
+    pub const DEFAULT_OUTPUT_BUF_SIZE: usize = 256;
+    pub const DEFAULT_DICTIONARY_SIZE: usize = 4096;
+    pub const DEFAULT_STDIN_CAPACITY: usize = 1024;
+    pub const DEFAULT_STDOUT_CAPACITY: usize = 1024;
+    pub const DEFAULT_BAG_OF_HOLDING_CAPACITY: usize = 16;
+    pub const DEFAULT_SPAWNULATOR_TIMEOUT: Duration = Duration::from_secs(5);
 
     const fn default_stack_size() -> usize {
         Self::DEFAULT_STACK_SIZE

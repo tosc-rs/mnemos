@@ -60,10 +60,10 @@ pub struct TcpUartConfig {
 }
 
 impl TcpUartConfig {
-    const DEFAULT_KCHANNEL_DEPTH: usize = 2;
-    const DEFAULT_INCOMING_SIZE: usize = 4096;
-    const DEFAULT_OUTGOING_SIZE: usize = 4096;
-    const DEFAULT_SOCKET_ADDR_STR: &str = "127.0.0.1:9999";
+    pub const DEFAULT_KCHANNEL_DEPTH: usize = 2;
+    pub const DEFAULT_INCOMING_SIZE: usize = 4096;
+    pub const DEFAULT_OUTGOING_SIZE: usize = 4096;
+    pub const DEFAULT_SOCKET_ADDR_STR: &str = "127.0.0.1:9999";
 
     const fn default_kchannel_depth() -> usize {
         Self::DEFAULT_KCHANNEL_DEPTH
@@ -93,8 +93,8 @@ pub struct DisplayConfig {
 }
 
 impl DisplayConfig {
-    const DEFAULT_KCHANNEL_DEPTH: usize = 2;
-    const DEFAULT_FRAMES_PER_SECOND: usize = 20;
+    pub const DEFAULT_KCHANNEL_DEPTH: usize = 2;
+    pub const DEFAULT_FRAMES_PER_SECOND: usize = 20;
 
     const fn default_kchannel_depth() -> usize {
         Self::DEFAULT_KCHANNEL_DEPTH
@@ -118,8 +118,8 @@ pub struct ForthShell {
 }
 
 impl ForthShell {
-    const DEFAULT_CAPACITY: usize = 1024;
-    const DEFAULT_PARAMS: Params = Params::new();
+    pub const DEFAULT_CAPACITY: usize = 1024;
+    pub const DEFAULT_PARAMS: Params = Params::new();
 
     const fn default_capacity() -> usize {
         Self::DEFAULT_CAPACITY
