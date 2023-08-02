@@ -40,7 +40,7 @@ pub fn kernel_start(info: &'static mut bootloader_api::BootInfo) -> ! {
 #[cfg_attr(target_os = "none", panic_handler)]
 fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
     use embedded_graphics::{
-        mono_font::{ascii, MonoTextStyleBuilder},
+        mono_font::MonoTextStyleBuilder,
         pixelcolor::{Rgb888, RgbColor as _},
         prelude::*,
         text::{Alignment, Text},
@@ -68,14 +68,18 @@ fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
     let mut target = framebuf.as_draw_target();
 
     let style = MonoTextStyleBuilder::new()
-        .font(&ascii::FONT_9X15_BOLD)
-        .text_color(Rgb888::RED)
-        .background_color(Rgb888::WHITE)
+        .font(&profont::PROFONT_18_POINT)
+        .text_color(Rgb888::WHITE)
         .build();
 
-    let _ = Text::with_alignment("mnemos panicked", Point::new(5, 15), style, Alignment::Left)
-        .draw(&mut target)
-        .unwrap();
+    let _ = Text::with_alignment(
+        "mnemos panicked lol",
+        Point::new(5, 15),
+        style,
+        Alignment::Left,
+    )
+    .draw(&mut target)
+    .unwrap();
 
     // TODO(eliza): actually print something good
 

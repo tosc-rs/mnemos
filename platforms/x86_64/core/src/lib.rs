@@ -8,10 +8,22 @@ pub use hal_x86_64::{
     cpu::{local::LocalKey, wait_for_interrupt},
     mm,
 };
-use kernel::{mnemos_alloc::containers::Box, Kernel, KernelSettings};
+use kernel::{
+    mnemos_alloc::{
+        containers::Box,
+        heap::{MnemosAlloc, SingleThreadedLinkedListAllocator},
+    },
+    Kernel, KernelSettings,
+};
 
 pub mod acpi;
 pub mod interrupt;
+
+// TODO(eliza): single-threaded linked list allocator is not gonna be sufficient
+// on x86 systems with Big memory amounts and SMP...
+// TODO(eliza): we will also need a page frame allocator to placate mycelium-hal...
+#[global_allocator]
+static AHEAP: MnemosAlloc<SingleThreadedLinkedListAllocator> = MnemosAlloc::new();
 
 pub fn init(bootinfo: &impl BootInfo, rsdp_addr: Option<PAddr>) -> &'static Kernel {
     // TODO: init early tracing?

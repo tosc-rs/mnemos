@@ -112,13 +112,13 @@ flash-c3 board *espflash-args: (_get-cargo-command "espflash" "cargo-espflash") 
         --bin {{ board }} \
         {{ espflash-args }}
 
-# build a bootable x86_64 disk image.
-build-x86 target="bootloader":
-    cd {{ _x86_dir }}/{{ target }} && {{ _cargo }} build --release
+# build a bootable x86_64 disk image, using rust-osdev/bootloader.
+build-x86 *args='':
+    {{ _cargo }} build -p mnemos-x86_64-bootloader {{ args }}
 
 # run an x86_64 MnemOS image in QEMU
-run-x86 target="bootloader": (build-x86 target)
-    cd {{ _x86_dir }}/{{ target }} && {{ _cargo }} run --release
+run-x86 *args='':
+    {{ _cargo }} run -p mnemos-x86_64-bootloader {{ args }}
 
 # run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard)
 crowtty *FLAGS:

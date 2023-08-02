@@ -6,8 +6,8 @@ version = "0.1.0"
 bootloader = "0.11"
 
 [build-dependencies.mnemos]
-package = "mnemos-x86_64"
-path = "../kernel"
+package = "mnemos-x86_64-core"
+path = "../core"
 artifact = "bin:bootloader"
 target = "x86_64-unknown-none"
 features = ["bootloader_api"]

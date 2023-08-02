@@ -7,11 +7,22 @@ edition = "2021"
 test = false
 bench = false
 
+[[bin]]
+name = "bootloader"
+test = false
+bench = false
+required-features = ["bootloader_api"]
+
 [features]
 
 [dependencies]
 acpi = "4.1.1"
+# NOTE FOR FUTURE ELIZAS WHO ARE MESSING WITH THIS: the bootloader crate's build
+# script is not that good, and breaks if you put this in `cfg(...).dependencies`
+# instead of normal [dependencies]. don't move this.
+bootloader_api = { version = "0.11", optional = true }
 embedded-graphics = "0.7.1"
+profont = "0.6.1"
 
 # kernel
 [dependencies.mnemos]
@@ -32,7 +43,6 @@ git = "https://github.com/hawkw/mycelium"
 
 [dependencies.mycelium-util]
 git = "https://github.com/hawkw/mycelium"
-
 
 [dependencies.futures]
 version = "0.3.21"

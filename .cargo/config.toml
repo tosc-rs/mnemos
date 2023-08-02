@@ -10,3 +10,6 @@ rustflags = ["--cfg", "tokio_unstable"]
 
 [target.riscv32imac-unknown-none-elf]
 runner = "espflash flash --monitor"
+
+[unstable]
+bindeps = true
