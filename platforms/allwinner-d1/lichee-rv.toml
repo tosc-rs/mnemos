@@ -18,5 +18,11 @@ enabled = true
 enabled = true
 
 [platform.i2c]
-enabled = true
+enabled = false
 mapping = "LicheeRvTwi0"
+
+[platform.i2c_puppet]
+enabled = false
+
+[platform.blink_service]
+enabled = true

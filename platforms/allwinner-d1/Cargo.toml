@@ -36,13 +36,13 @@ riscv-rt = "0.11.0"
 path = "../../source/kernel"
 default-features = false
 
+[dependencies.mnemos-beepy]
+path = "../beepy"
+
 [dependencies.tracing]
 version = "0.1.37"
 features = ["attributes"]
 default-features = false
-
-[dependencies.mnemos-beepy]
-path = "../beepy"
 
 [dependencies.embedded-graphics]
 version = "0.7.1"
@@ -55,3 +55,9 @@ default-features = false
 [dependencies.riscv]
 version = "0.10"
 features =[ "critical-section-single-hart"]
+
+[features]
+# board features
+lichee-rv = []
+mq-pro = []
+beepy = []
