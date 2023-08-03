@@ -20,5 +20,17 @@ fn main() {
     println!("cargo:rustc-link-arg=-Tmemory.x");
     println!("cargo:rustc-link-arg=-Tlink.x");
 
-    render_project::<PlatformConfig>("d1.toml").unwrap();
+    let lichee_rv = cfg!(feature = "lichee-rv");
+    let mq_pro = cfg!(feature = "mq-pro");
+    let beepy = cfg!(feature = "beepy");
+
+    let name = match (lichee_rv, mq_pro, beepy) {
+        (false, false, false) => panic!("Must select a board target"),
+        (true, false, false) => "lichee-rv.toml",
+        (false, true, false) => "mq-pro.toml",
+        (false, false, true) => "beepy.toml",
+        _ => panic!("Must only select one board target"),
+    };
+
+    render_project::<PlatformConfig>(name).unwrap();
 }

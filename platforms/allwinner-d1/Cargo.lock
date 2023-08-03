@@ -84,6 +84,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8fe8f5a8a398345e52358e18ff07cc17a568fbca5c6f73873d3a62056309603"
 
 [[package]]
+name = "bbq10kbd"
+version = "0.1.0"
+source = "git+https://github.com/hawkw/bbq10kbd?branch=eliza/async#d2365be8726e9320b0e4ab626043c1a8a41246f8"
+dependencies = [
+ "embedded-hal 0.2.7",
+ "embedded-hal-async",
+]
+
+[[package]]
 name = "bit_field"
 version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -661,6 +670,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "mnemos-beepy"
+version = "0.1.0"
+dependencies = [
+ "bbq10kbd",
+ "futures",
+ "mnemos",
+ "mycelium-bitfield",
+ "tracing 0.1.37",
+ "uuid",
+]
+
+[[package]]
 name = "mnemos-config"
 version = "0.1.0"
 dependencies = [
@@ -681,6 +702,7 @@ dependencies = [
  "embedded-graphics",
  "futures",
  "mnemos",
+ "mnemos-beepy",
  "mnemos-config",
  "riscv",
  "riscv-rt",
@@ -1548,8 +1570,3 @@ checksum = "f46aab759304e4d7b2075a9aecba26228bb073ee8c50db796b2c72c676b5d807"
 dependencies = [
  "memchr",
 ]
-
-[[patch.unused]]
-name = "bbq10kbd"
-version = "0.1.0"
-source = "git+https://github.com/hawkw/bbq10kbd?branch=eliza/async#d2365be8726e9320b0e4ab626043c1a8a41246f8"

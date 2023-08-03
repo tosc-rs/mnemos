@@ -14,13 +14,12 @@ use core::{
     fmt::Write,
     panic::PanicInfo,
     sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
 };
 use d1_pac::{Interrupt, DMAC, TIMER};
 use kernel::{
     mnemos_alloc::containers::Box,
     tracing::{self, Instrument},
-    Kernel, KernelSettings,
+    Kernel, KernelSettings, KernelServiceSettings,
 };
 
 pub use self::ram::Ram;
@@ -60,15 +59,11 @@ impl D1 {
         dmac: Dmac,
         plic: Plic,
         i2c0: Option<twi::I2c0>,
+        kernel_settings: KernelSettings,
+        service_settings: KernelServiceSettings,
     ) -> Self {
-        let k_settings = KernelSettings {
-            max_drivers: 16,
-            // Note: The timers used will be configured to 3MHz, leading to (approximately)
-            // 333ns granularity.
-            timer_granularity: Duration::from_nanos(333),
-        };
         let k = unsafe {
-            Box::into_raw(Kernel::new(k_settings).expect("cannot initialize kernel"))
+            Box::into_raw(Kernel::new(kernel_settings).expect("cannot initialize kernel"))
                 .as_ref()
                 .unwrap()
         };
@@ -110,7 +105,7 @@ impl D1 {
             i2c0_int
         });
 
-        k.initialize_default_services(Default::default());
+        k.initialize_default_services(service_settings);
 
         Self {
             kernel: k,
