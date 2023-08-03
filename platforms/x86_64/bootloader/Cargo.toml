@@ -1,17 +1,21 @@
 [package]
 name = "mnemos-x86_64-bootloader"
 version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# used for UEFI booting in QEMU
+ovmf-prebuilt = "0.1.0-alpha.1"
+# used for the QEMU runner
+clap = { version = "4", features = ["derive", "env"] }
 
 [build-dependencies]
 bootloader = "0.11"
 
+# the actual MnemOS kernel binary
 [build-dependencies.mnemos]
 package = "mnemos-x86_64-core"
 path = "../core"
 artifact = "bin:bootloader"
 target = "x86_64-unknown-none"
 features = ["bootloader_api"]
-
-[dependencies]
-# used for UEFI booting in QEMU
-ovmf-prebuilt = "0.1.0-alpha.1"
