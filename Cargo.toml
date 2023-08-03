@@ -26,7 +26,8 @@ members = [
     "tools/*",
 
     # platforms
-    "platforms/allwinner-d1/*",
+    "platforms/allwinner-d1",
+    "platforms/allwinner-d1/d1-config",
     "platforms/beepy",
     "platforms/esp32c3-buddy",
     "platforms/melpomene",
@@ -52,8 +53,6 @@ default-members = [
     "tools/f3repl",
 
     # platforms
-    "platforms/allwinner-d1/core",
-    "platforms/beepy",
     "platforms/melpomene",
     "platforms/melpomene/melpo-config",
 ]

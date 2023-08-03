@@ -3,6 +3,9 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
+use d1_config::PlatformConfig;
+use mnemos_config::buildtime::render_project;
+
 fn main() {
     let out_dir = env::var("OUT_DIR").expect("No out dir");
     let dest_path = Path::new(&out_dir);
@@ -16,4 +19,6 @@ fn main() {
     println!("cargo:rerun-if-changed=build.rs");
     println!("cargo:rustc-link-arg=-Tmemory.x");
     println!("cargo:rustc-link-arg=-Tlink.x");
+
+    render_project::<PlatformConfig>("d1.toml").unwrap();
 }
