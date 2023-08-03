@@ -41,7 +41,7 @@ pub struct D1 {
     pub plic: Plic,
     _uart: Uart,
     _spim: spim::Spim1,
-    i2c0_int: (Interrupt, fn()),
+    i2c0_int: Option<(Interrupt, fn())>,
 }
 
 impl D1 {
@@ -59,7 +59,7 @@ impl D1 {
         spim: spim::Spim1,
         dmac: Dmac,
         plic: Plic,
-        i2c0: twi::I2c0,
+        i2c0: Option<twi::I2c0>,
     ) -> Self {
         let k_settings = KernelSettings {
             max_drivers: 16,
@@ -96,16 +96,19 @@ impl D1 {
         .unwrap();
 
         // Initialize the I2C0 TWI
-        let i2c0_int = i2c0.interrupt();
-        k.initialize(
-            async {
-                tracing::debug!("initializing I2C0 TWI...");
-                i2c0.register(k, 4).await.unwrap();
-                tracing::info!("I2C0 TWI initialized!");
-            }
-            .instrument(tracing::info_span!("I2C0")),
-        )
-        .unwrap();
+        let i2c0_int = i2c0.map(|i2c0| {
+            let i2c0_int = i2c0.interrupt();
+            k.initialize(
+                async {
+                    tracing::debug!("initializing I2C0 TWI...");
+                    i2c0.register(k, 4).await.unwrap();
+                    tracing::info!("I2C0 TWI initialized!");
+                }
+                .instrument(tracing::info_span!("I2C0")),
+            )
+            .unwrap();
+            i2c0_int
+        });
 
         k.initialize_default_services(Default::default());
 
@@ -168,7 +171,7 @@ impl D1 {
             plic,
             _uart,
             _spim,
-            i2c0_int: (i2c0_int, i2c0_isr),
+            i2c0_int,
         } = self;
 
         // Timer0 is used as a freewheeling rolling timer.
@@ -202,11 +205,14 @@ impl D1 {
             plic.register(Interrupt::TIMER1, Self::timer1_int);
             plic.register(Interrupt::DMAC_NS, Self::handle_dmac);
             plic.register(Interrupt::UART0, D1Uart::handle_uart0_int);
-            plic.register(i2c0_int, i2c0_isr);
 
             plic.activate(Interrupt::DMAC_NS, Priority::P1).unwrap();
             plic.activate(Interrupt::UART0, Priority::P1).unwrap();
-            plic.activate(i2c0_int, Priority::P1).unwrap();
+
+            if let Some((i2c0_int, i2c0_isr)) = i2c0_int {
+                plic.register(i2c0_int, i2c0_isr);
+                plic.activate(i2c0_int, Priority::P1).unwrap();
+            }
         }
 
         timer0.start_counter(0xFFFF_FFFF);
@@ -349,3 +355,26 @@ impl D1 {
         }
     }
 }
+
+// ----
+
+use core::ptr::NonNull;
+use kernel::mnemos_alloc::heap::{MnemosAlloc, SingleThreadedLinkedListAllocator};
+
+#[global_allocator]
+static AHEAP: MnemosAlloc<SingleThreadedLinkedListAllocator> = MnemosAlloc::new();
+
+/// Initialize the heap.
+///
+/// # Safety
+///
+/// Only call this once!
+pub unsafe fn initialize_heap<const HEAP_SIZE: usize>(buf: &'static Ram<HEAP_SIZE>) {
+    AHEAP.init(NonNull::new(buf.as_ptr()).unwrap(), HEAP_SIZE);
+}
+
+#[panic_handler]
+fn handler(info: &PanicInfo) -> ! {
+    D1::handle_panic(info)
+}
+
