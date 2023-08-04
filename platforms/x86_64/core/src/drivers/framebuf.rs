@@ -2,7 +2,7 @@ use core::fmt;
 use embedded_graphics::{
     draw_target::DrawTarget,
     geometry::Point,
-    mono_font::{self, MonoFont, MonoTextStyle, MonoTextStyleBuilder},
+    mono_font::MonoTextStyle,
     pixelcolor::{self, PixelColor},
     text::{self, Text},
     Drawable,
@@ -13,6 +13,7 @@ use hal_core::framebuffer::{self, Draw};
 pub struct TextWriter<'style, 'target, D, C> {
     target: framebuffer::DrawTarget<&'target mut D>,
     width_px: u32,
+    start_x: i32,
     point: Point,
     style: MonoTextStyle<'style, C>,
 }
@@ -27,6 +28,7 @@ where
         let width_px = target.width() as u32;
         Self {
             target: target.as_draw_target(),
+            start_x: point.x,
             width_px,
             style,
             point,
@@ -35,6 +37,11 @@ where
 
     fn len_to_px(&self, len: u32) -> u32 {
         len / self.style.font.character_size.width
+    }
+
+    fn newline(&mut self) {
+        self.point.y = self.point.y + self.style.font.character_size.height as i32;
+        self.point.x = self.start_x;
     }
 }
 
@@ -45,8 +52,6 @@ where
     C: PixelColor,
 {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        let mut curr_point = self.point;
-
         // for a couple of reasons, we don't trust the `embedded-graphics` crate
         // to handle newlines for us:
         //
@@ -69,6 +74,12 @@ where
         // high. if we want to do something nicer about line height, we'd have
         // to implement that here...
         for mut line in s.split_inclusive('\n') {
+            // does this line begin with a newline?
+            if line.starts_with('\n') {
+                line = &line[1..];
+                self.newline();
+            }
+
             // does this chunk end with a newline? it might not, if:
             // (a) it's the last chunk in a string where newlines only occur in
             //     the beginning/middle.
@@ -82,29 +93,20 @@ where
                 line = &line[..line.len() - 1];
             }
 
-            let next_point = if line.is_empty() {
-                // if this line is now empty, it was *just* a newline character,
-                // so all we have to do is advance the write position.
-                curr_point
-            } else {
-                // otherwise, actually draw the text.
-                Text::with_alignment(line, curr_point, self.style, text::Alignment::Left)
-                    .draw(&mut self.target)
-                    .map_err(|_| fmt::Error)?
+            // if this line is now empty, it was *just* a newline character,
+            // so all we have to do is advance the write position.
+            if !line.is_empty() {
+                self.point =
+                    Text::with_alignment(line, self.point, self.style, text::Alignment::Left)
+                        .draw(&mut self.target)
+                        .map_err(|_| fmt::Error)?
             };
 
             if has_newline {
                 // carriage return
-                curr_point = Point {
-                    y: curr_point.y + self.style.font.character_size.height as i32,
-                    x: 10,
-                };
-            } else {
-                curr_point = next_point;
+                self.newline();
             }
         }
-
-        self.point = curr_point;
 
         Ok(())
     }

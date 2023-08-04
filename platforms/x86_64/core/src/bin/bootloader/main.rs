@@ -1,5 +1,6 @@
 #![no_std]
 #![no_main]
+#![feature(panic_info_message)]
 
 #[cfg(not(feature = "bootloader_api"))]
 compile_error!(
@@ -67,13 +68,24 @@ fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
 
     let mut writer = {
         let style = MonoTextStyleBuilder::new()
-            .font(&profont::PROFONT_18_POINT)
+            .font(&profont::PROFONT_12_POINT)
             .text_color(Rgb888::WHITE)
             .build();
-        TextWriter::new(&mut framebuf, style, Point::new(5, 15))
+        TextWriter::new(&mut framebuf, style, Point::new(10, 10))
     };
 
-    writeln!(&mut writer, "{panic}").unwrap();
+    let _ = writer.write_str("mnemOS panicked");
+    if let Some(message) = panic.message() {
+        let _ = writeln!(&mut writer, ":\n{message}");
+    } else if let Some(payload) = panic.payload().downcast_ref::<&'static str>() {
+        let _ = writeln!(&mut writer, ":\n{payload}");
+    } else if let Some(payload) = panic.payload().downcast_ref::<alloc::string::String>() {
+        let _ = writeln!(&mut writer, ":\n{payload}");
+    }
+
+    if let Some(location) = panic.location() {
+        let _ = writeln!(&mut writer, "at {location}");
+    }
 
     unsafe {
         cpu::halt();
