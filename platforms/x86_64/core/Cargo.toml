@@ -44,6 +44,10 @@ git = "https://github.com/hawkw/mycelium"
 [dependencies.mycelium-util]
 git = "https://github.com/hawkw/mycelium"
 
+[dependencies.mycelium-alloc]
+git = "https://github.com/hawkw/mycelium"
+features = ["buddy", "bump"]
+
 [dependencies.futures]
 version = "0.3.21"
 features = ["async-await"]

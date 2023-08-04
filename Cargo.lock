@@ -2464,6 +2464,7 @@ dependencies = [
  "hal-core",
  "hal-x86_64",
  "mnemos",
+ "mycelium-alloc",
  "mycelium-util 0.1.0 (git+https://github.com/hawkw/mycelium)",
  "profont",
  "tracing 0.1.37",
@@ -2482,6 +2483,16 @@ dependencies = [
  "tokio-native-tls",
  "url",
  "uuid 0.8.2",
+]
+
+[[package]]
+name = "mycelium-alloc"
+version = "0.1.0"
+source = "git+https://github.com/hawkw/mycelium#1f125194902cd4970b72eab0aa1d85d1b6ec1489"
+dependencies = [
+ "hal-core",
+ "mycelium-util 0.1.0 (git+https://github.com/hawkw/mycelium)",
+ "tracing 0.2.0",
 ]
 
 [[package]]
@@ -4154,7 +4165,7 @@ dependencies = [
 [[package]]
 name = "tracing"
 version = "0.2.0"
-source = "git+https://github.com/tokio-rs/tracing#27f688efb72316a26f3ec1f952c82626692c08ff"
+source = "git+https://github.com/tokio-rs/tracing#ef201ab3a9134c25b3d344a2df9c3f9ce74db88f"
 dependencies = [
  "pin-project-lite",
  "tracing-attributes 0.2.0",
@@ -4175,7 +4186,7 @@ dependencies = [
 [[package]]
 name = "tracing-attributes"
 version = "0.2.0"
-source = "git+https://github.com/tokio-rs/tracing#27f688efb72316a26f3ec1f952c82626692c08ff"
+source = "git+https://github.com/tokio-rs/tracing#ef201ab3a9134c25b3d344a2df9c3f9ce74db88f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -4195,7 +4206,7 @@ dependencies = [
 [[package]]
 name = "tracing-core"
 version = "0.2.0"
-source = "git+https://github.com/tokio-rs/tracing#27f688efb72316a26f3ec1f952c82626692c08ff"
+source = "git+https://github.com/tokio-rs/tracing#ef201ab3a9134c25b3d344a2df9c3f9ce74db88f"
 
 [[package]]
 name = "tracing-log"
