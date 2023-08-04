@@ -39,14 +39,14 @@ pub fn kernel_start(info: &'static mut bootloader_api::BootInfo) -> ! {
 #[cold]
 #[cfg_attr(target_os = "none", panic_handler)]
 fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
+    use core::fmt::Write;
     use embedded_graphics::{
         mono_font::MonoTextStyleBuilder,
         pixelcolor::{Rgb888, RgbColor as _},
         prelude::*,
-        text::{Alignment, Text},
     };
-
     use hal_core::framebuffer::{Draw, RgbColor};
+    use mnemos_x86_64_core::drivers::framebuf::TextWriter;
 
     // /!\ disable all interrupts, unlock everything to prevent deadlock /!\
     //
@@ -65,23 +65,15 @@ fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
     let mut framebuf = unsafe { framebuf::mk_framebuf() };
     framebuf.fill(RgbColor::RED);
 
-    let mut target = framebuf.as_draw_target();
+    let mut writer = {
+        let style = MonoTextStyleBuilder::new()
+            .font(&profont::PROFONT_18_POINT)
+            .text_color(Rgb888::WHITE)
+            .build();
+        TextWriter::new(&mut framebuf, style, Point::new(5, 15))
+    };
 
-    let style = MonoTextStyleBuilder::new()
-        .font(&profont::PROFONT_18_POINT)
-        .text_color(Rgb888::WHITE)
-        .build();
-
-    let _ = Text::with_alignment(
-        "mnemos panicked lol",
-        Point::new(5, 15),
-        style,
-        Alignment::Left,
-    )
-    .draw(&mut target)
-    .unwrap();
-
-    // TODO(eliza): actually print something good
+    writeln!(&mut writer, "{panic}").unwrap();
 
     unsafe {
         cpu::halt();
