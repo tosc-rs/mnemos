@@ -7,6 +7,8 @@ compile_error!(
     "building the `mnemos-x86_64-bootloader` binary requires the \
     'bootloader_api' Cargo feature to be enabled",
 );
+extern crate alloc;
+
 use bootloader_api::config::{BootloaderConfig, Mapping};
 use hal_core::PAddr;
 use hal_x86_64::cpu;
