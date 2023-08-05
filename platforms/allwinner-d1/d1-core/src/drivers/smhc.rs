@@ -19,7 +19,7 @@ use kernel::{
     comms::kchannel::{KChannel, KConsumer},
     mnemos_alloc::containers::FixedVec,
     registry,
-    services::sdmmc::{messages::Transfer, SdmmcService, Transaction},
+    services::sdmmc::{Command, Request, SdmmcService},
     tracing, Kernel,
 };
 
@@ -232,10 +232,10 @@ impl Smhc {
         }
     }
 
-    #[tracing::instrument(level = tracing::Level::DEBUG, skip(self, txn))]
-    async fn transaction(&self, txn: KConsumer<Transfer>) {
-        todo!()
-    }
+    // #[tracing::instrument(level = tracing::Level::DEBUG, skip(self, txn))]
+    // async fn transaction(&self, txn: KConsumer<Transfer>) {
+    //     todo!()
+    // }
 }
 
 impl IsrData {
