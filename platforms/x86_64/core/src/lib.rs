@@ -2,29 +2,34 @@
 extern crate alloc;
 
 use core::time::Duration;
-use hal_core::{boot::BootInfo, PAddr};
+use hal_core::{boot::BootInfo, PAddr, VAddr};
 use hal_x86_64::cpu::local::GsLocalData;
-pub use hal_x86_64::{
-    cpu::{local::LocalKey, wait_for_interrupt},
-    mm,
-};
+pub use hal_x86_64::cpu::{local::LocalKey, wait_for_interrupt};
 use kernel::{mnemos_alloc::containers::Box, Kernel, KernelSettings};
 
 pub mod acpi;
+pub mod allocator;
 pub mod drivers;
-pub mod heap;
 pub mod interrupt;
+mod trace;
 
-pub fn init(bootinfo: &impl BootInfo, rsdp_addr: Option<PAddr>) -> &'static Kernel {
+#[derive(Debug)]
+pub struct PlatformConfig {
+    pub rsdp_addr: Option<PAddr>,
+    pub physical_mem_offset: VAddr,
+}
+
+pub fn init<F: Deref<[u8]>>(bootinfo: &impl BootInfo, cfg: PlatformConfig, framebuf: fn() -> hal_core::framebuffer::Framebuffer<'static, F>) -> &'static Kernel {
+    // TODO(eliza): move some/all of this init stuff into `k.initialize` tasks?
+    tracing::subscriber::set_global_default(trace::TraceSubscriber::new(framebuf)).unwrap();
     // TODO: init early tracing?
     interrupt::enable_exceptions();
     bootinfo.init_paging();
-
-    // TODO: init allocator!
+    allocator::init(bootinfo, cfg.physical_mem_offset);
 
     // TODO: PCI?
 
-    init_acpi(bootinfo, rsdp_addr);
+    init_acpi(bootinfo, cfg.rsdp_addr);
 
     // init boot processor's core-local data
     unsafe {

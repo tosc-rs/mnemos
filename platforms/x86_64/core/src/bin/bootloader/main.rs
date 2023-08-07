@@ -10,7 +10,7 @@ compile_error!(
 extern crate alloc;
 
 use bootloader_api::config::{BootloaderConfig, Mapping};
-use hal_core::PAddr;
+use hal_core::{PAddr, VAddr};
 use hal_x86_64::cpu;
 mod bootinfo;
 mod framebuf;
@@ -32,10 +32,22 @@ pub fn kernel_start(info: &'static mut bootloader_api::BootInfo) -> ! {
         cpu::intrinsics::cli();
     }
 
-    let rsdp_addr = info.rsdp_addr.into_option().map(PAddr::from_u64);
+    let cfg = {
+        let phys_offset = info
+            .physical_memory_offset
+            .into_option()
+            // TODO(eliza): does `None` here mean "physical mem is identity
+            // mapped" or "we don't know where the physical mem is mapped"?
+            // check the bootloader docs...
+            .unwrap_or(0);
+        mnemos_x86_64_core::PlatformConfig {
+            rsdp_addr: info.rsdp_addr.into_option().map(PAddr::from_u64),
+            physical_mem_offset: VAddr::from_u64(phys_offset),
+        }
+    };
     let bootinfo = bootinfo::BootloaderApiBootInfo::from_bootloader(info);
 
-    let k = mnemos_x86_64_core::init(&bootinfo, rsdp_addr);
+    let k = mnemos_x86_64_core::init(&bootinfo, cfg);
     mnemos_x86_64_core::run(&bootinfo, k)
 }
 
@@ -78,15 +90,15 @@ fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
 
     let _ = writer.write_str("mnemOS panicked");
     if let Some(message) = panic.message() {
-        let _ = writeln!(&mut writer, ":\n{message}");
+        let _ = writeln!(&mut writer, ":\n  {message}");
     } else if let Some(payload) = panic.payload().downcast_ref::<&'static str>() {
-        let _ = writeln!(&mut writer, ":\n{payload}");
+        let _ = writeln!(&mut writer, ":\n  {payload}");
     } else if let Some(payload) = panic.payload().downcast_ref::<alloc::string::String>() {
-        let _ = writeln!(&mut writer, ":\n{payload}");
+        let _ = writeln!(&mut writer, ":\n  {payload}");
     }
 
     if let Some(location) = panic.location() {
-        let _ = writeln!(&mut writer, "at {location}");
+        let _ = writeln!(&mut writer, "  at {location}");
     }
 
     unsafe {

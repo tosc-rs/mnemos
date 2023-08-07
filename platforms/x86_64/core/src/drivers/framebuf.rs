@@ -35,6 +35,10 @@ where
         }
     }
 
+    pub fn next_point(&self) -> Point {
+        self.point
+    }
+
     fn len_to_px(&self, len: u32) -> u32 {
         len / self.style.font.character_size.width
     }
