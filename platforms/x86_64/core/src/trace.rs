@@ -1,36 +1,58 @@
-use core::sync::atomic::AtomicU64;
-use embedded_graphics::{text::mono::MonoTextStyleBuilder, Point};
+use crate::drivers::framebuf::TextWriter;
+use core::{
+    marker::PhantomData,
+    ops::{Deref, DerefMut},
+    sync::atomic::{AtomicU64, Ordering},
+};
+use embedded_graphics::{
+    draw_target::DrawTarget,
+    geometry::Point,
+    mono_font::{MonoTextStyle, MonoTextStyleBuilder},
+    pixelcolor::{Rgb888, RgbColor},
+};
+use hal_core::framebuffer;
 use hal_x86_64::framebuffer::Framebuffer;
 use kernel::{
     serial_trace::SerialSubscriber,
-    tracing::{level_filters::LevelFilter, span, Event, Interest, Metadata, Subscriber},
+    tracing::{
+        level_filters::LevelFilter, span, subscriber::Interest, Event, Metadata, Subscriber,
+    },
 };
 use mycelium_util::sync::InitOnce;
 
-static SERIAL: InitOnce<SerialSubscriber> = InitOnce::new();
+static SERIAL: InitOnce<SerialSubscriber> = InitOnce::uninitialized();
 
-pub struct TraceSubscriber<F> {
+pub struct TraceSubscriber<F>
+where
+    F: Deref<Target = [u8]> + DerefMut + 'static,
+{
     framebuf: fn() -> Framebuffer<'static, F>,
     point: AtomicU64,
+    _f: PhantomData<fn(&'static F)>,
 }
 
 #[inline]
-fn with_serial<T>(f: impl Fn(&SerialSubscriber) -> T) -> Option<T> {
+fn with_serial<T>(f: impl FnOnce(&SerialSubscriber) -> T) -> Option<T> {
     SERIAL.try_get().map(f)
 }
 
-impl<F> TraceSubscriber<F> {
-    pub const fn new(framebuf: fn() -> Framebuffer<'static, F>) -> Self {
+impl<F> TraceSubscriber<F>
+where
+    F: Deref<Target = [u8]> + DerefMut + 'static,
+{
+    pub fn new(framebuf: fn() -> Framebuffer<'static, F>) -> Self {
         Self {
             framebuf,
             point: AtomicU64::new(pack_point(Point { x: 10, y: 10 })),
+            _f: PhantomData,
         }
     }
 }
 
 impl<F> Subscriber for TraceSubscriber<F>
 where
-    F: Deref<[u8]>,
+    F: Deref<Target = [u8]> + DerefMut + 'static,
+    for<'a> framebuffer::DrawTarget<&'a mut Framebuffer<'static, F>>: DrawTarget<Color = Rgb888>, // jesus christ...
 {
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
         with_serial(|serial| serial.enabled(metadata)).unwrap_or(!metadata.is_span())
@@ -54,11 +76,11 @@ where
     }
 
     fn enter(&self, span: &span::Id) {
-        with_serial(|serial| serial.enter(span))
+        with_serial(|serial| serial.enter(span));
     }
 
     fn exit(&self, span: &span::Id) {
-        with_serial(|serial| serial.enter(span))
+        with_serial(|serial| serial.enter(span));
     }
 
     fn record_follows_from(&self, _: &span::Id, _: &span::Id) {
@@ -66,19 +88,39 @@ where
     }
 
     fn event(&self, event: &Event<'_>) {
+        use core::fmt::Write;
+
         if with_serial(|serial| serial.event(event)).is_none() {
+            let point = unpack_point(self.point.load(Ordering::Acquire));
             let mut framebuf = (self.framebuf)();
-            let mut writer = {
-                let style = MonoTextStyleBuilder::new()
-                    .font(&profont::PROFONT_12_POINT)
-                    .text_color(Rgb888::WHITE)
-                    .build();
-                let point = unpack_point(self.point.load(Ordering::Acquire));
-                crate::drivers::framebuf::TextWriter::new(framebuf, style, point)
+            let meta = event.metadata();
+            let (lvl_color, lvl_str) = match *meta.level() {
+                tracing::Level::TRACE => (Rgb888::BLUE, "TRCE"),
+                tracing::Level::DEBUG => (Rgb888::CYAN, "DBUG"),
+                tracing::Level::INFO => (Rgb888::GREEN, "INFO"),
+                tracing::Level::WARN => (Rgb888::YELLOW, "WARN"),
+                tracing::Level::ERROR => (Rgb888::RED, "ERR!"),
             };
-            writeln!("{event:?}");
-            self.point
-                .store(pack_point(writer.next_point()), Ordering::Release);
+            let mut writer =
+                TextWriter::new(&mut framebuf, &profont::PROFONT_12_POINT, lvl_color, point);
+            let _ = writer.write_str(lvl_str);
+            writer.set_color(Rgb888::WHITE);
+            let _ = write!(&mut writer, " {}:", meta.target());
+            event.record(
+                &mut (|field: &tracing::field::Field, value: &'_ (dyn core::fmt::Debug + '_)| {
+                    if field.name() == "message" {
+                        let _ = write!(&mut writer, " {value:?}");
+                    } else {
+                        let _ = write!(&mut writer, " {field}={value:?}");
+                    }
+                }) as &mut dyn tracing::field::Visit,
+            );
+            writeln!(&mut writer, "");
+
+            let mut next_point = writer.next_point();
+            drop(writer);
+
+            self.point.store(pack_point(next_point), Ordering::Release);
         }
     }
 
@@ -88,7 +130,7 @@ where
     }
 
     fn try_close(&self, span: span::Id) -> bool {
-        with_serial(|serial| serial.try_close(span))
+        with_serial(move |serial| serial.try_close(span))
             .expect("spans are not enabled until serial is enabled")
     }
 }

@@ -11,7 +11,7 @@ pub mod acpi;
 pub mod allocator;
 pub mod drivers;
 pub mod interrupt;
-mod trace;
+pub mod trace;
 
 #[derive(Debug)]
 pub struct PlatformConfig {
@@ -19,10 +19,7 @@ pub struct PlatformConfig {
     pub physical_mem_offset: VAddr,
 }
 
-pub fn init<F: Deref<[u8]>>(bootinfo: &impl BootInfo, cfg: PlatformConfig, framebuf: fn() -> hal_core::framebuffer::Framebuffer<'static, F>) -> &'static Kernel {
-    // TODO(eliza): move some/all of this init stuff into `k.initialize` tasks?
-    tracing::subscriber::set_global_default(trace::TraceSubscriber::new(framebuf)).unwrap();
-    // TODO: init early tracing?
+pub fn init(bootinfo: &impl BootInfo, cfg: PlatformConfig) -> &'static Kernel {
     interrupt::enable_exceptions();
     bootinfo.init_paging();
     allocator::init(bootinfo, cfg.physical_mem_offset);

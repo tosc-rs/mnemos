@@ -2,8 +2,8 @@ use core::fmt;
 use embedded_graphics::{
     draw_target::DrawTarget,
     geometry::Point,
-    mono_font::MonoTextStyle,
-    pixelcolor::{self, PixelColor},
+    mono_font::{MonoFont, MonoTextStyle, MonoTextStyleBuilder},
+    pixelcolor::PixelColor,
     text::{self, Text},
     Drawable,
 };
@@ -15,7 +15,9 @@ pub struct TextWriter<'style, 'target, D, C> {
     width_px: u32,
     start_x: i32,
     point: Point,
-    style: MonoTextStyle<'style, C>,
+    font: &'style MonoFont<'style>,
+    color: C,
+    last_line: i32,
 }
 
 impl<'style, 'target, D, C> TextWriter<'style, 'target, D, C>
@@ -24,13 +26,25 @@ where
     D: Draw,
     C: PixelColor,
 {
-    pub fn new(target: &'target mut D, style: MonoTextStyle<'style, C>, point: Point) -> Self {
+    pub fn new(
+        target: &'target mut D,
+        font: &'style MonoFont<'style>,
+        color: C,
+        point: Point,
+    ) -> Self {
         let width_px = target.width() as u32;
+        let height_px = target.height() as u32;
+        let last_line = {
+            let char_height = font.character_size.height;
+            (height_px - char_height - 10) as i32
+        };
         Self {
             target: target.as_draw_target(),
             start_x: point.x,
+            last_line,
             width_px,
-            style,
+            font,
+            color,
             point,
         }
     }
@@ -39,12 +53,32 @@ where
         self.point
     }
 
-    fn len_to_px(&self, len: u32) -> u32 {
-        len / self.style.font.character_size.width
+    pub fn set_color(&mut self, color: C) {
+        self.color = color;
+    }
+
+    fn len_to_px(&self, len: usize) -> u32 {
+        len as u32 * self.font.character_size.width
+    }
+
+    fn px_to_len(&self, px: u32) -> usize {
+        (px / self.font.character_size.width) as usize
     }
 
     fn newline(&mut self) {
-        self.point.y = self.point.y + self.style.font.character_size.height as i32;
+        if self.point.y > self.last_line {
+            let ydiff = self.point.y - self.last_line;
+            self.target.inner_mut().scroll_vert(ydiff as isize);
+            self.point = Point {
+                y: self.last_line,
+                x: 10,
+            };
+        }
+
+        // if we have reached the bottom of the screen, we'll need to scroll
+        // previous framebuffer contents up to make room for new line(s) of
+        // text.
+        self.point.y = self.point.y + self.font.character_size.height as i32;
         self.point.x = self.start_x;
     }
 }
@@ -56,6 +90,10 @@ where
     C: PixelColor,
 {
     fn write_str(&mut self, s: &str) -> fmt::Result {
+        let style = MonoTextStyleBuilder::new()
+            .font(self.font)
+            .text_color(self.color)
+            .build();
         // for a couple of reasons, we don't trust the `embedded-graphics` crate
         // to handle newlines for us:
         //
@@ -78,37 +116,54 @@ where
         // high. if we want to do something nicer about line height, we'd have
         // to implement that here...
         for mut line in s.split_inclusive('\n') {
-            // does this line begin with a newline?
-            if line.starts_with('\n') {
-                line = &line[1..];
-                self.newline();
-            }
+            while !line.is_empty() {
+                // does this line begin with a newline?
+                if line.starts_with('\n') {
+                    line = &line[1..];
+                    self.newline();
+                }
 
-            // does this chunk end with a newline? it might not, if:
-            // (a) it's the last chunk in a string where newlines only occur in
-            //     the beginning/middle.
-            // (b) the string being written has no newlines (so
-            //     `split_inclusive` will only yield a single chunk)
-            let has_newline = line.ends_with('\n');
-            if has_newline {
-                // if there's a trailing newline, trim it off --- no sense
-                // making the `embedded-graphics` crate draw an extra character
-                // it will essentially nop for.
-                line = &line[..line.len() - 1];
-            }
+                let mut has_newline = false;
+                // does this chunk end with a newline? it might not, if:
+                // (a) it's the last chunk in a string where newlines only occur in
+                //     the beginning/middle.
+                // (b) the string being written has no newlines (so
+                //     `split_inclusive` will only yield a single chunk)
+                has_newline = line.ends_with('\n');
+                if has_newline {
+                    // if there's a trailing newline, trim it off --- no sense
+                    // making the `embedded-graphics` crate draw an extra character
+                    // it will essentially nop for.
+                    line = &line[..line.len() - 1];
+                }
 
-            // if this line is now empty, it was *just* a newline character,
-            // so all we have to do is advance the write position.
-            if !line.is_empty() {
-                self.point =
-                    Text::with_alignment(line, self.point, self.style, text::Alignment::Left)
-                        .draw(&mut self.target)
-                        .map_err(|_| fmt::Error)?
-            };
+                let mut chunk = line;
 
-            if has_newline {
-                // carriage return
-                self.newline();
+                // if the line is longer than the remaining space on the current
+                // line, wrap the line.
+                let rem = self.px_to_len(self.width_px - (self.point.x as u32));
+                if line.len() > rem {
+                    let (curr, next) = line.split_at(rem as usize);
+                    line = next;
+                    chunk = curr;
+                    has_newline = true;
+                } else {
+                    line = "";
+                }
+
+                // if this line is now empty, it was *just* a newline character,
+                // so all we have to do is advance the write position.
+                if !chunk.is_empty() {
+                    self.point =
+                        Text::with_alignment(chunk, self.point, style, text::Alignment::Left)
+                            .draw(&mut self.target)
+                            .map_err(|_| fmt::Error)?
+                };
+
+                if has_newline {
+                    // carriage return
+                    self.newline();
+                }
             }
         }
 

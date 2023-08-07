@@ -14,6 +14,9 @@ const FREE_LISTS: usize = 32;
 
 const MIN_HEAP_SIZE: usize = 32;
 
+#[derive(Debug)]
+pub struct Heap(());
+
 #[global_allocator]
 pub static AHEAP: MnemosAlloc<Heap> = MnemosAlloc::new();
 
@@ -42,7 +45,7 @@ pub(crate) fn init(bootinfo: &impl BootInfo, vm_offset: VAddr) {
             free_regions += 1;
             free_bytes += size;
             if let Err(error) = unsafe { HEAP.add_region(region) } {
-                tracing::warn!(%error, "bad region");
+                tracing::warn!("bad region");
             }
         }
     }

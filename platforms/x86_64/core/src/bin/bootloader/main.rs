@@ -10,7 +10,10 @@ compile_error!(
 extern crate alloc;
 
 use bootloader_api::config::{BootloaderConfig, Mapping};
-use hal_core::{PAddr, VAddr};
+use hal_core::{
+    framebuffer::{Draw, RgbColor},
+    PAddr, VAddr,
+};
 use hal_x86_64::cpu;
 mod bootinfo;
 mod framebuf;
@@ -47,6 +50,14 @@ pub fn kernel_start(info: &'static mut bootloader_api::BootInfo) -> ! {
     };
     let bootinfo = bootinfo::BootloaderApiBootInfo::from_bootloader(info);
 
+    let subscriber = {
+        let framebuf = (|| unsafe { framebuf::mk_framebuf() }) as fn() -> _;
+        framebuf().fill(RgbColor::BLACK);
+        mnemos_x86_64_core::trace::TraceSubscriber::new(framebuf)
+    };
+    tracing::subscriber::set_global_default(subscriber)
+        .expect("tracing subscriber should not have already been set!");
+
     let k = mnemos_x86_64_core::init(&bootinfo, cfg);
     mnemos_x86_64_core::run(&bootinfo, k)
 }
@@ -60,7 +71,6 @@ fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
         pixelcolor::{Rgb888, RgbColor as _},
         prelude::*,
     };
-    use hal_core::framebuffer::{Draw, RgbColor};
     use mnemos_x86_64_core::drivers::framebuf::TextWriter;
 
     // /!\ disable all interrupts, unlock everything to prevent deadlock /!\
@@ -78,14 +88,15 @@ fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
     }
 
     let mut framebuf = unsafe { framebuf::mk_framebuf() };
-    framebuf.fill(RgbColor::RED);
+    // framebuf.fill(RgbColor::RED);
 
     let mut writer = {
-        let style = MonoTextStyleBuilder::new()
-            .font(&profont::PROFONT_12_POINT)
-            .text_color(Rgb888::WHITE)
-            .build();
-        TextWriter::new(&mut framebuf, style, Point::new(10, 10))
+        TextWriter::new(
+            &mut framebuf,
+            &profont::PROFONT_12_POINT,
+            Rgb888::WHITE,
+            Point::new(10, 10),
+        )
     };
 
     let _ = writer.write_str("mnemOS panicked");
