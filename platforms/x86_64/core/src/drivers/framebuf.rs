@@ -2,7 +2,7 @@ use core::fmt;
 use embedded_graphics::{
     draw_target::DrawTarget,
     geometry::Point,
-    mono_font::{MonoFont, MonoTextStyle, MonoTextStyleBuilder},
+    mono_font::MonoTextStyle,
     pixelcolor::PixelColor,
     text::{self, Text},
     Drawable,
