@@ -88,15 +88,29 @@ fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
     }
 
     let mut framebuf = unsafe { framebuf::mk_framebuf() };
-    // framebuf.fill(RgbColor::RED);
 
     let mut writer = {
-        TextWriter::new(
-            &mut framebuf,
-            &profont::PROFONT_12_POINT,
-            Rgb888::WHITE,
-            Point::new(10, 10),
-        )
+        let font = &profont::PROFONT_12_POINT;
+        let char_height = font.character_size.height;
+        // write the panic message at the bottom of the framebuffer, so that we
+        // don't clobber any existing text preceeding the panic (useful for
+        // debugging).
+        let point = {
+            let height_px = framebuf.height() as u32;
+            let last_line = (height_px - char_height - 10) as i32;
+            Point::new(10, last_line)
+        };
+
+        // scroll the framebuffer up by one line of text to make space for the
+        // panic message.
+        framebuf.scroll_vert(char_height as isize);
+
+        let style = MonoTextStyleBuilder::new()
+            .font(font)
+            .text_color(Rgb888::WHITE)
+            .background_color(Rgb888::RED)
+            .build();
+        TextWriter::new(&mut framebuf, style, point)
     };
 
     let _ = writer.write_str("mnemOS panicked");

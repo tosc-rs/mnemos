@@ -49,6 +49,13 @@ where
     }
 }
 
+fn style(color: Rgb888) -> MonoTextStyle<'static, Rgb888> {
+    MonoTextStyleBuilder::new()
+        .font(&profont::PROFONT_12_POINT)
+        .text_color(color)
+        .build()
+}
+
 impl<F> Subscriber for TraceSubscriber<F>
 where
     F: Deref<Target = [u8]> + DerefMut + 'static,
@@ -101,10 +108,9 @@ where
                 tracing::Level::WARN => (Rgb888::YELLOW, "WARN"),
                 tracing::Level::ERROR => (Rgb888::RED, "ERR!"),
             };
-            let mut writer =
-                TextWriter::new(&mut framebuf, &profont::PROFONT_12_POINT, lvl_color, point);
+            let mut writer = TextWriter::new(&mut framebuf, style(lvl_color), point);
             let _ = writer.write_str(lvl_str);
-            writer.set_color(Rgb888::WHITE);
+            writer.set_style(style(Rgb888::WHITE));
             let _ = write!(&mut writer, " {}:", meta.target());
             event.record(
                 &mut (|field: &tracing::field::Field, value: &'_ (dyn core::fmt::Debug + '_)| {

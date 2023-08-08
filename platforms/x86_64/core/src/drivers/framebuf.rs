@@ -15,8 +15,7 @@ pub struct TextWriter<'style, 'target, D, C> {
     width_px: u32,
     start_x: i32,
     point: Point,
-    font: &'style MonoFont<'style>,
-    color: C,
+    style: MonoTextStyle<'style, C>,
     last_line: i32,
 }
 
@@ -26,16 +25,11 @@ where
     D: Draw,
     C: PixelColor,
 {
-    pub fn new(
-        target: &'target mut D,
-        font: &'style MonoFont<'style>,
-        color: C,
-        point: Point,
-    ) -> Self {
+    pub fn new(target: &'target mut D, style: MonoTextStyle<'style, C>, point: Point) -> Self {
         let width_px = target.width() as u32;
         let height_px = target.height() as u32;
         let last_line = {
-            let char_height = font.character_size.height;
+            let char_height = style.font.character_size.height;
             (height_px - char_height - 10) as i32
         };
         Self {
@@ -43,8 +37,7 @@ where
             start_x: point.x,
             last_line,
             width_px,
-            font,
-            color,
+            style,
             point,
         }
     }
@@ -53,16 +46,16 @@ where
         self.point
     }
 
-    pub fn set_color(&mut self, color: C) {
-        self.color = color;
+    pub fn set_style(&mut self, style: MonoTextStyle<'style, C>) {
+        self.style = style;
     }
 
     fn len_to_px(&self, len: usize) -> u32 {
-        len as u32 * self.font.character_size.width
+        len as u32 * self.style.font.character_size.width
     }
 
     fn px_to_len(&self, px: u32) -> usize {
-        (px / self.font.character_size.width) as usize
+        (px / self.style.font.character_size.width) as usize
     }
 
     fn newline(&mut self) {
@@ -78,7 +71,7 @@ where
         // if we have reached the bottom of the screen, we'll need to scroll
         // previous framebuffer contents up to make room for new line(s) of
         // text.
-        self.point.y = self.point.y + self.font.character_size.height as i32;
+        self.point.y = self.point.y + self.style.font.character_size.height as i32;
         self.point.x = self.start_x;
     }
 }
@@ -90,10 +83,6 @@ where
     C: PixelColor,
 {
     fn write_str(&mut self, s: &str) -> fmt::Result {
-        let style = MonoTextStyleBuilder::new()
-            .font(self.font)
-            .text_color(self.color)
-            .build();
         // for a couple of reasons, we don't trust the `embedded-graphics` crate
         // to handle newlines for us:
         //
@@ -155,7 +144,7 @@ where
                 // so all we have to do is advance the write position.
                 if !chunk.is_empty() {
                     self.point =
-                        Text::with_alignment(chunk, self.point, style, text::Alignment::Left)
+                        Text::with_alignment(chunk, self.point, self.style, text::Alignment::Left)
                             .draw(&mut self.target)
                             .map_err(|_| fmt::Error)?
                 };
