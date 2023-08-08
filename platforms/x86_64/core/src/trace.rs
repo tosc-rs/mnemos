@@ -108,10 +108,16 @@ where
                 tracing::Level::WARN => (Rgb888::YELLOW, "WARN"),
                 tracing::Level::ERROR => (Rgb888::RED, "ERR!"),
             };
+
+            // write the level in the per-level color.
             let mut writer = TextWriter::new(&mut framebuf, style(lvl_color), point);
             let _ = writer.write_str(lvl_str);
-            writer.set_style(style(Rgb888::WHITE));
+
+            writer.set_style(style(Rgb888::new(128, 128, 128)));
             let _ = write!(&mut writer, " {}:", meta.target());
+
+            writer.set_style(style(Rgb888::WHITE));
+
             event.record(
                 &mut (|field: &tracing::field::Field, value: &'_ (dyn core::fmt::Debug + '_)| {
                     if field.name() == "message" {
