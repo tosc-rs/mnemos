@@ -334,7 +334,8 @@ impl Kernel {
                 #[cfg(feature = "serial-trace")]
                 if settings.sermux_trace.enabled {
                     let subscriber =
-                        crate::serial_trace::SerialSubscriber::start(self, settings.sermux_trace).await;
+                        crate::serial_trace::SerialSubscriber::start(self, settings.sermux_trace)
+                            .await;
                     tracing::subscriber::set_global_default(subscriber)
                         .expect("default tracing subscriber already set!");
                 }
