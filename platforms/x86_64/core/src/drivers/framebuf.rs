@@ -9,6 +9,8 @@ use embedded_graphics::{
 };
 use hal_core::framebuffer::{self, Draw};
 
+// TODO(eliza): add emb_display_service implementation!
+
 #[derive(Debug)]
 pub struct TextWriter<'style, 'target, D, C> {
     target: framebuffer::DrawTarget<&'target mut D>,
@@ -50,9 +52,9 @@ where
         self.style = style;
     }
 
-    fn len_to_px(&self, len: usize) -> u32 {
-        len as u32 * self.style.font.character_size.width
-    }
+    // fn len_to_px(&self, len: usize) -> u32 {
+    //     len as u32 * self.style.font.character_size.width
+    // }
 
     fn px_to_len(&self, px: u32) -> usize {
         (px / self.style.font.character_size.width) as usize
@@ -112,13 +114,12 @@ where
                     self.newline();
                 }
 
-                let mut has_newline = false;
                 // does this chunk end with a newline? it might not, if:
                 // (a) it's the last chunk in a string where newlines only occur in
                 //     the beginning/middle.
                 // (b) the string being written has no newlines (so
                 //     `split_inclusive` will only yield a single chunk)
-                has_newline = line.ends_with('\n');
+                let mut has_newline = line.ends_with('\n');
                 if has_newline {
                     // if there's a trailing newline, trim it off --- no sense
                     // making the `embedded-graphics` crate draw an extra character

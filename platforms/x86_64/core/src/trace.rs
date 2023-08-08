@@ -111,28 +111,26 @@ where
 
             // write the level in the per-level color.
             let mut writer = TextWriter::new(&mut framebuf, style(lvl_color), point);
-            let _ = writer.write_str(lvl_str);
+            writer.write_str(lvl_str).unwrap();
 
             writer.set_style(style(Rgb888::new(128, 128, 128)));
-            let _ = write!(&mut writer, " {}:", meta.target());
+            write!(&mut writer, " {}:", meta.target()).unwrap();
 
             writer.set_style(style(Rgb888::WHITE));
 
             event.record(
                 &mut (|field: &tracing::field::Field, value: &'_ (dyn core::fmt::Debug + '_)| {
                     if field.name() == "message" {
-                        let _ = write!(&mut writer, " {value:?}");
+                        write!(&mut writer, " {value:?}").unwrap();
                     } else {
-                        let _ = write!(&mut writer, " {field}={value:?}");
+                        write!(&mut writer, " {field}={value:?}").unwrap();
                     }
                 }) as &mut dyn tracing::field::Visit,
             );
-            writeln!(&mut writer, "");
+            writeln!(&mut writer, "").unwrap();
 
-            let mut next_point = writer.next_point();
-            drop(writer);
-
-            self.point.store(pack_point(next_point), Ordering::Release);
+            self.point
+                .store(pack_point(writer.next_point()), Ordering::Release);
         }
     }
 

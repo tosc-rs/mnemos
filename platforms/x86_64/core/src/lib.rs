@@ -37,13 +37,11 @@ pub fn init(bootinfo: &impl BootInfo, cfg: PlatformConfig) -> &'static Kernel {
         }
     };
 
-    init_acpi(k, bootinfo, cfg.rsdp_addr);
+    init_acpi(k, cfg.rsdp_addr);
     // TODO: PCI?
 
     // init boot processor's core-local data
-    unsafe {
-        GsLocalData::init();
-    }
+    GsLocalData::init();
     tracing::info!("set up the boot processor's local data");
 
     // TODO: spawn drivers (UART, keyboard, ...)
@@ -59,6 +57,7 @@ pub fn init(bootinfo: &impl BootInfo, cfg: PlatformConfig) -> &'static Kernel {
 }
 
 pub fn run(bootinfo: &impl BootInfo, kernel: &'static Kernel) -> ! {
+    let _ = bootinfo;
     tracing::info!("started kernel run loop\n--------------------\n");
     kernel.set_global_timer().unwrap();
 
@@ -88,7 +87,7 @@ pub fn run(bootinfo: &impl BootInfo, kernel: &'static Kernel) -> ! {
     }
 }
 
-fn init_acpi(k: &'static Kernel, bootinfo: &impl BootInfo, rsdp_addr: Option<PAddr>) {
+fn init_acpi(k: &'static Kernel, rsdp_addr: Option<PAddr>) {
     if let Some(rsdp) = rsdp_addr {
         let acpi = acpi::acpi_tables(rsdp);
         let platform_info = acpi.and_then(|acpi| acpi.platform_info());

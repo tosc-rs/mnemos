@@ -113,6 +113,7 @@ fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
         TextWriter::new(&mut framebuf, style, point)
     };
 
+    // write the panic message
     let _ = writer.write_str("mnemOS panicked");
     if let Some(message) = panic.message() {
         let _ = writeln!(&mut writer, ":\n  {message}");
@@ -126,7 +127,6 @@ fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
         let _ = writeln!(&mut writer, "  at {location}");
     }
 
-    unsafe {
-        cpu::halt();
-    }
+    // ...and die!
+    cpu::halt();
 }

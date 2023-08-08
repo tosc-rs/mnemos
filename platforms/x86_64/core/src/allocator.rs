@@ -29,7 +29,6 @@ pub(crate) fn init(bootinfo: &impl BootInfo, vm_offset: VAddr) {
     let mut regions = 0;
     let mut free_regions = 0;
     let mut free_bytes = 0;
-    let mut unused_regions = 0;
 
     for region in bootinfo.memory_map() {
         let kind = region.kind();
@@ -44,7 +43,7 @@ pub(crate) fn init(bootinfo: &impl BootInfo, vm_offset: VAddr) {
         if region.kind() == mem::RegionKind::FREE {
             free_regions += 1;
             free_bytes += size;
-            if let Err(error) = unsafe { HEAP.add_region(region) } {
+            if unsafe { HEAP.add_region(region) }.is_err() {
                 tracing::warn!("bad region");
             }
         }
@@ -65,7 +64,7 @@ pub(crate) fn init(bootinfo: &impl BootInfo, vm_offset: VAddr) {
 
 impl UnderlyingAllocator for Heap {
     const INIT: Self = Self(());
-    unsafe fn init(&self, start: NonNull<u8>, len: usize) {
+    unsafe fn init(&self, _: NonNull<u8>, _: usize) {
         unimplemented!()
     }
 
