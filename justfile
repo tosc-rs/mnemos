@@ -118,7 +118,7 @@ build-x86 *args='':
 
 # run an x86_64 MnemOS image in QEMU
 run-x86 *args='':
-    {{ _cargo }} run -p mnemos-x86_64-bootloader {{ args }}
+    {{ _cargo }} run -p mnemos-x86_64-bootloader -- {{ args }}
 
 # run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard)
 crowtty *FLAGS:
