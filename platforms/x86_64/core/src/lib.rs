@@ -24,20 +24,10 @@ pub fn init(bootinfo: &impl BootInfo, cfg: PlatformConfig) -> &'static Kernel {
     bootinfo.init_paging();
     allocator::init(bootinfo, cfg.physical_mem_offset);
 
-    // TODO: PCI?
-
-    init_acpi(bootinfo, cfg.rsdp_addr);
-
-    // init boot processor's core-local data
-    unsafe {
-        GsLocalData::init();
-    }
-    tracing::info!("set up the boot processor's local data");
-
     let k = {
         let settings = KernelSettings {
             max_drivers: 64, // we are a big x86 system with lots of RAM, this can probably be an even bigger number!
-            timer_granularity: Duration::from_millis(10),
+            timer_granularity: interrupt::TIMER_INTERVAL,
         };
 
         unsafe {
@@ -47,57 +37,65 @@ pub fn init(bootinfo: &impl BootInfo, cfg: PlatformConfig) -> &'static Kernel {
         }
     };
 
+    init_acpi(k, bootinfo, cfg.rsdp_addr);
+    // TODO: PCI?
+
+    // init boot processor's core-local data
+    unsafe {
+        GsLocalData::init();
+    }
+    tracing::info!("set up the boot processor's local data");
+
     // TODO: spawn drivers (UART, keyboard, ...)
+    k.initialize(async {
+        loop {
+            k.timer().sleep(Duration::from_secs(5)).await;
+            tracing::info!("help im trapped in an x86_64 operating system kernel!");
+        }
+    })
+    .unwrap();
+
     k
 }
 
-pub fn run(bootinfo: &impl BootInfo, k: &'static Kernel) -> ! {
+pub fn run(bootinfo: &impl BootInfo, kernel: &'static Kernel) -> ! {
+    tracing::info!("started kernel run loop\n--------------------\n");
+    kernel.set_global_timer().unwrap();
+
+    // TODO(eliza): this currently uses a periodic timer, rather than a
+    // freewheeling timer like other MnemOS kernels. The periodic timer is
+    // somewhat less efficient, as it results in us being woken every 10ms
+    // regardless of what timeouts are pending. If we used a freewheeling timer
+    // instead, we could sleep until a task is actually ready.
+    //
+    // However, this would require some upstream changes to the mycelium HAL to
+    // better support freewheeling timers. For now, the simpler periodic timer
+    // runloop works fine, I guess...
     loop {
-        // Tick the scheduler
-        // TODO(eliza): do we use the PIT or the local APIC timer?
-        let start: Duration = todo!("current value of freewheeling timer");
-        let tick = k.tick();
+        // drive the task scheduler
+        let tick = kernel.tick();
 
-        // Timer is downcounting
-        let elapsed = start - todo!("timer current value");
-        let turn = k.timer().force_advance(elapsed);
+        // turn the timer wheel if it wasn't turned recently and no one else is
+        // holding a lock, ensuring any pending timer ticks are consumed.
+        let turn = kernel.timer().force_advance_ticks(0);
 
-        // If there is nothing else scheduled, and we didn't just wake something up,
-        // sleep for some amount of time
-        if turn.expired == 0 && !tick.has_remaining {
-            let wfi_start: Duration = todo!("timer current value");
-
-            // TODO(AJM): Sometimes there is no "next" in the timer wheel, even though there should
-            // be. Don't take lack of timer wheel presence as the ONLY heuristic of whether we
-            // should just wait for SOME interrupt to occur. For now, force a max sleep of 100ms
-            // which is still probably wrong.
-            let amount = turn
-                .ticks_to_next_deadline()
-                .unwrap_or(todo!("figure this out"));
-
-            todo!("reset timer");
-
-            unsafe {
-                interrupt::wait_for_interrupt();
-            }
-            // Disable the timer interrupt in case that wasn't what woke us up
-            todo!("clear timer irq");
-
-            // Account for time slept
-            let elapsed = wfi_start - todo!("current timer value");
-            let _turn = k.timer().force_advance(elapsed);
+        // if there are no woken tasks, wait for an interrupt. otherwise,
+        // continue ticking.
+        let has_remaining = tick.has_remaining || turn.has_remaining();
+        if !has_remaining {
+            interrupt::wait_for_interrupt();
         }
     }
 }
 
-fn init_acpi(bootinfo: &impl BootInfo, rsdp_addr: Option<PAddr>) {
+fn init_acpi(k: &'static Kernel, bootinfo: &impl BootInfo, rsdp_addr: Option<PAddr>) {
     if let Some(rsdp) = rsdp_addr {
         let acpi = acpi::acpi_tables(rsdp);
         let platform_info = acpi.and_then(|acpi| acpi.platform_info());
         match platform_info {
             Ok(platform) => {
                 tracing::debug!("found ACPI platform info");
-                interrupt::enable_hardware_interrupts(Some(&platform.interrupt_model));
+                interrupt::enable_hardware_interrupts(Some(&platform.interrupt_model), k.timer());
                 acpi::bringup_smp(&platform)
                     .expect("failed to bring up application processors! this is bad news!");
                 return;
@@ -110,5 +108,5 @@ fn init_acpi(bootinfo: &impl BootInfo, rsdp_addr: Option<PAddr>) {
     }
 
     // no ACPI
-    interrupt::enable_hardware_interrupts(None)
+    interrupt::enable_hardware_interrupts(None, k.timer())
 }

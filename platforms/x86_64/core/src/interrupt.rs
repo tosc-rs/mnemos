@@ -1,4 +1,7 @@
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::{
+    ptr,
+    sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
+};
 use hal_core::{interrupt, VAddr};
 pub use hal_x86_64::interrupt::*;
 use hal_x86_64::{
@@ -18,8 +21,16 @@ pub fn enable_exceptions() {
     tracing::info!("IDT initialized!");
 }
 
-#[tracing::instrument(skip(acpi))]
-pub fn enable_hardware_interrupts(acpi: Option<&acpi::InterruptModel>) {
+#[tracing::instrument(skip(acpi, timer))]
+pub fn enable_hardware_interrupts(
+    acpi: Option<&acpi::InterruptModel>,
+    timer: &'static time::Timer,
+) {
+    // no way to have an atomic `*const` ptr lol :|
+    let timer = timer as *const _ as *mut _;
+    let _timer = TIMER.swap(timer, Ordering::Release);
+    debug_assert_eq!(_timer, ptr::null_mut());
+
     let controller = Controller::enable_hardware_interrupts(acpi, &crate::allocator::HEAP);
     controller
         .start_periodic_timer(TIMER_INTERVAL)
@@ -71,6 +82,7 @@ static TSS: sync::Lazy<task::StateSegment> = sync::Lazy::new(|| {
 pub(crate) static GDT: sync::InitOnce<Gdt> = sync::InitOnce::uninitialized();
 
 pub const TIMER_INTERVAL: time::Duration = time::Duration::from_millis(10);
+static TIMER: AtomicPtr<time::Timer> = AtomicPtr::new(ptr::null_mut());
 
 static TEST_INTERRUPT_WAS_FIRED: AtomicUsize = AtomicUsize::new(0);
 
@@ -114,11 +126,14 @@ impl hal_core::interrupt::Handlers<Registers> for InterruptHandlers {
     }
 
     fn timer_tick() {
-        // Do nothing, just kick us out of WFI...
+        if let Some(timer) = ptr::NonNull::new(TIMER.load(Ordering::Acquire)) {
+            unsafe { timer.as_ref() }.advance_ticks(1);
+        }
     }
 
     fn ps2_keyboard(scancode: u8) {
-        todo!("wake ps/2 keyboard driver service")
+        // TODO(eliza): add a keyboard driver
+        tracing::info!(scancode, "keyoard interrupt!!!");
     }
 
     fn test_interrupt<C>(cx: C)
