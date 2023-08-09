@@ -354,7 +354,7 @@ impl DrawTarget for MonoChunk {
         I: IntoIterator<Item = Pixel<Self::Color>>,
     {
         for Pixel(coord, color) in pixels.into_iter() {
-            let Ok((x, y)): Result<(u32, u32) , _> =  coord.try_into() else {
+            let Ok((x, y)): Result<(u32, u32), _> = coord.try_into() else {
                 continue;
             };
             self.draw_pixel(x, y, color.is_on());

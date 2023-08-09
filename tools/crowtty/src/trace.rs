@@ -177,8 +177,12 @@ impl TraceWorker {
                 parent: _,
                 fields,
             } => {
-                let Some(meta) =  self.metas.get(&meta) else {
-                    println!("{} {} UNKNOWN: {meta:?}", self.tag, "META".if_supports_color(Stream::Stdout, |x| x.bright_blue()));
+                let Some(meta) = self.metas.get(&meta) else {
+                    println!(
+                        "{} {} UNKNOWN: {meta:?}",
+                        self.tag,
+                        "META".if_supports_color(Stream::Stdout, |x| x.bright_blue())
+                    );
                     return;
                 };
                 let target = meta.target.as_str();
@@ -215,7 +219,11 @@ impl TraceWorker {
                 let start = Instant::now();
                 let mut repr = String::new();
                 let Some(meta) = self.metas.get(&meta) else {
-                    println!("{} {} UNKNOWN: {meta:?}", self.tag, "META".if_supports_color(Stream::Stdout, |x| x.bright_blue()));
+                    println!(
+                        "{} {} UNKNOWN: {meta:?}",
+                        self.tag,
+                        "META".if_supports_color(Stream::Stdout, |x| x.bright_blue())
+                    );
                     return;
                 };
 
