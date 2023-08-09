@@ -10,3 +10,15 @@ rustflags = ["--cfg", "tokio_unstable"]
 
 [target.riscv32imac-unknown-none-elf]
 runner = "espflash flash --monitor"
+
+[unstable]
+# Enables Cargo artifact dependencies.
+#
+# This allows a crate to depend on a specific binary artifact from another
+# crate. This is used as part of the build   process for `x86_64` targets using
+# `rust-osdev/bootloader`, where a target crate depends on the kernel binary
+# artifact from the kernel core crate and links it with the bootloader binary in
+# a `build.rs` script.
+#
+# See: https://doc.rust-lang.org/cargo/reference/unstable.html#artifact-dependencies
+bindeps = true

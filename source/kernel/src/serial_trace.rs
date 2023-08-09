@@ -49,7 +49,7 @@ static SHARED: Shared = Shared {
 // === impl SerialSubscriber ===
 
 impl SerialSubscriber {
-    pub async fn start(k: &'static crate::Kernel, settings: SerialTraceSettings) {
+    pub async fn start(k: &'static crate::Kernel, settings: SerialTraceSettings) -> Self {
         SHARED
             .max_level
             .store(level_to_u8(settings.initial_level), Ordering::Release);
@@ -69,12 +69,10 @@ impl SerialSubscriber {
             shared: &SHARED,
         };
 
-        // set the default tracing collector
-        tracing::subscriber::set_global_default(subscriber)
-            .expect("failed to set global default subscriber");
-
         // spawn a worker to read from the channel and write to the serial port.
         k.spawn(Self::worker(&SHARED, rx, isr_rx, port, k)).await;
+
+        subscriber
     }
 
     /// Serialize a `TraceEvent`, returning `true` if the event was correctly serialized.

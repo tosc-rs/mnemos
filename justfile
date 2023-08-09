@@ -29,6 +29,8 @@ _d1_pkg := "mnemos-d1"
 
 _espbuddy_pkg := "mnemos-esp32c3-buddy"
 
+_x86_bootloader_pkg := "mnemos-x86_64-bootloader"
+
 # arguments to pass to all RustDoc invocations
 _rustdoc := _cargo + " doc --no-deps --all-features"
 
@@ -42,7 +44,7 @@ default:
     @just --list
 
 # check all crates, across workspaces
-check: && (check-crate _d1_pkg) (check-crate _espbuddy_pkg)
+check: && (check-crate _d1_pkg) (check-crate _espbuddy_pkg) (check-crate _x86_bootloader_pkg)
     {{ _cargo }} check \
         --lib --bins --examples --tests --benches \
         {{ _fmt }}
@@ -55,7 +57,7 @@ check-crate crate:
         {{ _fmt }}
 
 # run Clippy checks for all crates, across workspaces.
-clippy: && (clippy-crate _d1_pkg) (clippy-crate _espbuddy_pkg)
+clippy: && (clippy-crate _d1_pkg) (clippy-crate _espbuddy_pkg) (clippy-crate _x86_bootloader_pkg)
     {{ _cargo }} clippy \
         --lib --bins --examples --tests --benches --all-features \
         {{ _fmt }}
@@ -76,6 +78,7 @@ fmt:
     {{ _cargo }} fmt
     {{ _cargo }} fmt --package {{ _d1_pkg }}
     {{ _cargo }} fmt --package {{ _espbuddy_pkg }}
+    {{ _cargo }} fmt --package {{ _x86_bootloader_pkg }}
 
 # build a Mnemos binary for the Allwinner D1
 build-d1 board='mq-pro': (_get-cargo-command "objcopy" "cargo-binutils")
@@ -110,6 +113,14 @@ flash-c3 board *espflash-args: (_get-cargo-command "espflash" "cargo-espflash") 
         --bin {{ board }} \
         {{ espflash-args }}
 
+# build a bootable x86_64 disk image, using rust-osdev/bootloader.
+build-x86 *args='':
+    {{ _cargo }} build --package {{ _x86_bootloader_pkg }} {{ args }}
+
+# run an x86_64 MnemOS image in QEMU
+run-x86 *args='':
+    {{ _cargo }} run -p {{ _x86_bootloader_pkg }} -- {{ args }}
+
 # run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard)
 crowtty *FLAGS:
     @{{ _cargo }} run --release --bin crowtty -- {{ FLAGS }}
@@ -119,7 +130,7 @@ melpomene *FLAGS:
     @{{ _cargo }} run --release --bin melpomene -- {{ FLAGS }}
 
 # build all RustDoc documentation
-all-docs *FLAGS: (docs FLAGS) (docs "-p " + _d1_pkg + FLAGS) (docs "-p " + _d1_pkg + FLAGS)
+all-docs *FLAGS: (docs FLAGS) (docs "-p " + _d1_pkg + FLAGS) (docs "-p " + _espbuddy_pkg + FLAGS)  (docs "-p " + _x86_bootloader_pkg + FLAGS)
 
 # run RustDoc
 docs *FLAGS:
