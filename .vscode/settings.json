@@ -1,6 +1,6 @@
 {
-    "rust-analyzer.check.invocationLocation": "root",
-    "rust-analyzer.cargo.buildScripts.invocationLocation": "root",
+    "rust-analyzer.check.invocationLocation": "workspace",
+    "rust-analyzer.cargo.buildScripts.invocationLocation": "workspace",
     "rust-analyzer.cargo.buildScripts.overrideCommand": [
         "cargo",
         "check",
@@ -14,5 +14,7 @@
         "--quiet",
         "--message-format=json",
         "--all-targets"
-    ]
+    ],
+    "rust-analyzer.workspace.symbol.search.scope": "workspace_and_dependencies",
+    "rust-analyzer.typing.continueCommentsOnNewline": false
 }
