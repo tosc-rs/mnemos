@@ -24,9 +24,15 @@ images.
 
 ### Building
 
-To build an x86_64 boot image, either run
+To build x86_64 boot images, either run
 `cargo build -p mnemos-x86_64-bootloader`, or use the `just build-x86`
 [`just` recipe][just].
+
+After running this command, BIOS and UEFI boot image files (named
+`mnemos-x86_64-bios.img` and `mnemos-x86_64-uefi.img`, respectively) will be
+output to the build script's [Cargo `$OUT_DIR`][outdir]. By default, the
+`$OUT_DIR` is `target/{debug,
+release}/build/mnemos-x86_64-bootloader-{hash}/out`.
 
 ### Running in QEMU
 
@@ -58,7 +64,7 @@ bootimage builder. Run `just run-x86 --help` to list them.
 [BIOS]: https://en.wikipedia.org/wiki/BIOS
 [UEFI]: https://en.wikipedia.org/wiki/UEFI
 [`ovmf-prebuilt`]: https://github.com/rust-osdev/ovmf-prebuilt
-
+[outdir]: https://doc.rust-lang.org/cargo/reference/environment-variables.html#environment-variables-cargo-sets-for-build-scripts
 
 ## License
 
