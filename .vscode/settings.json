@@ -5,6 +5,14 @@
         "cargo",
         "check",
         "--quiet",
-        "--message-format=json"
+        "--message-format=json",
+        "--all-targets"
+    ],
+    "rust-analyzer.check.overrideCommand": [
+        "cargo",
+        "clippy",
+        "--quiet",
+        "--message-format=json",
+        "--all-targets"
     ]
 }
