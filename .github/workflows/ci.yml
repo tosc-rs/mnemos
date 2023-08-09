@@ -136,5 +136,6 @@ jobs:
       run: rustup show
     - uses: actions/checkout@v2
     - uses: olix0r/cargo-action-fmt@ee1ef42932e44794821dab57ef1bf7a73df8b21f
+    - uses: extractions/setup-just@v1
     - name: run rustdoc
       run: just docs --message-format=json --document-private-items

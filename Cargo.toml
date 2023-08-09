@@ -1,4 +1,20 @@
-cargo-features = ["per-package-target", "profile-rustflags", "resolver"]
+cargo-features = [
+    # Allows setting a different target triple on a per-crate level. This is
+    # required to include platform crates (which require specific target
+    # triples) in the main workspace.
+    #
+    # See: https://doc.rust-lang.org/cargo/reference/unstable.html#per-package-target
+    "per-package-target",
+    # Some platform implementations require specific RUSTFLAGS environment
+    # variables to configure the compiler's behavior, such as setting linker
+    # arguments. This unstable feature allows us to configure these RUSTFLAGS in
+    # the Cargo.toml on a per-crate basis, rather than requiring a separate
+    # `.cargo/config.toml` in each platform crate (and necessitating `cd`ing
+    # into those crates' directories in order to build the crate).
+    #
+    # See: https://doc.rust-lang.org/cargo/reference/unstable.html#profile-rustflags-option
+    "profile-rustflags",
+]
 
 [workspace]
 resolver = "2"
@@ -18,8 +34,12 @@ members = [
     "platforms/x86_64/*",
     "platforms/pomelo",
 ]
-# by default, run cargo commands without a specific package against everything
-# that can build cross-platform.
+# By default, run cargo commands without a specific package against everything
+# that can build cross-platform. This avoids incompatible feature unification
+# while running `cargo check`/`cargo fmt`/etc for most workspace crates.
+#
+# Incompatible crates are checked/built/formatted/documented individually by the
+# `just check`, `just clippy`, `just docs`, and `just fmt` Just recipes.
 default-members = [
     # mnemOS source
     "source/*",
@@ -49,7 +69,9 @@ debug = 2 # symbols are nice and they don't increase the size on Flash
 lto = true # better optimizations
 
 [profile.release.package.mnemos-esp32c3-buddy]
-# opt-level='z' is broken on esp32c3
+# opt-level='z' is broken on esp32c3.
+#
+# See: https://github.com/esp-rs/esp-hal/pull/198
 opt-level = "s"
 rustflags = [
     "-C", "link-arg=-Tlinkall.x",
@@ -59,7 +81,9 @@ rustflags = [
 ]
 
 [profile.dev.package.mnemos-esp32c3-buddy]
-# opt-level='z' is broken on esp32c3
+# opt-level='z' is broken on esp32c3.
+#
+# See: https://github.com/esp-rs/esp-hal/pull/198
 opt-level = "s"
 rustflags = [
     "-C", "link-arg=-Tlinkall.x",
