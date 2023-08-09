@@ -3,7 +3,6 @@ cargo-features = ["per-package-target", "profile-rustflags"]
 [package]
 name = "crowtty"
 version = "0.1.0"
-edition = "2021"
 description = """
 crowtty is a host tool, aimed at speaking the sermux protocol with a
 simulator or physical target. It allows for receiving tracing messages,

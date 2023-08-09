@@ -1,0 +1,10 @@
+{
+    "rust-analyzer.check.invocationLocation": "root",
+    "rust-analyzer.cargo.buildScripts.invocationLocation": "root",
+    "rust-analyzer.cargo.buildScripts.overrideCommand": [
+        "cargo",
+        "check",
+        "--quiet",
+        "--message-format=json"
+    ]
+}
