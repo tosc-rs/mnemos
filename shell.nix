@@ -9,16 +9,6 @@ let
       ++ mnemos.nativeBuildInputs;
   };
 in mkShell {
-  nativeBuildInputs = [ pkg-config ];
-  buildInputs = [
-    clang
-    libclang
-    systemd
-    udev
-    # for melpomene
-    SDL2
-    SDL2.dev
-  ];
   packages = [
     # devtools
     just

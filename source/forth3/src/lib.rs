@@ -118,11 +118,7 @@ pub struct CallContext<T: 'static> {
 
 impl<T: 'static> Clone for CallContext<T> {
     fn clone(&self) -> Self {
-        Self {
-            eh: self.eh,
-            idx: self.idx,
-            len: self.len,
-        }
+        *self
     }
 }
 

@@ -30,6 +30,7 @@ buildEnv {
     SDL2.dev
     # other stuff
     bash
+    zlib
   ];
   passthru = with pkgs; {
     SSL_CERT_FILE = "${cacert}/etc/ssl/certs/ca-bundle.crt";

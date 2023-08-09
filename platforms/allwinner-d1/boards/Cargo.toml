@@ -1,8 +1,4 @@
-[workspace]
-resolver = "2"
-members = [
-    "."
-]
+cargo-features = ["per-package-target"]
 
 [package]
 name = "mnemos-d1"
@@ -12,6 +8,7 @@ repository = "https://github.com/tosc-rs/mnemos"
 homepage = "https://mnemos.dev"
 readme = "./README.md"
 license = "MIT OR Apache-2.0"
+forced-target = "riscv64imac-unknown-none-elf"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -61,36 +58,3 @@ default-features = false
 
 [dependencies.mnemos-beepy]
 path = "../../beepy"
-
-### patches ###
-
-[patch.crates-io.maitake]
-git = "https://github.com/hawkw/mycelium.git"
-rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
-
-[patch.crates-io.mycelium-util]
-git = "https://github.com/hawkw/mycelium.git"
-rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
-
-# Use the `mycelium-bitfield` crate from the Mycelium monorepo rather than
-# crates.io.
-# NOTE: this patch, unlike the patches for `maitake` and `mycelium-util`, (which
-# are unpublished), is not *strictly* necessary, as `mycelium-bitfield` *is*
-# published to crates.io. However, we may as well depend on the git version,
-# since it's already in our dependency tree as a transitive dep of `maitake` ---
-# having both a Git dep and a crates.io dep seems unfortunate.
-[patch.crates-io.mycelium-bitfield]
-git = "https://github.com/hawkw/mycelium.git"
-rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
-
-[patch.crates-io.cordyceps]
-git = "https://github.com/hawkw/mycelium.git"
-rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
-
-[patch.crates-io.mnemos-alloc]
-path = "../../../source/alloc"
-
-# NOTE: keep this patch in sync with the one in the main kernel workspace!
-[patch.crates-io.bbq10kbd]
-git = "https://github.com/hawkw/bbq10kbd"
-branch = "eliza/async"

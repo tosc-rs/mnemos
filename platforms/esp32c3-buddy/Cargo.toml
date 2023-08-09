@@ -1,8 +1,4 @@
-[workspace]
-resolver = "2"
-members = [
-    "."
-]
+cargo-features = ["per-package-target", "profile-rustflags"]
 
 [package]
 name = "mnemos-esp32c3-buddy"
@@ -17,11 +13,13 @@ homepage = "https://mnemos.dev"
 readme = "./README.md"
 license = "MIT OR Apache-2.0"
 
-[profile.release]
-# it turns out that we basically just "can't" build in debug mode (or our code
-# will fault), so just build in release mode all the time but keep debug
-# symbols.
-debug = true
+# this isn't technically the correct target --- it *should* be
+# `riscv32-imc-unknown-none-elf`. but, because we're using the
+# `riscv-atomic-emulation-trap` crate, we want to emit these instructions, and
+# just setting `target_has_atomic` in `rustflags` makes `portable-atomic` not
+# compile, since it does feature detection based on both `cfg_target_has_atomic`
+# *and* the target triple. oh well.
+forced-target = "riscv32imac-unknown-none-elf"
 
 [lib]
 test = false
@@ -71,31 +69,3 @@ default-features = false
 version = "0.3.21"
 default-features = false
 features = ["async-await"]
-
-### patches ###
-
-[patch.crates-io.maitake]
-git = "https://github.com/hawkw/mycelium.git"
-rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
-
-[patch.crates-io.mycelium-util]
-git = "https://github.com/hawkw/mycelium.git"
-rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
-
-# Use the `mycelium-bitfield` crate from the Mycelium monorepo rather than
-# crates.io.
-# NOTE: this patch, unlike the patches for `maitake` and `mycelium-util`, (which
-# are unpublished), is not *strictly* necessary, as `mycelium-bitfield` *is*
-# published to crates.io. However, we may as well depend on the git version,
-# since it's already in our dependency tree as a transitive dep of `maitake` ---
-# having both a Git dep and a crates.io dep seems unfortunate.
-[patch.crates-io.mycelium-bitfield]
-git = "https://github.com/hawkw/mycelium.git"
-rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
-
-[patch.crates-io.cordyceps]
-git = "https://github.com/hawkw/mycelium.git"
-rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
-
-[patch.crates-io.mnemos-alloc]
-path = "../../source/alloc"

@@ -77,15 +77,3 @@ version = "0.4.37"
 [dependencies.async-std]
 version = "1.12.0"
 features = ["unstable"]
-
-[patch.crates-io.maitake]
-git = "https://github.com/hawkw/mycelium.git"
-rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
-
-[patch.crates-io.mycelium-util]
-git = "https://github.com/hawkw/mycelium.git"
-rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
-
-[patch.crates-io.cordyceps]
-git = "https://github.com/hawkw/mycelium.git"
-rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"

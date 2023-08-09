@@ -25,13 +25,9 @@ _fmt := if env_var_or_default("GITHUB_ACTIONS", "") != "true" { "" } else {
 
 _d1_start_addr := "0x40000000"
 _d1_bin_path := "target/riscv64imac-unknown-none-elf"
-_d1_dir := "platforms/allwinner-d1/boards"
+_d1_pkg := "mnemos-d1"
 
-_pomelo_dir := "platforms/pomelo"
-
-_melpo_dir := "platforms/melpomene"
-
-_espbuddy_dir := "platforms/esp32c3-buddy"
+_espbuddy_pkg := "mnemos-esp32c3-buddy"
 
 # arguments to pass to all RustDoc invocations
 _rustdoc := _cargo + " doc --no-deps --all-features"
@@ -45,61 +41,74 @@ default:
     @echo ""
     @just --list
 
-# check all packages, across workspaces
-check: && (_check-dir _pomelo_dir ) (_check-dir _melpo_dir) (_check-dir _espbuddy_dir)
+# check all crates, across workspaces
+check: && (check-crate _d1_pkg) (check-crate _espbuddy_pkg)
     {{ _cargo }} check \
-        --workspace \
+        --lib --bins --examples --tests --benches \
+        {{ _fmt }}
+
+# check a crate.
+check-crate crate:
+    {{ _cargo }} check \
+        --lib --bins --examples --tests --benches --all-features \
+        --package {{ crate }} \
+        {{ _fmt }}
+
+# run Clippy checks for all crates, across workspaces.
+clippy: && (clippy-crate _d1_pkg) (clippy-crate _espbuddy_pkg)
+    {{ _cargo }} clippy \
         --lib --bins --examples --tests --benches --all-features \
         {{ _fmt }}
 
-# run Clippy checks for all packages, across workspaces.
-clippy: && (_clippy-dir _pomelo_dir ) (_clippy-dir _melpo_dir) (_clippy-dir _espbuddy_dir)
-    {{ _cargo }} clippy --workspace \
-        --lib --bins --examples --tests --benches --all-features \
+# run clippy checks for a crate.
+clippy-crate crate:
+    {{ _cargo }} clippy \
+        --lib --bins --examples --tests --benches \
+        --package {{ crate }} \
         {{ _fmt }}
 
 # test all packages, across workspaces
 test: (_get-cargo-command "nextest" "cargo-nextest" no-nextest)
-    {{ _cargo }} nextest run --workspace --all-features
-    # uncomment this if we actually add tests to the D1 platform
-    # (cd {{ _d1_dir }}; {{ _cargo }} nextest run --workspace)
+    {{ _cargo }} nextest run --all-features
 
-# run rustfmt for all packages, across workspaces
+# run rustfmt for all crates, across workspaces
 fmt:
-    {{ _cargo }} fmt --all
-    (cd {{ _d1_dir }}; {{ _cargo }} fmt --all)
+    {{ _cargo }} fmt
+    {{ _cargo }} fmt --package {{ _d1_pkg }}
+    {{ _cargo }} fmt --package {{ _espbuddy_pkg }}
 
 # build a Mnemos binary for the Allwinner D1
 build-d1 board='mq-pro': (_get-cargo-command "objcopy" "cargo-binutils")
-    cd {{ _d1_dir}} && {{ _cargo }} build --bin {{ board }} --release
-    cd {{ _d1_dir}} && \
-        {{ _cargo }} objcopy \
+    {{ _cargo }} build \
+        --package {{ _d1_pkg }} \
+        --bin {{ board }} \
+        --release
+    {{ _cargo }} objcopy \
+        --package {{ _d1_pkg }} \
         --bin {{ board }} \
         --release \
         -- \
-        -O binary \
-        ./{{ _d1_bin_path }}/mnemos-{{ board }}.bin
+        -O binary {{ _d1_bin_path }}/mnemos-{{ board }}.bin
 
 # flash an Allwinner D1 using xfel
 flash-d1 board='mq-pro': (build-d1 board)
     xfel ddr d1
-    xfel write {{ _d1_start_addr }} {{ _d1_dir}}/{{ _d1_bin_path }}/mnemos-{{ board }}.bin
+    xfel write {{ _d1_start_addr }} {{ _d1_bin_path }}/mnemos-{{ board }}.bin
     xfel exec {{ _d1_start_addr }}
 
 # build a MnemOS binary for the ESP32-C3
 build-c3 board:
-    cd {{ _espbuddy_dir }} && \
-    {{ _cargo }} build \
-        --release \
+    {{ _cargo }} build --release \
+        --package {{ _espbuddy_pkg }} \
         --bin {{ board }}
 
 # flash an ESP32-C3 with the MnemOS WiFi Buddy firmware
 flash-c3 board *espflash-args: (_get-cargo-command "espflash" "cargo-espflash") (build-c3 board)
-    cd {{ _espbuddy_dir }} && \
-        {{ _cargo }} espflash flash \
-            --release \
-            --bin {{ board }} \
-            {{ espflash-args }}
+    {{ _cargo }} espflash flash \
+        --release \
+        --package {{ _espbuddy_pkg }} \
+        --bin {{ board }} \
+        {{ espflash-args }}
 
 # run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard)
 crowtty *FLAGS:
@@ -107,8 +116,18 @@ crowtty *FLAGS:
 
 # run the Melpomene simulator
 melpomene *FLAGS:
-    @cd {{ _melpo_dir }}; \
-        cargo run --release --bin melpomene -- {{ FLAGS }}
+    @{{ _cargo }} run --release --bin melpomene -- {{ FLAGS }}
+
+# build all RustDoc documentation
+all-docs *FLAGS: (docs FLAGS) (docs "-p " + _d1_pkg + FLAGS) (docs "-p " + _d1_pkg + FLAGS)
+
+# run RustDoc
+docs *FLAGS:
+    env RUSTDOCFLAGS="--cfg docsrs -Dwarnings" \
+        {{ _cargo }} doc \
+        --all-features \
+        {{ FLAGS }} \
+        {{ _fmt }}
 
 _get-cargo-command name pkg skip='':
     #!/usr/bin/env bash
@@ -129,11 +148,3 @@ _get-cargo-command name pkg skip='':
     if confirm "       install it?"; then
         cargo install {{ pkg }}
     fi
-
-# run clippy for a subdirectory
-_clippy-dir dir:
-    cd {{ dir }}; {{ _cargo }} clippy --lib --bins {{ _fmt }}
-
-# run cargo check for a subdirectory
-_check-dir dir:
-    cd {{ dir }}; {{ _cargo }} check --lib --bins {{ _fmt }}

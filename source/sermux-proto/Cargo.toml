@@ -1,3 +1,5 @@
+cargo-features = ["per-package-target", "profile-rustflags"]
+
 [package]
 name = "sermux-proto"
 version = "0.1.0"

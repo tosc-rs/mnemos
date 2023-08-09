@@ -11,9 +11,7 @@ use gloo_utils::format::JsValueSerdeExt;
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
     forth::{self, Forth},
-    services::{
-        serial_mux::{PortHandle,WellKnown},
-    },
+    services::serial_mux::{PortHandle, WellKnown},
     Kernel, KernelSettings,
 };
 use pomelo::{
