@@ -118,6 +118,17 @@ crowtty *FLAGS:
 melpomene *FLAGS:
     @{{ _cargo }} run --release --bin melpomene -- {{ FLAGS }}
 
+# build all RustDoc documentation
+all-docs *FLAGS: (docs FLAGS) (docs "-p " + _d1_pkg + FLAGS) (docs "-p " + _d1_pkg + FLAGS)
+
+# run RustDoc
+docs *FLAGS:
+    env RUSTDOCFLAGS="--cfg docsrs -Dwarnings" \
+        {{ _cargo }} doc \
+        --all-features \
+        {{ FLAGS }} \
+        {{ _fmt }}
+
 _get-cargo-command name pkg skip='':
     #!/usr/bin/env bash
     set -euo pipefail
