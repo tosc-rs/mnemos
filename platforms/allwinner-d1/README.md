@@ -16,16 +16,6 @@ This directory contains MnemOS platform support for the Allwinner D1 RISC-V SoC.
 
 ### Building
 
-> **Note**
->
-> The `boards/` directory is its own Cargo workspace. This is in order  to avoid
-> blowing away artifacts for host tools cached in the main workspace when
-> building the MnemOS binary for a target.
-
-To build for the Allwinner D1 platform, either build from within the
-`allwinner-d1/boards/` directory, or use the [`just build-d1` Just
-recipe][just].
-
 This crate contains a separate Cargo bin target for each supported D1 board.
 These bin targets depend on the [`mnemos-d1-core` crate] for the majority of the
 platform implementation, and configure the D1's I/O pins based on how those pins
@@ -34,6 +24,14 @@ provided:
 
 * `mq-pro`: MnemOS for the [MangoPi MQ Pro]
 * `lichee-rv`: MnemOS for the [Sipeed Lichee RV]
+
+The simplest way to build a MnemOS image for an Allwinner D1 board is to use the
+[`just build-d1` Just recipe][just].
+
+> [!IMPORTANT]
+>
+> Running Just recipes requires Just to be installed. See
+> [https://just.systems](https://just.systems) for details on using Just.
 
 The `just build-d1` recipe takes an optional argument to select which bin target
 is built; by default, the `mq-pro` bin target is selected. For example:
@@ -44,6 +42,25 @@ $ just build-d1 mq-pro      # also builds MnemOS for the MQ Pro
 $ just build-d1 lichee-rv   # builds MnemOS for the Lichee RV
 ```
 
+Alternatively, Allwinner D1 images can be built manually using Cargo. To build
+using Cargo, run the following commands:
+
+```console
+# set which board binary to build
+$ export BOARD="mq-pro" # or "lichee-rv"
+
+# build the MnemOS binary for that board
+$ cargo build -p mnemos-d1 --board $BOARD --release
+
+# produce a binary that can be flashed to the board
+$ cargo objcopy -p mnemos-d1 --bin $BOARD -- release \
+     -O binary target/riscv64imac-unknown-none-elf/mnemos-$BOARD.bin
+```
+
+> [!IMPORTANT]
+>
+> Note that `cargo-binutils` must be installed in order to use `cargo objcopy`.
+> The `just build-d1` recipe will prompt to install it automatically.
 ### Running
 
 The quickest way to get MnemOS running on a D1 SBC is using [`xfel`].
@@ -69,7 +86,7 @@ xfel write 0x40000000 platforms/allwinner-d1/boards/target/riscv64imac-unknown-n
 xfel exec 0x40000000
 ```
 
-> **Note**
+> [!NOTE]
 >
 > When flashing the MangoPi MQ Pro using `just flash-d1`, ensure that the USB
 > cable is plugged in to the USB-C port on the board labeled as "OTG" on the
@@ -95,7 +112,7 @@ building `xfel` from source for Linux, MacOS, and Windows can be found
 [here][xfel-build]. Pre-built `xfel` binaries for Windows are available
 [here][xfel-win].
 
-> **Note**
+> [!NOTE]
 >
 > In addition to the official distribution channels, I (Eliza) have written [a
 > Nix derivation for `xfel`][xfel-nix]. Eventually, I'd like to upstream this to

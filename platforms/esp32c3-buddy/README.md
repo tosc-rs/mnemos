@@ -18,15 +18,13 @@ either board can be used interchangeably.
 
 ### Building
 
-> **Note**
->
-> This crate is its own Cargo workspace. This is in order to avoid
-> blowing away artifacts for host tools cached in the main workspace when
-> building the MnemOS binary for a target.
+The simplest way to build a MnemOS image for the [ESP32-C3] platform to use the
+[`just build-c3` Just recipe][just].
 
-To build for the [ESP32-C3] platform, either build from within the
-`platforms/esp32c3-buddy` directory, or use the [`just build-c3` Just
-recipe][just].
+> [!IMPORTANT]
+>
+> Running Just recipes requires Just to be installed. See
+> [https://just.systems](https://just.systems) for details on using Just.
 
 The two supported ESP32-C3 dev boards are pinout-compatible, but route different
 pins on the ESP32 to the pins on the dev board. Therefore, this crate contains
@@ -44,6 +42,16 @@ $ just build-c3 qtpy   # builds MnemOS for the Adafruit QT Py ESP32-C3
 $ just build-c3 xiao   # builds MnemOS for the Seeedstudio XIAO ESP32-C3
 ```
 
+Alternatively, Allwinner D1 images can be built manually using Cargo. To build
+using Cargo, run:
+
+```console
+# builds MnemOS for the Adafruit QT Py ESP32-C3
+$ cargo build -p mnemos-esp32c3-buddy --bin qtpy --release
+# builds MnemOS for the Seeedstudio XIAO ESP32-C3
+$ cargo build -p mnemos-esp32c3-buddy --bin xiao --release
+```
+
 ### Flashing & Running
 
 ESP32-C3 dev boards can be flashed over USB using [`cargo-espflash`]. To flash
@@ -58,7 +66,7 @@ $ just flash-c3 qtpy   # build and flash the Adafruit QT Py ESP32-C3
 $ just flash-c3 xiao   # build and flash the Seeedstudio XIAO ESP32-C3
 ```
 
-> **Note**
+> [!IMPORTANT]
 >
 > In order to flash an ESP32-C3 board, the [`cargo-espflash`] executable
 > must be installed. The `just flash-c3` Just recipe will check if
@@ -69,9 +77,32 @@ If everything worked successfully, you should see output similar to this:
 ```console
 $ just flash-c3 qtpy
        Found cargo-espflash
-cd platforms/esp32c3-buddy && cargo build --release
+cargo build --package mnemos-esp32c3-buddy --bin qtpy --release
     Finished release [optimized] target(s) in 0.04s
-cd platforms/esp32c3-buddy && cargo espflash flash --monitor
+cargo espflash --package mnemos-esp32c3-buddy --bin qtpy flash --monitor
+[2023-07-28T16:40:37Z INFO ] Serial port: '/dev/ttyACM0'
+[2023-07-28T16:40:37Z INFO ] Connecting...
+[2023-07-28T16:40:38Z INFO ] Using flash stub
+    Finished dev [unoptimized + debuginfo] target(s) in 0.04s
+Chip type:         esp32c3 (revision v0.3)
+Crystal frequency: 40MHz
+Flash size:        4MB
+Features:          WiFi, BLE
+MAC address:       34:b4:72:ea:44:18
+App/part. size:    209,760/4,128,768 bytes, 5.08%
+[00:00:00] [========================================]      13/13      0x0
+[00:00:00] [========================================]       1/1       0x8000
+[00:00:01] [========================================]      67/67      0x10000
+[2023-07-28T16:40:41Z INFO ] Flashing has completed!
+```
+
+Alternatively, the board can be flashed manually using [`cargo-espflash`]. For
+example:
+```console
+$ cargo espflash flash \
+    --package mnemos-esp32c3-buddy \
+    --bin qtpy \ # or 'xiao'
+    --monitor
 [2023-07-28T16:40:37Z INFO ] Serial port: '/dev/ttyACM0'
 [2023-07-28T16:40:37Z INFO ] Connecting...
 [2023-07-28T16:40:38Z INFO ] Using flash stub

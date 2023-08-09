@@ -1,3 +1,5 @@
+cargo-features = ["per-package-target", "profile-rustflags"]
+
 [package]
 name = "forth3"
 version = "0.1.0"
