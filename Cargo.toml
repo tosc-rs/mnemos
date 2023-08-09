@@ -15,6 +15,7 @@ members = [
     "platforms/esp32c3-buddy",
     "platforms/melpomene",
     "platforms/melpomene/melpo-config",
+    "platforms/x86_64/*",
     "platforms/pomelo",
 ]
 # by default, run cargo commands without a specific package against everything
@@ -31,7 +32,7 @@ default-members = [
     "platforms/beepy",
     "platforms/melpomene",
     "platforms/melpomene/melpo-config",
-    "platforms/x86_64/*",
+    "platforms/x86_64/core",
 ]
 # this isn't actually a crate
 exclude = ["source/notes"]
