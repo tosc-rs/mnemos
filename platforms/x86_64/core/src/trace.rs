@@ -127,7 +127,7 @@ where
                     }
                 }) as &mut dyn tracing::field::Visit,
             );
-            writeln!(&mut writer, "").unwrap();
+            writeln!(&mut writer).unwrap();
 
             self.point
                 .store(pack_point(writer.next_point()), Ordering::Release);
