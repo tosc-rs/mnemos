@@ -35,6 +35,7 @@ pub(super) unsafe fn mk_framebuf() -> FramebufWriter {
 /// This forcibly unlocks a potentially-locked mutex, violating mutual
 /// exclusion! This should only be called in conditions where no other CPU core
 /// will *ever* attempt to access the framebuffer again (such as while oopsing).
+#[allow(dead_code)]
 pub(super) unsafe fn force_unlock() {
     if let Some((_, fb)) = FRAMEBUFFER.try_get() {
         fb.force_unlock();
