@@ -73,7 +73,7 @@ where
         // if we have reached the bottom of the screen, we'll need to scroll
         // previous framebuffer contents up to make room for new line(s) of
         // text.
-        self.point.y = self.point.y + self.style.font.character_size.height as i32;
+        self.point.y += self.style.font.character_size.height as i32;
         self.point.x = self.start_x;
     }
 }
@@ -133,7 +133,7 @@ where
                 // line, wrap the line.
                 let rem = self.px_to_len(self.width_px - (self.point.x as u32));
                 if line.len() > rem {
-                    let (curr, next) = line.split_at(rem as usize);
+                    let (curr, next) = line.split_at(rem);
                     line = next;
                     chunk = curr;
                     has_newline = true;
