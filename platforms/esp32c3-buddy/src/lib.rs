@@ -101,7 +101,7 @@ pub fn run(k: &'static Kernel, alarm1: Alarm<Target, 1>) -> ! {
         // Timer is downcounting
         let elapsed = SystemTimer::now() - start;
 
-        let turn = k.timer().force_advance_ticks(elapsed as u64 / 2u64);
+        let turn = k.timer().force_advance_ticks(elapsed / 2u64);
 
         // If there is nothing else scheduled, and we didn't just wake something up,
         // sleep for some amount of time
@@ -138,7 +138,7 @@ pub fn run(k: &'static Kernel, alarm1: Alarm<Target, 1>) -> ! {
             // Account for time slept
             let elapsed = SystemTimer::now() - wfi_start;
 
-            let _turn = k.timer().force_advance_ticks(elapsed as u64 / 2u64);
+            let _turn = k.timer().force_advance_ticks(elapsed / 2u64);
         }
     }
 }

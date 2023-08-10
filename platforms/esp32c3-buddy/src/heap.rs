@@ -38,6 +38,9 @@ impl UnderlyingAllocator for UnderlyingEspHeap {
     ///
     /// May or may not require a call to [UnderlyingAllocator::init()] before the allocator
     /// is actually ready for use.
+    //
+    // TODO: Clippy has a point here as this is misuse prone, but silence for now.
+    #[allow(clippy::declare_interior_mutable_const)]
     const INIT: Self = UnderlyingEspHeap(EspHeap::empty());
 
     /// Initialize the allocator, if it is necessary to populate with a region
