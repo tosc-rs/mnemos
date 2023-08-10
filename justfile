@@ -60,14 +60,16 @@ check-crate crate:
 clippy: && (clippy-crate _d1_pkg) (clippy-crate _espbuddy_pkg) (clippy-crate _x86_bootloader_pkg)
     {{ _cargo }} clippy \
         --lib --bins --examples --tests --benches --all-features \
-        {{ _fmt }}
+        {{ _fmt }} \
+        -- -Dwarnings
 
 # run clippy checks for a crate.
 clippy-crate crate:
     {{ _cargo }} clippy \
         --lib --bins --examples --tests --benches \
         --package {{ crate }} \
-        {{ _fmt }}
+        {{ _fmt }} \
+        -- -Dwarnings
 
 # test all packages, across workspaces
 test: (_get-cargo-command "nextest" "cargo-nextest" no-nextest)

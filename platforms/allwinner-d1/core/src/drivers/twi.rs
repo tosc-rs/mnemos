@@ -1,3 +1,6 @@
+// Note: We sometimes force a pass by ref mut to enforce exclusive access
+#![allow(clippy::needless_pass_by_ref_mut)]
+
 //! Drivers for the Allwinner D1's I²C/TWI peripherals.
 //!
 //! This module contains an implementation of a driver for controlling the

@@ -241,7 +241,7 @@ pub enum RegistrationError {
 // https://github.com/solderparty/i2c_puppet#protocol
 const ADDR: u8 = 0x1f;
 
-//// i2c_puppet I2C registers
+/// i2c_puppet I2C registers
 mod reg {
     /// To write with a register, we must OR the register number with this mask:
     /// <https://github.com/solderparty/i2c_puppet#protocol>
