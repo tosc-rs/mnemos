@@ -128,6 +128,8 @@ fn main() -> ! {
     d1.run()
 }
 
+// Note: pass by ref mut to enforce exclusive access
+#[allow(clippy::needless_pass_by_ref_mut)]
 fn init_i2c_puppet_irq(gpio: &mut d1_pac::GPIO, plic: &mut Plic) -> &'static WaitCell {
     use d1_pac::Interrupt;
     use mnemos_d1_core::plic::Priority;
