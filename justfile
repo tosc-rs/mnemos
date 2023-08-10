@@ -15,10 +15,10 @@ _rustflags := env_var_or_default("RUSTFLAGS", "")
 
 # If we're running in Github Actions and cargo-action-fmt is installed, then add
 # a command suffix that formats errors.
-_fmt := if env_var_or_default("GITHUB_ACTIONS", "") != "true" { "" } else {
+_fmt := if env_var_or_default("GITHUB_ACTIONS", "") != "true" { "-- -Dwarnings" } else {
     ```
     if command -v cargo-action-fmt >/dev/null 2>&1; then
-        echo "--message-format=json | cargo-action-fmt"
+        echo "--message-format=json -- -Dwarnings | cargo-action-fmt"
     fi
     ```
 }
@@ -57,19 +57,19 @@ check-crate crate:
         {{ _fmt }}
 
 # run Clippy checks for all crates, across workspaces.
+# NOTE: -Dwarnings is added by _fmt because reasons
 clippy: && (clippy-crate _d1_pkg) (clippy-crate _espbuddy_pkg) (clippy-crate _x86_bootloader_pkg)
     {{ _cargo }} clippy \
         --lib --bins --examples --tests --benches --all-features \
-        {{ _fmt }} \
-        -- -Dwarnings
+        {{ _fmt }}
 
 # run clippy checks for a crate.
+# NOTE: -Dwarnings is added by _fmt because reasons
 clippy-crate crate:
     {{ _cargo }} clippy \
         --lib --bins --examples --tests --benches \
         --package {{ crate }} \
-        {{ _fmt }} \
-        -- -Dwarnings
+        {{ _fmt }}
 
 # test all packages, across workspaces
 test: (_get-cargo-command "nextest" "cargo-nextest" no-nextest)
