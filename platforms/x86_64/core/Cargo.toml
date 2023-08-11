@@ -1,7 +1,10 @@
+cargo-features = ["per-package-target", "profile-rustflags"]
+
 [package]
 name = "mnemos-x86_64-core"
 version = "0.1.0"
 edition = "2021"
+forced-target = "x86_64-unknown-none"
 
 [lib]
 test = false

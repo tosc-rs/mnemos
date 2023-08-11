@@ -52,7 +52,6 @@ default-members = [
     "platforms/beepy",
     "platforms/melpomene",
     "platforms/melpomene/melpo-config",
-    "platforms/x86_64/core",
 ]
 # this isn't actually a crate
 exclude = ["source/notes"]
