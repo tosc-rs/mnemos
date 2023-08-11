@@ -64,6 +64,7 @@ pub fn kernel_start(info: &'static mut bootloader_api::BootInfo) -> ! {
 
 #[cold]
 #[cfg_attr(target_os = "none", panic_handler)]
+#[allow(dead_code)]
 fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
     use core::fmt::Write;
     use embedded_graphics::{

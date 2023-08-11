@@ -1,3 +1,6 @@
+// Note: We sometimes force a pass by ref mut to enforce exclusive access
+#![allow(clippy::needless_pass_by_ref_mut)]
+
 use d1_pac::{GPIO, UART0};
 
 use core::{

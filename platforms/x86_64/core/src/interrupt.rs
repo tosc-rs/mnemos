@@ -111,7 +111,7 @@ impl hal_core::interrupt::Handlers<Registers> for InterruptHandlers {
         C: interrupt::Context<Registers = Registers> + interrupt::ctx::CodeFault,
     {
         // TODO: add a nice fault handler
-        let _fault = match cx.details() {
+        match cx.details() {
             Some(deets) => panic!("code fault {}: \n{deets}", cx.fault_kind()),
             None => panic!("code fault {}!", cx.fault_kind()),
         };

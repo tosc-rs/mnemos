@@ -64,11 +64,11 @@ impl TcpSerial {
 
         let _hdl = tokio::spawn(
             async move {
-                let mut handle = a_ring;
+                let handle = a_ring;
                 loop {
                     match listener.accept().await {
                         Ok((stream, addr)) => {
-                            process_stream(&mut handle, stream, irq.clone())
+                            process_stream(&handle, stream, irq.clone())
                                 .instrument(info_span!("process_stream", client.addr = %addr))
                                 .await
                         }
@@ -88,7 +88,7 @@ impl TcpSerial {
     }
 }
 
-async fn process_stream(handle: &mut BidiHandle, mut stream: TcpStream, irq: Arc<Notify>) {
+async fn process_stream(handle: &BidiHandle, mut stream: TcpStream, irq: Arc<Notify>) {
     loop {
         // Wait until either the socket has data to read, or the other end of
         // the BBQueue has data to write.
@@ -111,7 +111,7 @@ async fn process_stream(handle: &mut BidiHandle, mut stream: TcpStream, irq: Arc
                 // Try to read data, this may still fail with `WouldBlock`
                 // if the readiness event is a false positive.
                 match stream.try_read(&mut in_grant) {
-                    Ok(used) if used == 0 => {
+                    Ok(0) => {
                         warn!("Empty read, socket probably closed.");
                         return;
                     },

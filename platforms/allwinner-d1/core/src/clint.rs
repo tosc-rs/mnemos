@@ -21,6 +21,12 @@ impl Clint {
         self.clint
     }
 
+    /// Summon the clint peripheral
+    ///
+    /// # Safety
+    ///
+    /// This is intended for use in interrupt context. Care should be taken not to have
+    /// multiple instances live at the same time that may race or cause other UB issues
     #[must_use]
     pub unsafe fn summon() -> Self {
         Self {

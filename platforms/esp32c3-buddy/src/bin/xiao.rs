@@ -41,7 +41,7 @@ fn main() -> ! {
 
     mnemos_esp32c3_buddy::spawn_daemons(k);
     mnemos_esp32c3_buddy::spawn_serial(
-        &k,
+        k,
         peripherals.USB_DEVICE,
         &mut system.peripheral_clock_control,
     );
@@ -51,5 +51,5 @@ fn main() -> ! {
     // Alarm 1 will be used to generate "sleep until" interrupts.
     let alarm1 = syst.alarm1;
 
-    mnemos_esp32c3_buddy::run(&k, alarm1)
+    mnemos_esp32c3_buddy::run(k, alarm1)
 }

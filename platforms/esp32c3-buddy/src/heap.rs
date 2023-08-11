@@ -38,6 +38,13 @@ impl UnderlyingAllocator for UnderlyingEspHeap {
     ///
     /// May or may not require a call to [UnderlyingAllocator::init()] before the allocator
     /// is actually ready for use.
+    //
+    // clippy note: <https://rust-lang.github.io/rust-clippy/master/index.html#/declare_interior_mutable_const>
+    //
+    // > A “non-constant” const item is a legacy way to supply an initialized value to
+    // > downstream static items (e.g., the std::sync::ONCE_INIT constant). In this
+    // > case the use of const is legit, and this lint should be suppressed.
+    #[allow(clippy::declare_interior_mutable_const)]
     const INIT: Self = UnderlyingEspHeap(EspHeap::empty());
 
     /// Initialize the allocator, if it is necessary to populate with a region
