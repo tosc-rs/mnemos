@@ -67,7 +67,6 @@ check-crate crate:
         {{ _fmt_check_doc }}
 
 # run Clippy checks for all crates, across workspaces.
-# NOTE: -Dwarnings is added by _fmt because reasons
 clippy: && (clippy-crate _d1_pkg) (clippy-crate _espbuddy_pkg) (clippy-crate _x86_bootloader_pkg)
     {{ _cargo }} clippy \
         --lib --bins --examples --tests --benches --all-features \
