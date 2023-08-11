@@ -58,7 +58,7 @@ check-crate crate:
         {{ _fmt }}
 
 # run Clippy checks for all crates, across workspaces.
-clippy: && (clippy-crate _d1_pkg) (clippy-crate _espbuddy_pkg) (check-crate _x86_pkg) (clippy-crate _x86_bootloader_pkg)
+clippy: && (clippy-crate _d1_pkg) (clippy-crate _espbuddy_pkg) (clippy-crate _x86_pkg) (clippy-crate _x86_bootloader_pkg)
     {{ _cargo }} clippy \
         --lib --bins --examples --tests --benches --all-features \
         {{ _fmt }}
