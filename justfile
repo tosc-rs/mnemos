@@ -46,12 +46,16 @@ default:
 
 # check all crates, across workspaces
 check: && (check-crate _d1_pkg) (check-crate _espbuddy_pkg) (check-crate _x86_pkg) (check-crate _x86_bootloader_pkg)
+    #!/usr/bin/env bash
+    set -euxo pipefail
     {{ _cargo }} check \
         --lib --bins --examples --tests --benches \
         {{ _fmt }}
 
 # check a crate.
 check-crate crate:
+    #!/usr/bin/env bash
+    set -euxo pipefail
     {{ _cargo }} check \
         --lib --bins --examples --tests --benches --all-features \
         --package {{ crate }} \
@@ -59,12 +63,16 @@ check-crate crate:
 
 # run Clippy checks for all crates, across workspaces.
 clippy: && (clippy-crate _d1_pkg) (clippy-crate _espbuddy_pkg) (clippy-crate _x86_pkg) (clippy-crate _x86_bootloader_pkg)
+    #!/usr/bin/env bash
+    set -euxo pipefail
     {{ _cargo }} clippy \
         --lib --bins --examples --tests --benches --all-features \
         {{ _fmt }}
 
 # run clippy checks for a crate.
 clippy-crate crate:
+    #!/usr/bin/env bash
+    set -euxo pipefail
     {{ _cargo }} clippy \
         --lib --bins --examples --tests --benches \
         --package {{ crate }} \
