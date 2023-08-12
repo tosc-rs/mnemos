@@ -39,6 +39,7 @@ _d1_pkg := "mnemos-d1"
 
 _espbuddy_pkg := "mnemos-esp32c3-buddy"
 
+_x86_pkg := "mnemos-x86_64-bootloader"
 _x86_bootloader_pkg := "mnemos-x86_64-bootloader"
 
 # arguments to pass to all RustDoc invocations
@@ -54,20 +55,26 @@ default:
     @just --list
 
 # check all crates, across workspaces
-check: && (check-crate _d1_pkg) (check-crate _espbuddy_pkg) (check-crate _x86_bootloader_pkg)
+check: && (check-crate _d1_pkg) (check-crate _espbuddy_pkg) (check-crate _x86_pkg) (check-crate _x86_bootloader_pkg)
+    #!/usr/bin/env bash
+    set -euxo pipefail
     {{ _cargo }} check \
         --lib --bins --examples --tests --benches \
         {{ _fmt_check_doc }}
 
 # check a crate.
 check-crate crate:
+    #!/usr/bin/env bash
+    set -euxo pipefail
     {{ _cargo }} check \
         --lib --bins --examples --tests --benches --all-features \
         --package {{ crate }} \
         {{ _fmt_check_doc }}
 
 # run Clippy checks for all crates, across workspaces.
-clippy: && (clippy-crate _d1_pkg) (clippy-crate _espbuddy_pkg) (clippy-crate _x86_bootloader_pkg)
+clippy: && (clippy-crate _d1_pkg) (clippy-crate _espbuddy_pkg) (clippy-crate _x86_pkg) (clippy-crate _x86_bootloader_pkg)
+    #!/usr/bin/env bash
+    set -euxo pipefail
     {{ _cargo }} clippy \
         --lib --bins --examples --tests --benches --all-features \
         {{ _fmt_clippy }}
@@ -75,6 +82,8 @@ clippy: && (clippy-crate _d1_pkg) (clippy-crate _espbuddy_pkg) (clippy-crate _x8
 # run clippy checks for a crate.
 # NOTE: -Dwarnings is added by _fmt because reasons
 clippy-crate crate:
+    #!/usr/bin/env bash
+    set -euxo pipefail
     {{ _cargo }} clippy \
         --lib --bins --examples --tests --benches \
         --package {{ crate }} \
@@ -89,6 +98,7 @@ fmt:
     {{ _cargo }} fmt
     {{ _cargo }} fmt --package {{ _d1_pkg }}
     {{ _cargo }} fmt --package {{ _espbuddy_pkg }}
+    {{ _cargo }} fmt --package {{ _x86_pkg }}
     {{ _cargo }} fmt --package {{ _x86_bootloader_pkg }}
 
 # build a Mnemos binary for the Allwinner D1
