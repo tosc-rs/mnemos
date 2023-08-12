@@ -1,14 +1,9 @@
 scope@{ pkgs ? import <nixpkgs> { } }:
 with pkgs;
-let
-  mnemos = import ./default.nix { inherit pkgs; };
-
-  env = buildEnv {
-    name = "mnemos-env";
-    paths = [ ] ++ lib.optional stdenv.isDarwin libiconv ++ mnemos.buildInputs
-      ++ mnemos.nativeBuildInputs;
-  };
+let mnemos = import ./default.nix { inherit pkgs; };
 in mkShell {
+  buildInputs = mnemos.buildInputs;
+  nativeBuildInputs = mnemos.nativeBuildInputs;
   packages = [
     # devtools
     just
