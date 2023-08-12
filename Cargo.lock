@@ -2499,6 +2499,7 @@ dependencies = [
 name = "mnemos-x86_64-bootloader"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bootloader",
  "clap 4.3.5",
  "mnemos-x86_64-core",
