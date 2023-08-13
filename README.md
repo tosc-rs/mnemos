@@ -1,14 +1,42 @@
 <img src = "./assets/logo-mnemos-1280px.png" width = "600" alt="MnemOS" />
 
-This repository is for the MnemOS Operating System.
+MnemOS ([`mnɛːmos`][name]) is a hobby-grade, experimental operating system for
+[small computers][d1] (and [bigger ones, too][x86]). The MnemOS kernel and
+userspace use a design based on asynchronous message passing, inspired by
+[Erlang] and [microkernels], although MnemOS is not a true microkernel.
 
-## Development and API Docs
+This repository contains the [cross-platform core of the MnemOS kernel][kernel],
+which is implemented as a Rust library crate, [platform-specific
+implementation][platforms] for supported hardware and simulator targets,
+[development tools][tools] for wirking on MnemOS, and reusable libraries which
+the kernel, tools, and platform implementations depend on.
+
+[name]: https://mnemos.dev/mnemosprojectoverview/book/#where-does-the-name-come-fromhow-do-i-pronounce-it
+[d1]: https://github.com/tosc-rs/mnemos/tree/main/platforms/allwinner-d1
+[x86]: https://github.com/tosc-rs/mnemos/tree/main/platforms/x86_64
+[Erlang]: https://en.wikipedia.org/wiki/Erlang_(programming_language)#Processes
+[microkernels]: https://en.wikipedia.org/wiki/Microkernel
+[kernel]: https://mnemos.dev/doc/kernel/
+[platforms]: https://github.com/tosc-rs/mnemos/tree/main/platforms
+[tools]: https://github.com/tosc-rs/mnemos/tree/main/tools
+
+## Learn More
+
+### Development and API Docs
 
 `rustdoc` output for the current `main` branch can be built locally with `cargo doc --open`.
 
-[hosted mnemOS `main` branch documentation](https://mnemos-dev.jamesmunns.com/) - includes "the mnemOS book" and source/API documentation.
+- [the MnemOS book][book], a high-level discussion of MnemOS' design
+- [hosted `main` branch API documentation][rustdoc] for the kernel and other
+  MnemOS crates
+- [a series of automatically-generated weekly updates][updates], which track
+  MnemOS implementation progress over time
 
-## Development Blogs
+[book]: https://mnemos.dev/mnemosprojectoverview/book/
+[rustdoc]: https://mnemos.dev/doc/kernel/
+[updates]: https://mnemos.dev/mnemosprojectoverview/changelog/
+
+### Development Blogs
 
 We've written a series of development blogs following the story of MnemOS'
 implementation. You can find them here:
@@ -16,10 +44,11 @@ implementation. You can find them here:
 - [MnemOS Moment 1][moment-1], by James Munns (2023-06-02)
 - [MnemOS Moment 2: Search for a Shell][moment-2], by James Munns (2023-07-10)
 
+
 [moment-1]: https://onevariable.com/blog/mnemos-moment-1/
 [moment-2]: https://onevariable.com/blog/mnemos-moment-2/
 
-## Folder Layout
+### Folder Layout
 
 The project layout contains the following folders:
 
@@ -60,13 +89,13 @@ Melpomene can be run using the `just melpomene` [`just` recipe], or using
 
 Join us on Matrix: [#mnemos-dev:beeper.com](https://matrix.to/#/#mnemos-dev:beeper.com)
 
-## License
+### License
 
 [MIT] + [Apache 2.0].
 
 [MIT]: ./LICENSE-MIT
 [Apache 2.0]: ./LICENSE-APACHE
 
-## Code of Conduct
+### Code of Conduct
 
 The MnemOS project follows the [Contributor Covenant Code of Conduct](./code_of_conduct.md).
