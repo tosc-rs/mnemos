@@ -20,35 +20,7 @@ the kernel, tools, and platform implementations depend on.
 [platforms]: https://github.com/tosc-rs/mnemos/tree/main/platforms
 [tools]: https://github.com/tosc-rs/mnemos/tree/main/tools
 
-## Learn More
-
-### Development and API Docs
-
-`rustdoc` output for the current `main` branch can be built locally with `cargo doc --open`.
-
-- [the MnemOS book][book], a high-level discussion of MnemOS' design
-- [hosted `main` branch API documentation][rustdoc] for the kernel and other
-  MnemOS crates
-- [a series of automatically-generated weekly updates][updates], which track
-  MnemOS implementation progress over time
-
-[book]: https://mnemos.dev/mnemosprojectoverview/book/
-[rustdoc]: https://mnemos.dev/doc/kernel/
-[updates]: https://mnemos.dev/mnemosprojectoverview/changelog/
-
-### Development Blogs
-
-We've written a series of development blogs following the story of MnemOS'
-implementation. You can find them here:
-
-- [MnemOS Moment 1][moment-1], by James Munns (2023-06-02)
-- [MnemOS Moment 2: Search for a Shell][moment-2], by James Munns (2023-07-10)
-
-
-[moment-1]: https://onevariable.com/blog/mnemos-moment-1/
-[moment-2]: https://onevariable.com/blog/mnemos-moment-2/
-
-### Folder Layout
+## Folder Layout
 
 The project layout contains the following folders:
 
@@ -84,6 +56,34 @@ Melpomene can be run using the `just melpomene` [`just` recipe], or using
 [`platforms/allwinner-d1/README.md`]: ./platforms/allwinner-d1/README.md
 [Melpomene]: ./platforms/melpomene
 [`just` recipe]: ./justfile
+
+## Learn More
+
+### Development and API Docs
+
+`rustdoc` output for the current `main` branch can be built locally with `cargo doc --open`.
+
+- [the MnemOS book][book], a high-level discussion of MnemOS' design
+- [hosted `main` branch API documentation][rustdoc] for the kernel and other
+  MnemOS crates
+- [a series of automatically-generated weekly updates][updates], which track
+  MnemOS implementation progress over time
+
+[book]: https://mnemos.dev/mnemosprojectoverview/book/
+[rustdoc]: https://mnemos.dev/doc/kernel/
+[updates]: https://mnemos.dev/mnemosprojectoverview/changelog/
+
+### Development Blogs
+
+We've written a series of development blogs following the story of MnemOS'
+implementation. You can find them here:
+
+- [MnemOS Moment 1][moment-1], by James Munns (2023-06-02)
+- [MnemOS Moment 2: Search for a Shell][moment-2], by James Munns (2023-07-10)
+
+
+[moment-1]: https://onevariable.com/blog/mnemos-moment-1/
+[moment-2]: https://onevariable.com/blog/mnemos-moment-2/
 
 ## Getting Involved
 
