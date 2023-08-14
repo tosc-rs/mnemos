@@ -8,7 +8,7 @@ userspace use a design based on asynchronous message passing, inspired by
 This repository contains the [cross-platform core of the MnemOS kernel][kernel],
 which is implemented as a Rust library crate, [platform-specific
 implementation][platforms] for supported hardware and simulator targets,
-[development tools][tools] for wirking on MnemOS, and reusable libraries which
+[development tools][tools] for working on MnemOS, and reusable libraries which
 the kernel, tools, and platform implementations depend on.
 
 [name]: https://mnemos.dev/mnemosprojectoverview/book/#where-does-the-name-come-fromhow-do-i-pronounce-it
