@@ -1,6 +1,6 @@
 use std::{time::Duration, io::ErrorKind};
 
-use tokio::net::{TcpStream, TcpListener};
+use tokio::net::{TcpStream, TcpListener, tcp::{OwnedReadHalf, OwnedWriteHalf}};
 
 pub struct NetFriends {
 
@@ -27,67 +27,31 @@ impl FakeSerialFriend {
 }
 
 async fn friend_talker(client_stream: TcpStream) -> Result<(), ()> {
-    let (mut rx, mut tx) = client_stream.into_split();
-    let mut buf = [0u8; 4096];
-    let mut acc = Accumulator {
-        buffer: vec![],
-    };
+    let (rx, tx) = client_stream.into_split();
+
+    let mut txc = encoder_stream(tx);
+    let mut rxc = decoder_stream(rx);
+
     loop {
         tokio::time::sleep(Duration::from_secs(1)).await;
-        tx.writable().await.map_err(drop)?;
-        tx.try_write(&encode(b"hello!")).map_err(drop)?;
+        txc.send(b"hello!".to_vec()).await.unwrap();
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        rx.readable().await.map_err(drop)?;
-        match rx.try_read(&mut buf) {
-            Ok(0) => todo!(),
-            Ok(n) => {
-                let mut window = &buf[..n];
-                'winny: while !window.is_empty() {
-                    match acc.feed(window) {
-                        AccOut::MessageRem { msg, rem } => {
-                            let msg = core::str::from_utf8(&msg).unwrap();
-                            tracing::info!("Decoded '{msg}'");
-                            window = rem;
-                        },
-                        AccOut::ErrorRem { rem } => todo!(),
-                        AccOut::Consumed => break 'winny,
-                    }
-                }
-            },
-            Err(e) => todo!("what {e:?}"),
-        }
+        let msg = rxc.recv().await.unwrap();
+        let msg = core::str::from_utf8(&msg).unwrap();
+        tracing::info!("Got '{msg}'");
     }
 }
 
 async fn serial_friend(host_stream: TcpStream) -> Result<(), ()> {
-    let (mut rx, mut tx) = host_stream.into_split();
+    let (rx, tx) = host_stream.into_split();
 
-    // loopback
-    let mut buf = [0u8; 4096];
+    let mut rxc = decoder_stream(rx);
+    let mut txc = encoder_stream(tx);
+
     loop {
-        rx.readable().await.map_err(drop)?;
-        match rx.try_read(&mut buf) {
-            Ok(0) => todo!("rx hung up"),
-            Ok(n) => {
-                tracing::info!("Friend got {n} bytes");
-                let mut window = &buf[..n];
-                while !window.is_empty() {
-                    tx.writable().await.map_err(drop)?;
-                    match tx.try_write(window) {
-                        Ok(0) => todo!("tx hung up"),
-                        Ok(n) => {
-                            tracing::info!("Friend sent {n} bytes");
-                            window = &window[n..];
-                        }
-                        Err(e) => panic!("what {e:?}"),
-                    }
-                }
-            }
-            Err(e) if e.kind() == ErrorKind::WouldBlock => {},
-            Err(e) => panic!("what {e:?}"),
-        }
+        let msg = rxc.recv().await.unwrap();
+        let msg = msg.into_iter().rev().collect::<Vec<u8>>();
+        txc.send(msg).await.unwrap();
     }
 
     Err(())
@@ -110,6 +74,67 @@ enum AccOut<'a> {
 
 fn encode(src: &[u8]) -> Vec<u8> {
     cobs::encode_vec(src)
+}
+
+fn encoder_stream(mut tx: OwnedWriteHalf) -> tokio::sync::mpsc::Sender<Vec<u8>> {
+    let (txc, mut rxc) = tokio::sync::mpsc::channel(64);
+
+    tokio::spawn(async move {
+        loop {
+            let msg: Vec<u8> = rxc.recv().await.unwrap();
+            let msg = encode(msg.as_slice());
+
+            let mut window = msg.as_slice();
+            while !window.is_empty() {
+                tx.writable().await.unwrap();
+                match tx.try_write(window) {
+                    Ok(0) => todo!(),
+                    Ok(n) => {
+                        window = &window[n..];
+                    }
+                    Err(e) if e.kind() == ErrorKind::WouldBlock => {},
+                    Err(e) => panic!("{e:?}"),
+                }
+            }
+        }
+    });
+
+    txc
+}
+
+fn decoder_stream(mut rx: OwnedReadHalf) -> tokio::sync::mpsc::Receiver<Vec<u8>> {
+    let (txc, rxc) = tokio::sync::mpsc::channel(64);
+
+    tokio::spawn(async move {
+        let mut buf = [0u8; 4096];
+        let mut acc = Accumulator {
+            buffer: vec![],
+        };
+
+        loop {
+            rx.readable().await.map_err(drop).unwrap();
+            match rx.try_read(&mut buf) {
+                Ok(0) => todo!(),
+                Ok(n) => {
+                    let mut window = &buf[..n];
+                    'winny: while !window.is_empty() {
+                        match acc.feed(window) {
+                            AccOut::MessageRem { msg, rem } => {
+                                txc.send(msg).await.unwrap();
+                                window = rem;
+                            },
+                            AccOut::ErrorRem { rem } => todo!(),
+                            AccOut::Consumed => break 'winny,
+                        }
+                    }
+                },
+                Err(e) if e.kind() == ErrorKind::WouldBlock => {},
+                Err(e) => todo!("what {e:?}"),
+            }
+        }
+    });
+
+    rxc
 }
 
 impl Accumulator {
