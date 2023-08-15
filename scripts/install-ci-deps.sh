@@ -6,7 +6,7 @@ set -euxo pipefail
 mkdir -p ./target
 
 # Install libudev
-sudo apt-get update && sudo apt-get install -y libudev-dev
+apt-get update && apt-get install -y libudev-dev
 
 # Install Oranda
 curl \
