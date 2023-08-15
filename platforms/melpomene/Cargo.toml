@@ -23,6 +23,7 @@ mnemos-kernel = { package = "mnemos", path = "../../source/kernel" }
 serde = { version = "1.0.178", features = ["derive"] }
 melpo-config = { path = "./melpo-config" }
 mnemos-config = { path = "../../source/config" }
+cobs = "0.2.3"
 
 [dependencies.tracing]
 version = "0.1.35"
