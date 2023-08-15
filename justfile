@@ -1,13 +1,30 @@
 #!/usr/bin/env -S just --justfile
-# justfile for Mnemos
-# see https://just.systems/man for more details
+_docstring := "
+justfile for MnemOS
+see https://just.systems/man for more details
 
+Available variables:
+    toolchain       # overrides the default Rust toolchain set in the
+                    # rust-toolchain.toml file.
+    no-nextest      # disables cargo nextest (use cargo test) instead.
+    profile         # configures what Cargo profile (release or debug) to use
+                    # for builds.
+
+Variables can be set using `just VARIABLE=VALUE ...` or
+`just --set VARIABLE VALUE ...`.
+
+See https://just.systems/man/en/chapter_36.html for details.
+"
 
 # Overrides the default Rust toolchain set in `rust-toolchain.toml`.
 toolchain := ""
 
 # disables cargo nextest
 no-nextest := ''
+
+# configures what profile to use for builds. the default depends on the target
+# being built.
+profile := 'release'
 
 _cargo := "cargo" + if toolchain != "" { " +" + toolchain } else { "" }
 
@@ -49,9 +66,7 @@ alias melpo := melpomene
 
 # default recipe to display help information
 default:
-    @echo "justfile for Mnemos"
-    @echo "see https://just.systems/man for more details"
-    @echo ""
+    @echo '{{ _docstring }}'
     @just --list
 
 # check all crates, across workspaces
@@ -104,13 +119,13 @@ fmt:
 # build a Mnemos binary for the Allwinner D1
 build-d1 board='mq-pro': (_get-cargo-command "objcopy" "cargo-binutils")
     {{ _cargo }} build \
+        --profile {{ profile }} \
         --package {{ _d1_pkg }} \
-        --bin {{ board }} \
-        --release
+        --bin {{ board }}
     {{ _cargo }} objcopy \
+        --profile {{ profile }} \
         --package {{ _d1_pkg }} \
         --bin {{ board }} \
-        --release \
         -- \
         -O binary {{ _d1_bin_path }}/mnemos-{{ board }}.bin
 
@@ -122,14 +137,15 @@ flash-d1 board='mq-pro': (build-d1 board)
 
 # build a MnemOS binary for the ESP32-C3
 build-c3 board:
-    {{ _cargo }} build --release \
+    {{ _cargo }} build \
+        --profile {{ profile }} \
         --package {{ _espbuddy_pkg }} \
         --bin {{ board }}
 
 # flash an ESP32-C3 with the MnemOS WiFi Buddy firmware
 flash-c3 board *espflash-args: (_get-cargo-command "espflash" "cargo-espflash") (build-c3 board)
     {{ _cargo }} espflash flash \
-        --release \
+        --profile {{ profile }} \
         --package {{ _espbuddy_pkg }} \
         --bin {{ board }} \
         {{ espflash-args }}
@@ -144,11 +160,11 @@ run-x86 *args='':
 
 # run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard)
 crowtty *FLAGS:
-    @{{ _cargo }} run --release --bin crowtty -- {{ FLAGS }}
+    {{ _cargo }} run --profile {{ profile }} --bin crowtty -- {{ FLAGS }}
 
 # run the Melpomene simulator
 melpomene *FLAGS:
-    @{{ _cargo }} run --release --bin melpomene -- {{ FLAGS }}
+    {{ _cargo }} run --profile {{ profile }} --bin melpomene -- {{ FLAGS }}
 
 # build all RustDoc documentation
 all-docs *FLAGS: (docs FLAGS) (docs "-p " + _d1_pkg + FLAGS) (docs "-p " + _espbuddy_pkg + FLAGS)  (docs "-p " + _x86_bootloader_pkg + FLAGS)
