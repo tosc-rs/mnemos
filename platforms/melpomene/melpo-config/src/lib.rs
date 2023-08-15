@@ -90,17 +90,24 @@ pub struct DisplayConfig {
     /// The maximum number of frames per second. Must be >= 1
     #[serde(default = "DisplayConfig::default_frames_per_second")]
     pub frames_per_second: usize,
+    /// The scaling of the display
+    #[serde(default = "DisplayConfig::default_scaling")]
+    pub scaling: u32,
 }
 
 impl DisplayConfig {
     pub const DEFAULT_KCHANNEL_DEPTH: usize = 2;
     pub const DEFAULT_FRAMES_PER_SECOND: usize = 20;
+    pub const DEFAULT_SCALING: u32 = 2;
 
     const fn default_kchannel_depth() -> usize {
         Self::DEFAULT_KCHANNEL_DEPTH
     }
     const fn default_frames_per_second() -> usize {
         Self::DEFAULT_FRAMES_PER_SECOND
+    }
+    const fn default_scaling() -> u32 {
+        Self::DEFAULT_SCALING
     }
 }
 
