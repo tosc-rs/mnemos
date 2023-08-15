@@ -2,7 +2,7 @@
 
 set -euxo pipefail
 
-just docs
+./just docs
 
 rm -rf ./target/ci-publish || :
 mkdir -p ./target/ci-publish/
