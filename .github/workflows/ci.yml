@@ -144,6 +144,7 @@ jobs:
   netlify_dryrun:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v2
       - name: install netlify deps
         run: ./scripts/install-ci-deps.sh
       - name: run netlify ci
