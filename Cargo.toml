@@ -66,6 +66,8 @@ license = "MIT OR Apache-2.0"
 
 [profile.release]
 lto = 'thin' # better optimizations at a lower cost
+# symbols are nice and they don't increase the size on Flash
+debug = true
 
 ## profile settings for D1 ##
 
@@ -74,14 +76,11 @@ codegen-units = 1 # better optimizations
 # faster optimizations --- we don't need opt-level='s'/'z' on D1, since we have
 # a whopping 1GB of RAM!
 opt-level = 3
-# symbols are nice and they don't increase the size on Flash
-debug = "line-tables-only"
 
 [profile.dev.package.mnemos-d1]
 # faster optimizations --- we don't need opt-level='s'/'z' on D1, since we have
 # a whopping 1GB of RAM!
 opt-level = 3
-debug = true
 
 ## profile settings for esp32c3-buddy ##
 
@@ -91,8 +90,6 @@ codegen-units = 1 # better optimizations
 #
 # See: https://github.com/esp-rs/esp-hal/pull/198
 opt-level = "s"
-# symbols are nice and they don't increase the size on Flash
-debug = "line-tables-only"
 rustflags = [
     "-C", "link-arg=-Tlinkall.x",
     # Required to obtain backtraces (e.g. when using the "esp-backtrace" crate.)
@@ -107,7 +104,6 @@ codegen-units = 1 # better optimizations
 # See: https://github.com/esp-rs/esp-hal/pull/198
 opt-level = "s"
 # symbols are nice and they don't increase the size on Flash
-debug = true
 rustflags = [
     "-C", "link-arg=-Tlinkall.x",
     # Required to obtain backtraces (e.g. when using the "esp-backtrace" crate.)
@@ -121,13 +117,21 @@ rustflags = [
 codegen-units = 1 # better optimizations
 # faster optimizations --- we don't need to optimize for size on x86
 opt-level = 3
-# symbols are nice and they don't increase the size on Flash
-debug = "line-tables-only"
 
 [profile.dev.package.mnemos-x86_64-core]
 # faster optimizations --- we don't need to optimize for size on x86
 opt-level = 3
-debug = true
+
+## profile settings for host tools ##
+[profile.release.package.crowtty]
+# only generate the debuginfo needed for backtraces, speeding
+# up the build a bit.
+debug = "line-tables-only"
+
+[profile.release.package.melpomene]
+# only generate the debuginfo needed for backtraces, speeding
+# up the build a bit.
+debug = "line-tables-only"
 
 ### patches ###
 
