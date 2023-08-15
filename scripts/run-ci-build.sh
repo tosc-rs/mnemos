@@ -2,13 +2,7 @@
 
 set -euxo pipefail
 
-cargo doc \
-    --no-deps \
-    --all-features \
-    --document-private-items \
-    --workspace \
-    --exclude crowtty \
-    --exclude lichee-rv
+./just docs
 
 rm -rf ./target/ci-publish || :
 mkdir -p ./target/ci-publish/
