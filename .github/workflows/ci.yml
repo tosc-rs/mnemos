@@ -139,3 +139,12 @@ jobs:
     - uses: extractions/setup-just@v1
     - name: run rustdoc
       run: just docs --message-format=json --document-private-items
+
+  # check that netlify CI should work
+  netlify_dryrun:
+    runs-on: ubuntu-latest
+    steps:
+      - name: install netlify deps
+        run: ./scripts/install-ci-deps.sh
+      - name: run netlify ci
+        run: ./scripts/run-ci-build.sh
