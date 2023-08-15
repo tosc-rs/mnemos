@@ -65,11 +65,12 @@ license = "MIT OR Apache-2.0"
 ### profile settings ###
 
 [profile.release]
-codegen-units = 1 # better optimizations
+lto = 'thin' # better optimizations at a lower cost
 
 ## profile settings for D1 ##
 
 [profile.release.package.mnemos-d1]
+codegen-units = 1 # better optimizations
 # faster optimizations --- we don't need opt-level='s'/'z' on D1, since we have
 # a whopping 1GB of RAM!
 opt-level = 3
@@ -85,6 +86,7 @@ debug = true
 ## profile settings for esp32c3-buddy ##
 
 [profile.release.package.mnemos-esp32c3-buddy]
+codegen-units = 1 # better optimizations
 # opt-level='z' is broken on esp32c3.
 #
 # See: https://github.com/esp-rs/esp-hal/pull/198
@@ -99,6 +101,7 @@ rustflags = [
 ]
 
 [profile.dev.package.mnemos-esp32c3-buddy]
+codegen-units = 1 # better optimizations
 # opt-level='z' is broken on esp32c3.
 #
 # See: https://github.com/esp-rs/esp-hal/pull/198
@@ -115,6 +118,7 @@ rustflags = [
 ## profile settings for x86_64 ##
 
 [profile.release.package.mnemos-x86_64-core]
+codegen-units = 1 # better optimizations
 # faster optimizations --- we don't need to optimize for size on x86
 opt-level = 3
 # symbols are nice and they don't increase the size on Flash

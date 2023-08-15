@@ -8,8 +8,7 @@ Available variables:
                     # rust-toolchain.toml file.
     no-nextest      # disables cargo nextest (use cargo test) instead.
     profile         # configures what Cargo profile (release or debug) to use
-                    # for builds. the default depends on which platform target
-                    # is being built.
+                    # for builds.
 
 Variables can be set using `just VARIABLE=VALUE ...` or
 `just --set VARIABLE VALUE ...`.
@@ -25,29 +24,7 @@ no-nextest := ''
 
 # configures what profile to use for builds. the default depends on the target
 # being built.
-profile := ''
-
-# Cargo profile for host targets (melpomene/crowtty)
-_host_release := if profile == '' {
-    ''
-} else if profile == 'debug' {
-    ''
-} else if profile == 'release' {
-    '--release'
-} else {
-    error("invalid profile, expected either 'debug' or 'release', not '" + profile + "'")
-}
-
-# Cargo profile for platform targets (actual kernel builds)
-_target_release := if profile == '' {
-    '--release'
-} else if profile == 'debug' {
-    ''
-} else if profile == 'release' {
-    '--release'
-} else {
-    error("invalid profile, expected either 'debug' or 'release', not '" + profile + "'")
-}
+profile := 'release'
 
 _cargo := "cargo" + if toolchain != "" { " +" + toolchain } else { "" }
 
@@ -142,11 +119,11 @@ fmt:
 # build a Mnemos binary for the Allwinner D1
 build-d1 board='mq-pro': (_get-cargo-command "objcopy" "cargo-binutils")
     {{ _cargo }} build \
-        {{ _target_release }} \
+        --profile {{ profile }} \
         --package {{ _d1_pkg }} \
         --bin {{ board }}
     {{ _cargo }} objcopy \
-        {{ _target_release }} \
+        --profile {{ profile }} \
         --package {{ _d1_pkg }} \
         --bin {{ board }} \
         -- \
@@ -161,14 +138,14 @@ flash-d1 board='mq-pro': (build-d1 board)
 # build a MnemOS binary for the ESP32-C3
 build-c3 board:
     {{ _cargo }} build \
-        {{ _target_release }} \
+        --profile {{ profile }} \
         --package {{ _espbuddy_pkg }} \
         --bin {{ board }}
 
 # flash an ESP32-C3 with the MnemOS WiFi Buddy firmware
 flash-c3 board *espflash-args: (_get-cargo-command "espflash" "cargo-espflash") (build-c3 board)
     {{ _cargo }} espflash flash \
-        {{ _target_release }} \
+        --profile {{ profile }} \
         --package {{ _espbuddy_pkg }} \
         --bin {{ board }} \
         {{ espflash-args }}
@@ -183,11 +160,11 @@ run-x86 *args='':
 
 # run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard)
 crowtty *FLAGS:
-    @{{ _cargo }} run {{ _host_release }} --bin crowtty -- {{ FLAGS }}
+    {{ _cargo }} run --profile {{ profile }} --bin crowtty -- {{ FLAGS }}
 
 # run the Melpomene simulator
 melpomene *FLAGS:
-    @{{ _cargo }} run {{ _host_release }} --bin melpomene -- {{ FLAGS }}
+    {{ _cargo }} run --profile {{ profile }} --bin melpomene -- {{ FLAGS }}
 
 # build all RustDoc documentation
 all-docs *FLAGS: (docs FLAGS) (docs "-p " + _d1_pkg + FLAGS) (docs "-p " + _espbuddy_pkg + FLAGS)  (docs "-p " + _x86_bootloader_pkg + FLAGS)
