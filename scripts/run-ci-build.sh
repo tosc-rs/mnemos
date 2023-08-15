@@ -13,7 +13,7 @@ defaultmembers=$( \
     tr -d '\n' \
 )
 
-./just docs $defaultmembers
+./just docs --document-private-items $defaultmembers
 
 rm -rf ./target/ci-publish || :
 mkdir -p ./target/ci-publish/
