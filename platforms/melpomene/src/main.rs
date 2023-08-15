@@ -5,7 +5,7 @@ use futures::FutureExt;
 use melpo_config::PlatformConfig;
 use melpomene::{
     cli,
-    sim_drivers::{emb_display::SimDisplay, tcp_serial::TcpSerial},
+    sim_drivers::{emb_display::SimDisplay, tcp_serial::TcpSerial, net_friends::FakeSerialFriend},
 };
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
@@ -124,6 +124,11 @@ async fn kernel_entry() {
     } else {
         tracing::warn!("Not spawning forth GUI shell!");
     }
+
+    // JAMES
+    let fsf = FakeSerialFriend::new(8000).await;
+
+    // JAMES
 
     let sleep_cap = config
         .platform

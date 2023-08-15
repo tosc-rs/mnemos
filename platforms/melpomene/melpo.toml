@@ -39,7 +39,7 @@ enabled = true
 # sleep_cap = { secs = 0, nanos = 100_000_000 } # 100ms
 
 [platform.display]
-enabled = true
+enabled = false
 # kchannel_depth = 2
 # frames_per_second = 20
 # scaling = 2
@@ -52,7 +52,7 @@ enabled = true
 # kchannel_depth = 2
 
 [platform.forth_shell]
-enabled = true
+enabled = false
 # capacity = 1024
 
 # [platform.forth_shell.params]
