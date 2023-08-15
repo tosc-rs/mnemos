@@ -2,7 +2,18 @@
 
 set -euxo pipefail
 
-./just docs
+defaultmembers=$( \
+    cargo metadata --format-version 1 | \
+    jq .workspace_default_members | \
+    grep -E '  ".*' | \
+    grep -v 'crowtty' | \
+    cut -d" " -f3 | \
+    cut -d'"' -f2 | \
+    sed -E 's/(.*)/-p \1 /g' | \
+    tr -d '\n' \
+)
+
+./just docs $defaultmembers
 
 rm -rf ./target/ci-publish || :
 mkdir -p ./target/ci-publish/
