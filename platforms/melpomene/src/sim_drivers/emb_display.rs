@@ -75,9 +75,7 @@ impl SimDisplay {
             height,
         };
 
-        kernel
-            .spawn(commander.run(width, height, settings))
-            .await;
+        kernel.spawn(commander.run(width, height, settings)).await;
 
         kernel
             .with_registry(|reg| reg.register_konly::<EmbDisplayService>(&cmd_prod))
