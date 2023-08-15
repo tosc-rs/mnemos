@@ -42,6 +42,7 @@ enabled = true
 enabled = true
 # kchannel_depth = 2
 # frames_per_second = 20
+# scaling = 2
 
 [platform.tcp_uart]
 enabled = true

@@ -75,9 +75,7 @@ impl SimDisplay {
             height,
         };
 
-        kernel
-            .spawn(commander.run(width, height, settings.frames_per_second))
-            .await;
+        kernel.spawn(commander.run(width, height, settings)).await;
 
         kernel
             .with_registry(|reg| reg.register_konly::<EmbDisplayService>(&cmd_prod))
@@ -113,9 +111,10 @@ struct Context {
 
 impl CommanderTask {
     /// The entrypoint for the driver execution
-    async fn run(self, width: u32, height: u32, frames_per_second: usize) {
+    async fn run(self, width: u32, height: u32, settings: DisplayConfig) {
         let output_settings = OutputSettingsBuilder::new()
             .theme(BinaryColorTheme::OledBlue)
+            .scale(settings.scaling)
             .build();
 
         let bytes = (width * height) as usize;
@@ -146,7 +145,7 @@ impl CommanderTask {
         self.kernel
             .spawn({
                 let mutex = mutex.clone();
-                render_loop(self.kernel, mutex, frames_per_second)
+                render_loop(self.kernel, mutex, settings.frames_per_second)
             })
             .await;
 
