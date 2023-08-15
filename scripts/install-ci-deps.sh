@@ -5,8 +5,8 @@ set -euxo pipefail
 # make sure the target output directory exists
 mkdir -p ./target
 
-# Install docs deps
-rustup toolchain install stable
+# Install libudev
+sudo apt-get update && sudo apt-get install -y libudev-dev
 
 # Install Oranda
 curl \
