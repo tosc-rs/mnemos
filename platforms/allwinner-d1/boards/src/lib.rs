@@ -36,7 +36,7 @@ fn exception_handler(trap_frame: &riscv_rt::TrapFrame) -> ! {
             let mepc = riscv::register::mepc::read();
             panic!(
                 "CPU exception: {exn} ({exn:#X}) at {mepc:#X}\n\n{:#X}",
-                trap::PrettyTrapFrame(&trap_frame)
+                trap::PrettyTrapFrame(trap_frame)
             );
         }
     }
