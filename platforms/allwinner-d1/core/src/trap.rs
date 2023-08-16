@@ -1,17 +1,21 @@
 //! RISC-V trap/exception handling
-
+#![warn(missing_docs)]
 // TODO(eliza): none of this is really D1-specific, and it should all work on
 // any RISC-V target. If/when we add a generic `mnemos-riscv` crate, we may want
 // to move this stuff there...
 
 use core::fmt;
 
+/// Represents the cause of a trap, based on the value of the `mcause` register.
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Trap {
+    /// The trap was an interrupt.
     Interrupt(Interrupt),
+    /// The trap was an exception.
     Exception(Exception),
 }
 
+/// Error returned by [`Trap::from_mcause`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct InvalidMcause {
     bits: usize,
@@ -99,7 +103,7 @@ cause_enum! {
     /// If the interrupt bit (the highest bit) in the `mcause` register is 0, the
     /// rest of the `mcause` register is interpreted as an exception cause.
     ///
-    /// See "3.1.20 Machine Cause Register (`mcause`)" in [_RISC-V Privelieged
+    /// See "3.1.20 Machine Cause Register (`mcause`)" in [_RISC-V rivileged
     /// Architectures_, v1.10][manual].
     ///
     /// [manual]:
@@ -129,7 +133,7 @@ cause_enum! {
     /// If the interrupt bit (the highest bit) in the `mcause` register is 1, the
     /// rest of the `mcause` register is interpreted as an interrupt cause.
     ///
-    /// See "3.1.20 Machine Cause Register (`mcause`)" in [_RISC-V Privelieged
+    /// See "3.1.20 Machine Cause Register (`mcause`)" in [_RISC-V Privileged
     /// Architectures_, v1.10][manual].
     ///
     /// [manual]:
@@ -151,6 +155,15 @@ cause_enum! {
 // === impl Trap ===
 
 impl Trap {
+    /// Reads the value of the `mcause` register and interprets it as a `Trap`.
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[`Trap`]`)` if the value of the `mcause` register is a valid
+    ///   trap code
+    /// - [`Err`]`(`[`InvalidMcause`]`)` if the value of the `mcause` register
+    ///   is not a valid trap code. Note that this Should Not Happen if the
+    ///   hardware is functioning correctly.
     #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
     pub fn from_mcause() -> Result<Self, InvalidMcause> {
         let mut bits: usize;
@@ -160,6 +173,15 @@ impl Trap {
         Self::from_bits(bits)
     }
 
+    /// Reads the value of the `mcause` register and interprets it as a `Trap`.
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[`Trap`]`)` if the value of the `mcause` register is a valid
+    ///   trap code
+    /// - [`Err`]`(`[`InvalidMcause`]`)` if the value of the `mcause` register
+    ///   is not a valid trap code. Note that this Should Not Happen if the
+    ///   hardware is functioning correctly.
     #[cfg(not(any(target_arch = "riscv64", target_arch = "riscv32")))]
     pub fn from_mcause() -> Result<Self, InvalidMcause> {
         unimplemented!("cannot access mcause on a non-RISC-V platform!")
