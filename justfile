@@ -70,38 +70,42 @@ default:
     @just --list
 
 # check all crates, across workspaces
-check: && (check-crate _d1_pkg) (check-crate _espbuddy_pkg) (check-crate _x86_pkg) (check-crate _x86_bootloader_pkg)
+check *ARGS: && (check-crate _d1_pkg ARGS) (check-crate _espbuddy_pkg ARGS) (check-crate _x86_pkg ARGS) (check-crate _x86_bootloader_pkg ARGS)
     #!/usr/bin/env bash
     set -euxo pipefail
     {{ _cargo }} check \
         --lib --bins --examples --tests --benches \
+        {{ ARGS }} \
         {{ _fmt_check_doc }}
 
 # check a crate.
-check-crate crate:
+check-crate crate *ARGS:
     #!/usr/bin/env bash
     set -euxo pipefail
     {{ _cargo }} check \
         --lib --bins --examples --tests --benches --all-features \
         --package {{ crate }} \
+        {{ ARGS }} \
         {{ _fmt_check_doc }}
 
 # run Clippy checks for all crates, across workspaces.
-clippy: && (clippy-crate _d1_pkg) (clippy-crate _espbuddy_pkg) (clippy-crate _x86_pkg) (clippy-crate _x86_bootloader_pkg)
+clippy *ARGS: && (clippy-crate _d1_pkg ARGS) (clippy-crate _espbuddy_pkg ARGS) (clippy-crate _x86_pkg ARGS) (clippy-crate _x86_bootloader_pkg ARGS)
     #!/usr/bin/env bash
     set -euxo pipefail
     {{ _cargo }} clippy \
         --lib --bins --examples --tests --benches --all-features \
+        {{ ARGS }} \
         {{ _fmt_clippy }}
 
 # run clippy checks for a crate.
 # NOTE: -Dwarnings is added by _fmt because reasons
-clippy-crate crate:
+clippy-crate crate *ARGS:
     #!/usr/bin/env bash
     set -euxo pipefail
     {{ _cargo }} clippy \
         --lib --bins --examples --tests --benches \
         --package {{ crate }} \
+        {{ ARGS }} \
         {{ _fmt_clippy }}
 
 # test all packages, across workspaces
