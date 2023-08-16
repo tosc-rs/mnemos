@@ -9,6 +9,7 @@ pub mod drivers;
 pub mod plic;
 mod ram;
 pub mod timer;
+pub mod trap;
 
 use core::{
     fmt::Write,
