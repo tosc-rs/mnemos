@@ -18,6 +18,10 @@ pub struct InvalidMcause {
     err: &'static str,
 }
 
+/// Pretty-prints a [`riscv_rt::TrapFrame`].
+#[derive(Copy, Clone, Debug)]
+pub struct PrettyTrapFrame<'a>(pub &'a riscv_rt::TrapFrame);
+
 macro_rules! cause_enum {
     (
         $(#[$meta:meta])* $vis:vis enum $Enum:ident {
@@ -188,9 +192,37 @@ impl fmt::Display for Trap {
 }
 
 // === impl InvalidMcause ===
+
 impl fmt::Display for InvalidMcause {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self { bits, err } = self;
         write!(f, "invalid mcause ({bits:#b}): {err}")
+    }
+}
+
+const CHARS: usize = (usize::BITS / 4) as usize;
+
+macro_rules! pretty_trap_frame {
+    (fmt: $f:ident, frame: $frame:expr, $spec:literal => $($reg:ident),+ $(,)?) => {
+
+        let nl = if $f.alternate() { "\n" } else { ", " };
+        $(
+            $f.pad(stringify!($reg))?;
+            write!($f, concat!(": {:0width$", $spec,"}{}"), $frame.$reg, nl, width = CHARS)?;
+        )+
+    }
+}
+
+impl fmt::LowerHex for PrettyTrapFrame<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        pretty_trap_frame!(fmt: f, frame: self.0, "x" => ra, t0, t1, t2, t3, t4, t5, t6, a0, a1, a2, a3, a4, a5, a6, a7);
+        Ok(())
+    }
+}
+
+impl fmt::UpperHex for PrettyTrapFrame<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        pretty_trap_frame!(fmt: f, frame: self.0, "X" => ra, t0, t1, t2, t3, t4, t5, t6, a0, a1, a2, a3, a4, a5, a6, a7);
+        Ok(())
     }
 }

@@ -2454,6 +2454,7 @@ dependencies = [
  "futures",
  "mnemos",
  "riscv",
+ "riscv-rt",
  "tracing 0.1.37",
 ]
 

@@ -4,7 +4,10 @@ extern crate alloc;
 
 use core::{panic::PanicInfo, ptr::NonNull};
 use kernel::mnemos_alloc::heap::{MnemosAlloc, SingleThreadedLinkedListAllocator};
-use mnemos_d1_core::{trap::Trap, Ram, D1};
+use mnemos_d1_core::{
+    trap::{self, Trap},
+    Ram, D1,
+};
 
 #[global_allocator]
 static AHEAP: MnemosAlloc<SingleThreadedLinkedListAllocator> = MnemosAlloc::new();
@@ -31,7 +34,10 @@ fn exception_handler(trap_frame: &riscv_rt::TrapFrame) -> ! {
         }
         Trap::Exception(exn) => {
             let mepc = riscv::register::mepc::read();
-            panic!("CPU exception: {exn} ({exn:#X}) at {mepc:#X}\n\n{trap_frame:?}")
+            panic!(
+                "CPU exception: {exn} ({exn:#X}) at {mepc:#X}\n\n{:#X}",
+                trap::PrettyTrapFrame(&trap_frame)
+            );
         }
     }
 }
