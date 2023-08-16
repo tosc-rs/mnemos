@@ -69,8 +69,5 @@ fn main() -> ! {
         })
         .unwrap();
 
-    unsafe {
-        core::arch::asm!("ecall");
-    }
     d1.run()
 }
