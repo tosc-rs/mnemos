@@ -17,6 +17,7 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 d1-pac = "0.0.31"
 critical-section = "1.1.1"
+riscv-rt = "0.11.0"
 
 # kernel
 [dependencies.mnemos]

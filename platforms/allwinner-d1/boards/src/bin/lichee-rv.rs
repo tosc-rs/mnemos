@@ -50,7 +50,6 @@ fn main() -> ! {
     });
 
     d1.initialize_sharp_display();
-
     // Initialize LED loop
     d1.kernel
         .initialize(async move {
