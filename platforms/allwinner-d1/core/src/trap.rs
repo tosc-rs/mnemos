@@ -152,7 +152,6 @@ cause_enum! {
 
 impl Trap {
     #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
-    #[must_use]
     pub fn from_mcause() -> Result<Self, InvalidMcause> {
         let mut bits: usize;
         unsafe {
