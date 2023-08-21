@@ -107,6 +107,9 @@ version = "0.7.1"
 [dependencies.embedded-hal-async]
 version = "0.2.0-alpha.2"
 
+[dependencies.embedded-hal]
+version = "=1.0.0-rc.1"
+
 [dependencies.forth3]
 path = "../forth3"
 features = ["async"]

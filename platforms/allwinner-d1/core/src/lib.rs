@@ -1,4 +1,5 @@
 #![no_std]
+#![feature(async_fn_in_trait)] // needed for `embedded-hal-async`
 
 extern crate alloc;
 
@@ -6,6 +7,7 @@ pub mod ccu;
 pub mod clint;
 pub mod dmac;
 pub mod drivers;
+pub mod gpio;
 pub mod plic;
 mod ram;
 pub mod timer;
