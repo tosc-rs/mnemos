@@ -444,6 +444,8 @@ impl I2cPuppetServer {
         tracing::info!("running in IRQ-driven mode...");
         loop {
             select_biased! {
+                // i2c_puppet triggers an IRQ by asserting the IRQ line low, according
+                // to https://github.com/solderparty/i2c_puppet#protocol
                 _ = irq.wait_for_low().fuse() => {
                     tracing::trace!("i2c_puppet IRQ fired!");
                 },
@@ -454,9 +456,12 @@ impl I2cPuppetServer {
                     }
                 },
 
-                // _ = kernel.sleep(self.settings.poll_interval).fuse() => {
-                //     tracing::trace!("`i2c_puppet` poll interval elapsed");
-                // }
+                // occasionally, we'll still poll i2c_puppet in case we missed
+                // an IRQ for some reason. but we can do this less frequently
+                // than in polling mode.
+                _ = kernel.sleep(self.settings.poll_interval).fuse() => {
+                    tracing::trace!("`i2c_puppet` poll interval elapsed");
+                }
             }
 
             self.poll_keys().await;
