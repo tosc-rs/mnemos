@@ -454,9 +454,9 @@ impl I2cPuppetServer {
                     }
                 },
 
-                _ = kernel.sleep(self.settings.poll_interval).fuse() => {
-                    tracing::trace!("`i2c_puppet` poll interval elapsed");
-                }
+                // _ = kernel.sleep(self.settings.poll_interval).fuse() => {
+                //     tracing::trace!("`i2c_puppet` poll interval elapsed");
+                // }
             }
 
             self.poll_keys().await;

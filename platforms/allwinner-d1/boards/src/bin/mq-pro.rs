@@ -52,9 +52,9 @@ fn main() -> ! {
     });
 
     let i2c_puppet_up = {
-        let pin = gpio::IrqPin::new(gpio::PinB::B7, &p.GPIO);
         d1.kernel
             .initialize(async move {
+                let pin = gpio::IrqPin::new(gpio::PinB::B7, &p.GPIO);
                 let settings =
                     I2cPuppetSettings::default().with_poll_interval(Duration::from_secs(2));
                 d1.kernel.sleep(Duration::from_secs(2)).await;
@@ -65,23 +65,23 @@ fn main() -> ! {
             .unwrap()
     };
 
-    // Initialize LED loop
-    d1.kernel
-        .initialize(async move {
-            loop {
-                p.GPIO.pd_dat.modify(|_r, w| {
-                    w.pd_dat().variant(1 << 18);
-                    w
-                });
-                d1.kernel.sleep(Duration::from_millis(250)).await;
-                p.GPIO.pd_dat.modify(|_r, w| {
-                    w.pd_dat().variant(0);
-                    w
-                });
-                d1.kernel.sleep(Duration::from_millis(250)).await;
-            }
-        })
-        .unwrap();
+    // // Initialize LED loop
+    // d1.kernel
+    //     .initialize(async move {
+    //         loop {
+    //             p.GPIO.pd_dat.modify(|_r, w| {
+    //                 w.pd_dat().variant(1 << 18);
+    //                 w
+    //             });
+    //             d1.kernel.sleep(Duration::from_millis(250)).await;
+    //             p.GPIO.pd_dat.modify(|_r, w| {
+    //                 w.pd_dat().variant(0);
+    //                 w
+    //             });
+    //             d1.kernel.sleep(Duration::from_millis(250)).await;
+    //         }
+    //     })
+    //     .unwrap();
 
     d1.initialize_sharp_display();
 

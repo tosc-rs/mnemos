@@ -364,7 +364,7 @@ macro_rules! isrs {
                 debug_assert!(Isr::is_in_isr());
                 let gpio = unsafe { &*GPIO::ptr() };
                 gpio.$register.modify(|r, w| {
-                    tracing::trace!($register = ?format_args!("{:#b}", r.bits()), "GPIO interrupt");
+                    // tracing::info!($register = ?format_args!("{:#b}", r.bits()), "GPIO interrupt");
                     for (bit, waiters) in $waiters.iter().enumerate() {
                         let bit = unsafe {
                             // Safety: the length of each IRQ waker array is the
