@@ -243,7 +243,7 @@ impl IrqPin<PinB> {
 
         // the PB_CFG0 register has pins 0-7, while the PB_CFG1 register has
         // the remaining pins.
-        if num >= 7 {
+        if num > 7 {
             let num = num - 7;
             gpio.pb_cfg1.modify(|r, w| {
                 let bits = PinMode::Irq.set_bits(r.bits(), num as usize);
@@ -273,7 +273,7 @@ impl IrqPin<PinB> {
 
         // set the trigger mode in either PB_EINT_CFG0 or PB_EINT_CFG1 depending
         // on the pin number.
-        if num >= 7 {
+        if num > 7 {
             let num = num - 7;
             gpio.pb_eint_cfg1.modify(|r, w| {
                 let bits = trigger.set_bits(r.bits(), num);
@@ -439,3 +439,17 @@ isrs! {
 //         }
 //     }
 // }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mode_bits() {
+        let bits = 0;
+        assert_eq!(
+            PinMode::Input.set_bits(bits, PinB::B7 as usize),
+            (PinMode::Input as u32) << 28
+        );
+    }
+}
