@@ -210,6 +210,11 @@ impl D1 {
             plic.activate(Interrupt::DMAC_NS, Priority::P1).unwrap();
             plic.activate(Interrupt::UART0, Priority::P1).unwrap();
             plic.activate(i2c0_int, Priority::P1).unwrap();
+
+            for (irq, isr) in gpio::INTERRUPTS {
+                plic.register(irq, isr);
+                plic.activate(irq, Priority::P1).unwrap();
+            }
         }
 
         timer0.start_counter(0xFFFF_FFFF);

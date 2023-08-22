@@ -37,7 +37,6 @@ mnemos-d1-core = { path = "../core" }
 riscv = "0.10"
 riscv-rt = "0.11.0"
 d1-pac = "0.0.31"
-embedded-hal = "0.2.7"
 
 [dependencies.futures]
 version = "0.3.21"

@@ -1,10 +1,7 @@
-use d1_pac::{gpio, Interrupt, GPIO};
-use kernel::{
-    embedded_hal_async::digital::Wait, isr::Isr, maitake::sync::WaitCell,
-    mnemos_alloc::containers::Arc,
-};
+use d1_pac::{Interrupt, GPIO};
+use kernel::{embedded_hal, embedded_hal_async::digital::Wait, isr::Isr, maitake::sync::WaitCell};
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Pin {
     /// Pin group PB
     B(PinB),
@@ -21,7 +18,7 @@ pub enum Pin {
 }
 
 #[repr(u8)]
-#[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PinB {
     B0 = 0,
     B1,
@@ -39,7 +36,7 @@ pub enum PinB {
 }
 
 #[repr(u8)]
-#[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PinC {
     C0 = 0,
     C1,
@@ -52,7 +49,7 @@ pub enum PinC {
 }
 
 #[repr(u8)]
-#[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PinD {
     D0 = 0,
     D1,
@@ -80,7 +77,7 @@ pub enum PinD {
 }
 
 #[repr(u8)]
-#[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PinE {
     E0 = 0,
     E1,
@@ -105,7 +102,7 @@ pub enum PinE {
 }
 
 #[repr(u8)]
-#[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PinF {
     F0 = 0,
     F1,
@@ -118,7 +115,7 @@ pub enum PinF {
 }
 
 #[repr(u8)]
-#[derive(Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 pub enum PinG {
     G0 = 0,
     G1,
@@ -176,12 +173,20 @@ enum Trigger {
     LowLevel = 0x3,
 }
 
-
 const TRIGGER_MASK: u32 = 0b111;
 
-impl PinB {
+#[derive(Debug, Eq, PartialEq)]
+pub struct InputPin<T> {
+    pin: T,
+}
+
+impl InputPin<PinB> {
+    pub fn from_pin(pin: PinB) -> Self {
+        Self { pin }
+    }
+
     async fn wait_for_irq(&mut self, trigger: Trigger) {
-        let num = self as usize;
+        let num = self.pin as usize;
 
         let wait = PB_IRQS[num].subscribe().await;
 
@@ -189,44 +194,36 @@ impl PinB {
         let int_enable = 1 << num;
 
         // disable the IRQ while writing to the register.
-        gpio.pb_eint_ctl.modify(|r, w| unsafe {
-            w.bits(r.bits() & !int_enable)
-        });
+        gpio.pb_eint_ctl
+            .modify(|r, w| unsafe { w.bits(r.bits() & !int_enable) });
 
         if num > 7 {
             let shift = (num - 7) * 3;
-            gpio.pb_eint_cfg1.modify(|r, w| unsafe {
-                w.bits(set_trigger_bits(r.bits(), shift, trigger))
-            });
+            gpio.pb_eint_cfg1
+                .modify(|r, w| unsafe { w.bits(set_trigger_bits(r.bits(), shift, trigger)) });
         } else {
             let shift = num * 3;
-            gpio.pb_eint_cfg0.modify(|r, w| unsafe {
-                w.bits(set_trigger_bits(r.bits(), shift, trigger))
-            });
+            gpio.pb_eint_cfg0
+                .modify(|r, w| unsafe { w.bits(set_trigger_bits(r.bits(), shift, trigger)) });
         }
 
         // enable the IRQ.
-        gpio.pb_eint_ctl.modify(|r, w| unsafe {
-            w.bits(r.bits() | int_enable)
-        });
+        gpio.pb_eint_ctl
+            .modify(|r, w| unsafe { w.bits(r.bits() | int_enable) });
 
         wait.await.expect("waitcell should never be closed");
 
         // disable the IRQ again.
-        gpio.pb_eint_ctl.modify(|r, w| unsafe {
-            w.bits(r.bits() & !int_enable)
-        });
+        gpio.pb_eint_ctl
+            .modify(|r, w| unsafe { w.bits(r.bits() & !int_enable) });
     }
 }
 
-
-#[inline(always)]
-fn set_trigger_bits(bits: u32, shift: u32, trigger: Trigger) -> u32 {
-    let mask = !(TRIGGER_MASK) << shift;
-    (bits & mask) | (trigger as u32 << shift)
+impl embedded_hal::digital::ErrorType for InputPin<PinB> {
+    type Error = core::convert::Infallible;
 }
 
-impl Wait for PinB {
+impl Wait for InputPin<PinB> {
     async fn wait_for_high(&mut self) -> Result<(), Self::Error> {
         self.wait_for_irq(Trigger::HighLevel).await;
         Ok(())
@@ -264,6 +261,13 @@ pub(crate) const INTERRUPTS: [(Interrupt, fn()); 5] = [
     // in `d1_pac`...
     // (Interrupt::GPIOG_NS, handle_pg_irq)
 ];
+
+#[inline(always)]
+fn set_trigger_bits(bits: u32, shift: usize, trigger: Trigger) -> u32 {
+    let trigger = trigger as u32;
+    let mask = !(TRIGGER_MASK) << shift;
+    (bits & mask) | (trigger << shift)
+}
 
 #[allow(clippy::declare_interior_mutable_const)]
 const NEW_WAITCELL: WaitCell = WaitCell::new();

@@ -2362,6 +2362,7 @@ version = "0.1.0"
 dependencies = [
  "cobs",
  "embedded-graphics",
+ "embedded-hal 1.0.0-alpha.11",
  "embedded-hal-async",
  "forth3",
  "futures",
@@ -2434,7 +2435,6 @@ name = "mnemos-d1"
 version = "0.1.0"
 dependencies = [
  "d1-pac",
- "embedded-hal 0.2.7",
  "futures",
  "mnemos",
  "mnemos-beepy",

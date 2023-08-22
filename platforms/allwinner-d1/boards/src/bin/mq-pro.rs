@@ -10,6 +10,7 @@ use mnemos_d1_core::{
     ccu::Ccu,
     dmac::Dmac,
     drivers::{spim::kernel_spim1, twi, uart::kernel_uart},
+    gpio,
     plic::Plic,
     timer::Timers,
     Ram, D1,
@@ -78,9 +79,13 @@ fn main() -> ! {
         .initialize(async move {
             let settings = I2cPuppetSettings::default().with_poll_interval(Duration::from_secs(2));
             d1.kernel.sleep(Duration::from_secs(2)).await;
-            I2cPuppetServer::register(d1.kernel, settings, i2c_puppet_irq)
-                .await
-                .expect("failed to register i2c_puppet driver!");
+            I2cPuppetServer::register_with_irq(
+                d1.kernel,
+                settings,
+                gpio::InputPin::from_pin(gpio::PinB::B7),
+            )
+            .await
+            .expect("failed to register i2c_puppet driver!");
         })
         .unwrap();
 

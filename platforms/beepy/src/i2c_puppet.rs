@@ -9,10 +9,12 @@ use kernel::{
         kchannel::{KChannel, KConsumer, KProducer},
         oneshot::Reusable,
     },
-    embedded_hal_async::i2c::{self, I2c},
-    maitake::sync::WaitCell,
+    embedded_hal_async::{
+        digital,
+        i2c::{self, I2c},
+    },
     mnemos_alloc::containers::FixedVec,
-    registry::{self, Envelope, KernelHandle, RegisteredDriver},
+    registry::{self, Envelope, KernelHandle, Message, RegisteredDriver},
     retry::{AlwaysRetry, ExpBackoff, Retry, WithMaxRetries},
     services::{
         i2c::{I2cClient, I2cError},
@@ -327,20 +329,55 @@ impl I2cPuppetServer {
     /// * `kernel`: a reference to the [`Kernel`], used for spawning tasks and
     ///   registering the driver.
     /// * `settings`: [`I2cPuppetSettings`] to configure the driver's behavior.
-    /// * `irq_waker`: an optional [`WaitCell`] that will be notified when the
-    ///   `i2c_puppet` IRQ line is asserted.
-    ///
-    ///   If the [`WaitCell`] is [`Some`], the `i2c_puppet` driver will poll
-    ///   key status when the `WaitCell` is woken. If the [`WaitCell`] is
-    ///   [`None`], the driver will only poll the `i2c_puppet` device when
-    ///   [`settings.poll_interval`](I2cPuppetSettings#structfield.poll_interval)
-    ///   elapses.
-    #[instrument(level = Level::DEBUG, skip(kernel, irq_waker))]
+    #[instrument(level = Level::DEBUG, skip(kernel))]
     pub async fn register(
         kernel: &'static Kernel,
         settings: I2cPuppetSettings,
-        irq_waker: impl Into<Option<&'static WaitCell>>,
     ) -> Result<(), RegistrationError> {
+        let (tx, rx) = KChannel::new_async(settings.channel_capacity).await.split();
+        let this = Self::new(kernel, settings, rx).await?;
+        kernel
+            .spawn(
+                this.run_no_irq(kernel)
+                    .instrument(tracing::info_span!("I2cPuppetServer")),
+            )
+            .await;
+        kernel
+            .with_registry(|reg| reg.register_konly::<I2cPuppetService>(&tx))
+            .await
+            .map_err(RegistrationError::Registry)?;
+        Ok(())
+    }
+
+    #[instrument(level = Level::DEBUG, skip(kernel, irq))]
+    pub async fn register_with_irq<Pin>(
+        kernel: &'static Kernel,
+        settings: I2cPuppetSettings,
+        irq: Pin,
+    ) -> Result<(), RegistrationError>
+    where
+        Pin: digital::Wait + 'static,
+    {
+        let (tx, rx) = KChannel::new_async(settings.channel_capacity).await.split();
+        let this = Self::new(kernel, settings, rx).await?;
+        kernel
+            .spawn(
+                this.run_with_irq(kernel, irq)
+                    .instrument(tracing::info_span!("I2cPuppetServer")),
+            )
+            .await;
+        kernel
+            .with_registry(|reg| reg.register_konly::<I2cPuppetService>(&tx))
+            .await
+            .map_err(RegistrationError::Registry)?;
+        Ok(())
+    }
+
+    async fn new(
+        kernel: &'static Kernel,
+        settings: I2cPuppetSettings,
+        rx: KConsumer<Message<I2cPuppetService>>,
+    ) -> Result<Self, RegistrationError> {
         let keymux = if settings.keymux {
             let keymux = KeyboardMuxClient::from_registry(kernel).await;
             tracing::debug!("acquired keyboard mux client");
@@ -348,7 +385,6 @@ impl I2cPuppetServer {
         } else {
             None
         };
-        let (tx, rx) = KChannel::new_async(settings.channel_capacity).await.split();
         let mut i2c = {
             // The longest read or write operation we will perform is two bytes
             // long. Thus, we can reuse a single 2-byte buffer forever.
@@ -380,32 +416,13 @@ impl I2cPuppetServer {
             .await
             .map_err(RegistrationError::NoI2cPuppet)?;
 
-        let this = Self {
+        Ok(Self {
             settings,
             rx,
             i2c,
             subscriptions,
             keymux,
-        };
-
-        let span = tracing::info_span!("I2cPuppetServer");
-
-        match irq_waker.into() {
-            Some(irq) => {
-                kernel
-                    .spawn(this.run_with_irq(kernel, irq).instrument(span))
-                    .await;
-            }
-            None => {
-                kernel.spawn(this.run_no_irq(kernel).instrument(span)).await;
-            }
-        }
-
-        kernel
-            .with_registry(|reg| reg.register_konly::<I2cPuppetService>(&tx))
-            .await
-            .map_err(RegistrationError::Registry)?;
-        Ok(())
+        })
     }
 
     async fn run_no_irq(mut self, kernel: &'static Kernel) {
@@ -423,11 +440,11 @@ impl I2cPuppetServer {
         }
     }
 
-    async fn run_with_irq(mut self, kernel: &'static Kernel, irq: &'static WaitCell) {
+    async fn run_with_irq<Pin: digital::Wait>(mut self, kernel: &'static Kernel, mut irq: Pin) {
         tracing::info!("running in IRQ-driven mode...");
         loop {
             select_biased! {
-                _ = irq.wait().fuse() => {
+                _ = irq.wait_for_low().fuse() => {
                     tracing::trace!("i2c_puppet IRQ fired!");
                 },
 
