@@ -165,6 +165,7 @@ impl embedded_hal::digital::ErrorType for PinB {
 }
 
 #[repr(u32)]
+#[derive(Copy, Clone, Eq, PartialEq)]
 enum Trigger {
     PosEdge = 0x0,
     NegEdge = 0x1,
@@ -173,15 +174,88 @@ enum Trigger {
     LowLevel = 0x3,
 }
 
-const TRIGGER_MASK: u32 = 0b111;
+#[repr(u32)]
+#[derive(Copy, Clone, Eq, PartialEq)]
+enum PinMode {
+    /// Input mode
+    Input = 0b0000,
+    /// Output mode
+    Output = 0b0001,
+    /// Alternate function 1 (pin-specific)
+    Fn1 = 0b0010,
+    /// Alternate function 2 (pin-specific)
+    Fn2 = 0b0011,
+    /// Alternate function 3 (pin-specific)
+    Fn3 = 0b0100,
+    /// Alternate function 4 (pin-specific)
+    Fn4 = 0b0101,
+    /// Input interrupt mode
+    Irq = 0b1110,
+    /// I/0 disabled.
+    Off = 0b1111,
+}
+
+impl PinMode {
+    /// Number of bits used for each pin's pin mode in the `{pin_block}_CFG{n}`
+    /// registers.
+    const BITS: u32 = Self::MASK.count_ones();
+    const MASK: u32 = Self::Off as u32;
+
+    #[inline(always)]
+    fn set_bits(self, bits: u32, num: usize) -> u32 {
+        let shift = num as u32 * Self::BITS;
+        let mode = self as u32;
+        let mask = !(Self::MASK) << shift;
+        (bits & mask) | (mode << shift)
+    }
+}
+
+impl Trigger {
+    /// Number of bits used for each pin's IRQ trigger in the `{pin
+    /// block}_EINT_CFG{n}` registers.
+    const BITS: u32 = Self::MASK.count_ones();
+    const MASK: u32 = 0b111;
+
+    #[inline(always)]
+    fn set_bits(self, bits: u32, num: usize) -> u32 {
+        let shift = num as u32 * Self::BITS;
+        let trigger = self as u32;
+        let mask = !(Self::MASK) << shift;
+        (bits & mask) | (trigger << shift)
+    }
+}
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct InputPin<T> {
+pub struct IrqPin<T> {
     pin: T,
 }
 
-impl InputPin<PinB> {
-    pub fn from_pin(pin: PinB) -> Self {
+impl IrqPin<PinB> {
+    pub fn new(pin: PinB, gpio: &GPIO) -> Self {
+        // TODO(eliza): this should probably assert nobody else is using that pin...
+        let num = pin as u32;
+
+        // disable the IRQ while writing to the register.
+        gpio.pb_eint_ctl
+            .modify(|r, w| unsafe { w.bits(r.bits() & !(1 << num)) });
+
+        // first, make sure the pin is in interrupt mode.
+
+        // the PB_CFG0 register has pins 0-7, while the PB_CFG1 register has
+        // the remaining pins.
+        if num >= 7 {
+            let num = num - 7;
+            gpio.pb_cfg1.modify(|r, w| {
+                let bits = PinMode::Irq.set_bits(r.bits(), num as usize);
+                unsafe { w.bits(bits) }
+            })
+        } else {
+            gpio.pb_cfg0.modify(|r, w| {
+                let bits = PinMode::Irq.set_bits(r.bits(), num as usize);
+                unsafe { w.bits(bits) }
+            })
+        }
+
         Self { pin }
     }
 
@@ -197,14 +271,19 @@ impl InputPin<PinB> {
         gpio.pb_eint_ctl
             .modify(|r, w| unsafe { w.bits(r.bits() & !int_enable) });
 
-        if num > 7 {
-            let shift = (num - 7) * 3;
-            gpio.pb_eint_cfg1
-                .modify(|r, w| unsafe { w.bits(set_trigger_bits(r.bits(), shift, trigger)) });
+        // set the trigger mode in either PB_EINT_CFG0 or PB_EINT_CFG1 depending
+        // on the pin number.
+        if num >= 7 {
+            let num = num - 7;
+            gpio.pb_eint_cfg1.modify(|r, w| {
+                let bits = trigger.set_bits(r.bits(), num);
+                unsafe { w.bits(bits) }
+            });
         } else {
-            let shift = num * 3;
-            gpio.pb_eint_cfg0
-                .modify(|r, w| unsafe { w.bits(set_trigger_bits(r.bits(), shift, trigger)) });
+            gpio.pb_eint_cfg0.modify(|r, w| {
+                let bits = trigger.set_bits(r.bits(), num);
+                unsafe { w.bits(bits) }
+            });
         }
 
         // enable the IRQ.
@@ -219,11 +298,11 @@ impl InputPin<PinB> {
     }
 }
 
-impl embedded_hal::digital::ErrorType for InputPin<PinB> {
+impl embedded_hal::digital::ErrorType for IrqPin<PinB> {
     type Error = core::convert::Infallible;
 }
 
-impl Wait for InputPin<PinB> {
+impl Wait for IrqPin<PinB> {
     async fn wait_for_high(&mut self) -> Result<(), Self::Error> {
         self.wait_for_irq(Trigger::HighLevel).await;
         Ok(())
@@ -261,13 +340,6 @@ pub(crate) const INTERRUPTS: [(Interrupt, fn()); 5] = [
     // in `d1_pac`...
     // (Interrupt::GPIOG_NS, handle_pg_irq)
 ];
-
-#[inline(always)]
-fn set_trigger_bits(bits: u32, shift: usize, trigger: Trigger) -> u32 {
-    let trigger = trigger as u32;
-    let mask = !(TRIGGER_MASK) << shift;
-    (bits & mask) | (trigger << shift)
-}
 
 #[allow(clippy::declare_interior_mutable_const)]
 const NEW_WAITCELL: WaitCell = WaitCell::new();
