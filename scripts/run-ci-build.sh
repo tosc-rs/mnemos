@@ -19,6 +19,9 @@ rm -rf ./target/ci-publish || :
 mkdir -p ./target/ci-publish/
 cp -r ./target/doc ./target/ci-publish/
 
+# Add RFCs to the mdbook before building the Oranda site
+./scripts/rfc2book.py
+
 # Build with oranda
 oranda build
 
