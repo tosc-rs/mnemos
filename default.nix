@@ -20,7 +20,7 @@ buildEnv {
       (glibcLocales.override { locales = [ locale ]; })
     ] ++ lib.optional stdenv.isDarwin [ Security libiconv ];
 
-  nativeBuildInputs = [ pkg-config cmake rustup ];
+  nativeBuildInputs = [ pkg-config cmake rustup python3 ];
   buildInputs = [
     clang
     libclang
