@@ -181,6 +181,17 @@ docs *FLAGS:
         {{ FLAGS }} \
         {{ _fmt_check_doc }}
 
+# Run a mdBook command, generating the book's RFC section first.
+mdbook CMD="build --open": (_get-cargo-bin "mdbook")
+    ./scripts/rfc2book.py
+    cd book && mdbook {{ CMD }}
+
+
+# Run an Oranda command, generating the book's RFC section first.
+oranda CMD="dev": (_get-cargo-bin "oranda")
+    ./scripts/rfc2book.py
+    oranda {{ CMD }}
+
 _get-cargo-command name pkg skip='':
     #!/usr/bin/env bash
     set -euo pipefail
@@ -199,4 +210,19 @@ _get-cargo-command name pkg skip='':
     err "missing cargo-{{ name }} executable"
     if confirm "       install it?"; then
         cargo install {{ pkg }}
+    fi
+
+_get-cargo-bin name:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source "./scripts/_util.sh"
+
+    if command -v {{ name }}; then
+        status "Found" "{{ name }}"
+        exit 0
+    fi
+
+    err "missing {{ name }} executable"
+    if confirm "       install it?"; then
+        cargo install {{ name }}
     fi
