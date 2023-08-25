@@ -50,6 +50,15 @@ _fmt_check_doc := if env_var_or_default("GITHUB_ACTIONS", "") != "true" { "" } e
     ```
 }
 
+# if `cargo binstall` is found, prefer it when installing binaries.
+_cargo_install := ```
+    if {{ _cargo }} --list | grep -q binstall; then
+        echo "binstall"
+    else
+        echo "install"
+    fi
+```
+
 _d1_start_addr := "0x40000000"
 _d1_bin_path := "target/riscv64imac-unknown-none-elf"
 _d1_pkg := "mnemos-d1"
@@ -109,7 +118,7 @@ clippy-crate crate *ARGS:
         {{ _fmt_clippy }}
 
 # test all packages, across workspaces
-test: (_get-cargo-command "nextest" "cargo-nextest" no-nextest)
+test: (_get-cargo-bin "cargo-nextest" no-nextest)
     {{ _cargo }} nextest run --all-features
 
 # run rustfmt for all crates, across workspaces
@@ -121,7 +130,7 @@ fmt:
     {{ _cargo }} fmt --package {{ _x86_bootloader_pkg }}
 
 # build a Mnemos binary for the Allwinner D1
-build-d1 board='mq-pro': (_get-cargo-command "objcopy" "cargo-binutils")
+build-d1 board='mq-pro': (_get-cargo-bin "cargo-binutils")
     {{ _cargo }} build \
         --profile {{ profile }} \
         --package {{ _d1_pkg }} \
@@ -147,7 +156,7 @@ build-c3 board:
         --bin {{ board }}
 
 # flash an ESP32-C3 with the MnemOS WiFi Buddy firmware
-flash-c3 board *espflash-args: (_get-cargo-command "espflash" "cargo-espflash") (build-c3 board)
+flash-c3 board *espflash-args: (_get-cargo-bin "cargo-espflash") (build-c3 board)
     {{ _cargo }} espflash flash \
         --profile {{ profile }} \
         --package {{ _espbuddy_pkg }} \
@@ -181,48 +190,33 @@ docs *FLAGS:
         {{ FLAGS }} \
         {{ _fmt_check_doc }}
 
-# Run a mdBook command, generating the book's RFC section first.
+# run a mdBook command, generating the book's RFC section first.
 mdbook CMD="build --open": (_get-cargo-bin "mdbook")
     ./scripts/rfc2book.py
     cd book && mdbook {{ CMD }}
 
 
-# Run an Oranda command, generating the book's RFC section first.
+# run an Oranda command, generating the book's RFC section first.
 oranda CMD="dev": (_get-cargo-bin "oranda")
     ./scripts/rfc2book.py
     oranda {{ CMD }}
 
-_get-cargo-command name pkg skip='':
+_get-cargo-bin name skip='':
     #!/usr/bin/env bash
     set -euo pipefail
     source "./scripts/_util.sh"
 
     if [ -n "{{ skip }}" ]; then
-        status "Configured" "not to use cargo-{{ name }}"
+        status "Configured" "not to use {{ name }}"
         exit 0
     fi
 
-    if {{ _cargo }} --list | grep -q {{ name }}; then
-        status "Found" "cargo-{{ name }}"
-        exit 0
-    fi
-
-    err "missing cargo-{{ name }} executable"
-    if confirm "       install it?"; then
-        cargo install {{ pkg }}
-    fi
-
-_get-cargo-bin name:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    source "./scripts/_util.sh"
-
-    if command -v {{ name }}; then
+    if command -v {{ name }} >/dev/null 2>&1; then
         status "Found" "{{ name }}"
         exit 0
     fi
 
     err "missing {{ name }} executable"
     if confirm "       install it?"; then
-        cargo install {{ name }}
+        {{ _cargo }} {{ _cargo_install }} {{ name }}
     fi
