@@ -17,8 +17,8 @@ When building the published documentation on <https://mnemos.dev>, the mdBook is
 built using [Oranda], rather than the mdBook command-line tool. Therefore,
 [Oranda] is the preferred way to build the documentation.
 
-Unlike other mdBook projects, this directory does not contain a SUMMARY.md
-file. This is because the SUMMARY.md file is automatically generated, in order
+Unlike other mdBook projects, this directory does not contain a `SUMMARY.md`
+file. This is because the `SUMMARY.md`` file is automatically generated, in order
 to append the [mnemOS RFCs](../rfcs/) to the mdBook. This is performed
 by the [`rfc2book.py`][rfc2book] script in [`scripts/`](../scripts/).
 
@@ -26,6 +26,9 @@ by the [`rfc2book.py`][rfc2book] script in [`scripts/`](../scripts/).
 >
 > Therefore, **[`scripts/rfc2book.py`][rfc2book] must be run**
 > before running any [mdBook] or [Oranda] commands to build the book.
+
+The [`index.md`](./index.md) file is used to generate the `SUMMARY.md` file.
+New chapters should be added to `index.md`.
 
 ### Just Recipes
 
