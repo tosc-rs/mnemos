@@ -10,12 +10,23 @@ use gloo::timers::future::TimeoutFuture;
 use gloo_utils::format::JsValueSerdeExt;
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
+    daemons::{
+        sermux::HelloSettings,
+        shells::{graphical_shell_mono, GraphicalShellSettings},
+    },
     forth::{self, Forth},
-    services::serial_mux::{PortHandle, WellKnown},
-    Kernel, KernelSettings,
+    services::{
+        keyboard::{
+            key_event::{Kind, Modifiers},
+            mux::KeyboardMuxClient,
+            KeyEvent,
+        },
+        serial_mux::{PortHandle, WellKnown},
+    },
+    Kernel, KernelServiceSettings, KernelSettings,
 };
 use pomelo::{
-    sim_drivers::serial::Serial,
+    sim_drivers::{emb_display::SimDisplay, serial::Serial},
     term_iface::{init_term, to_term, Command, SERMUX_TX},
 };
 #[allow(unused_imports)]
@@ -80,6 +91,7 @@ async fn kernel_entry() {
     SERMUX_TX.set(tx.clone()).unwrap();
 
     // Initialize a loopback UART
+    // TODO this vs. default services
     kernel
         .initialize({
             async move {
@@ -100,7 +112,34 @@ async fn kernel_entry() {
         })
         .unwrap();
 
-    kernel.initialize_default_services(Default::default());
+    let mut service_settings: KernelServiceSettings = Default::default();
+    service_settings.sermux_hello.enabled = false;
+    kernel.initialize_default_services(service_settings);
+
+    let width = 400;
+    let height = 240;
+    kernel
+        .initialize(async move {
+            SimDisplay::register(kernel, height, height).await.unwrap();
+        })
+        .unwrap();
+
+    let mut guish = GraphicalShellSettings::with_display_size(width, height);
+
+    guish.capacity = Default::default();
+    guish.forth_settings = Default::default();
+    kernel
+        .initialize(graphical_shell_mono(kernel, guish))
+        .unwrap();
+
+    spawn_local(async move {
+        loop {
+            kernel.sleep(Duration::from_millis(4000)).await;
+            let mut keymux = KeyboardMuxClient::from_registry(kernel).await;
+            keymux.publish_key(KeyEvent::from_char('h')).await;
+            keymux.publish_key(KeyEvent::from_char('i')).await;
+        }
+    });
 
     // go forth and replduce
     spawn_local(async move {

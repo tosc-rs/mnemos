@@ -4,16 +4,6 @@
 
 use core::time::Duration;
 
-use crate::{
-    comms::bbq::BidiHandle,
-    forth::Params,
-    services::{
-        emb_display::{EmbDisplayClient, FrameLocSize, MonoChunk},
-        keyboard::{key_event, KeyClient},
-        serial_mux::{PortHandle, WellKnown},
-    },
-    Kernel,
-};
 use embedded_graphics::{
     mono_font::{MonoFont, MonoTextStyle},
     pixelcolor::BinaryColor,
@@ -22,12 +12,21 @@ use embedded_graphics::{
     text::Text,
     Drawable,
 };
-
 use futures::FutureExt;
 use input_mgr::RingLine;
 use profont::PROFONT_12_POINT;
+use tracing::error;
 
-use crate::forth::Forth;
+use crate::{
+    comms::bbq::BidiHandle,
+    forth::{Forth, Params},
+    services::{
+        emb_display::{EmbDisplayClient, FrameLocSize, MonoChunk},
+        keyboard::{key_event, KeyClient},
+        serial_mux::{PortHandle, WellKnown},
+    },
+    Kernel,
+};
 
 /// Settings for the [sermux_shell] daemon
 #[derive(Debug)]
@@ -154,7 +153,6 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
     let mut disp_hdl = EmbDisplayClient::from_registry(k).await;
     let char_y = font.character_size.height;
     let char_x = font.character_size.width + font.character_spacing;
-
     // Draw titlebar
     {
         let mut fc_0 = MonoChunk::allocate_mono(FrameLocSize {
@@ -194,7 +192,10 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
         .into_styled(line_style)
         .draw(&mut fc_0)
         .unwrap();
-        disp_hdl.draw(fc_0).await.unwrap();
+
+        if let Err(e) = disp_hdl.draw(fc_0).await {
+            error!("GUI error {e:?}");
+        };
     }
 
     let style = ring_drawer::BwStyle {
@@ -229,7 +230,13 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
     loop {
         if any {
             ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
-            fc_0 = disp_hdl.draw_mono(fc_0).await.unwrap();
+            match disp_hdl.draw_mono(fc_0).await {
+                Ok(fc) => fc_0 = fc,
+                Err(e) => {
+                    error!("GUI error {e:?}");
+                    return;
+                }
+            }
             any = false;
         }
 

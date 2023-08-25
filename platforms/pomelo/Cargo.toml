@@ -18,6 +18,10 @@ postcard = "1"
 wasm-bindgen = "0.2.87"
 gloo-utils = { version = "0.1", features = ["serde"] }
 serde = { version = "1.0.171", features = ["derive"] }
+# waiting for PR merge
+# embedded-graphics-web-simulator = "0.3.0"
+embedded-graphics-web-simulator = { git = 'https://github.com/spookyvision/embedded-graphics-web-simulator' }
+embedded-graphics = "0.8"
 
 [dependencies.tracing]
 version = "0.1.35"
@@ -43,7 +47,7 @@ path = "../../source/sermux-proto"
 path = "../../source/alloc"
 features = ["use-std"]
 
-# Melpomelo does not use any APIs from `maitake` directly. This dependency is
+# Pomelo does not use any APIs from `maitake` directly. This dependency is
 # instead required in order to enable `maitake`'s support for `tracing` 0.1.x,
 # which is needed to support the Tokio Console while running in the simulator,
 # but is not needed by actual builds of mnemOS running on real hardware.
@@ -64,7 +68,7 @@ features = ["std", "async-await"]
 version = "0.2.1"
 
 [dependencies.gloo]
-version = "0.8.1"
+version = "0.10"
 features = ["futures"]
 
 [dependencies.futures-util]
@@ -77,3 +81,7 @@ version = "0.4.37"
 [dependencies.async-std]
 version = "1.12.0"
 features = ["unstable"]
+
+[dependencies.web-sys]
+version = "0.3.4"
+features = ['Document', 'Element', 'HtmlElement', 'Node', 'Window']
