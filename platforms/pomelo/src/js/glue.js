@@ -179,7 +179,7 @@ export function init_term(command_callback) {
             f: (args) => {
                 command_callback({ 'Echo': args });
             },
-            description: "Contender for world's most contorted echo implementation",
+            description: "Echoes a string back to you",
         },
         hello: {
             f: (_args) => {
