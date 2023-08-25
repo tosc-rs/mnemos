@@ -51,10 +51,10 @@ def main():
         summary = summary_in.read()
         with open(f'{src_path}/SUMMARY.md', 'w') as summary_out:
             summary_out.write(summary)
-            index_item = '\n# RFCs\n\n- [Introduction](rfcs/README.md)\n';
+            index_item = '\n\n- [RFCs](rfcs/README.md)\n';
             print(index_item, end='')
             summary_out.write(f'\n{index_item}')
-            collect(summary_out, rfc_path, src_path, 0)
+            collect(summary_out, rfc_path, src_path, 1)
             print('')
 
 def collect(summary, path, srcpath, depth):
@@ -66,7 +66,7 @@ def collect(summary, path, srcpath, depth):
         name = entry.name[:-3]
         if name != 'README':
             link_path = entry.path[5:]
-            index_item = f'- {indent}[{name}](rfcs/{link_path})\n'
+            index_item = f'{indent}- [{name}](rfcs/{link_path})\n'
             print(index_item, end='')
             summary.write(index_item)
             maybe_subdir = os.path.join(path, name)
