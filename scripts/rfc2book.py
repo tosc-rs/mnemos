@@ -48,7 +48,7 @@ def main():
         shutil.rmtree(book_rfcs)
     os.mkdir(book_rfcs)
 
-    with open(f'{src_path}/summary.md', 'r') as summary_in:
+    with open(f'{src_path}/index.md', 'r') as summary_in:
         summary = summary_in.read()
         with open(f'{src_path}/SUMMARY.md', 'w') as summary_out:
             summary_out.write(summary)
