@@ -26,20 +26,19 @@ import os
 import shutil
 import subprocess
 
-
-
 def main():
     src_path = None
     rfc_path = None
     cwd = os.getcwd()
+
     if cwd.endswith('book'):
+        # change source paths if we are being run inside the `book` directory.
         src_path = 'src'
         rfc_path = '../rfcs'
-    elif cwd.endswith('mnemos'):
+    else:
+        # otherwise, assume the script is being run inside the repo root.
         src_path = 'book/src'
         rfc_path = 'rfcs'
-    else:
-        raise Exception('rfc2book must be run either in the repo root (mnemos/) or in the mdbook (mnemos/book/) directory')
 
     book_rfcs = f'{src_path}/rfcs'
 
