@@ -2,13 +2,23 @@
   description = "Flake providing a development shell for MnemOS";
 
   inputs = {
+    # unstable is necessary for Oranda's flake, which depends on `tailwindcss`
+    # (not available in stable nixpkgs yet).
+    nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
+    oranda = {
+      # use my fork of Oranda until upstream merges PR
+      # https://github.com/axodotdev/oranda/pull/609 (this is necessary to fix
+      # the flake)
+      url = "github:hawkw/oranda?rev=8e5eff3d1f9c4e3642d8c327032d4072d2ca4a00";
+      inputs.nixpkgs.follows = "nixpkgs";
+    };
     flake-utils = {
       url = "github:numtide/flake-utils";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
+  outputs = { self, nixpkgs, flake-utils, oranda }:
     flake-utils.lib.eachDefaultSystem (system:
       let pkgs = import nixpkgs { inherit system; };
       in {
@@ -44,6 +54,8 @@
               cargo-espmonitor
               # for testing the x86_64 kernel
               qemu
+              # for building the website
+              oranda.packages.${system}.default
             ];
 
             buildInputs = [ libclang zlib ];
