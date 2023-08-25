@@ -1,13 +1,15 @@
 {
-    "project": {
-        "name": "Mnemos Project Overview",
-        "description": "This page provides an overview of the entire MnemOS project. The other boxes on this page provide an overview of the individual crates that make up MnemOS.",
-        "readme_path": "./README.md",
-        "repository": "https://github.com/tosc-rs/mnemos",
-        "homepage": "https://mnemos.dev",
-        "license": "MIT OR Apache-2.0"
-    },
-    "components": {
-        "changelog": true
+  "project": {
+      "name": "Mnemos Project Overview",
+      "description": "This page provides an overview of the entire MnemOS project. The other boxes on this page provide an overview of the individual crates that make up MnemOS.",
+      "readme_path": "./README.md",
+      "repository": "https://github.com/tosc-rs/mnemos",
+      "homepage": "https://mnemos.dev",
+      "license": "MIT OR Apache-2.0"
+  },
+  "components": {
+    "changelog": {
+      "read_changelog_file": false
     }
+  }
 }
