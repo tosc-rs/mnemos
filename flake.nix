@@ -56,6 +56,7 @@
               qemu
               # for building the website
               oranda.packages.${system}.default
+              python3 # needed by rfc2book
             ];
 
             buildInputs = [ libclang zlib ];
