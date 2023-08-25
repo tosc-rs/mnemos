@@ -3,7 +3,8 @@
     "static_dir": "assets"
   },
   "workspace": {
-    "name": "MnemOS",
+    "name": "",
+    "docs_path": "./assets/INDEX.md",
     "members": [
       {
         "slug": "MnemosProjectOverview",
@@ -62,5 +63,10 @@
         "path": "tools/f3repl"
       }
     ]
+  },
+  "project": {
+    "repository": "https://github.com/tosc-rs/mnemos",
+    "homepage": "https://mnemos.dev",
+    "license": "MIT OR Apache-2.0"
   }
 }
