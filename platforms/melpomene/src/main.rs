@@ -30,7 +30,7 @@ fn main() {
 #[global_allocator]
 static AHEAP: MnemosAlloc<System> = MnemosAlloc::new();
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main(flavor = "multi_thread", worker_threads = 2)]
 async fn run_melpomene() {
     let local = tokio::task::LocalSet::new();
     println!("========================================");
@@ -128,45 +128,25 @@ async fn kernel_entry() {
     let sleep_cap = config
         .platform
         .sleep_cap
-        .unwrap_or_else(PlatformConfig::default_sleep_cap)
-        .as_micros() as u64;
+        .unwrap_or_else(PlatformConfig::default_sleep_cap);
+
+    let t0 = tokio::time::Instant::now();
     loop {
-        // Tick the scheduler
-        let t0 = tokio::time::Instant::now();
-        let tick = k.tick();
+        let sleep = k.run_until_sleepy(|| t0.elapsed());
 
-        // advance the timer (don't take more than 500k years)
-        let ticks = t0.elapsed().as_micros() as u64;
-        let turn = k.timer().force_advance_ticks(ticks);
-        tracing::trace!("advanced timer by {ticks:?}");
+        tracing::trace!("waiting for an interrupt...");
 
-        // If there is nothing else scheduled, and we didn't just wake something up,
-        // sleep for some amount of time
-        if turn.expired == 0 && !tick.has_remaining {
-            let wfi_start = tokio::time::Instant::now();
-            // if no timers have expired on this tick, we should sleep until the
-            // next timer expires *or* something is woken by I/O, to simulate a
-            // hardware platform waiting for an interrupt.
-            tracing::trace!("waiting for an interrupt...");
+        let amount = sleep.next_deadline.unwrap_or(sleep_cap);
+        tracing::trace!("next timer expires in {amount:?}us");
 
-            let amount = turn.ticks_to_next_deadline().unwrap_or(sleep_cap);
-            tracing::trace!("next timer expires in {amount:?}us");
-            // wait for an "interrupt"
-            futures::select! {
-                _ = irq.notified().fuse() => {
-                    tracing::trace!("...woken by I/O interrupt");
-               },
-               _ = tokio::time::sleep(Duration::from_micros(amount)).fuse() => {
-                    tracing::trace!("woken by timer");
-               }
+        // wait for an "interrupt"
+        futures::select! {
+            _ = irq.notified().fuse() => {
+                tracing::trace!("...woken by I/O interrupt");
+            },
+            _ = tokio::time::sleep(amount).fuse() => {
+                tracing::trace!("woken by timer");
             }
-
-            // Account for time slept
-            let elapsed = wfi_start.elapsed().as_micros() as u64;
-            let _turn = k.timer().force_advance_ticks(elapsed);
-        } else {
-            // let other tokio tasks (simulated hardware devices) run.
-            tokio::task::yield_now().await;
         }
     }
 }

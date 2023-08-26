@@ -157,6 +157,13 @@ pub struct KernelServiceSettings {
     pub sermux_trace: serial_trace::SerialTraceSettings,
 }
 
+pub struct Sleepy<F> {
+    pub next_deadline: Option<Duration>,
+    kernel: &'static Kernel,
+    wfi_start: Duration,
+    now: F,
+}
+
 impl Kernel {
     /// Create a new kernel with the given settings.
     ///
@@ -254,6 +261,51 @@ impl Kernel {
     #[inline]
     pub fn timeout<F: Future>(&'static self, duration: Duration, f: F) -> Timeout<'static, F> {
         self.inner.timer.timeout(duration, f)
+    }
+
+    /// Run the kernel executor continuously until no scheduled work is
+    /// remaining, returning the duration for which the platform implementation
+    /// should sleep.
+    ///
+    /// # Returns
+    ///
+    /// - [`Some`]`(`[`Duration`]`)` if the platform implementation should set a
+    ///   timer before waiting for an interrupt. If this method returns
+    ///   [`Some`], the platform should set a timer to expire after the returned
+    ///   [`Duration`] prior to sleeping, and must advance the kernel's timer
+    ///   by the period for which the platform slept.
+    /// - [`None`] if there is no pending timeouts in the kernel's timer wheel.
+    ///   In this case, the platform implementation should sleep until an interrupt
+    ///   occurs. The platform *may* choose to set a timer anyway, to limit the
+    ///   maximum amount of time spent waiting for an interrupt.
+    pub fn run_until_sleepy<F>(&'static self, mut now: F) -> Sleepy<F>
+    where
+        F: FnMut() -> Duration,
+    {
+        loop {
+            let start = now();
+
+            // Tick the scheduler.
+            let tick = self.tick();
+
+            // Advance the timer by the tick duration.
+            let elapsed = now() - start;
+            let turn = self.timer().force_advance(elapsed);
+
+            // If there is nothing else scheduled, and we didn't just wake
+            // something up, it's time for the platform implementation to
+            // sleep.
+            if turn.expired == 0 && !tick.has_remaining {
+                return Sleepy {
+                    kernel: self,
+                    wfi_start: now(),
+                    next_deadline: turn.time_to_next_deadline(),
+                    now,
+                };
+            }
+
+            // Otherwise, continue looping.
+        }
     }
 
     /// Initialize the default set of cross-platform kernel [`services`] that
@@ -365,5 +417,17 @@ impl Kernel {
                 tracing::error!("Sermux services configured without sermux! Skipping.");
             }
         }
+    }
+}
+
+// === impl Sleepy ===
+
+impl<F> Sleepy<F>
+where
+    F: FnMut() -> Duration,
+{
+    pub fn wake_up(mut self) {
+        let elapsed = (self.now)().saturating_sub(self.wfi_start);
+        self.kernel.timer().force_advance(elapsed);
     }
 }
