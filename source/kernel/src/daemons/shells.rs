@@ -15,7 +15,7 @@ use embedded_graphics::{
 use futures::FutureExt;
 use input_mgr::RingLine;
 use profont::PROFONT_12_POINT;
-use tracing::error;
+use tracing::{debug, error};
 
 use crate::{
     comms::bbq::BidiHandle,
@@ -228,6 +228,7 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
     let interval = Duration::from_secs(1) / 20;
 
     loop {
+        // debug!("mono shell loop");
         if any {
             ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
             match disp_hdl.draw_mono(fc_0).await {

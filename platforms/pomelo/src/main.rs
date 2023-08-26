@@ -3,7 +3,7 @@ use std::{alloc::System, time::Duration};
 use async_std::stream::IntoStream;
 use futures::{
     channel::mpsc::{self},
-    FutureExt,
+    FutureExt, SinkExt,
 };
 use futures_util::{select, StreamExt};
 use gloo::timers::future::TimeoutFuture;
@@ -94,6 +94,7 @@ async fn kernel_entry() {
     // TODO this vs. default services
     kernel
         .initialize({
+            let irq_tx = irq_tx.clone();
             async move {
                 debug!("initializing loopback UART");
                 Serial::register(
@@ -101,7 +102,7 @@ async fn kernel_entry() {
                     256,
                     SERIAL_FRAME_SIZE * 2, // *1 is not quite enough, required overhead to be +10 bytes for cobs + sermux
                     WellKnown::Loopback.into(),
-                    irq_tx.clone(),
+                    irq_tx,
                     rx.into_stream(),
                     to_term,
                 )
@@ -119,8 +120,13 @@ async fn kernel_entry() {
     let width = 400;
     let height = 240;
     kernel
-        .initialize(async move {
-            SimDisplay::register(kernel, height, height).await.unwrap();
+        .initialize({
+            let irq_tx = irq_tx.clone();
+            async move {
+                SimDisplay::register(kernel, height, height, irq_tx)
+                    .await
+                    .unwrap();
+            }
         })
         .unwrap();
 
@@ -132,12 +138,21 @@ async fn kernel_entry() {
         .initialize(graphical_shell_mono(kernel, guish))
         .unwrap();
 
-    spawn_local(async move {
-        loop {
-            kernel.sleep(Duration::from_millis(4000)).await;
+    // synthetic keyboard events
+
+    spawn_local({
+        let mut irq_tx: mpsc::Sender<()> = irq_tx.clone();
+        async move {
+            let cmd = "2 2 + .\n";
             let mut keymux = KeyboardMuxClient::from_registry(kernel).await;
-            keymux.publish_key(KeyEvent::from_char('h')).await;
-            keymux.publish_key(KeyEvent::from_char('i')).await;
+
+            for _ in 0..5 {
+                for char in cmd.chars() {
+                    keymux.publish_key(KeyEvent::from_char(char)).await;
+                    irq_tx.send(()).await;
+                    kernel.sleep(Duration::from_millis(100)).await;
+                }
+            }
         }
     });
 
@@ -193,33 +208,40 @@ async fn kernel_entry() {
             .to_std()
             .unwrap();
         trace!("timer - before sleep: advance {dt:?}");
-        let next_turn = timer
-            .force_advance(dt)
-            .time_to_next_deadline()
-            .unwrap_or(Duration::from_secs(1));
-        trace!("timer: before sleep: next turn in {next_turn:?}");
-        let mut next_fut = TimeoutFuture::new(
-            next_turn
-                .as_millis()
-                .try_into()
-                .expect("next turn is too far in the future"),
-        )
-        .fuse();
+        let next_turn = timer.force_advance(dt);
 
-        then = chrono::Local::now();
-        let now = select! {
-            _ = irq_rx.next() => {
-                trace!("timer: WAKE: \"irq\" {tick:?}");
-                chrono::Local::now()
-            },
-            _ = next_fut => {
-                let tick = kernel.tick();
-                trace!("timer: WAKE: timer {tick:?}");
-                chrono::Local::now()
-            }
-        };
-        let dt = now.signed_duration_since(then).to_std().unwrap();
-        trace!("timer: slept for {dt:?}");
-        kernel.timer().force_advance(dt);
+        trace!("timer: before sleep: next turn in {next_turn:?}");
+
+        if next_turn.expired == 0 || !tick.has_remaining {
+            trace!("timer: sleeping");
+            let next_turn = next_turn
+                .time_to_next_deadline()
+                .unwrap_or(Duration::from_millis(3000));
+            let mut next_fut = TimeoutFuture::new(
+                next_turn
+                    .as_millis()
+                    .try_into()
+                    .expect("next turn is too far in the future"),
+            )
+            .fuse();
+
+            then = chrono::Local::now();
+            let now = select! {
+                _ = irq_rx.next() => {
+                    trace!("timer: WAKE: \"irq\" {tick:?}");
+                    chrono::Local::now()
+                },
+                _ = next_fut => {
+                    // let tick = kernel.tick();
+                    trace!("timer: WAKE: timer {tick:?}");
+                    chrono::Local::now()
+                }
+            };
+            let dt = now.signed_duration_since(then).to_std().unwrap();
+            trace!("timer: slept for {dt:?}");
+            kernel.timer().force_advance(dt);
+        } else {
+            tracing::warn!("timer worm");
+        }
     }
 }

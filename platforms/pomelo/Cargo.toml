@@ -84,4 +84,12 @@ features = ["unstable"]
 
 [dependencies.web-sys]
 version = "0.3.4"
-features = ['Document', 'Element', 'HtmlElement', 'Node', 'Window']
+features = [
+    'Document',
+    'Element',
+    'HtmlElement',
+    'Node',
+    'Window',
+    'KeyboardEvent',
+    'EventTarget',
+]

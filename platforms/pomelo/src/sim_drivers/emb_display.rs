@@ -28,6 +28,7 @@ use embedded_graphics::{
 use embedded_graphics_web_simulator::{
     display::WebSimulatorDisplay as SimulatorDisplay, output_settings::OutputSettingsBuilder,
 };
+use futures::channel::mpsc;
 use maitake::sync::Mutex;
 use mnemos_alloc::containers::{Arc, HeapArray};
 use mnemos_kernel::{
@@ -53,6 +54,7 @@ use wasm_bindgen_futures::spawn_local;
 /// Implements the [`EmbDisplayService`] driver using the `embedded-graphics`
 /// simulator.
 pub struct SimDisplay;
+use futures::SinkExt;
 
 impl SimDisplay {
     /// Register the driver instance
@@ -64,6 +66,7 @@ impl SimDisplay {
         kernel: &'static Kernel,
         width: u32,
         height: u32,
+        irq_tx: mpsc::Sender<()>,
     ) -> Result<(), FrameError> {
         tracing::debug!("initializing SimDisplay server ({width}x{height})...");
 
@@ -82,6 +85,30 @@ impl SimDisplay {
             .with_registry(|reg| reg.register_konly::<EmbDisplayService>(&cmd_prod))
             .await
             .map_err(|_| FrameError::DisplayAlreadyExists)?;
+
+        // listen for key events
+        let closure = Closure::<dyn FnMut(_)>::new(move |event: web_sys::KeyboardEvent| {
+            event.prevent_default();
+            let key = event.key();
+            let char = if key == "Enter" {
+                '\n'
+            } else if key.len() == 1 {
+                key.chars().nth(0).unwrap()
+            } else {
+                return;
+            };
+            let mut irq_tx = irq_tx.clone();
+            spawn_local(async move {
+                let mut keymux = KeyboardMuxClient::from_registry(kernel).await;
+                keymux.publish_key(KeyEvent::from_char(char)).await;
+                debug!("keyboard IRQ!");
+                irq_tx.send(()).await;
+            });
+        });
+        graphics_container()
+            .add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref())
+            .unwrap();
+        closure.forget();
 
         tracing::info!("SimDisplayServer initialized!");
 
@@ -132,7 +159,6 @@ impl CommanderTask {
             width,
             height,
         };
-
         self.message_loop(context).await;
     }
 
@@ -142,6 +168,7 @@ impl CommanderTask {
     /// sent us a message and "hung up" without waiting for a response.
     async fn message_loop(&self, context: Context) {
         debug!("display message loop");
+
         let context = Rc::new(RefCell::new(context));
         // let f = Rc::new(RefCell::new(None));
         loop {
@@ -149,17 +176,25 @@ impl CommanderTask {
             let (req, env, reply_tx) = msg.split();
             match req {
                 Request::Draw(FrameChunk::Mono(fc)) => {
-                    debug!("drawing?");
                     let context = context.clone();
+
+                    // TODO need to queue up frame chunks and process them all in r_a_f
+
                     // *f.borrow_mut() = Some(Closure::new(move || {
                     //     draw_mono(&fc, &mut *context.borrow_mut());
                     // }));
 
-                    let leakme = Closure::new(move || {
-                        draw_mono(&fc, &mut *context.borrow_mut());
+                    let leakme = Closure::once(move || {
+                        if let Ok(_) = draw_mono(&fc, &mut *context.borrow_mut()) {
+                            let response = env.fill(Ok(Response::DrawComplete(fc.into())));
+                            spawn_local(async {
+                                reply_tx.reply_konly(response).await;
+                            });
+                        }
                     });
                     let l = Box::leak(Box::new(leakme));
                     request_animation_frame(&l);
+
                     // request_animation_frame(f.borrow().as_ref().unwrap());
                 }
                 Request::GetMeta => {
@@ -179,14 +214,11 @@ impl CommanderTask {
 
 /// Draw the given MonoChunk to the persistent framebuffer
 fn draw_mono(fc: &MonoChunk, context: &mut Context) -> Result<(), ()> {
-    debug!("drawing??");
     draw_to(&mut context.framebuf, fc, context.width, context.height);
-    // TODO unwrap
-    let raw_img = frame_display(&context.framebuf, context.width).unwrap();
+    let raw_img = frame_display(&context.framebuf, context.width).map_err(|_| ())?;
     let image = Image::new(&raw_img, Point::new(0, 0));
-    // TODO unwrap
-    image.draw(&mut context.display).unwrap();
-    debug!("drawing???");
+    image.draw(&mut context.display).map_err(|_| ())?;
+    context.display.flush();
     Ok(())
 }
 fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u32) {

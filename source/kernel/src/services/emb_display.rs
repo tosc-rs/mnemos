@@ -10,17 +10,18 @@
 //! of use.
 use core::time::Duration;
 
+use embedded_graphics::{
+    pixelcolor::{BinaryColor, Gray8},
+    prelude::*,
+};
+use uuid::Uuid;
+
 use crate::{
     comms::oneshot::Reusable,
     mnemos_alloc::containers::HeapArray,
     registry::{self, Envelope, KernelHandle, RegisteredDriver},
     Kernel,
 };
-use embedded_graphics::{
-    pixelcolor::{BinaryColor, Gray8},
-    prelude::*,
-};
-use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Service Definition
@@ -215,6 +216,7 @@ impl From<MonoChunk> for FrameChunk {
 // users to make the size/perf tradeoff, particularly if we want to support
 // targets with very small memory. For example, a 400x240 monochrome display would
 // be 93.75KiB at 8bpp, but only 11.72KiB at 1bpp.
+#[derive(Clone)]
 pub struct MonoChunk {
     meta: FrameChunkMetadata,
     data: Buf8,
@@ -442,6 +444,7 @@ impl FrameChunkMetadata {
     }
 }
 
+#[derive(Clone)]
 struct Buf8 {
     bytes: HeapArray<u8>,
 }
