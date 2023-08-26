@@ -23,7 +23,7 @@
       let pkgs = import nixpkgs { inherit system; };
       in {
         devShell = with pkgs;
-          mkShell {
+          mkShell rec {
             name = "mnemos-dev";
 
             nativeBuildInputs = [
@@ -31,15 +31,6 @@
               # simulator.
               pkg-config
               cmake
-
-              # these are in nativeBuildInputs as they are dependencies of the
-              # host tools.
-              # TODO(eliza): add separate packages for each of crowtty,
-              # melpomene, and other host tools...
-              systemd
-              udev
-              SDL2
-              SDL2.dev
 
               # compilers
               rustup
@@ -59,11 +50,22 @@
               python3 # needed by rfc2book
             ];
 
-            buildInputs = [ libclang zlib ];
+            buildInputs = [
+              libclang
+              zlib
+              # dependencies of the host tools
+              # TODO(eliza): add separate packages for each of crowtty,
+              # melpomene, and other host tools...
+              systemd
+              udev.dev
+              SDL2
+              SDL2.dev
+            ];
 
             # Fix missing OpenSSL
             PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
             LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
+            LD_LIBRARY_PATH = "${lib.makeLibraryPath buildInputs}";
           };
       });
 }
