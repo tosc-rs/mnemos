@@ -1,20 +1,46 @@
+#![doc = include_str!("../README.md")]
 use anyhow::{Context, Result};
-use std::{env, process};
+use std::{env, path::Path, process};
 
-const JUST_PATH: &str = env!("CARGO_BIN_FILE_JUST_just");
-const NEXTEST_PATH: &str = env!("CARGO_BIN_FILE_CARGO_NEXTEST_cargo-nextest");
+const MN_CARGO_BINS: Option<&str> = option_env!("MN_CARGO_BINS");
+
+const PATH_KEY: &str = "PATH";
 
 fn main() -> Result<()> {
-    let args: Vec<String> = env::args().collect();
-    let args = &args[1..];
+    if cfg!(not(feature = "install-deps")) {
+        eprintln!("warning: running `mn` without the 'install-deps' feature falls back to just doing nothing!");
+    }
+
     let verbose = env::var("MN_VERBOSE")
         .map(|s| !s.is_empty())
         .unwrap_or(false);
+    if verbose {
+        println!("Manganese: MN_CARGO_BINS={MN_CARGO_BINS:?}");
+    }
 
-    let just_args = if args.is_empty() { &[] } else { &args[1..] };
+    let args: Vec<String> = env::args().collect();
+    let just_args = &args[1..];
 
-    let mut cmd = process::Command::new(JUST_PATH);
-    cmd.args(just_args).env("MN_NEXTEST_PATH", NEXTEST_PATH);
+    let (path, mut cmd) = {
+        let prev_path = env::var(PATH_KEY).ok().unwrap_or_default();
+        if let Some(cargo_bins) = MN_CARGO_BINS {
+            let mut path = String::with_capacity(cargo_bins.len() + 1 + prev_path.len());
+            path.push_str(cargo_bins);
+            path.push(':');
+            path.push_str(&prev_path);
+            let just_path = Path::new(&cargo_bins).join("just");
+
+            (path, process::Command::new(just_path))
+        } else {
+            if cfg!(feature = "install-deps") {
+                panic!("if the 'install-deps' feature is enabled, MN_CARGO_BINS must be set! seems like the build script broke...");
+            }
+
+            (prev_path, process::Command::new("just"))
+        }
+    };
+
+    cmd.args(just_args).env(PATH_KEY, path);
 
     if verbose {
         println!("Manganese: {cmd:?}");
@@ -22,9 +48,11 @@ fn main() -> Result<()> {
 
     let status = cmd
         .spawn()
-        .context("failed to spawn `just` command")?
+        .with_context(|| format!("failed to spawn `just` command\ncommand: {cmd:?}"))?
         .wait()
-        .context("failed to spawn `just` command")?;
+        .with_context(|| {
+            format!("failed to wait for `just` command to complete\ncommand: {cmd:?}")
+        })?;
 
     if verbose {
         println!("Manganese: exit status {status:?}");

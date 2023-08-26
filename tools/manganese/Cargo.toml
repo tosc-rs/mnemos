@@ -12,13 +12,44 @@ readme = "./README.md"
 license = "MIT OR Apache-2.0"
 edition = "2021"
 
+[features]
+# off-by-default feature to avoid compiling `mn`'s bindeps when the crate is not
+# in use
+install-deps = [
+    "just",
+    "cargo-nextest",
+    "cargo-binutils",
+    "cargo-espflash",
+    "trunk",
+]
+
 [dependencies]
 anyhow = "1"
 
-[dependencies.just]
+[build-dependencies]
+anyhow = "1"
+
+[build-dependencies.just]
 version = "1.14.0"
 artifact = "bin:just"
+optional = true
 
-[dependencies.cargo-nextest]
+[build-dependencies.cargo-espflash]
+version = "2.0.1"
+artifact = "bin:cargo-espflash"
+optional = true
+
+[build-dependencies.cargo-nextest]
 version = "0.9.57"
 artifact = "bin:cargo-nextest"
+optional = true
+
+[build-dependencies.cargo-binutils]
+version = "0.3"
+artifact = "bin"
+optional = true
+
+[build-dependencies.trunk]
+version = "0.17.5"
+artifact = "bin"
+optional = true

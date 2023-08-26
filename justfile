@@ -50,11 +50,6 @@ _fmt_check_doc := if env_var_or_default("GITHUB_ACTIONS", "") != "true" { "" } e
     ```
 }
 
-_skip_nextest := env_var_or_default("MN_NEXTEST_PATH", "") + no-nextest
-_nextest_cmd := env_var_or_default("MN_NEXTEST_PATH", _cargo + " nextest")
-_skip_espflash := env_var_or_default("MN_ESPFLASH_PATH", "")
-_espflash_cmd := env_var_or_default("MN_NEXTEST_PATH", _cargo + " espflash")
-
 _d1_start_addr := "0x40000000"
 _d1_bin_path := "target/riscv64imac-unknown-none-elf"
 _d1_pkg := "mnemos-d1"
@@ -114,8 +109,11 @@ clippy-crate crate *ARGS:
         {{ _fmt_clippy }}
 
 # test all packages, across workspaces
-test: (_get-cargo-command "nextest" "cargo-nextest" _skip_nextest)
-    {{ _nextest_cmd }} run --all-features
+test *ARGS="--all-features": (nextest "run " + ARGS)
+
+# run a Nextest command
+nextest *ARGS: (_get-cargo-command "nextest" "cargo-nextest" no-nextest)
+    {{ _cargo }} nextest {{ ARGS }}
 
 # run rustfmt for all crates, across workspaces
 fmt:
@@ -152,8 +150,8 @@ build-c3 board:
         --bin {{ board }}
 
 # flash an ESP32-C3 with the MnemOS WiFi Buddy firmware
-flash-c3 board *espflash-args: (_get-cargo-command "espflash" "cargo-espflash" _skip_espflash) (build-c3 board)
-    {{ _espflash_cmd }} \
+flash-c3 board *espflash-args: (_get-cargo-command "espflash" "cargo-espflash") (build-c3 board)
+    {{ _cargo }} espflash \
         --profile {{ profile }} \
         --package {{ _espbuddy_pkg }} \
         --bin {{ board }} \
@@ -185,6 +183,10 @@ docs *FLAGS:
         --all-features \
         {{ FLAGS }} \
         {{ _fmt_check_doc }}
+
+# Run a Trunk command
+trunk *CMD: (_get-cargo-bin "trunk")
+    trunk {{ CMD }}
 
 # Run a mdBook command, generating the book's RFC section first.
 mdbook CMD="build --open": (_get-cargo-bin "mdbook")
