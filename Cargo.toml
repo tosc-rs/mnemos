@@ -161,3 +161,13 @@ rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
 [patch.crates-io.bbq10kbd]
 git = "https://github.com/hawkw/bbq10kbd"
 branch = "eliza/async"
+
+# necessary to avoid `esp32c3-hal` depending on `log` with version `=0.4.18`,
+# which clashes with the `nextest` dependency of `log` `^0.4.19`. lol. lmao.
+[patch.crates-io.esp32c3-hal]
+git = "https://github.com/esp-rs/esp-hal"
+rev = "5a8be302b4049a6ebc17bd712d97c85a9fd83f76"
+
+[patch.crates-io.esp-hal-common]
+git = "https://github.com/esp-rs/esp-hal"
+rev = "5a8be302b4049a6ebc17bd712d97c85a9fd83f76"

@@ -1,0 +1,24 @@
+cargo-features = ["per-package-target", "profile-rustflags"]
+
+[package]
+name = "manganese"
+version = "0.1.0"
+description = """
+the mnemOS build tool
+"""
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
+readme = "./README.md"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+
+[dependencies]
+anyhow = "1"
+
+[dependencies.just]
+version = "1.14.0"
+artifact = "bin:just"
+
+[dependencies.cargo-nextest]
+version = "0.9.57"
+artifact = "bin:cargo-nextest"
