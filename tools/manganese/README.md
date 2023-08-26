@@ -9,15 +9,17 @@ yes, this is a wildly deranged idea. i'm so smart.
 
 > [!IMPORTANT]
 >
-> you don't actually need this to build mnemOS. you can just run the [`just`
-> recipes][justfile] directly, using the versions of mnemOS' build dependencies
-> which you've installed using your package manager or `cargo install`. this is
-> a purely optional tool intended to provide a way to build mnemOS using *only*
-> Cargo, so that the project can be built without requiring a complicated dev
-> environment setup.
+> you don't actually need this to build mnemOS.
+>
+> you can just run the [`just` recipes][`justfile``] directly, using the
+> versions of mnemOS' build dependencies which you've installed using your
+> package manager or `cargo install`. this is a purely optional tool intended to
+> provide a way to build mnemOS using *only* Cargo, so that the project can be
+> built without requiring a complicated dev environment setup.
 >
 > if you'd rather use versions of mnemOS' build dependencies that you've
-> installed through other means, simply "don't run `cargo mn`".
+> installed through other means, simply "don't run `cargo mn`", and you'll be
+> fine.
 
 ## using it
 
