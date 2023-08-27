@@ -31,5 +31,5 @@ This directory contains code for running MnemOS on the supported hardware and si
 
 [MIT] + [Apache 2.0].
 
-[MIT]: ./../../LICENSE-MIT
-[Apache 2.0]: ./../../LICENSE-APACHE
+[MIT]: https://github.com/tosc-rs/mnemos/blob/main/LICENSE-MIT
+[Apache 2.0]:https://github.com/tosc-rs/mnemos/blob/main/LICENSE-APACHE
