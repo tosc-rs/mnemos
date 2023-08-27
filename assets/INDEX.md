@@ -24,6 +24,11 @@ To learn more about MnemOS, you can:
 - read [dev blogs]
 - try [Pomelo, a web-based MnemOS simulator][pomelo]
 
+To get involved in MnemOS development, you can:
+
+- join our development chat on Matrix: [#mnemos-dev:beeper.com]
+- contribute to the project on GitHub: [tosc-rs/mnemos]
+
 The following pages summarize various components of MnemOS:
 
 [name]: https://mnemos.dev/mnemosprojectoverview/book/#where-does-the-name-come-fromhow-do-i-pronounce-it
@@ -35,4 +40,6 @@ The following pages summarize various components of MnemOS:
 [project overview]: https://mnemos.dev/mnemosprojectoverview/
 [dev blogs]: https://onevariable.com/blog/mnemos-moment-1/
 [pomelo]: https://anatol.versteht.es/mlem/
+[#mnemos-dev:beeper.com]: https://matrix.to/#/#mnemos-dev:beeper.com
+[tosc-rs/mnemos]: https://github.com/tosc-rs/mnemos
 </div>
