@@ -7,7 +7,7 @@ dependencies*, so you don't have to install them manually.
 
 yes, this is a wildly deranged idea. i'm so smart.
 
-> [!IMPORTANT]
+> **Note**
 >
 > you don't actually need this to build mnemOS.
 >
@@ -91,7 +91,7 @@ this directory is prepended to the `$PATH` environment variable for the `just`
 command invocation. this means that any binaries produced by `mn`'s artifact
 deps will be visible to the `just` recipe that executes.
 
-> [!NOTE]
+> **Note**
 >
 > why is this implemented by modifying the `$PATH` for a `just` invocation,
 > rather than just having the `mn` binary know the paths at which all the bin
