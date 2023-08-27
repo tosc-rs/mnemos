@@ -4,6 +4,6 @@ Wire types used by the `SerialMuxService` in the mnemos kernel. Extracted as a s
 
 ## Development Documentation
 
-Please see [the development docs](https://mnemos-dev.jamesmunns.com/doc/sermux-proto/index.html) for documentation of the current `main` branch.
+Please see [the development docs](https://mnemos.dev/doc/sermux-proto/index.html) for documentation of the current `main` branch.
 
 Docs can be built locally with `cargo doc`.
