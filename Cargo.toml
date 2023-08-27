@@ -175,3 +175,7 @@ rev = "5a8be302b4049a6ebc17bd712d97c85a9fd83f76"
 [patch.crates-io.esp-hal-common]
 git = "https://github.com/esp-rs/esp-hal"
 rev = "5a8be302b4049a6ebc17bd712d97c85a9fd83f76"
+
+[patch.crates-io.esp-hal-procmacros]
+git = "https://github.com/esp-rs/esp-hal"
+rev = "5a8be302b4049a6ebc17bd712d97c85a9fd83f76"
