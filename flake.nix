@@ -16,11 +16,25 @@
       url = "github:numtide/flake-utils";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # see https://fasterthanli.me/series/building-a-rust-service-with-nix/part-10#a-flake-with-a-dev-shell
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        flake-utils.follows = "flake-utils";
+      };
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, oranda }:
+  outputs = { self, nixpkgs, flake-utils, oranda, rust-overlay }:
     flake-utils.lib.eachDefaultSystem (system:
-      let pkgs = import nixpkgs { inherit system; };
+      let
+        overlays = [ (import rust-overlay) ];
+        pkgs = import nixpkgs { inherit system overlays; };
+        # use the Rust toolchain specified in the project's rust-toolchain.toml
+        rustToolchain = pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile
+          ./rust-toolchain.toml;
       in {
         devShell = with pkgs;
           mkShell rec {
@@ -33,11 +47,10 @@
               cmake
 
               # compilers
-              rustup
+              rustToolchain
               clang
 
               # devtools
-              rust-analyzer
               just
               cargo-nextest
               # rust esp32 tools
