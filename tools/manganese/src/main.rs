@@ -7,7 +7,7 @@ const MN_CARGO_BINS: Option<&str> = option_env!("MN_CARGO_BINS");
 const PATH_KEY: &str = "PATH";
 
 fn main() -> Result<()> {
-    if cfg!(not(feature = "install-deps")) {
+    if cfg!(not(feature = "_any-deps")) {
         eprintln!("warning: running `mn` without the 'install-deps' feature falls back to just doing nothing!");
     }
 
@@ -32,7 +32,7 @@ fn main() -> Result<()> {
 
             (path, process::Command::new(just_path))
         } else {
-            if cfg!(feature = "install-deps") {
+            if cfg!(feature = "_any-deps") {
                 panic!("if the 'install-deps' feature is enabled, MN_CARGO_BINS must be set! seems like the build script broke...");
             }
 

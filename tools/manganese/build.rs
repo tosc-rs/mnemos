@@ -1,11 +1,11 @@
 fn main() -> anyhow::Result<()> {
-    #[cfg(feature = "install-deps")]
+    #[cfg(feature = "_any_deps")]
     install_deps()?;
 
     Ok(())
 }
 
-#[cfg(feature = "install-deps")]
+#[cfg(feature = "_any_deps")]
 fn install_deps() -> anyhow::Result<()> {
     use anyhow::{Context, Result};
     use std::{
@@ -63,12 +63,24 @@ fn install_deps() -> anyhow::Result<()> {
     fs::create_dir_all(&bins_path)
         .with_context(|| format!("failed to create bins directory {}", bins_path.display()))?;
 
-    install_bin(&bins_path, "CARGO_NEXTEST", "cargo-nextest")?;
-    // TODO(eliza): should we also add the other cargo-binutils tools to the bin path?
-    install_bin(&bins_path, "CARGO_BINUTILS", "cargo-objcopy")?;
-    install_bin(&bins_path, "CARGO_ESPFLASH", "cargo-espflash")?;
+    if cfg!(feature = "cargo-nextest") {
+        install_bin(&bins_path, "CARGO_NEXTEST", "cargo-nextest")?;
+    }
+
+    if cfg!(feature = "cargo-binutils") {
+        // TODO(eliza): should we also add the other cargo-binutils tools to the bin path?
+        install_bin(&bins_path, "CARGO_BINUTILS", "cargo-objcopy")?;
+    }
+
+    if cfg!(feature = "cargo-espflash") {
+        install_bin(&bins_path, "CARGO_ESPFLASH", "cargo-espflash")?;
+    }
+
+    if cfg!(feature = "trunk") {
+        install_bin(&bins_path, "TRUNK", "trunk")?;
+    }
+
     install_bin(&bins_path, "JUST", "just")?;
-    install_bin(&bins_path, "TRUNK", "trunk")?;
 
     println!("cargo:rustc-env=MN_CARGO_BINS={}", bins_path.display());
 
