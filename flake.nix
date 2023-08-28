@@ -61,6 +61,8 @@
               # for building the website
               oranda.packages.${system}.default
               python3 # needed by rfc2book
+              # for building pomelo
+              trunk
             ];
 
             buildInputs = [
