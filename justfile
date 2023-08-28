@@ -50,8 +50,10 @@ _fmt_check_doc := if env_var_or_default("GITHUB_ACTIONS", "") != "true" { "" } e
     ```
 }
 
+_target_dir := justfile_directory() / "target"
+
 _d1_start_addr := "0x40000000"
-_d1_bin_path := "target/riscv64imac-unknown-none-elf"
+_d1_bin_path := _target_dir / "riscv64imac-unknown-none-elf"
 _d1_pkg := "mnemos-d1"
 
 _espbuddy_pkg := "mnemos-esp32c3-buddy"
@@ -63,7 +65,7 @@ _x86_bootloader_pkg := "mnemos-x86_64-bootloader"
 _rustdoc := _cargo + " doc --no-deps --all-features"
 
 _ci_docsmembers := ```
-    {{ _cargo }} metadata --format-version 1 | \
+    cargo metadata --format-version 1 | \
         jq .workspace_default_members | \
         grep -E '  ".*' | \
         grep -v 'crowtty' | \
@@ -72,6 +74,8 @@ _ci_docsmembers := ```
         sed -E 's/(.*)/-p \1 /g' | \
         tr -d '\n'
 ```
+
+_ci_publish_dir := _target_dir / "ci-publish"
 
 alias melpo := melpomene
 
@@ -190,19 +194,9 @@ docs *FLAGS:
         {{ _rustdoc }} {{ FLAGS }} {{ _fmt_check_doc }}
 
 # build the docs that will be built for a netlify publish
-netlify: (docs _ci_docsmembers " --document-private-items")
-    rm -rf ./target/ci-publish || :
-    mkdir -p ./target/ci-publish/
-    cp -r ./target/doc ./target/ci-publish/
-
-    # Add RFCs to the mdbook before building the Oranda site
-    ./scripts/rfc2book.py
-
-    # Build with oranda
-    oranda build
-
-    # Copy to publish directory
-    cp -r ./public/* ./target/ci-publish
+netlify: (docs _ci_docsmembers " --document-private-items --target-dir=" + _ci_publish_dir) (oranda "build")
+    # Copy from Oranda to publish directory
+    cp -r {{ justfile_directory() }}/public/* {{ _ci_publish_dir }}
 
 # Run a mdBook command, generating the book's RFC section first.
 mdbook CMD="build --open": (_get-cargo-bin "mdbook")
