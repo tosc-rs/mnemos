@@ -1,6 +1,6 @@
 use core::{any::TypeId, marker::PhantomData};
 
-use crate::comms::oneshot::Reusable;
+use crate::comms::{kchannel, oneshot::Reusable};
 use mnemos_alloc::containers::FixedVec;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -13,6 +13,10 @@ use crate::comms::{
     kchannel::{ErasedKProducer, KProducer},
     oneshot::{ReusableError, Sender},
 };
+
+pub mod listener;
+
+pub use self::listener::Listener;
 
 /// A partial list of known UUIDs of driver services
 pub mod known_uuids {
@@ -62,6 +66,12 @@ pub trait RegisteredDriver {
     /// This is the type of an UNSUCCESSFUL response sent FROM the driver service
     type Error: 'static;
 
+    // XXX(eliza): ideally, we could default `Hello` to () and `ConnectError` to
+    // `Infallible`...do we want to do that? it requires a nightly feature.
+    type Hello: 'static;
+
+    type ConnectError: 'static;
+
     /// This is the UUID of the driver service
     const UUID: Uuid;
 
@@ -69,7 +79,13 @@ pub trait RegisteredDriver {
     /// Corresponds to the same type ID as `(Self::Request, Self::Response, Self::Error)`
     fn type_id() -> RegistryType {
         RegistryType {
-            tuple_type_id: TypeId::of::<(Self::Request, Self::Response, Self::Error)>(),
+            tuple_type_id: TypeId::of::<(
+                Self::Request,
+                Self::Response,
+                Self::Error,
+                Self::Hello,
+                Self::ConnectError,
+            )>(),
         }
     }
 }
@@ -230,6 +246,17 @@ pub enum RegistrationError {
 }
 
 #[derive(Debug, Eq, PartialEq)]
+pub enum ConnectError<D: RegisteredDriver> {
+    /// No [`RegisteredDriver`] of this type was found!
+    NotFound,
+    /// The remote [`RegisteredDriver`] rejected the connection.
+    Rejected(D::ConnectError),
+    /// The remote [`RegisteredDriver`] has been registered, but the service
+    /// task has terminated.
+    DriverDead,
+}
+
+#[derive(Debug, Eq, PartialEq)]
 pub enum OneshotRequestError {
     /// An error occurred while acquiring a sender.
     Sender(ReusableError),
@@ -299,7 +326,7 @@ type ErasedDeserHandler = unsafe fn(
 /// tuple type id is correct.
 struct RegistryValue {
     req_resp_tuple_id: TypeId,
-    req_prod: ErasedKProducer,
+    conn_prod: ErasedKProducer,
     req_deser: Option<ErasedDeserHandler>,
     service_id: ServiceId,
 }
@@ -339,22 +366,23 @@ impl Registry {
     #[tracing::instrument(
         name = "Registry::register_konly",
         level = "debug",
-        skip(self, kch),
+        skip(self, registration),
         fields(uuid = ?RD::UUID),
     )]
     pub fn register_konly<RD: RegisteredDriver>(
         &mut self,
-        kch: &KProducer<Message<RD>>,
+        registration: listener::Registration<RD>,
     ) -> Result<(), RegistrationError> {
         if self.items.as_slice().iter().any(|i| i.key == RD::UUID) {
             return Err(RegistrationError::UuidAlreadyRegistered);
         }
+        let conn_prod = registration.tx.type_erase();
         self.items
             .try_push(RegistryItem {
                 key: RD::UUID,
                 value: RegistryValue {
                     req_resp_tuple_id: RD::type_id().type_of(),
-                    req_prod: kch.clone().type_erase(),
+                    conn_prod,
                     req_deser: None,
                     service_id: ServiceId(self.counter),
                 },
@@ -373,10 +401,13 @@ impl Registry {
     #[tracing::instrument(
         name = "Registry::register",
         level = "debug",
-        skip(self, kch),
+        skip(self, registration),
         fields(uuid = ?RD::UUID),
     )]
-    pub fn register<RD>(&mut self, kch: &KProducer<Message<RD>>) -> Result<(), RegistrationError>
+    pub fn register<RD>(
+        &mut self,
+        registration: listener::Registration<RD>,
+    ) -> Result<(), RegistrationError>
     where
         RD: RegisteredDriver,
         RD::Request: Serialize + DeserializeOwned,
@@ -385,12 +416,14 @@ impl Registry {
         if self.items.as_slice().iter().any(|i| i.key == RD::UUID) {
             return Err(RegistrationError::UuidAlreadyRegistered);
         }
+
+        let conn_prod = registration.tx.type_erase();
         self.items
             .try_push(RegistryItem {
                 key: RD::UUID,
                 value: RegistryValue {
                     req_resp_tuple_id: RD::type_id().type_of(),
-                    req_prod: kch.clone().type_erase(),
+                    conn_prod,
                     req_deser: Some(map_deser::<RD>),
                     service_id: ServiceId(self.counter),
                 },
@@ -399,6 +432,71 @@ impl Registry {
         info!(uuid = ?RD::UUID, service_id = self.counter, "Registered");
         self.counter = self.counter.wrapping_add(1);
         Ok(())
+    }
+
+    #[tracing::instrument(
+        name = "Registry::get_with_hello",
+        level = "debug",
+        skip(self, hello),
+        fields(uuid = ?RD::UUID),
+    )]
+    pub async fn get_with_hello<RD: RegisteredDriver>(
+        &mut self,
+        hello: RD::Hello,
+    ) -> Result<KernelHandle<RD>, ConnectError<RD>> {
+        let item = self
+            .items
+            .as_slice()
+            .iter()
+            .find(|i| i.key == RD::UUID)
+            .ok_or(ConnectError::NotFound)?;
+        if item.value.req_resp_tuple_id != RD::type_id().type_of() {
+            return Err(ConnectError::NotFound);
+        }
+
+        // cast the erased connection sender back to a typed sender.
+        let tx = unsafe {
+            // Safety: we just checked that the type IDs match above.
+            item.value
+                .conn_prod
+                .clone_typed::<listener::Connection<RD>>()
+        };
+
+        // TODO(eliza): it would be nice if we could reuse the oneshot receiver
+        // every time this driver is connected to? This would require type
+        // erasing it...
+        let rx = Reusable::new_async().await;
+        let reply = rx
+            .sender()
+            .await
+            .expect("we just created the oneshot, so this should never fail");
+        // send the connection request...
+        tx.enqueue_async(listener::Connection {
+            hello,
+            accept: listener::Accept { reply }
+        }).await.map_err(|err| match err {
+            kchannel::EnqueueError::Closed(_) => ConnectError::DriverDead,
+            kchannel::EnqueueError::Full(_) => unreachable!("the channel should not be full, as we are using `enqueue_async`, which waits for capacity")
+        })?;
+        // ...and wait for a response with an established connection.
+        let prod = rx
+            .receive()
+            .await
+            // this is a `Reusable<Result<KProducer, RD::ConnectError>>>`, so
+            // the outer `Result` is the error returned by `receive()`...
+            .map_err(|_| ConnectError::DriverDead)?
+            // ...and the inner `Result` is the error returned by the driver.
+            .map_err(ConnectError::Rejected)?;
+
+        let res = Ok(KernelHandle {
+            prod,
+            service_id: item.value.service_id,
+            client_id: ClientId(self.counter),
+            request_ctr: 0,
+        });
+        info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
+        self.counter = self.counter.wrapping_add(1);
+        res
     }
 
     /// Get a kernelspace (including drivers) handle of a given driver service.
@@ -415,22 +513,11 @@ impl Registry {
         skip(self),
         fields(uuid = ?RD::UUID),
     )]
-    pub fn get<RD: RegisteredDriver>(&mut self) -> Option<KernelHandle<RD>> {
-        let item = self.items.as_slice().iter().find(|i| i.key == RD::UUID)?;
-        if item.value.req_resp_tuple_id != RD::type_id().type_of() {
-            return None;
-        }
-        unsafe {
-            let res = Some(KernelHandle {
-                prod: item.value.req_prod.clone_typed(),
-                service_id: item.value.service_id,
-                client_id: ClientId(self.counter),
-                request_ctr: 0,
-            });
-            info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
-            self.counter = self.counter.wrapping_add(1);
-            res
-        }
+    pub async fn get<RD>(&mut self) -> Result<KernelHandle<RD>, ConnectError<RD>>
+    where
+        RD: RegisteredDriver<Hello = ()>,
+    {
+        self.get_with_hello(()).await
     }
 
     /// Get a handle capable of processing serialized userspace messages to a
@@ -453,16 +540,17 @@ impl Registry {
         RD::Request: Serialize + DeserializeOwned,
         RD::Response: Serialize + DeserializeOwned,
     {
-        let item = self.items.as_slice().iter().find(|i| i.key == RD::UUID)?;
-        let client_id = self.counter;
-        info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
-        self.counter = self.counter.wrapping_add(1);
-        Some(UserspaceHandle {
-            req_producer_leaked: item.value.req_prod.clone(),
-            req_deser: item.value.req_deser?,
-            service_id: item.value.service_id,
-            client_id: ClientId(client_id),
-        })
+        todo!("eliza: make this work with the new listener/accept design")
+        // let item = self.items.as_slice().iter().find(|i| i.key == RD::UUID)?;
+        // let client_id = self.counter;
+        // info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
+        // self.counter = self.counter.wrapping_add(1);
+        // Some(UserspaceHandle {
+        //     req_producer_leaked: item.value.req_prod.clone(),
+        //     req_deser: item.value.req_deser?,
+        //     service_id: item.value.service_id,
+        //     client_id: ClientId(client_id),
+        // })
     }
 }
 

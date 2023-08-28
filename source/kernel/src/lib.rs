@@ -90,7 +90,11 @@ use abi::{
     syscall::{KernelResponse, UserRequest},
 };
 use comms::kchannel::KChannel;
-use core::{convert::identity, future::Future, ptr::NonNull};
+use core::{
+    convert::identity,
+    future::{Future, IntoFuture},
+    ptr::NonNull,
+};
 pub use embedded_hal_async;
 pub use maitake;
 use maitake::{
@@ -230,6 +234,10 @@ impl Kernel {
     {
         let mut guard = self.registry.lock().await;
         f(&mut guard)
+    }
+
+    pub async fn registry(&'static self) -> maitake::sync::MutexGuard<'_, Registry> {
+        self.registry.lock().await
     }
 
     #[track_caller]

@@ -37,6 +37,8 @@ impl RegisteredDriver for KeyboardService {
     type Request = Subscribe;
     type Response = Subscribed;
     type Error = KeyboardError;
+    type Hello = ();
+    type ConnectError = core::convert::Infallible;
 
     const UUID: Uuid = known_uuids::kernel::KEYBOARD;
 }
