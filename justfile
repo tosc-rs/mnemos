@@ -62,6 +62,17 @@ _x86_bootloader_pkg := "mnemos-x86_64-bootloader"
 # arguments to pass to all RustDoc invocations
 _rustdoc := _cargo + " doc --no-deps --all-features"
 
+_ci_docsmembers := ```
+    {{ _cargo }} metadata --format-version 1 | \
+        jq .workspace_default_members | \
+        grep -E '  ".*' | \
+        grep -v 'crowtty' | \
+        cut -d" " -f3 | \
+        cut -d'"' -f2 | \
+        sed -E 's/(.*)/-p \1 /g' | \
+        tr -d '\n'
+```
+
 alias melpo := melpomene
 
 # default recipe to display help information
@@ -176,16 +187,27 @@ all-docs *FLAGS: (docs FLAGS) (docs "-p " + _d1_pkg + FLAGS) (docs "-p " + _espb
 # run RustDoc
 docs *FLAGS:
     env RUSTDOCFLAGS="--cfg docsrs -Dwarnings" \
-        {{ _cargo }} doc \
-        --all-features \
-        {{ FLAGS }} \
-        {{ _fmt_check_doc }}
+        {{ _rustdoc }} {{ FLAGS }} {{ _fmt_check_doc }}
+
+# build the docs that will be built for a netlify publish
+netlify: (docs _ci_docsmembers " --document-private-items")
+    rm -rf ./target/ci-publish || :
+    mkdir -p ./target/ci-publish/
+    cp -r ./target/doc ./target/ci-publish/
+
+    # Add RFCs to the mdbook before building the Oranda site
+    ./scripts/rfc2book.py
+
+    # Build with oranda
+    oranda build
+
+    # Copy to publish directory
+    cp -r ./public/* ./target/ci-publish
 
 # Run a mdBook command, generating the book's RFC section first.
 mdbook CMD="build --open": (_get-cargo-bin "mdbook")
     ./scripts/rfc2book.py
     cd book && mdbook {{ CMD }}
-
 
 # Run an Oranda command, generating the book's RFC section first.
 oranda CMD="dev": (_get-cargo-bin "oranda")
@@ -217,7 +239,7 @@ _get-cargo-bin name:
     set -euo pipefail
     source "./scripts/_util.sh"
 
-    if command -v {{ name }}; then
+    if command -v {{ name }} >/dev/null 2>&1; then
         status "Found" "{{ name }}"
         exit 0
     fi
