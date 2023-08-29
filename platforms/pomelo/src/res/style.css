@@ -1,4 +1,29 @@
+body {
+    background-color: #aaa;
+}
+
+div#windows {
+    text-align: center;
+}
+
 div#graphics {
     background-color: #223344;
-    width: 720px;
+    width: 480px;
+    height: 480px;
+}
+
+div#terminal {
+    width: 50%;
+    background-color: #2D2E2C;
+    margin-left: 10px;
+    text-align: left;
+}
+
+div.window {
+    margin: 0 auto;
+    display: inline-block;
+    vertical-align: top;
+    padding: 10px;
+    border-radius: 8px;
+    filter: drop-shadow(5px 5px 10px #666);
 }
