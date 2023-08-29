@@ -94,8 +94,11 @@ async fn kernel_entry() {
         tracing::warn!("Not spawning TCP UART server!");
     }
 
+    let mut debounce_period = Duration::from_millis(50);
+
     // Spawn the graphics driver
     if config.platform.display.enabled {
+        debounce_period = Duration::from_secs(1) / config.platform.display.frames_per_second as u32;
         k.initialize(async move {
             SimDisplay::register(
                 k,
@@ -120,6 +123,7 @@ async fn kernel_entry() {
         let forth_shell = config.platform.forth_shell;
         guish.capacity = forth_shell.capacity;
         guish.forth_settings = forth_shell.params;
+        guish.redraw_debounce = debounce_period;
         k.initialize(graphical_shell_mono(k, guish)).unwrap();
     } else {
         tracing::warn!("Not spawning forth GUI shell!");
