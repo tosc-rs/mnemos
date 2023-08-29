@@ -135,12 +135,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9c7d0618f0e0b7e8ff11427422b64564d5fb0be1940354bfe2e0529b18a9d9b8"
 
 [[package]]
-name = "anymap2"
-version = "0.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d301b3b94cb4b2f23d7917810addbbaff90738e0ca2be692bd027e70d7e0330c"
-
-[[package]]
 name = "async-channel"
 version = "1.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -243,7 +237,7 @@ dependencies = [
  "futures-core",
  "futures-io",
  "futures-lite",
- "gloo-timers",
+ "gloo-timers 0.2.6",
  "kv-log-macro",
  "log",
  "memchr",
@@ -737,6 +731,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "console_error_panic_hook"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a06aeb73f470f66dcdbf7223caeebb85984942f22f1adb2a088cf9668146bbbc"
+dependencies = [
+ "cfg-if 1.0.0",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "const_format"
 version = "0.2.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1020,9 +1024,22 @@ checksum = "750082c65094fbcc4baf9ba31583ce9a8bb7f52cadfb96f6164b1bc7f922f32b"
 dependencies = [
  "az",
  "byteorder",
- "embedded-graphics-core",
- "float-cmp",
- "micromath",
+ "embedded-graphics-core 0.3.3",
+ "float-cmp 0.8.0",
+ "micromath 1.1.1",
+]
+
+[[package]]
+name = "embedded-graphics"
+version = "0.8.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0649998afacf6d575d126d83e68b78c0ab0e00ca2ac7e9b3db11b4cbe8274ef0"
+dependencies = [
+ "az",
+ "byteorder",
+ "embedded-graphics-core 0.4.0",
+ "float-cmp 0.9.0",
+ "micromath 2.0.0",
 ]
 
 [[package]]
@@ -1036,15 +1053,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "embedded-graphics-core"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba9ecd261f991856250d2207f6d8376946cd9f412a2165d3b75bc87a0bc7a044"
+dependencies = [
+ "az",
+ "byteorder",
+]
+
+[[package]]
 name = "embedded-graphics-simulator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b889c087f6ddfba35047f9f0dfbd662aa05597110c937e5dbde641735d97fb1"
 dependencies = [
  "base64 0.13.1",
- "embedded-graphics",
+ "embedded-graphics 0.7.1",
  "image",
  "sdl2",
+]
+
+[[package]]
+name = "embedded-graphics-web-simulator"
+version = "0.3.0"
+source = "git+https://github.com/spookyvision/embedded-graphics-web-simulator#0f07b1efb8181860c16b3edf8293aff9515cc480"
+dependencies = [
+ "embedded-graphics 0.8.1",
+ "js-sys",
+ "wasm-bindgen",
+ "web-sys",
 ]
 
 [[package]]
@@ -1245,6 +1283,15 @@ name = "float-cmp"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1267f4ac4f343772758f7b1bdcbe767c218bbab93bb432acbf5162bbf85a6c4"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
+name = "float-cmp"
+version = "0.9.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "98de4bbd547a563b716d8dfa9aad1cb19bfab00f4fa09a6a4ed21dbcf44ce9c4"
 dependencies = [
  "num-traits",
 ]
@@ -1473,9 +1520,9 @@ checksum = "b6c80984affa11d98d1b88b66ac8853f143217b399d3c74116778ff8fdb4ed2e"
 
 [[package]]
 name = "gloo"
-version = "0.8.1"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28999cda5ef6916ffd33fb4a7b87e1de633c47c0dc6d97905fee1cdaa142b94d"
+checksum = "cd35526c28cc55c1db77aed6296de58677dbab863b118483a27845631d870249"
 dependencies = [
  "gloo-console",
  "gloo-dialogs",
@@ -1485,18 +1532,18 @@ dependencies = [
  "gloo-net",
  "gloo-render",
  "gloo-storage",
- "gloo-timers",
- "gloo-utils",
+ "gloo-timers 0.3.0",
+ "gloo-utils 0.2.0",
  "gloo-worker",
 ]
 
 [[package]]
 name = "gloo-console"
-version = "0.2.3"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "82b7ce3c05debe147233596904981848862b068862e9ec3e34be446077190d3f"
+checksum = "2a17868f56b4a24f677b17c8cb69958385102fa879418052d60b50bc1727e261"
 dependencies = [
- "gloo-utils",
+ "gloo-utils 0.2.0",
  "js-sys",
  "serde",
  "wasm-bindgen",
@@ -1505,9 +1552,9 @@ dependencies = [
 
 [[package]]
 name = "gloo-dialogs"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "67062364ac72d27f08445a46cab428188e2e224ec9e37efdba48ae8c289002e6"
+checksum = "bf4748e10122b01435750ff530095b1217cf6546173459448b83913ebe7815df"
 dependencies = [
  "wasm-bindgen",
  "web-sys",
@@ -1515,9 +1562,9 @@ dependencies = [
 
 [[package]]
 name = "gloo-events"
-version = "0.1.2"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "68b107f8abed8105e4182de63845afcc7b69c098b7852a813ea7462a320992fc"
+checksum = "27c26fb45f7c385ba980f5fa87ac677e363949e065a083722697ef1b2cc91e41"
 dependencies = [
  "wasm-bindgen",
  "web-sys",
@@ -1525,9 +1572,9 @@ dependencies = [
 
 [[package]]
 name = "gloo-file"
-version = "0.2.3"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8d5564e570a38b43d78bdc063374a0c3098c4f0d64005b12f9bbe87e869b6d7"
+checksum = "97563d71863fb2824b2e974e754a81d19c4a7ec47b09ced8a0e6656b6d54bd1f"
 dependencies = [
  "futures-channel",
  "gloo-events",
@@ -1538,12 +1585,12 @@ dependencies = [
 
 [[package]]
 name = "gloo-history"
-version = "0.1.5"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "85725d90bf0ed47063b3930ef28e863658a7905989e9929a8708aab74a1d5e7f"
+checksum = "91be9f3dd048f35a59c8de3d716ef6d568360078c73ed35a7700776ed53153c8"
 dependencies = [
  "gloo-events",
- "gloo-utils",
+ "gloo-utils 0.2.0",
  "serde",
  "serde-wasm-bindgen",
  "serde_urlencoded",
@@ -1554,14 +1601,14 @@ dependencies = [
 
 [[package]]
 name = "gloo-net"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a66b4e3c7d9ed8d315fd6b97c8b1f74a7c6ecbbc2320e65ae7ed38b7068cc620"
+checksum = "8ac9e8288ae2c632fa9f8657ac70bfe38a1530f345282d7ba66a1f70b72b7dc4"
 dependencies = [
  "futures-channel",
  "futures-core",
  "futures-sink",
- "gloo-utils",
+ "gloo-utils 0.2.0",
  "http",
  "js-sys",
  "pin-project",
@@ -1575,9 +1622,9 @@ dependencies = [
 
 [[package]]
 name = "gloo-render"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2fd9306aef67cfd4449823aadcd14e3958e0800aa2183955a309112a84ec7764"
+checksum = "56008b6744713a8e8d98ac3dcb7d06543d5662358c9c805b4ce2167ad4649833"
 dependencies = [
  "wasm-bindgen",
  "web-sys",
@@ -1585,11 +1632,11 @@ dependencies = [
 
 [[package]]
 name = "gloo-storage"
-version = "0.2.2"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d6ab60bf5dbfd6f0ed1f7843da31b41010515c745735c970e821945ca91e480"
+checksum = "fbc8031e8c92758af912f9bc08fbbadd3c6f3cfcbf6b64cdf3d6a81f0139277a"
 dependencies = [
- "gloo-utils",
+ "gloo-utils 0.2.0",
  "js-sys",
  "serde",
  "serde_json",
@@ -1611,6 +1658,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "gloo-timers"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbb143cf96099802033e0d4f4963b19fd2e0b728bcf076cd9cf7f6634f092994"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "js-sys",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "gloo-utils"
 version = "0.1.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1624,20 +1683,47 @@ dependencies = [
 ]
 
 [[package]]
-name = "gloo-worker"
-version = "0.2.1"
+name = "gloo-utils"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13471584da78061a28306d1359dd0178d8d6fc1c7c80e5e35d27260346e0516a"
+checksum = "0b5555354113b18c547c1d3a98fbf7fb32a9ff4f6fa112ce823a21641a0ba3aa"
 dependencies = [
- "anymap2",
- "bincode",
- "gloo-console",
- "gloo-utils",
  "js-sys",
  "serde",
+ "serde_json",
+ "wasm-bindgen",
+ "web-sys",
+]
+
+[[package]]
+name = "gloo-worker"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "76495d3dd87de51da268fa3a593da118ab43eb7f8809e17eb38d3319b424e400"
+dependencies = [
+ "bincode",
+ "futures",
+ "gloo-utils 0.2.0",
+ "gloo-worker-macros",
+ "js-sys",
+ "pinned",
+ "serde",
+ "thiserror",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+]
+
+[[package]]
+name = "gloo-worker-macros"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "956caa58d4857bc9941749d55e4bd3000032d8212762586fa5705632967140e7"
+dependencies = [
+ "proc-macro-crate",
+ "proc-macro2",
+ "quote",
+ "syn 2.0.27",
 ]
 
 [[package]]
@@ -1676,7 +1762,7 @@ name = "hal-core"
 version = "0.1.0"
 source = "git+https://github.com/hawkw/mycelium#1f125194902cd4970b72eab0aa1d85d1b6ec1489"
 dependencies = [
- "embedded-graphics-core",
+ "embedded-graphics-core 0.3.3",
  "mycelium-util 0.1.0 (git+https://github.com/hawkw/mycelium)",
  "tracing 0.2.0",
 ]
@@ -2202,7 +2288,7 @@ dependencies = [
  "chrono",
  "clap 3.2.25",
  "console-subscriber",
- "embedded-graphics",
+ "embedded-graphics 0.7.1",
  "embedded-graphics-simulator",
  "forth3",
  "futures",
@@ -2252,6 +2338,12 @@ name = "micromath"
 version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bc4010833aea396656c2f91ee704d51a6f1329ec2ab56ffd00bfd56f7481ea94"
+
+[[package]]
+name = "micromath"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "39617bc909d64b068dcffd0e3e31679195b5576d0c83fadc52690268cc2b2b55"
 
 [[package]]
 name = "miette"
@@ -2361,7 +2453,7 @@ name = "mnemos"
 version = "0.1.0"
 dependencies = [
  "cobs",
- "embedded-graphics",
+ "embedded-graphics 0.7.1",
  "embedded-hal-async",
  "forth3",
  "futures",
@@ -2450,7 +2542,7 @@ version = "0.1.0"
 dependencies = [
  "critical-section",
  "d1-pac",
- "embedded-graphics",
+ "embedded-graphics 0.7.1",
  "futures",
  "mnemos",
  "riscv",
@@ -2513,7 +2605,7 @@ version = "0.1.0"
 dependencies = [
  "acpi",
  "bootloader_api",
- "embedded-graphics",
+ "embedded-graphics 0.7.1",
  "futures",
  "hal-core",
  "hal-x86_64",
@@ -2564,7 +2656,7 @@ name = "mycelium-trace"
 version = "0.1.0"
 source = "git+https://github.com/hawkw/mycelium#1f125194902cd4970b72eab0aa1d85d1b6ec1489"
 dependencies = [
- "embedded-graphics",
+ "embedded-graphics 0.7.1",
  "hal-core",
  "mycelium-util 0.1.0 (git+https://github.com/hawkw/mycelium)",
  "tracing 0.2.0",
@@ -2879,6 +2971,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8b870d8c151b6f2fb93e84a13146138f05d02ed11c7e7c54f8826aaaf7c9f184"
 
 [[package]]
+name = "pinned"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a829027bd95e54cfe13e3e258a1ae7b645960553fb82b75ff852c29688ee595b"
+dependencies = [
+ "futures",
+ "rustversion",
+ "thiserror",
+]
+
+[[package]]
 name = "pkg-config"
 version = "0.3.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2918,11 +3021,14 @@ version = "0.1.0"
 dependencies = [
  "async-std",
  "chrono",
+ "console_error_panic_hook",
+ "embedded-graphics 0.8.1",
+ "embedded-graphics-web-simulator",
  "forth3",
  "futures",
  "futures-util",
  "gloo",
- "gloo-utils",
+ "gloo-utils 0.1.7",
  "humantime",
  "maitake",
  "mnemos",
@@ -2936,6 +3042,7 @@ dependencies = [
  "uuid 1.3.4",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -3043,7 +3150,7 @@ version = "0.6.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd908932b251e9f146130df7566e8f7c5b0c6ddb29f6d67571f3579f59043c36"
 dependencies = [
- "embedded-graphics",
+ "embedded-graphics 0.7.1",
 ]
 
 [[package]]
@@ -3376,7 +3483,7 @@ name = "ring-drawer"
 version = "0.1.0"
 source = "git+https://github.com/tosc-rs/teletype/?rev=de95e610cc79db6d59ad6b40eb2d82adebb4e033#de95e610cc79db6d59ad6b40eb2d82adebb4e033"
 dependencies = [
- "embedded-graphics",
+ "embedded-graphics 0.7.1",
  "input-mgr",
  "profont",
 ]
