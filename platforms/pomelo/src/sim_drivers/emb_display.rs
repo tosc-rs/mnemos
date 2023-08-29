@@ -34,7 +34,7 @@ use embedded_graphics::{
 use embedded_graphics_web_simulator::{
     display::WebSimulatorDisplay as SimulatorDisplay, output_settings::OutputSettingsBuilder,
 };
-use futures::channel::mpsc;
+use futures::{channel::mpsc, SinkExt};
 use maitake::sync::Mutex;
 use mnemos_alloc::containers::{Arc, HeapArray};
 use mnemos_kernel::{
@@ -56,10 +56,10 @@ use mnemos_kernel::{
 use tracing::{debug, info, warn};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
+
 /// Implements the [`EmbDisplayService`] driver using the `embedded-graphics`
 /// simulator.
 pub struct SimDisplay;
-use futures::SinkExt;
 
 impl SimDisplay {
     /// Register the driver instance
