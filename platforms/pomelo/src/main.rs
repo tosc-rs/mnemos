@@ -213,8 +213,6 @@ async fn kernel_entry() {
 
         trace!("timer: before sleep: next turn in {next_turn:?}");
 
-        // TODO: this seems to always be true
-        // https://github.com/tosc-rs/mnemos/issues/257
         if next_turn.expired == 0 || !tick.has_remaining {
             trace!("timer: sleeping");
             let next_turn = next_turn
