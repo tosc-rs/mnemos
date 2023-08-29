@@ -22,6 +22,7 @@ serde = { version = "1.0.171", features = ["derive"] }
 # embedded-graphics-web-simulator = "0.3.0"
 embedded-graphics-web-simulator = { git = 'https://github.com/spookyvision/embedded-graphics-web-simulator' }
 embedded-graphics = "0.8"
+console_error_panic_hook = "0.1.7"
 
 [dependencies.tracing]
 version = "0.1.35"

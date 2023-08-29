@@ -18,7 +18,13 @@
 //! them back to be rendered into the total frame. Any data in the client's sub-frame
 //! will replace the current contents of the whole frame buffer.
 
-use std::{cell::RefCell, process::exit, rc::Rc, time::Duration};
+use std::{
+    cell::{OnceCell, RefCell},
+    process::exit,
+    rc::Rc,
+    sync::OnceLock,
+    time::Duration,
+};
 
 use embedded_graphics::{
     image::{Image, ImageRaw},
@@ -33,7 +39,7 @@ use maitake::sync::Mutex;
 use mnemos_alloc::containers::{Arc, HeapArray};
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
-    registry::Message,
+    registry::{Message, OpenEnvelope, ReplyTo},
     services::{
         emb_display::{
             DisplayMetadata, EmbDisplayService, FrameChunk, FrameError, FrameKind, MonoChunk,
@@ -47,10 +53,9 @@ use mnemos_kernel::{
     },
     Kernel,
 };
-use tracing::debug;
+use tracing::{debug, info, warn};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::spawn_local;
-
 /// Implements the [`EmbDisplayService`] driver using the `embedded-graphics`
 /// simulator.
 pub struct SimDisplay;
@@ -73,7 +78,6 @@ impl SimDisplay {
         // TODO settings.kchannel_depth
         let (cmd_prod, cmd_cons) = KChannel::new_async(2).await.split();
         let commander = CommanderTask {
-            kernel,
             cmd: cmd_cons,
             width,
             height,
@@ -90,19 +94,42 @@ impl SimDisplay {
         let closure = Closure::<dyn FnMut(_)>::new(move |event: web_sys::KeyboardEvent| {
             event.prevent_default();
             let key = event.key();
-            let char = if key == "Enter" {
-                '\n'
+            let event = if key == "Enter" {
+                KeyEvent::from_char('\n')
+            } else if key == "Backspace" {
+                KeyEvent {
+                    kind: key_event::Kind::Pressed,
+                    modifiers: Modifiers::new(),
+                    code: KeyCode::Backspace,
+                }
             } else if key.len() == 1 {
-                key.chars().nth(0).unwrap()
+                let char = key.chars().nth(0).unwrap();
+                KeyEvent::from_char(char)
             } else {
+                warn!("unable to handle key event: {key:?}");
                 return;
             };
             let mut irq_tx = irq_tx.clone();
+
+            let tx_c: OnceCell<
+                std::sync::mpsc::Receiver<(
+                    Request,
+                    OpenEnvelope<Result<Response, FrameError>>,
+                    ReplyTo<EmbDisplayService>,
+                )>,
+            > = OnceCell::new();
             spawn_local(async move {
+                // TODO conflict with sleep logic
+                // https://github.com/tosc-rs/mnemos/issues/256
                 let mut keymux = KeyboardMuxClient::from_registry(kernel).await;
-                keymux.publish_key(KeyEvent::from_char(char)).await;
-                debug!("keyboard IRQ!");
-                irq_tx.send(()).await;
+
+                // TODO conflict with sleep logic
+                match keymux.publish_key(event).await {
+                    Ok(_) => {
+                        let _ = irq_tx.send(()).await;
+                    }
+                    Err(e) => warn!("could not publish key event: {e:?}"),
+                }
             });
         });
         graphics_container()
@@ -110,7 +137,7 @@ impl SimDisplay {
             .unwrap();
         closure.forget();
 
-        tracing::info!("SimDisplayServer initialized!");
+        info!("SimDisplayServer initialized!");
 
         Ok(())
     }
@@ -124,7 +151,6 @@ impl SimDisplay {
 /// async function that will process requests, and periodically redraw the
 /// framebuffer.
 struct CommanderTask {
-    kernel: &'static Kernel,
     cmd: KConsumer<Message<EmbDisplayService>>,
     width: u32,
     height: u32,
@@ -141,7 +167,7 @@ impl CommanderTask {
     /// The entrypoint for the driver execution
     async fn run(self, width: u32, height: u32) {
         let output_settings = OutputSettingsBuilder::new()
-            .scale(2)
+            .scale(1)
             .pixel_spacing(1)
             .build();
 
@@ -170,32 +196,50 @@ impl CommanderTask {
         debug!("display message loop");
 
         let context = Rc::new(RefCell::new(context));
-        // let f = Rc::new(RefCell::new(None));
+
+        let (tx, rx): (
+            std::sync::mpsc::Sender<(
+                Rc<RefCell<Context>>,
+                OpenEnvelope<Result<Response, FrameError>>,
+                ReplyTo<EmbDisplayService>,
+                MonoChunk,
+            )>,
+            std::sync::mpsc::Receiver<(
+                Rc<RefCell<Context>>,
+                OpenEnvelope<Result<Response, FrameError>>,
+                ReplyTo<EmbDisplayService>,
+                MonoChunk,
+            )>,
+        ) = std::sync::mpsc::channel();
+
+        let rx = Rc::new(RefCell::new(rx));
+
+        let leakme = Closure::<dyn FnMut()>::new({
+            let rx = rx.clone();
+            move || {
+                let rx = rx.borrow_mut();
+                while let Ok((context, env, reply_tx, fc)) = rx.try_recv() {
+                    if let Ok(_) = draw_mono(&fc, &mut *context.borrow_mut()) {
+                        let response = env.fill(Ok(Response::DrawComplete(fc.into())));
+                        spawn_local(async {
+                            // TODO conflict with sleep logic
+                            // https://github.com/tosc-rs/mnemos/issues/256
+                            reply_tx.reply_konly(response).await.unwrap();
+                        });
+                    }
+                }
+            }
+        });
+        let l = Box::leak(Box::new(leakme));
+
         loop {
             let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
             let (req, env, reply_tx) = msg.split();
+
             match req {
                 Request::Draw(FrameChunk::Mono(fc)) => {
-                    let context = context.clone();
-
-                    // TODO need to queue up frame chunks and process them all in r_a_f
-
-                    // *f.borrow_mut() = Some(Closure::new(move || {
-                    //     draw_mono(&fc, &mut *context.borrow_mut());
-                    // }));
-
-                    let leakme = Closure::once(move || {
-                        if let Ok(_) = draw_mono(&fc, &mut *context.borrow_mut()) {
-                            let response = env.fill(Ok(Response::DrawComplete(fc.into())));
-                            spawn_local(async {
-                                reply_tx.reply_konly(response).await;
-                            });
-                        }
-                    });
-                    let l = Box::leak(Box::new(leakme));
+                    tx.send((context.clone(), env, reply_tx, fc)).unwrap();
                     request_animation_frame(&l);
-
-                    // request_animation_frame(f.borrow().as_ref().unwrap());
                 }
                 Request::GetMeta => {
                     let meta = DisplayMetadata {
@@ -218,10 +262,35 @@ fn draw_mono(fc: &MonoChunk, context: &mut Context) -> Result<(), ()> {
     let raw_img = frame_display(&context.framebuf, context.width).map_err(|_| ())?;
     let image = Image::new(&raw_img, Point::new(0, 0));
     image.draw(&mut context.display).map_err(|_| ())?;
-    context.display.flush();
+    context.display.flush().ok();
     Ok(())
 }
-fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u32) {
+
+fn request_animation_frame(f: &Closure<dyn FnMut()>) {
+    window()
+        .request_animation_frame(f.as_ref().unchecked_ref())
+        .expect("should register `requestAnimationFrame` OK");
+}
+
+fn window() -> web_sys::Window {
+    web_sys::window().expect("no global `window` exists")
+}
+
+fn document() -> web_sys::Document {
+    window()
+        .document()
+        .expect("should have a document on window")
+}
+
+fn graphics_container() -> web_sys::Element {
+    document()
+        .get_element_by_id("graphics")
+        .expect("document should have our text container")
+}
+
+// TODO: move to shared helper module - https://github.com/tosc-rs/mnemos/issues/260
+// TODO: blocked on e-g update https://github.com/tosc-rs/mnemos/issues/259
+pub fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u32) {
     let meta = src.meta();
     let data = src.data();
     let mask = src.mask();
@@ -275,36 +344,17 @@ fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u32) {
     }
 }
 
+// TODO: move to shared helper module - https://github.com/tosc-rs/mnemos/issues/260
+// TODO: blocked on e-g update https://github.com/tosc-rs/mnemos/issues/259
+
 /// Create and return a Simulator display object from raw pixel data.
 ///
 /// Pixel data is turned into a raw image, and then drawn onto a SimulatorDisplay object
 /// This is necessary as a e-g Window only accepts SimulatorDisplay object
 /// On a physical display, the raw pixel data can be sent over to the display directly
 /// Using the display's device interface
-fn frame_display(fc: &HeapArray<u8>, width: u32) -> Result<ImageRaw<Gray8>, ()> {
+pub fn frame_display(fc: &HeapArray<u8>, width: u32) -> Result<ImageRaw<Gray8>, ()> {
     // TODO: We use Gray8 instead of BinaryColor here because BinaryColor bitpacks to 1bpp,
     // while we are currently doing 8bpp.
     Ok(ImageRaw::<Gray8>::new(fc, width))
-}
-
-fn request_animation_frame(f: &Closure<dyn FnMut()>) {
-    window()
-        .request_animation_frame(f.as_ref().unchecked_ref())
-        .expect("should register `requestAnimationFrame` OK");
-}
-
-fn window() -> web_sys::Window {
-    web_sys::window().expect("no global `window` exists")
-}
-
-fn document() -> web_sys::Document {
-    window()
-        .document()
-        .expect("should have a document on window")
-}
-
-fn graphics_container() -> web_sys::Element {
-    document()
-        .get_element_by_id("graphics")
-        .expect("document should have our text container")
 }

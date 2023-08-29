@@ -10,17 +10,10 @@ use gloo::timers::future::TimeoutFuture;
 use gloo_utils::format::JsValueSerdeExt;
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
-    daemons::{
-        sermux::HelloSettings,
-        shells::{graphical_shell_mono, GraphicalShellSettings},
-    },
+    daemons::shells::{graphical_shell_mono, GraphicalShellSettings},
     forth::{self, Forth},
     services::{
-        keyboard::{
-            key_event::{Kind, Modifiers},
-            mux::KeyboardMuxClient,
-            KeyEvent,
-        },
+        keyboard::{mux::KeyboardMuxClient, KeyEvent},
         serial_mux::{PortHandle, WellKnown},
     },
     Kernel, KernelServiceSettings, KernelSettings,
@@ -29,6 +22,7 @@ use pomelo::{
     sim_drivers::{emb_display::SimDisplay, serial::Serial},
     term_iface::{init_term, to_term, Command, SERMUX_TX},
 };
+use tracing::warn;
 #[allow(unused_imports)]
 use tracing::{debug, error, info, trace, Instrument, Level};
 use tracing_subscriber::{
@@ -54,6 +48,7 @@ fn setup_tracing() {
     tracing::subscriber::set_global_default(subscriber).unwrap();
 }
 fn main() {
+    console_error_panic_hook::set_once();
     setup_tracing();
 
     let _span: tracing::span::EnteredSpan = tracing::info_span!("Pomelo").entered();
@@ -117,7 +112,7 @@ async fn kernel_entry() {
     service_settings.sermux_hello.enabled = false;
     kernel.initialize_default_services(service_settings);
 
-    let width = 400;
+    let width = 240;
     let height = 240;
     kernel
         .initialize({
@@ -139,22 +134,28 @@ async fn kernel_entry() {
         .unwrap();
 
     // synthetic keyboard events
-
-    spawn_local({
-        let mut irq_tx: mpsc::Sender<()> = irq_tx.clone();
-        async move {
-            let cmd = "2 2 + .\n";
+    if false {
+        spawn_local(async move {
+            let mut irq_tx: mpsc::Sender<()> = irq_tx.clone();
             let mut keymux = KeyboardMuxClient::from_registry(kernel).await;
 
-            for _ in 0..5 {
+            // TODO this sleep is to work around a race where initial events get swallowed
+            kernel.sleep(Duration::from_millis(300)).await;
+            for i in 2..4 {
+                let cmd = format!("1 {i} * .\n");
                 for char in cmd.chars() {
-                    keymux.publish_key(KeyEvent::from_char(char)).await;
-                    irq_tx.send(()).await;
+                    // TODO conflict with sleep logic
+                    // https://github.com/tosc-rs/mnemos/issues/256
+                    keymux.publish_key(KeyEvent::from_char(char)).await.unwrap();
+                    irq_tx.send(()).await.unwrap();
+
+                    // TODO this sleep is to work around another(?) race - this time the '\n'
+                    // seems to be affected exclusively
                     kernel.sleep(Duration::from_millis(100)).await;
                 }
             }
-        }
-    });
+        });
+    }
 
     // go forth and replduce
     spawn_local(async move {
@@ -212,11 +213,13 @@ async fn kernel_entry() {
 
         trace!("timer: before sleep: next turn in {next_turn:?}");
 
+        // TODO: this seems to always be true
+        // https://github.com/tosc-rs/mnemos/issues/257
         if next_turn.expired == 0 || !tick.has_remaining {
             trace!("timer: sleeping");
             let next_turn = next_turn
                 .time_to_next_deadline()
-                .unwrap_or(Duration::from_millis(3000));
+                .unwrap_or(Duration::from_millis(100));
             let mut next_fut = TimeoutFuture::new(
                 next_turn
                     .as_millis()
@@ -241,7 +244,7 @@ async fn kernel_entry() {
             trace!("timer: slept for {dt:?}");
             kernel.timer().force_advance(dt);
         } else {
-            tracing::warn!("timer worm");
+            warn!("timer worm");
         }
     }
 }
