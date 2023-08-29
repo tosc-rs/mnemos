@@ -36,15 +36,6 @@ export function init_term(command_callback) {
 
     window.term = term;
 
-    // var isWebglEnabled = false;
-    // try {
-    //     const webgl = new window.WebglAddon.WebglAddon();
-    //     term.loadAddon(webgl);
-    //     isWebglEnabled = true;
-    // } catch (e) {
-    //     console.warn('WebGL addon threw an exception during load', e);
-    // }
-
     // Cancel wheel events from scrolling the page if the terminal has scrollback
     document.querySelector('.xterm').addEventListener('wheel', e => {
         if (term.buffer.active.baseY > 0) {
