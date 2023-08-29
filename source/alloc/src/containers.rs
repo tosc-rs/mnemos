@@ -289,7 +289,6 @@ impl<T> DerefMut for ArrayBuf<T> {
 
 /// A heap allocation of a `[T; N]`. Useful for things like buffers that never need to
 /// change size (unlike [FixedVec]), and are less spooky than [ArrayBuf].
-#[derive(Clone)]
 pub struct HeapArray<T> {
     ptr: NonNull<T>,
     len: usize,

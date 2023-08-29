@@ -216,7 +216,6 @@ impl From<MonoChunk> for FrameChunk {
 // users to make the size/perf tradeoff, particularly if we want to support
 // targets with very small memory. For example, a 400x240 monochrome display would
 // be 93.75KiB at 8bpp, but only 11.72KiB at 1bpp.
-#[derive(Clone)]
 pub struct MonoChunk {
     meta: FrameChunkMetadata,
     data: Buf8,
@@ -444,7 +443,6 @@ impl FrameChunkMetadata {
     }
 }
 
-#[derive(Clone)]
 struct Buf8 {
     bytes: HeapArray<u8>,
 }
