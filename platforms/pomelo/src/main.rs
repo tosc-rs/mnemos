@@ -239,8 +239,6 @@ async fn kernel_entry() {
             let dt = now.signed_duration_since(then).to_std().unwrap();
             trace!("timer: slept for {dt:?}");
             kernel.timer().force_advance(dt);
-        } else {
-            warn!("timer worm");
         }
     }
 }
