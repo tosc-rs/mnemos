@@ -90,11 +90,7 @@ use abi::{
     syscall::{KernelResponse, UserRequest},
 };
 use comms::kchannel::KChannel;
-use core::{
-    convert::identity,
-    future::{Future, IntoFuture},
-    ptr::NonNull,
-};
+use core::{convert::identity, future::Future, ptr::NonNull};
 pub use embedded_hal_async;
 pub use maitake;
 use maitake::{

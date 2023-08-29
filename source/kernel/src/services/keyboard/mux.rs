@@ -11,12 +11,12 @@ use super::{key_event, KeyEvent, KeyboardError, KeyboardService, Subscribed};
 use crate::{
     comms::{
         bbq,
-        kchannel::{KChannel, KConsumer, KProducer},
+        kchannel::{KChannel, KProducer},
         oneshot::Reusable,
     },
     mnemos_alloc::containers::FixedVec,
     registry::{
-        self, known_uuids, Envelope, KernelHandle, OneshotRequestError, RegisteredDriver,
+        self, known_uuids, listener, Envelope, KernelHandle, OneshotRequestError, RegisteredDriver,
         RegistrationError,
     },
     services::serial_mux,
@@ -39,6 +39,8 @@ impl RegisteredDriver for KeyboardMuxService {
     type Request = Publish;
     type Response = Response;
     type Error = core::convert::Infallible;
+    type Hello = ();
+    type ConnectError = core::convert::Infallible;
 
     const UUID: Uuid = known_uuids::kernel::KEYBOARD_MUX;
 }
@@ -76,9 +78,11 @@ impl KeyboardMuxClient {
     pub async fn from_registry(kernel: &'static Kernel) -> Self {
         loop {
             match Self::from_registry_no_retry(kernel).await {
-                Some(port) => return port,
-                None => {
-                    // I2C probably isn't registered yet. Try again in a bit
+                Ok(me) => return me,
+                Err(registry::ConnectError::Rejected(_)) => {
+                    unreachable!("the KeyboardMuxService does not return connect errors!")
+                }
+                Err(_) => {
                     kernel.sleep(Duration::from_millis(10)).await;
                 }
             }
@@ -91,12 +95,11 @@ impl KeyboardMuxClient {
     ///
     /// Prefer [`KeyboardMuxClient::from_registry`] unless you will not be spawning one
     /// around the same time as obtaining a client.
-    pub async fn from_registry_no_retry(kernel: &'static Kernel) -> Option<Self> {
-        let handle = kernel
-            .with_registry(|reg| reg.get::<KeyboardMuxService>())
-            .await?;
-
-        Some(Self {
+    pub async fn from_registry_no_retry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<KeyboardMuxService>> {
+        let handle = kernel.registry().await.get::<KeyboardMuxService>().await?;
+        Ok(Self {
             handle,
             reply: Reusable::new_async().await,
         })
@@ -127,8 +130,8 @@ impl KeyboardMuxClient {
 /// implementation is used for tasks that consume keyboard input to subscribe to
 /// key events.
 pub struct KeyboardMuxServer {
-    key_rx: KConsumer<registry::Message<KeyboardMuxService>>,
-    sub_rx: KConsumer<registry::Message<KeyboardService>>,
+    key_rx: listener::RequestStream<KeyboardMuxService>,
+    sub_rx: listener::RequestStream<KeyboardService>,
     subscriptions: FixedVec<KProducer<KeyEvent>>,
     settings: KeyboardMuxSettings,
     sermux_port: Option<serial_mux::PortHandle>,
@@ -162,8 +165,8 @@ impl KeyboardMuxServer {
         kernel: &'static Kernel,
         settings: KeyboardMuxSettings,
     ) -> Result<(), RegistrationError> {
-        let (key_tx, key_rx) = KChannel::new_async(settings.buffer_capacity).await.split();
-        let (sub_tx, sub_rx) = KChannel::new_async(8).await.split();
+        let (keys, key_tx) = registry::Listener::new(settings.buffer_capacity).await;
+        let (subs, sub_tx) = registry::Listener::new(8).await;
         let subscriptions = FixedVec::new(settings.max_keyboards).await;
         let sermux_port = if let Some(port) = settings.sermux_port {
             let mut client = serial_mux::SerialMuxClient::from_registry(kernel).await;
@@ -178,6 +181,8 @@ impl KeyboardMuxServer {
         } else {
             None
         };
+        let sub_rx = subs.into_request_stream(8).await;
+        let key_rx = keys.into_request_stream(settings.buffer_capacity).await;
         kernel
             .spawn(
                 Self {
@@ -193,8 +198,8 @@ impl KeyboardMuxServer {
 
         kernel
             .with_registry(|reg| {
-                reg.register_konly::<KeyboardMuxService>(&key_tx)?;
-                reg.register_konly::<KeyboardService>(&sub_tx)?;
+                reg.register_konly::<KeyboardMuxService>(key_tx)?;
+                reg.register_konly::<KeyboardService>(sub_tx)?;
                 Ok(())
             })
             .await?;
@@ -213,11 +218,7 @@ impl KeyboardMuxServer {
                 None => future::Either::Right(future::pending::<bbq::GrantR>()),
             };
             futures::select_biased! {
-                msg = self.sub_rx.dequeue_async().fuse() => {
-                    let Ok(registry::Message { msg, reply }) = msg else {
-                        tracing::warn!("Key subscription channel ended!");
-                        break;
-                    };
+                registry::Message { msg, reply } = self.sub_rx.next_request().fuse() => {
                     let (tx, rx) = KChannel::new_async(self.settings.buffer_capacity).await.split();
                     match self.subscriptions.try_push(tx) {
                         Ok(()) => {
@@ -234,12 +235,7 @@ impl KeyboardMuxServer {
                         }
                     }
                 },
-                msg = self.key_rx.dequeue_async().fuse() => {
-                    let Ok(registry::Message { msg, reply }) = msg else {
-                        tracing::warn!("Key publish channel ended!");
-                        break;
-                    };
-
+                registry::Message { msg, reply } = self.key_rx.next_request().fuse() => {
                     let Publish(key) = msg.body;
                     tracing::debug!(?key, "publishing key event");
 

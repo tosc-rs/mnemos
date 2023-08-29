@@ -10,12 +10,8 @@ use core::time::Duration;
 
 use crate::comms::bbq::GrantR;
 use crate::{
-    comms::{
-        bbq,
-        kchannel::{KChannel, KConsumer},
-        oneshot::Reusable,
-    },
-    registry::{Envelope, KernelHandle, Message, RegisteredDriver},
+    comms::{bbq, oneshot::Reusable},
+    registry::{self, Envelope, KernelHandle, Message, RegisteredDriver},
     services::simple_serial::SimpleSerialClient,
     Kernel,
 };
@@ -40,6 +36,11 @@ impl RegisteredDriver for SerialMuxService {
     type Request = Request;
     type Response = Response;
     type Error = SerialMuxError;
+    // TODO(eliza): we could convert this service into a design where
+    // `RegisterPort` is the `Hello` message rather than the `Request`...let's
+    // do that later, once bidi has been added to `RegisteredDriver`?
+    type Hello = ();
+    type ConnectError = core::convert::Infallible;
     const UUID: Uuid = crate::registry::known_uuids::kernel::SERIAL_MUX;
 }
 
@@ -89,10 +90,12 @@ impl SerialMuxClient {
     /// If the [`SerialMuxServer`] hasn't been registered yet, we will retry until it has been
     pub async fn from_registry(kernel: &'static Kernel) -> Self {
         loop {
-            match SerialMuxClient::from_registry_no_retry(kernel).await {
-                Some(port) => return port,
-                None => {
-                    // SerialMux probably isn't registered yet. Try again in a bit
+            match Self::from_registry_no_retry(kernel).await {
+                Ok(me) => return me,
+                Err(registry::ConnectError::Rejected(_)) => {
+                    unreachable!("the SerialMuxService does not return connect errors!")
+                }
+                Err(_) => {
                     kernel.sleep(Duration::from_millis(10)).await;
                 }
             }
@@ -105,12 +108,12 @@ impl SerialMuxClient {
     ///
     /// Prefer [`SerialMuxClient::from_registry`] unless you will not be spawning one
     /// around the same time as obtaining a client.
-    pub async fn from_registry_no_retry(kernel: &'static Kernel) -> Option<Self> {
-        let prod = kernel
-            .with_registry(|reg| reg.get::<SerialMuxService>())
-            .await?;
+    pub async fn from_registry_no_retry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<SerialMuxService>> {
+        let prod = kernel.registry().await.get::<SerialMuxService>().await?;
 
-        Some(SerialMuxClient {
+        Ok(SerialMuxClient {
             prod,
             reply: Reusable::new_async().await,
         })
@@ -246,10 +249,10 @@ impl SerialMuxServer {
 
         let ports = FixedVec::new(max_ports).await;
         let imutex = Arc::new(Mutex::new(MuxingInfo { ports, max_frame })).await;
-        let (cmd_prod, cmd_cons) = KChannel::new_async(max_ports).await.split();
+        let (listener, registration) = registry::Listener::new(max_ports).await;
         let buf = FixedVec::new(max_frame).await;
         let commander = CommanderTask {
-            cmd: cmd_cons,
+            cmd: listener.into_request_stream(max_ports).await,
             out: sprod,
             mux: imutex.clone(),
         };
@@ -268,7 +271,7 @@ impl SerialMuxServer {
             .await;
 
         kernel
-            .with_registry(|reg| reg.register_konly::<SerialMuxService>(&cmd_prod))
+            .with_registry(|reg| reg.register_konly::<SerialMuxService>(registration))
             .await
             .map_err(|_| RegistrationError::MuxAlreadyRegistered)?;
 
@@ -324,7 +327,7 @@ struct MuxingInfo {
 }
 
 struct CommanderTask {
-    cmd: KConsumer<Message<SerialMuxService>>,
+    cmd: registry::listener::RequestStream<SerialMuxService>,
     out: bbq::MpscProducer,
     mux: Arc<Mutex<MuxingInfo>>,
 }
@@ -371,10 +374,9 @@ impl MuxingInfo {
 // impl CommanderTask
 
 impl CommanderTask {
-    async fn run(self) {
+    async fn run(mut self) {
         loop {
-            let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
-            let Message { msg: req, reply } = msg;
+            let Message { msg: req, reply } = self.cmd.next_request().await;
             match req.body {
                 Request::RegisterPort { port_id, capacity } => {
                     let res = {

@@ -97,7 +97,7 @@ use crate::{
         oneshot::{self, Reusable},
     },
     mnemos_alloc::containers::FixedVec,
-    registry::{known_uuids, Envelope, KernelHandle, RegisteredDriver},
+    registry::{self, known_uuids, Envelope, KernelHandle, RegisteredDriver},
     Kernel,
 };
 use core::{convert::Infallible, fmt, time::Duration};
@@ -118,6 +118,8 @@ impl RegisteredDriver for I2cService {
     type Request = StartTransaction;
     type Response = Transaction;
     type Error = core::convert::Infallible;
+    type Hello = ();
+    type ConnectError = core::convert::Infallible;
 
     const UUID: Uuid = known_uuids::kernel::I2C;
 }
@@ -304,10 +306,12 @@ impl I2cClient {
     /// has been registered.
     pub async fn from_registry(kernel: &'static Kernel) -> Self {
         loop {
-            match I2cClient::from_registry_no_retry(kernel).await {
-                Some(port) => return port,
-                None => {
-                    // I2C probably isn't registered yet. Try again in a bit
+            match Self::from_registry_no_retry(kernel).await {
+                Ok(me) => return me,
+                Err(registry::ConnectError::Rejected(_)) => {
+                    unreachable!("the I2cService does not return connect errors!")
+                }
+                Err(_) => {
                     kernel.sleep(Duration::from_millis(10)).await;
                 }
             }
@@ -320,10 +324,12 @@ impl I2cClient {
     ///
     /// Prefer [`I2cClient::from_registry`] unless you will not be spawning one
     /// around the same time as obtaining a client.
-    pub async fn from_registry_no_retry(kernel: &'static Kernel) -> Option<Self> {
-        let handle = kernel.with_registry(|reg| reg.get::<I2cService>()).await?;
+    pub async fn from_registry_no_retry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<I2cService>> {
+        let handle = kernel.registry().await.get::<I2cService>().await?;
 
-        Some(I2cClient {
+        Ok(I2cClient {
             handle,
             reply: Reusable::new_async().await,
             cached_buf: None,

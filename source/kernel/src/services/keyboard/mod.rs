@@ -130,8 +130,11 @@ impl KeyClient {
         subscribe: Subscribe,
     ) -> Option<Self> {
         let mut handle = kernel
-            .with_registry(|reg| reg.get::<KeyboardService>())
-            .await?;
+            .registry()
+            .await
+            .get::<KeyboardService>()
+            .await
+            .ok()?;
         let reply = oneshot::Reusable::new_async().await;
         let Subscribed { rx } = handle
             .request_oneshot(subscribe, &reply)

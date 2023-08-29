@@ -41,18 +41,13 @@
 use core::{convert::Infallible, time::Duration};
 
 use crate::{
-    comms::{
-        kchannel::{KChannel, KConsumer},
-        oneshot::Reusable,
-    },
+    comms::oneshot::Reusable,
     forth::{self, Forth},
     registry::{
-        self, known_uuids::kernel::FORTH_SPAWNULATOR, Envelope, KernelHandle, Message,
-        RegisteredDriver,
+        self, known_uuids::kernel::FORTH_SPAWNULATOR, Envelope, KernelHandle, RegisteredDriver,
     },
     Kernel,
 };
-use futures::FutureExt;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -179,7 +174,7 @@ impl SpawnulatorServer {
     #[tracing::instrument(skip(kernel, vms))]
     async fn spawnulate(
         kernel: &'static Kernel,
-        mut vms: registry::listener::RequestStream<SpawnulatorService>,
+        vms: registry::listener::RequestStream<SpawnulatorService>,
     ) {
         tracing::debug!("spawnulator running...");
         loop {

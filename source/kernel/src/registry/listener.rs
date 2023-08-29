@@ -79,14 +79,14 @@ impl<D: RegisteredDriver> Listener<D> {
         (listener, registration)
     }
 
-    pub async fn next(&mut self) -> Connection<D> {
+    pub async fn next(&self) -> Connection<D> {
         self.rx
             .dequeue_async()
             .await
             .expect("the kernel should never drop the sender end of a service's incoming channel!")
     }
 
-    pub async fn try_next(&mut self) -> Option<Connection<D>> {
+    pub async fn try_next(&self) -> Option<Connection<D>> {
         self.rx.dequeue_sync()
     }
 
@@ -172,7 +172,7 @@ impl<D: RegisteredDriver> RequestStream<D> {
     /// discarded.
     ///
     /// [`Hello`]: RegisteredDriver::Hello
-    pub async fn next_request(&mut self) -> Message<D> {
+    pub async fn next_request(&self) -> Message<D> {
         loop {
             let conn = select_biased! {
                 msg = self.chan.dequeue_async().fuse() => {
