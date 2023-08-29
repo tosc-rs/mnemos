@@ -227,17 +227,15 @@ async fn kernel_entry() {
             .fuse();
 
             then = chrono::Local::now();
-            let now = select! {
+            select! {
                 _ = irq_rx.next() => {
                     trace!("timer: WAKE: \"irq\" {tick:?}");
-                    chrono::Local::now()
                 },
                 _ = next_fut => {
-                    // let tick = kernel.tick();
                     trace!("timer: WAKE: timer {tick:?}");
-                    chrono::Local::now()
                 }
-            };
+            }
+            let now = chrono::Local::now();
             let dt = now.signed_duration_since(then).to_std().unwrap();
             trace!("timer: slept for {dt:?}");
             kernel.timer().force_advance(dt);
