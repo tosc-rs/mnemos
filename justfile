@@ -59,6 +59,8 @@ _espbuddy_pkg := "mnemos-esp32c3-buddy"
 _x86_pkg := "mnemos-x86_64-bootloader"
 _x86_bootloader_pkg := "mnemos-x86_64-bootloader"
 
+_pomelo_index_path := "platforms"/"pomelo"/"index.html"
+
 # arguments to pass to all RustDoc invocations
 _rustdoc := _cargo + " doc --no-deps --all-features"
 
@@ -173,6 +175,13 @@ melpomene *FLAGS:
 # build all RustDoc documentation
 all-docs *FLAGS: (docs FLAGS) (docs "-p " + _d1_pkg + FLAGS) (docs "-p " + _espbuddy_pkg + FLAGS)  (docs "-p " + _x86_bootloader_pkg + FLAGS)
 
+# serve Pomelo and open it in the browser
+pomelo *ARGS="--release --open": (trunk "serve " + ARGS + " " + _pomelo_index_path)
+
+# run an arbitrary Trunk command (used for running WASM projects, such as pomelo)
+trunk CMD: (_get-cargo-bin "trunk")
+    trunk {{ CMD }}
+
 # run RustDoc
 docs *FLAGS:
     env RUSTDOCFLAGS="--cfg docsrs -Dwarnings" \
@@ -185,7 +194,6 @@ docs *FLAGS:
 mdbook CMD="build --open": (_get-cargo-bin "mdbook")
     ./scripts/rfc2book.py
     cd book && mdbook {{ CMD }}
-
 
 # Run an Oranda command, generating the book's RFC section first.
 oranda CMD="dev": (_get-cargo-bin "oranda")
@@ -217,7 +225,7 @@ _get-cargo-bin name:
     set -euo pipefail
     source "./scripts/_util.sh"
 
-    if command -v {{ name }}; then
+    if command -v {{ name }} >/dev/null 2>&1; then
         status "Found" "{{ name }}"
         exit 0
     fi
