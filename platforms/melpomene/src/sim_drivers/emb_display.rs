@@ -293,6 +293,8 @@ async fn render_loop(
     }
 }
 
+// TODO: move to shared helper module - https://github.com/tosc-rs/mnemos/issues/260
+// TODO: blocked on e-g update https://github.com/tosc-rs/mnemos/issues/259
 fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u32) {
     let meta = src.meta();
     let data = src.data();
@@ -346,6 +348,9 @@ fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u32) {
             });
     }
 }
+
+// TODO: move to shared helper module - https://github.com/tosc-rs/mnemos/issues/260
+// TODO: blocked on e-g update https://github.com/tosc-rs/mnemos/issues/259
 
 /// Create and return a Simulator display object from raw pixel data.
 ///
