@@ -2,6 +2,7 @@
 <html>
 
 <head>
+    <meta charset="UTF-8">
     <base data-trunk-public-url />
     <script data-trunk src="src/js/xterm.js"></script>
     <link data-trunk rel="css" href="src/js/xterm.css" />
@@ -9,6 +10,21 @@
 </head>
 
 <body>
+    <h1>🍊 Pomelo 🍊</h1>
+    <h2>A WebAssembly emulator for MnemOS</h2>
+    <div id="intro">
+        The left window shows a graphical forth shell. It is interactive when focused.
+
+        The right window resembles a terminal into the system - tab completion and cursor up/down history is available
+        for your convenience. Since currently no concept exists for <span class="code">EOF</span>, cursor positioning
+        may appear somewhat chaotic.
+
+        Type <span class="code">help</span> for a list of
+        commands, and consult the <a href="https://github.com/tosc-rs/mnemos/tree/main/platforms/pomelo">README</a> for
+        further
+        details.
+
+    </div>
     <div id="windows">
         <div class="window" id="graphics" tabindex="2"></div>
         <div class="window" id="terminal"></div>

@@ -1,9 +1,34 @@
 body {
-    background-color: #aaa;
+    font-family: Helvetica, Arial, sans-serif;
+    background-color: #cecece;
+    text-align: center;
+    color: #333;
 }
 
-div#windows {
-    text-align: center;
+a:link {
+    color: #666;
+}
+
+a:visited {
+    color: #999;
+}
+
+/* mouse over link */
+a:hover {
+    color: hotpink;
+}
+
+
+
+div#intro {
+    width: 50%;
+    margin: 2em auto;
+    text-align: left;
+}
+
+span.code {
+    font-family: 'Courier New', Courier, monospace;
+    background-color: #eee;
 }
 
 div#graphics {
@@ -15,7 +40,7 @@ div#graphics {
 div#terminal {
     width: 50%;
     background-color: #2D2E2C;
-    margin-left: 10px;
+    margin-left: 20px;
     text-align: left;
 }
 
@@ -24,6 +49,6 @@ div.window {
     display: inline-block;
     vertical-align: top;
     padding: 10px;
-    border-radius: 8px;
-    filter: drop-shadow(5px 5px 10px #666);
+    border-radius: 6px;
+    filter: drop-shadow(6px 6px 10px rgba(0, 0, 0, 0.4935));
 }
