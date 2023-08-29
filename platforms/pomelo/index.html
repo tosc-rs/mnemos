@@ -16,13 +16,14 @@
         The left window shows a graphical forth shell. It is interactive when focused.
 
         The right window resembles a terminal into the system - tab completion and cursor up/down history is available
-        for your convenience. Since currently no concept exists for <span class="code">EOF</span>, cursor positioning
-        may appear somewhat chaotic.
+        for your convenience. <br><br>
 
         Type <span class="code">help</span> for a list of
         commands, and consult the <a href="https://github.com/tosc-rs/mnemos/tree/main/platforms/pomelo">README</a> for
-        further
-        details.
+        further details. <br><br>
+        Note: Since currently no concept for <span class="code">EOF</span> exists, cursor positioning
+        may appear somewhat chaotic (we can't reset the prompt when some command finishes, because there is no
+        "finish").
 
     </div>
     <div id="windows">

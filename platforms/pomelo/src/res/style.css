@@ -1,6 +1,5 @@
 body {
     font-family: Helvetica, Arial, sans-serif;
-    background-color: #cecece;
     text-align: center;
     color: #333;
 }
@@ -28,7 +27,7 @@ div#intro {
 
 span.code {
     font-family: 'Courier New', Courier, monospace;
-    background-color: #eee;
+    background-color: #edc;
 }
 
 div#graphics {
