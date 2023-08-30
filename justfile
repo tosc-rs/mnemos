@@ -57,7 +57,8 @@ _espbuddy_pkg := "mnemos-esp32c3-buddy"
 _x86_pkg := "mnemos-x86_64-bootloader"
 _x86_bootloader_pkg := "mnemos-x86_64-bootloader"
 
-_pomelo_index_path := "platforms"/"pomelo"/"index.html"
+_pomelo_pkg := "pomelo"
+_pomelo_index_path := "platforms"/_pomelo_pkg/"index.html"
 
 # arguments to pass to all RustDoc invocations
 _rustdoc := _cargo + " doc --no-deps --all-features"
@@ -70,7 +71,7 @@ default:
     @just --list
 
 # check all crates, across workspaces
-check *ARGS: && (check-crate _d1_pkg ARGS) (check-crate _espbuddy_pkg ARGS) (check-crate _x86_pkg ARGS) (check-crate _x86_bootloader_pkg ARGS)
+check *ARGS: && (check-crate _d1_pkg ARGS) (check-crate _espbuddy_pkg ARGS) (check-crate _x86_pkg ARGS) (check-crate _x86_bootloader_pkg ARGS) (check-crate _pomelo_pkg ARGS)
     #!/usr/bin/env bash
     set -euxo pipefail
     {{ _cargo }} check \
@@ -89,7 +90,7 @@ check-crate crate *ARGS:
         {{ _fmt_check_doc }}
 
 # run Clippy checks for all crates, across workspaces.
-clippy *ARGS: && (clippy-crate _d1_pkg ARGS) (clippy-crate _espbuddy_pkg ARGS) (clippy-crate _x86_pkg ARGS) (clippy-crate _x86_bootloader_pkg ARGS)
+clippy *ARGS: && (clippy-crate _d1_pkg ARGS) (clippy-crate _espbuddy_pkg ARGS) (clippy-crate _x86_pkg ARGS) (clippy-crate _x86_bootloader_pkg ARGS) (clippy-crate _pomelo_pkg ARGS)
     #!/usr/bin/env bash
     set -euxo pipefail
     {{ _cargo }} clippy \
@@ -171,7 +172,7 @@ melpomene *FLAGS:
     {{ _cargo }} run --profile {{ profile }} --bin melpomene -- {{ FLAGS }}
 
 # build all RustDoc documentation
-all-docs *FLAGS: (docs FLAGS) (docs "-p " + _d1_pkg + FLAGS) (docs "-p " + _espbuddy_pkg + FLAGS)  (docs "-p " + _x86_bootloader_pkg + FLAGS)
+all-docs *FLAGS: (docs FLAGS) (docs "-p " + _d1_pkg + FLAGS) (docs "-p " + _espbuddy_pkg + FLAGS)  (docs "-p " + _x86_bootloader_pkg + FLAGS) (docs "-p " + _pomelo_pkg + FLAGS)
 
 # serve Pomelo and open it in the browser
 pomelo *ARGS="--release --open": (trunk "serve " + ARGS + " " + _pomelo_index_path)
