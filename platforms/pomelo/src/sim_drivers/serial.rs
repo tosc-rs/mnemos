@@ -1,6 +1,5 @@
 use std::{pin::pin, str::from_utf8};
 
-use async_std::task::spawn_local;
 use futures::{
     channel::mpsc::{self},
     select,
@@ -17,6 +16,7 @@ use mnemos_kernel::{
 };
 use sermux_proto::{PortChunk, WellKnown};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
+use wasm_bindgen_futures::spawn_local;
 
 use super::io;
 pub struct Serial {}

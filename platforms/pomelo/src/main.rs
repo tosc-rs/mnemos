@@ -22,7 +22,6 @@ use pomelo::{
     sim_drivers::{emb_display::SimDisplay, serial::Serial},
     term_iface::{init_term, to_term, Command, SERMUX_TX},
 };
-use tracing::warn;
 #[allow(unused_imports)]
 use tracing::{debug, error, info, trace, Instrument, Level};
 use tracing_subscriber::{

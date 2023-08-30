@@ -18,13 +18,7 @@
 //! them back to be rendered into the total frame. Any data in the client's sub-frame
 //! will replace the current contents of the whole frame buffer.
 
-use std::{
-    cell::{OnceCell, RefCell},
-    process::exit,
-    rc::Rc,
-    sync::OnceLock,
-    time::Duration,
-};
+use std::{cell::RefCell, rc::Rc};
 
 use embedded_graphics::{
     image::{Image, ImageRaw},
@@ -35,8 +29,7 @@ use embedded_graphics_web_simulator::{
     display::WebSimulatorDisplay as SimulatorDisplay, output_settings::OutputSettingsBuilder,
 };
 use futures::{channel::mpsc, SinkExt};
-use maitake::sync::Mutex;
-use mnemos_alloc::containers::{Arc, HeapArray};
+use mnemos_alloc::containers::HeapArray;
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
     registry::{Message, OpenEnvelope, ReplyTo},
@@ -111,13 +104,6 @@ impl SimDisplay {
             };
             let mut irq_tx = irq_tx.clone();
 
-            let tx_c: OnceCell<
-                std::sync::mpsc::Receiver<(
-                    Request,
-                    OpenEnvelope<Result<Response, FrameError>>,
-                    ReplyTo<EmbDisplayService>,
-                )>,
-            > = OnceCell::new();
             spawn_local(async move {
                 // TODO conflict with sleep logic
                 // https://github.com/tosc-rs/mnemos/issues/256
@@ -163,6 +149,13 @@ struct Context {
     height: u32,
 }
 
+type DrawData = (
+    Rc<RefCell<Context>>,
+    OpenEnvelope<Result<Response, FrameError>>,
+    ReplyTo<EmbDisplayService>,
+    MonoChunk,
+);
+
 impl CommanderTask {
     /// The entrypoint for the driver execution
     async fn run(self, width: u32, height: u32) {
@@ -198,28 +191,18 @@ impl CommanderTask {
         let context = Rc::new(RefCell::new(context));
 
         let (tx, rx): (
-            std::sync::mpsc::Sender<(
-                Rc<RefCell<Context>>,
-                OpenEnvelope<Result<Response, FrameError>>,
-                ReplyTo<EmbDisplayService>,
-                MonoChunk,
-            )>,
-            std::sync::mpsc::Receiver<(
-                Rc<RefCell<Context>>,
-                OpenEnvelope<Result<Response, FrameError>>,
-                ReplyTo<EmbDisplayService>,
-                MonoChunk,
-            )>,
+            std::sync::mpsc::Sender<DrawData>,
+            std::sync::mpsc::Receiver<DrawData>,
         ) = std::sync::mpsc::channel();
 
         let rx = Rc::new(RefCell::new(rx));
 
-        let leakme = Closure::<dyn FnMut()>::new({
+        let draw_callback = Closure::<dyn FnMut()>::new({
             let rx = rx.clone();
             move || {
                 let rx = rx.borrow_mut();
                 while let Ok((context, env, reply_tx, fc)) = rx.try_recv() {
-                    if let Ok(_) = draw_mono(&fc, &mut *context.borrow_mut()) {
+                    if draw_mono(&fc, &mut context.borrow_mut()).is_ok() {
                         let response = env.fill(Ok(Response::DrawComplete(fc.into())));
                         spawn_local(async {
                             // TODO conflict with sleep logic
@@ -230,7 +213,7 @@ impl CommanderTask {
                 }
             }
         });
-        let l = Box::leak(Box::new(leakme));
+        let l = Box::leak(Box::new(draw_callback));
 
         loop {
             let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
@@ -239,7 +222,7 @@ impl CommanderTask {
             match req {
                 Request::Draw(FrameChunk::Mono(fc)) => {
                     tx.send((context.clone(), env, reply_tx, fc)).unwrap();
-                    request_animation_frame(&l);
+                    request_animation_frame(l);
                 }
                 Request::GetMeta => {
                     let meta = DisplayMetadata {
@@ -259,7 +242,7 @@ impl CommanderTask {
 /// Draw the given MonoChunk to the persistent framebuffer
 fn draw_mono(fc: &MonoChunk, context: &mut Context) -> Result<(), ()> {
     draw_to(&mut context.framebuf, fc, context.width, context.height);
-    let raw_img = frame_display(&context.framebuf, context.width).map_err(|_| ())?;
+    let raw_img = frame_display(&context.framebuf, context.width);
     let image = Image::new(&raw_img, Point::new(0, 0));
     image.draw(&mut context.display).map_err(|_| ())?;
     context.display.flush().ok();
@@ -353,8 +336,8 @@ pub fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u3
 /// This is necessary as a e-g Window only accepts SimulatorDisplay object
 /// On a physical display, the raw pixel data can be sent over to the display directly
 /// Using the display's device interface
-pub fn frame_display(fc: &HeapArray<u8>, width: u32) -> Result<ImageRaw<Gray8>, ()> {
+pub fn frame_display(fc: &HeapArray<u8>, width: u32) -> ImageRaw<Gray8> {
     // TODO: We use Gray8 instead of BinaryColor here because BinaryColor bitpacks to 1bpp,
     // while we are currently doing 8bpp.
-    Ok(ImageRaw::<Gray8>::new(fc, width))
+    ImageRaw::<Gray8>::new(fc, width)
 }
