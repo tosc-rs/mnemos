@@ -32,9 +32,7 @@ _rustflags := env_var_or_default("RUSTFLAGS", "")
 
 # If we're running in Github Actions and cargo-action-fmt is installed, then add
 # a command suffix that formats errors.
-#
-# Clippy version also gets -Dwarnings.
-_fmt_clippy := if env_var_or_default("GITHUB_ACTIONS", "") != "true" { "-- -Dwarnings" } else {
+_fmt_clippy := if env_var_or_default("GITHUB_ACTIONS", "") != "true" { "" } else {
     ```
     if command -v cargo-action-fmt >/dev/null 2>&1; then
         echo "--message-format=json -- -Dwarnings | cargo-action-fmt"
