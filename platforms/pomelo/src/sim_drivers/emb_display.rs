@@ -29,9 +29,9 @@ use embedded_graphics_web_simulator::{
     display::WebSimulatorDisplay as SimulatorDisplay, output_settings::OutputSettingsBuilder,
 };
 use futures::{channel::mpsc, SinkExt};
-use mnemos_alloc::containers::HeapArray;
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
+    mnemos_alloc::containers::HeapArray,
     registry::{Message, OpenEnvelope, ReplyTo},
     services::{
         emb_display::{

@@ -8,10 +8,10 @@ use futures::{
 use futures_util::{select, StreamExt};
 use gloo::timers::future::TimeoutFuture;
 use gloo_utils::format::JsValueSerdeExt;
-use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
     daemons::shells::{graphical_shell_mono, GraphicalShellSettings},
     forth::{self, Forth},
+    mnemos_alloc::heap::MnemosAlloc,
     services::{
         keyboard::{mux::KeyboardMuxClient, KeyEvent},
         serial_mux::{PortHandle, WellKnown},
