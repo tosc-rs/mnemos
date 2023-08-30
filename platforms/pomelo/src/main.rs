@@ -19,8 +19,7 @@ use pomelo::{
     sim_drivers::{emb_display::SimDisplay, serial::Serial},
     term_iface::{init_term, to_term, Command, SERMUX_TX},
 };
-#[allow(unused_imports)]
-use tracing::{debug, error, info, trace, Instrument, Level};
+use tracing::{debug, info, trace, Level};
 use tracing_subscriber::{
     filter::{self},
     prelude::*,
@@ -74,7 +73,11 @@ async fn kernel_entry() {
     };
 
     // Simulates the kernel main loop being woken by an IRQ.
-    let (irq_tx, irq_rx) = mpsc::channel::<()>(4);
+    let (mut irq_tx, irq_rx) = mpsc::channel::<()>(4);
+
+    // TODO: something in the init sequence is not waking up the kernel when it should.
+    // work around for now by forcing one irq
+    irq_tx.try_send(()).ok();
 
     // Initialize the virtual serial port mux
     const SERIAL_FRAME_SIZE: usize = 512;
@@ -107,7 +110,6 @@ async fn kernel_entry() {
     let mut service_settings: KernelServiceSettings = Default::default();
     service_settings.sermux_hello.enabled = false;
     kernel.initialize_default_services(service_settings);
-
     let width = 240;
     let height = 240;
     kernel
