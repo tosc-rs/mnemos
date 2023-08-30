@@ -91,7 +91,7 @@ impl SimDisplay {
         kernel: &'static Kernel,
         width: u32,
         height: u32,
-        irq_tx: mpsc::Sender<()>,
+        mut irq_tx: mpsc::Sender<()>,
     ) -> Result<(), FrameError> {
         tracing::debug!("initializing SimDisplay server ({width}x{height})...");
 
@@ -137,8 +137,11 @@ impl SimDisplay {
                 warn!("unable to handle key event: {key:?}");
                 return;
             };
-            if let Err(e) = key_tx.enqueue_sync(event) {
-                warn!("could not enqueue key event: {e:?}");
+            match key_tx.enqueue_sync(event) {
+                Ok(_) => {
+                    irq_tx.try_send(()).ok();
+                }
+                Err(e) => warn!("could not enqueue key event: {e:?}"),
             }
         });
         graphics_container()
