@@ -62,8 +62,8 @@ impl Serial {
 
         spawn_local(
             async move {
-                let mut handle = a_ring;
-                process_stream(&mut handle, recv, irq_tx, recv_callback)
+                let handle = a_ring;
+                process_stream(&handle, recv, irq_tx, recv_callback)
                     .instrument(info_span!("process_stream", ?port))
                     .await
             }
@@ -76,7 +76,7 @@ impl Serial {
 }
 
 async fn process_stream(
-    handle: &mut BidiHandle,
+    handle: &BidiHandle,
     mut in_stream: impl Stream<Item = u8>,
     mut irq: mpsc::Sender<()>,
     recv_callback: fn(String),
