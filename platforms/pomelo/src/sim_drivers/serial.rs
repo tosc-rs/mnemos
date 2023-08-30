@@ -60,15 +60,17 @@ impl Serial {
             })
             .await;
 
-        spawn_local(
-            async move {
-                let handle = a_ring;
-                process_stream(&handle, recv, irq_tx, recv_callback)
-                    .instrument(info_span!("process_stream", ?port))
-                    .await
-            }
-            .instrument(info_span!("Serial", ?port)),
-        );
+        kernel
+            .spawn(
+                async move {
+                    let handle = a_ring;
+                    process_stream(&handle, recv, irq_tx, recv_callback)
+                        .instrument(info_span!("process_stream", ?port))
+                        .await
+                }
+                .instrument(info_span!("Serial", ?port)),
+            )
+            .await;
         kernel
             .with_registry(|reg| reg.register_konly::<SimpleSerialService>(&prod))
             .await

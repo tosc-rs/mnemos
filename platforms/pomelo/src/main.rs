@@ -133,15 +133,16 @@ async fn kernel_entry() {
         .unwrap();
 
     // go forth and replduce
-    spawn_local(async move {
-        let port = PortHandle::open(kernel, WellKnown::ForthShell0.into(), 256)
-            .await
-            .unwrap();
-        let (task, tid_io) = Forth::new(kernel, forth::Params::default())
-            .await
-            .expect("Forth spawning must succeed");
-        kernel.spawn(task.run()).await;
-        kernel
+    kernel
+        .spawn(async move {
+            let port = PortHandle::open(kernel, WellKnown::ForthShell0.into(), 256)
+                .await
+                .unwrap();
+            let (task, tid_io) = Forth::new(kernel, forth::Params::default())
+                .await
+                .expect("Forth spawning must succeed");
+            kernel.spawn(task.run()).await;
+            kernel
             .spawn(async move {
                 loop {
                     futures::select_biased! {
@@ -163,7 +164,8 @@ async fn kernel_entry() {
                 }
             })
             .await;
-    });
+        })
+        .await;
 
     // link to browser terminal: receive commands, dispatch bacon
     let eternal_cb: Closure<dyn Fn(JsValue)> = Closure::new(|val: JsValue| {

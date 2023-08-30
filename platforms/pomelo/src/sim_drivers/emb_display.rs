@@ -119,7 +119,7 @@ impl SimDisplay {
             .map_err(|_| FrameError::DisplayAlreadyExists)?;
 
         // listen for key events
-        let closure = Closure::<dyn FnMut(_)>::new(move |event: web_sys::KeyboardEvent| {
+        let on_keydown = Closure::<dyn FnMut(_)>::new(move |event: web_sys::KeyboardEvent| {
             event.prevent_default();
             let key = event.key();
             let event = if key == "Enter" {
@@ -145,9 +145,9 @@ impl SimDisplay {
             }
         });
         graphics_container()
-            .add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref())
+            .add_event_listener_with_callback("keydown", on_keydown.as_ref().unchecked_ref())
             .unwrap();
-        closure.forget();
+        on_keydown.forget();
 
         info!("SimDisplayServer initialized!");
 
@@ -247,7 +247,7 @@ impl CommanderTask {
                 }
             }
         });
-        let l = Box::leak(Box::new(draw_callback));
+        let draw_callback = Box::leak(Box::new(draw_callback));
 
         loop {
             let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
@@ -256,7 +256,7 @@ impl CommanderTask {
             match req {
                 Request::Draw(FrameChunk::Mono(fc)) => {
                     tx.send((context.clone(), env, reply_tx, fc)).unwrap();
-                    request_animation_frame(l);
+                    request_animation_frame(draw_callback);
                 }
                 Request::GetMeta => {
                     let meta = DisplayMetadata {
