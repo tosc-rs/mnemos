@@ -75,7 +75,6 @@ type DrawCompleteData = (
 
 async fn draw_complete_handler(rx: KConsumer<DrawCompleteData>) {
     while let Ok((reply_tx, response)) = rx.dequeue_async().await {
-        info!("wake: draw complete");
         if let Err(e) = reply_tx.reply_konly(response).await {
             warn!("could not send reply: {e:?}");
         }
