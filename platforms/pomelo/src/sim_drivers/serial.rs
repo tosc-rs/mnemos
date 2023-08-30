@@ -16,7 +16,6 @@ use mnemos_kernel::{
 };
 use sermux_proto::{PortChunk, WellKnown};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
-use wasm_bindgen_futures::spawn_local;
 
 use super::io;
 pub struct Serial {}
