@@ -1,0 +1,64 @@
+cargo-features = ["per-package-target", "profile-rustflags"]
+
+[package]
+name = "manganese"
+version = "0.1.0"
+description = """
+the mnemOS build tool
+"""
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
+readme = "./README.md"
+license = "MIT OR Apache-2.0"
+edition = "2021"
+
+[features]
+default = []
+# off-by-default features to avoid compiling `mn`'s bindeps when the crate is not
+# in use
+install-deps = [
+    "just",
+    "cargo-nextest",
+    "cargo-binutils",
+    "cargo-espflash",
+    "trunk",
+]
+
+just = ["dep:just", "_any_deps"]
+cargo-nextest = ["dep:cargo-nextest", "_any_deps"]
+cargo-binutils = ["dep:cargo-binutils", "_any_deps"]
+cargo-espflash = ["dep:cargo-espflash", "_any_deps"]
+
+# dummy feature that indicates any dependency is being installed.
+_any_deps = []
+
+[dependencies]
+anyhow = "1"
+
+[build-dependencies]
+anyhow = "1"
+
+[build-dependencies.just]
+version = "1.14.0"
+artifact = "bin:just"
+optional = true
+
+[build-dependencies.cargo-espflash]
+version = "2.0.1"
+artifact = "bin:cargo-espflash"
+optional = true
+
+[build-dependencies.cargo-nextest]
+version = "0.9.57"
+artifact = "bin:cargo-nextest"
+optional = true
+
+[build-dependencies.cargo-binutils]
+version = "0.3"
+artifact = "bin"
+optional = true
+
+[build-dependencies.trunk]
+version = "0.17.5"
+artifact = "bin"
+optional = true

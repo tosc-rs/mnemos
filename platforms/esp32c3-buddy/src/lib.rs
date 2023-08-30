@@ -74,8 +74,8 @@ pub fn spawn_serial(
     k.initialize(drivers::usb_serial::UsbSerialServer::new(dev).register(k, 512, 512))
         .expect("failed to spawn UsbSerialServer!");
 
-    interrupt::enable(Interrupt::USB_SERIAL_JTAG, interrupt::Priority::Priority1)
-        .expect("failed to enable USB_SERIAL_JTAG interrupt");
+    interrupt::enable(Interrupt::USB_DEVICE, interrupt::Priority::Priority1)
+        .expect("failed to enable USB_DEVICE interrupt");
 }
 
 pub fn run(k: &'static Kernel, alarm1: Alarm<Target, 1>) -> ! {

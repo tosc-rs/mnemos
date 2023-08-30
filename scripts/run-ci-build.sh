@@ -6,7 +6,11 @@ defaultmembers=$( \
     cargo metadata --format-version 1 | \
     jq .workspace_default_members | \
     grep -E '  ".*' | \
+    # crowtty's dependencies can't easily be installed on netlify
     grep -v 'crowtty' | \
+    # manganese depends on `libudev` (transitive dep via one of its' bindeps)
+    # which can't be installed on CI.
+    grep -v 'manganese' | \
     cut -d" " -f3 | \
     cut -d'"' -f2 | \
     sed -E 's/(.*)/-p \1 /g' | \
