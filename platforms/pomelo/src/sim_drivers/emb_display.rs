@@ -18,7 +18,7 @@
 //! them back to be rendered into the total frame. Any data in the client's sub-frame
 //! will replace the current contents of the whole frame buffer.
 
-use std::{cell::RefCell, rc::Rc};
+use std::{cell::RefCell, rc::Rc, sync};
 
 use embedded_graphics::{
     image::{Image, ImageRaw},
@@ -28,7 +28,6 @@ use embedded_graphics::{
 use embedded_graphics_web_simulator::{
     display::WebSimulatorDisplay as SimulatorDisplay, output_settings::OutputSettingsBuilder,
 };
-use futures::{channel::mpsc, SinkExt};
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
     mnemos_alloc::containers::HeapArray,
@@ -49,19 +48,17 @@ use mnemos_kernel::{
 use tracing::{info, warn};
 use wasm_bindgen::prelude::*;
 
+use super::io::irq_sync;
+
 /// Implements the [`EmbDisplayService`] driver using the `embedded-graphics`
 /// simulator.
 pub struct SimDisplay;
 
-async fn key_event_handler(
-    mut irq_tx: mpsc::Sender<()>,
-    key_rx: KConsumer<KeyEvent>,
-    mut keymux: KeyboardMuxClient,
-) {
+async fn key_event_handler(key_rx: KConsumer<KeyEvent>, mut keymux: KeyboardMuxClient) {
     while let Ok(key) = key_rx.dequeue_async().await {
         match keymux.publish_key(key).await {
             Ok(_) => {
-                irq_tx.send(()).await.ok();
+                irq_sync();
             }
             Err(e) => warn!("could not publish key event: {e:?}"),
         }
@@ -90,7 +87,6 @@ impl SimDisplay {
         kernel: &'static Kernel,
         width: u32,
         height: u32,
-        mut irq_tx: mpsc::Sender<()>,
     ) -> Result<(), FrameError> {
         tracing::debug!("initializing SimDisplay server ({width}x{height})...");
 
@@ -102,15 +98,11 @@ impl SimDisplay {
             height,
         };
 
-        kernel
-            .spawn(commander.run(kernel, irq_tx.clone(), width, height))
-            .await;
+        kernel.spawn(commander.run(kernel, width, height)).await;
 
         let (key_tx, key_rx) = KChannel::new_async(32).await.split();
         let keymux = KeyboardMuxClient::from_registry(kernel).await;
-        kernel
-            .spawn(key_event_handler(irq_tx.clone(), key_rx, keymux))
-            .await;
+        kernel.spawn(key_event_handler(key_rx, keymux)).await;
 
         kernel
             .with_registry(|reg| reg.register_konly::<EmbDisplayService>(&cmd_prod))
@@ -138,7 +130,7 @@ impl SimDisplay {
             };
             match key_tx.enqueue_sync(event) {
                 Ok(_) => {
-                    irq_tx.try_send(()).ok();
+                    irq_sync();
                 }
                 Err(e) => warn!("could not enqueue key event: {e:?}"),
             }
@@ -183,7 +175,7 @@ type DrawData = (
 
 impl CommanderTask {
     /// The entrypoint for the driver execution
-    async fn run(self, kernel: &'static Kernel, irq_tx: mpsc::Sender<()>, width: u32, height: u32) {
+    async fn run(self, kernel: &'static Kernel, width: u32, height: u32) {
         let output_settings = OutputSettingsBuilder::new()
             .scale(1)
             .pixel_spacing(1)
@@ -203,25 +195,18 @@ impl CommanderTask {
             width,
             height,
         };
-        self.message_loop(kernel, irq_tx, context).await;
+        self.message_loop(kernel, context).await;
     }
 
     /// This loop services incoming client requests.
     ///
     /// Generally, don't handle errors when replying to clients, this indicates that they
     /// sent us a message and "hung up" without waiting for a response.
-    async fn message_loop(
-        &self,
-        kernel: &'static Kernel,
-        mut irq_tx: mpsc::Sender<()>,
-        context: Context,
-    ) {
+    async fn message_loop(&self, kernel: &'static Kernel, context: Context) {
         let context = Rc::new(RefCell::new(context));
 
-        let (tx, rx): (
-            std::sync::mpsc::Sender<DrawData>,
-            std::sync::mpsc::Receiver<DrawData>,
-        ) = std::sync::mpsc::channel();
+        let (tx, rx): (sync::mpsc::Sender<DrawData>, sync::mpsc::Receiver<DrawData>) =
+            sync::mpsc::channel();
 
         let rx = Rc::new(RefCell::new(rx));
 
@@ -238,7 +223,7 @@ impl CommanderTask {
                             env.fill(Ok(Response::DrawComplete(fc.into())));
                         match draw_complete_tx.enqueue_sync((reply_tx, response)) {
                             Ok(_) => {
-                                irq_tx.try_send(()).ok();
+                                irq_sync();
                             }
                             Err(_) => warn!("could not enqueue draw complete ack"),
                         }

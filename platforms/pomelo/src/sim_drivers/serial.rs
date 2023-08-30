@@ -4,7 +4,7 @@ use futures::{
     channel::mpsc::{self},
     select,
 };
-use futures_util::{FutureExt, SinkExt, Stream, StreamExt};
+use futures_util::{FutureExt, Stream, StreamExt};
 use mnemos_kernel::{
     comms::{
         bbq::{new_bidi_channel, BidiHandle},
@@ -18,6 +18,7 @@ use sermux_proto::{PortChunk, WellKnown};
 use tracing::{debug, error, info_span, trace, warn, Instrument};
 
 use super::io;
+use crate::sim_drivers::io::irq_async;
 pub struct Serial {}
 
 impl Serial {
@@ -26,7 +27,6 @@ impl Serial {
         incoming_size: usize,
         outgoing_size: usize,
         port: u16,
-        irq_tx: mpsc::Sender<()>,
         recv: mpsc::Receiver<u8>,
         recv_callback: fn(String),
     ) -> Result<(), registry::RegistrationError> {
@@ -63,7 +63,7 @@ impl Serial {
             .spawn(
                 async move {
                     let handle = a_ring;
-                    process_stream(&handle, recv, irq_tx, recv_callback)
+                    process_stream(&handle, recv, recv_callback)
                         .instrument(info_span!("process_stream", ?port))
                         .await
                 }
@@ -79,7 +79,6 @@ impl Serial {
 async fn process_stream(
     handle: &BidiHandle,
     mut in_stream: impl Stream<Item = u8>,
-    mut irq: mpsc::Sender<()>,
     recv_callback: fn(String),
 ) {
     debug!("processing serial stream");
@@ -118,13 +117,7 @@ async fn process_stream(
                     debug!(len = used, "Got incoming message",);
                     in_grant.commit(used);
 
-                    // Simulate an "interrupt", waking the kernel if it's waiting
-                    // an IRQ.
-                    trace!("IRQ");
-                    if let Err(e) = irq.send(()).await {
-                        warn!("pseudo irq failed: {e:?}");
-                    }
-                    trace!("/IRQ");
+                    irq_async().await;
                 }
 
             }

@@ -1,7 +1,19 @@
+use std::sync::OnceLock;
+
+use mnemos_kernel::comms::kchannel::KProducer;
 use sermux_proto::PortChunk;
 use tracing::{debug, error};
 
 use crate::term_iface::SERMUX_TX;
+pub static IRQ_TX: OnceLock<KProducer<()>> = OnceLock::new();
+
+pub(crate) fn irq_sync() {
+    IRQ_TX.get().unwrap().enqueue_sync(()).ok();
+}
+
+pub async fn irq_async() {
+    IRQ_TX.get().unwrap().enqueue_async(()).await.ok();
+}
 
 pub fn send(port: u16, data: &[u8]) {
     let chunk = PortChunk::new(port, data);
@@ -16,6 +28,7 @@ pub fn send(port: u16, data: &[u8]) {
                     tracing::error!("sermux: could not send: {e:?}");
                 }
             }
+            irq_sync();
         }
         Err(e) => error!("sermux: {e:?}"),
     }

@@ -5,10 +5,11 @@ use futures::{
     channel::mpsc::{self},
     FutureExt,
 };
-use futures_util::{select, StreamExt};
+use futures_util::select;
 use gloo::timers::future::TimeoutFuture;
 use gloo_utils::format::JsValueSerdeExt;
 use mnemos_kernel::{
+    comms::kchannel::KChannel,
     daemons::shells::{graphical_shell_mono, GraphicalShellSettings},
     forth::{self, Forth},
     mnemos_alloc::heap::MnemosAlloc,
@@ -16,7 +17,11 @@ use mnemos_kernel::{
     Kernel, KernelServiceSettings, KernelSettings,
 };
 use pomelo::{
-    sim_drivers::{emb_display::SimDisplay, serial::Serial},
+    sim_drivers::{
+        emb_display::SimDisplay,
+        io::{irq_async, IRQ_TX},
+        serial::Serial,
+    },
     term_iface::{init_term, to_term, Command, SERMUX_TX},
 };
 use tracing::{debug, info, trace, Level};
@@ -73,11 +78,12 @@ async fn kernel_entry() {
     };
 
     // Simulates the kernel main loop being woken by an IRQ.
-    let (mut irq_tx, irq_rx) = mpsc::channel::<()>(4);
+    let (irq_tx, irq_rx) = KChannel::new_async(4).await.split();
+    IRQ_TX.set(irq_tx.clone()).ok();
 
     // TODO: something in the init sequence is not waking up the kernel when it should.
     // work around for now by forcing one irq
-    irq_tx.try_send(()).ok();
+    irq_async().await;
 
     // Initialize the virtual serial port mux
     const SERIAL_FRAME_SIZE: usize = 512;
@@ -88,7 +94,6 @@ async fn kernel_entry() {
     // TODO this vs. default services
     kernel
         .initialize({
-            let irq_tx = irq_tx.clone();
             async move {
                 debug!("initializing loopback UART");
                 Serial::register(
@@ -96,7 +101,6 @@ async fn kernel_entry() {
                     256,
                     SERIAL_FRAME_SIZE * 2, // *1 is not quite enough, required overhead to be +10 bytes for cobs + sermux
                     WellKnown::Loopback.into(),
-                    irq_tx,
                     rx.into_stream(),
                     to_term,
                 )
@@ -114,11 +118,8 @@ async fn kernel_entry() {
     let height = 240;
     kernel
         .initialize({
-            let irq_tx = irq_tx.clone();
             async move {
-                SimDisplay::register(kernel, height, height, irq_tx)
-                    .await
-                    .unwrap();
+                SimDisplay::register(kernel, height, height).await.unwrap();
             }
         })
         .unwrap();
@@ -175,7 +176,6 @@ async fn kernel_entry() {
     init_term(&eternal_cb);
     eternal_cb.forget();
 
-    let mut irq_rx = irq_rx.into_stream().fuse();
     let timer = kernel.timer();
     loop {
         let mut then = chrono::Local::now();
@@ -204,7 +204,7 @@ async fn kernel_entry() {
 
             then = chrono::Local::now();
             select! {
-                _ = irq_rx.next() => {
+                _ = irq_rx.dequeue_async().fuse() => {
                     trace!("timer: WAKE: \"irq\" {tick:?}");
                 },
                 _ = next_fut => {
