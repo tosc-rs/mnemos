@@ -12,7 +12,7 @@ use crate::comms::bbq::GrantR;
 use crate::{
     comms::{bbq, oneshot::Reusable},
     registry::{self, Envelope, KernelHandle, Message, RegisteredDriver},
-    services::simple_serial::SimpleSerialClient,
+    services::simple_serial::{SimpleSerialClient, SimpleSerialService},
     Kernel,
 };
 use maitake::sync::Mutex;
@@ -207,7 +207,7 @@ impl SerialMuxServer {
         loop {
             match SerialMuxServer::register_no_retry(kernel, settings).await {
                 Ok(_) => break,
-                Err(RegistrationError::SerialPortNotFound) => {
+                Err(RegistrationError::Connect(registry::ConnectError::NotFound)) => {
                     // Uart probably isn't registered yet. Try again in a bit
                     kernel.sleep(Duration::from_millis(10)).await;
                 }
@@ -238,7 +238,7 @@ impl SerialMuxServer {
         let max_ports = max_ports as usize;
         let mut serial_handle = SimpleSerialClient::from_registry(kernel)
             .await
-            .ok_or(RegistrationError::SerialPortNotFound)?;
+            .map_err(RegistrationError::Connect)?;
         let serial_port = serial_handle
             .get_port()
             .await
@@ -311,7 +311,8 @@ impl Default for SerialMuxSettings {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum RegistrationError {
-    SerialPortNotFound,
+    /// An error occurred connecting to the [`SimpleSerialService`].
+    Connect(registry::ConnectError<SimpleSerialService>),
     NoSerialPortAvailable,
     MuxAlreadyRegistered,
 }

@@ -1,4 +1,8 @@
-use core::{any::TypeId, marker::PhantomData};
+use core::{
+    any::{self, TypeId},
+    fmt,
+    marker::PhantomData,
+};
 
 use crate::comms::{kchannel, oneshot::Reusable};
 use mnemos_alloc::containers::FixedVec;
@@ -245,7 +249,6 @@ pub enum RegistrationError {
     RegistryFull,
 }
 
-#[derive(Debug, Eq, PartialEq)]
 pub enum ConnectError<D: RegisteredDriver> {
     /// No [`RegisteredDriver`] of this type was found!
     NotFound,
@@ -822,4 +825,70 @@ where
     req_prod
         .enqueue_sync(msg)
         .map_err(|_| UserHandlerError::QueueFull)
+}
+
+// ConnectError
+
+impl<D> PartialEq for ConnectError<D>
+where
+    D: RegisteredDriver,
+    D::ConnectError: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::DriverDead, Self::DriverDead) => true,
+            (Self::NotFound, Self::NotFound) => true,
+            (Self::Rejected(this), Self::Rejected(that)) => this == that,
+            _ => false,
+        }
+    }
+}
+
+impl<D> Eq for ConnectError<D>
+where
+    D: RegisteredDriver,
+    D::ConnectError: Eq,
+{
+}
+
+impl<D> fmt::Debug for ConnectError<D>
+where
+    D: RegisteredDriver,
+    D::ConnectError: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DriverDead => {
+                write!(f, "ConnectError::<{}>::DriverDead", any::type_name::<D>())
+            }
+            Self::NotFound => write!(f, "ConnectError::<{}>::NotFound", any::type_name::<D>()),
+            Self::Rejected(err) => write!(
+                f,
+                "ConnectError::<{}>::Rejected({err:?})",
+                any::type_name::<D>()
+            ),
+        }
+    }
+}
+
+impl<D> fmt::Display for ConnectError<D>
+where
+    D: RegisteredDriver,
+    D::ConnectError: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DriverDead => write!(f, "the {} service has terminated", any::type_name::<D>()),
+            Self::NotFound => write!(
+                f,
+                "no {} service found in the registry",
+                any::type_name::<D>()
+            ),
+            Self::Rejected(err) => write!(
+                f,
+                "the {} service rejected the connection: {err}",
+                any::type_name::<D>()
+            ),
+        }
+    }
 }
