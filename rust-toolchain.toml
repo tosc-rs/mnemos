@@ -12,5 +12,8 @@ targets = [
     "riscv64imac-unknown-none-elf",
     # ESP32-C3
     "riscv32imac-unknown-none-elf",
+    # x86_64
     "x86_64-unknown-none",
+    # pomelo
+    "wasm32-unknown-unknown",
 ]
