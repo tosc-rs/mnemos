@@ -32,7 +32,7 @@ use futures::{channel::mpsc, SinkExt};
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
     mnemos_alloc::containers::HeapArray,
-    registry::{Message, OpenEnvelope, ReplyTo},
+    registry::{Envelope, Message, OpenEnvelope, ReplyTo},
     services::{
         emb_display::{
             DisplayMetadata, EmbDisplayService, FrameChunk, FrameError, FrameKind, MonoChunk,
@@ -46,14 +46,41 @@ use mnemos_kernel::{
     },
     Kernel,
 };
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use wasm_bindgen::prelude::*;
-use wasm_bindgen_futures::spawn_local;
 
 /// Implements the [`EmbDisplayService`] driver using the `embedded-graphics`
 /// simulator.
 pub struct SimDisplay;
 
+async fn key_event_handler(
+    mut irq_tx: mpsc::Sender<()>,
+    key_rx: KConsumer<KeyEvent>,
+    mut keymux: KeyboardMuxClient,
+) {
+    while let Ok(key) = key_rx.dequeue_async().await {
+        match keymux.publish_key(key).await {
+            Ok(_) => {
+                irq_tx.send(()).await.ok();
+            }
+            Err(e) => warn!("could not publish key event: {e:?}"),
+        }
+    }
+}
+
+type DrawCompleteData = (
+    ReplyTo<EmbDisplayService>,
+    Envelope<Result<Response, FrameError>>,
+);
+
+async fn draw_complete_handler(rx: KConsumer<DrawCompleteData>) {
+    while let Ok((reply_tx, response)) = rx.dequeue_async().await {
+        info!("wake: draw complete");
+        if let Err(e) = reply_tx.reply_konly(response).await {
+            warn!("could not send reply: {e:?}");
+        }
+    }
+}
 impl SimDisplay {
     /// Register the driver instance
     ///
@@ -76,7 +103,15 @@ impl SimDisplay {
             height,
         };
 
-        kernel.spawn(commander.run(width, height)).await;
+        kernel
+            .spawn(commander.run(kernel, irq_tx.clone(), width, height))
+            .await;
+
+        let (key_tx, key_rx) = KChannel::new_async(32).await.split();
+        let keymux = KeyboardMuxClient::from_registry(kernel).await;
+        kernel
+            .spawn(key_event_handler(irq_tx.clone(), key_rx, keymux))
+            .await;
 
         kernel
             .with_registry(|reg| reg.register_konly::<EmbDisplayService>(&cmd_prod))
@@ -102,21 +137,9 @@ impl SimDisplay {
                 warn!("unable to handle key event: {key:?}");
                 return;
             };
-            let mut irq_tx = irq_tx.clone();
-
-            spawn_local(async move {
-                // TODO conflict with sleep logic
-                // https://github.com/tosc-rs/mnemos/issues/256
-                let mut keymux = KeyboardMuxClient::from_registry(kernel).await;
-
-                // TODO conflict with sleep logic
-                match keymux.publish_key(event).await {
-                    Ok(_) => {
-                        let _ = irq_tx.send(()).await;
-                    }
-                    Err(e) => warn!("could not publish key event: {e:?}"),
-                }
-            });
+            if let Err(e) = key_tx.enqueue_sync(event) {
+                warn!("could not enqueue key event: {e:?}");
+            }
         });
         graphics_container()
             .add_event_listener_with_callback("keydown", closure.as_ref().unchecked_ref())
@@ -158,7 +181,7 @@ type DrawData = (
 
 impl CommanderTask {
     /// The entrypoint for the driver execution
-    async fn run(self, width: u32, height: u32) {
+    async fn run(self, kernel: &'static Kernel, irq_tx: mpsc::Sender<()>, width: u32, height: u32) {
         let output_settings = OutputSettingsBuilder::new()
             .scale(1)
             .pixel_spacing(1)
@@ -178,16 +201,19 @@ impl CommanderTask {
             width,
             height,
         };
-        self.message_loop(context).await;
+        self.message_loop(kernel, irq_tx, context).await;
     }
 
     /// This loop services incoming client requests.
     ///
     /// Generally, don't handle errors when replying to clients, this indicates that they
     /// sent us a message and "hung up" without waiting for a response.
-    async fn message_loop(&self, context: Context) {
-        debug!("display message loop");
-
+    async fn message_loop(
+        &self,
+        kernel: &'static Kernel,
+        mut irq_tx: mpsc::Sender<()>,
+        context: Context,
+    ) {
         let context = Rc::new(RefCell::new(context));
 
         let (tx, rx): (
@@ -197,18 +223,23 @@ impl CommanderTask {
 
         let rx = Rc::new(RefCell::new(rx));
 
+        let (draw_complete_tx, draw_complete_rx) = KChannel::new_async(32).await.split();
+        kernel.spawn(draw_complete_handler(draw_complete_rx)).await;
+
         let draw_callback = Closure::<dyn FnMut()>::new({
             let rx = rx.clone();
             move || {
                 let rx = rx.borrow_mut();
                 while let Ok((context, env, reply_tx, fc)) = rx.try_recv() {
                     if draw_mono(&fc, &mut context.borrow_mut()).is_ok() {
-                        let response = env.fill(Ok(Response::DrawComplete(fc.into())));
-                        spawn_local(async {
-                            // TODO conflict with sleep logic
-                            // https://github.com/tosc-rs/mnemos/issues/256
-                            reply_tx.reply_konly(response).await.unwrap();
-                        });
+                        let response: Envelope<Result<Response, FrameError>> =
+                            env.fill(Ok(Response::DrawComplete(fc.into())));
+                        match draw_complete_tx.enqueue_sync((reply_tx, response)) {
+                            Ok(_) => {
+                                irq_tx.try_send(()).ok();
+                            }
+                            Err(_) => warn!("could not enqueue draw complete ack"),
+                        }
                     }
                 }
             }

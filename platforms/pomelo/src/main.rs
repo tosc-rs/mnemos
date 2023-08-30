@@ -216,7 +216,7 @@ async fn kernel_entry() {
             trace!("timer: sleeping");
             let next_turn = next_turn
                 .time_to_next_deadline()
-                .unwrap_or(Duration::from_millis(100));
+                .unwrap_or(Duration::from_millis(2000));
             let mut next_fut = TimeoutFuture::new(
                 next_turn
                     .as_millis()
