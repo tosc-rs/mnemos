@@ -196,7 +196,7 @@ impl UsbSerialServer {
 }
 
 #[interrupt]
-fn USB_SERIAL_JTAG() {
+fn USB_DEVICE() {
     let _isr = kernel::isr::Isr::enter();
     let dev = unsafe { USB_DEVICE::steal() };
 
