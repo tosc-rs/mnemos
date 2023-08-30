@@ -197,10 +197,6 @@ docs *FLAGS:
         {{ FLAGS }} \
         {{ _fmt_check_doc }}
 
-# Run a Trunk command
-trunk *CMD: (_get-cargo-bin "trunk")
-    trunk {{ CMD }}
-
 # Run a mdBook command, generating the book's RFC section first.
 mdbook CMD="build --open": (_get-cargo-bin "mdbook")
     ./scripts/rfc2book.py
