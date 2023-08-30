@@ -132,30 +132,6 @@ async fn kernel_entry() {
         .initialize(graphical_shell_mono(kernel, guish))
         .unwrap();
 
-    // synthetic keyboard events
-    if false {
-        spawn_local(async move {
-            let mut irq_tx: mpsc::Sender<()> = irq_tx.clone();
-            let mut keymux = KeyboardMuxClient::from_registry(kernel).await;
-
-            // TODO this sleep is to work around a race where initial events get swallowed
-            kernel.sleep(Duration::from_millis(300)).await;
-            for i in 2..4 {
-                let cmd = format!("1 {i} * .\n");
-                for char in cmd.chars() {
-                    // TODO conflict with sleep logic
-                    // https://github.com/tosc-rs/mnemos/issues/256
-                    keymux.publish_key(KeyEvent::from_char(char)).await.unwrap();
-                    irq_tx.send(()).await.unwrap();
-
-                    // TODO this sleep is to work around another(?) race - this time the '\n'
-                    // seems to be affected exclusively
-                    kernel.sleep(Duration::from_millis(100)).await;
-                }
-            }
-        });
-    }
-
     // go forth and replduce
     spawn_local(async move {
         let port = PortHandle::open(kernel, WellKnown::ForthShell0.into(), 256)
