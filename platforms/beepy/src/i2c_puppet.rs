@@ -35,6 +35,8 @@ impl RegisteredDriver for I2cPuppetService {
     type Request = Request;
     type Response = Response;
     type Error = Error;
+    type Hello = ();
+    type ConnectError = core::convert::Infallible;
 
     const UUID: Uuid = uuid!("f5f26c40-6079-4233-8894-39887b878dec");
 }

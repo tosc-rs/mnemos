@@ -28,10 +28,9 @@ use core::{convert::identity, time::Duration};
 
 use embedded_graphics::{pixelcolor::Gray8, prelude::*, primitives::Rectangle};
 use kernel::{
-    comms::kchannel::{KChannel, KConsumer},
     maitake::sync::{Mutex, WaitQueue},
     mnemos_alloc::containers::{Arc, FixedVec},
-    registry::Message,
+    registry::{self, listener},
     services::emb_display::{
         DisplayMetadata, EmbDisplayService, FrameChunk, FrameError, FrameKind, MonoChunk, Request,
         Response,
@@ -88,9 +87,9 @@ impl SharpDisplay {
         }))
         .await;
 
-        let (cmd_prod, cmd_cons) = KChannel::new_async(2).await.split();
+        let (listener, registration) = registry::Listener::new(2).await;
         let commander = CommanderTask {
-            cmd: cmd_cons,
+            cmd: listener.into_request_stream(2).await,
             ctxt: ctxt.clone(),
             height: HEIGHT as u32,
             width: WIDTH as u32,
@@ -112,7 +111,7 @@ impl SharpDisplay {
         kernel.spawn(draw.draw_run()).await;
 
         kernel
-            .with_registry(|reg| reg.register_konly::<EmbDisplayService>(&cmd_prod))
+            .with_registry(|reg| reg.register_konly::<EmbDisplayService>(registration))
             .await
             .map_err(|_| FrameError::DisplayAlreadyExists)?;
 
@@ -293,7 +292,7 @@ impl Draw {
 /// async function that will process requests, and periodically redraw the
 /// framebuffer.
 struct CommanderTask {
-    cmd: KConsumer<Message<EmbDisplayService>>,
+    cmd: listener::RequestStream<EmbDisplayService>,
     ctxt: Arc<Mutex<Context>>,
     width: u32,
     height: u32,
@@ -308,8 +307,7 @@ impl CommanderTask {
         // Generally, don't handle errors when replying to clients, this indicates that they
         // sent us a message and "hung up" without waiting for a response.
         loop {
-            let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
-            let (req, env, reply_tx) = msg.split();
+            let (req, env, reply_tx) = self.cmd.next_request().await.split();
             match req {
                 Request::Draw(FrameChunk::Mono(fc)) => {
                     tracing::debug!("Processing Draw Mono command");

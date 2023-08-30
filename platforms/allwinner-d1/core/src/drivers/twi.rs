@@ -60,7 +60,7 @@ use core::{
 use crate::ccu::Ccu;
 use d1_pac::{twi, Interrupt, GPIO, TWI0, TWI1, TWI2, TWI3};
 use kernel::{
-    comms::kchannel::{KChannel, KConsumer},
+    comms::kchannel::KConsumer,
     embedded_hal_async::i2c::{ErrorKind, NoAcknowledgeSource},
     mnemos_alloc::containers::FixedVec,
     registry,
@@ -299,23 +299,31 @@ impl I2c0 {
         }
     }
 
-    pub async fn register(self, kernel: &'static Kernel, queued: usize) -> Result<(), ()> {
-        let (tx, rx) = KChannel::new_async(queued).await.split();
+    pub async fn register(
+        self,
+        kernel: &'static Kernel,
+        queued: usize,
+    ) -> Result<(), registry::RegistrationError> {
+        let (listener, registration) = registry::Listener::new(queued).await;
+        let rx = listener.into_request_stream(queued).await;
 
         kernel.spawn(self.run(rx)).await;
         tracing::info!("TWI driver task spawned");
         kernel
-            .with_registry(move |reg| reg.register_konly::<I2cService>(&tx).map_err(drop))
+            .with_registry(move |reg| reg.register_konly::<I2cService>(registration))
             .await?;
 
         Ok(())
     }
 
     #[tracing::instrument(name = "TWI", level = tracing::Level::INFO, skip(self, rx))]
-    async fn run(self, rx: KConsumer<registry::Message<I2cService>>) {
+    async fn run(self, rx: registry::listener::RequestStream<I2cService>) {
         tracing::info!("starting TWI driver task");
-        while let Ok(registry::Message { msg, reply }) = rx.dequeue_async().await {
+        loop {
+            let registry::Message { msg, reply } = rx.next_request().await;
             let addr = msg.body.addr;
+
+            // TODO(eliza): rewrite this to use the `Hello` API instead?
             let (txn, rx) = Transaction::new(msg.body).await;
             if let Err(error) = reply.reply_konly(msg.reply_with_body(|_| Ok(txn))).await {
                 tracing::warn!(?error, "client hung up...");

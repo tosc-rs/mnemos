@@ -156,25 +156,23 @@ impl D1Uart {
         }
     }
 
-    async fn serial_server(handle: BidiHandle, kcons: KConsumer<Message<SimpleSerialService>>) {
-        loop {
-            if let Ok(req) = kcons.dequeue_async().await {
-                let Request::GetPort = req.msg.body;
-                let resp = req.msg.reply_with(Ok(Response::PortHandle { handle }));
-                let _ = req.reply.reply_konly(resp).await;
-                break;
-            }
-        }
+    async fn serial_server(
+        handle: BidiHandle,
+        reqs: registry::listener::RequestStream<SimpleSerialService>,
+    ) {
+        let req = reqs.next_request().await;
+        let Request::GetPort = req.msg.body;
+        let resp = req.msg.reply_with(Ok(Response::PortHandle { handle }));
+        let _ = req.reply.reply_konly(resp).await;
 
         // And deny all further requests after the first
         loop {
-            if let Ok(req) = kcons.dequeue_async().await {
-                let Request::GetPort = req.msg.body;
-                let resp = req
-                    .msg
-                    .reply_with(Err(SimpleSerialError::AlreadyAssignedPort));
-                let _ = req.reply.reply_konly(resp).await;
-            }
+            let req = reqs.next_request().await;
+            let Request::GetPort = req.msg.body;
+            let resp = req
+                .msg
+                .reply_with(Err(SimpleSerialError::AlreadyAssignedPort));
+            let _ = req.reply.reply_konly(resp).await;
         }
     }
 
@@ -186,12 +184,11 @@ impl D1Uart {
     ) -> Result<(), registry::RegistrationError> {
         assert_eq!(tx_channel.channel_index(), 0);
 
-        let (kprod, kcons) = KChannel::<Message<SimpleSerialService>>::new_async(4)
-            .await
-            .split();
+        let (listener, registration) = registry::Listener::new(4).await;
+        let reqs = listener.into_request_stream(4).await;
         let (fifo_a, fifo_b) = new_bidi_channel(cap_in, cap_out).await;
 
-        let _server_hdl = k.spawn(D1Uart::serial_server(fifo_b, kcons)).await;
+        let _server_hdl = k.spawn(D1Uart::serial_server(fifo_b, reqs)).await;
 
         let (prod, cons) = fifo_a.split();
         let _send_hdl = k.spawn(D1Uart::sending(cons, tx_channel)).await;
@@ -201,7 +198,7 @@ impl D1Uart {
         let old = UART_RX.swap(leaked_prod, Ordering::AcqRel);
         assert_eq!(old, null_mut());
 
-        k.with_registry(|reg| reg.register_konly::<SimpleSerialService>(&kprod))
+        k.with_registry(|reg| reg.register_konly::<SimpleSerialService>(registration))
             .await?;
 
         Ok(())
