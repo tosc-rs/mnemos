@@ -19,7 +19,7 @@ chrono = { version = "0.4.26", features = ["wasmbind"] }
 humantime = "2"
 postcard = "1"
 wasm-bindgen = "0.2.87"
-gloo-utils = { version = "0.1", features = ["serde"] }
+gloo-utils = { version = "0.2", features = ["serde"] }
 serde = { version = "1.0.171", features = ["derive"] }
 # waiting for PR merge
 # embedded-graphics-web-simulator = "0.3.0"
