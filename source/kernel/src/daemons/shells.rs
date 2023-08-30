@@ -4,6 +4,16 @@
 
 use core::time::Duration;
 
+use crate::{
+    comms::bbq::{BidiHandle, GrantR},
+    forth::Params,
+    services::{
+        emb_display::{EmbDisplayClient, FrameLocSize, MonoChunk},
+        keyboard::{key_event, KeyClient, KeyClientError},
+        serial_mux::{PortHandle, WellKnown},
+    },
+    Kernel,
+};
 use embedded_graphics::{
     mono_font::{MonoFont, MonoTextStyle},
     pixelcolor::BinaryColor,
@@ -12,21 +22,13 @@ use embedded_graphics::{
     text::Text,
     Drawable,
 };
+
 use futures::FutureExt;
 use input_mgr::RingLine;
+use key_event::KeyEvent;
 use profont::PROFONT_12_POINT;
-use tracing::error;
 
-use crate::{
-    comms::bbq::BidiHandle,
-    forth::{Forth, Params},
-    services::{
-        emb_display::{EmbDisplayClient, FrameLocSize, MonoChunk},
-        keyboard::{key_event, KeyClient},
-        serial_mux::{PortHandle, WellKnown},
-    },
-    Kernel,
-};
+use crate::forth::Forth;
 
 /// Settings for the [sermux_shell] daemon
 #[derive(Debug)]
@@ -119,6 +121,8 @@ pub struct GraphicalShellSettings {
     pub disp_width_px: u32,
     /// Display height in pixels
     pub disp_height_px: u32,
+    /// Redraw debounce time
+    pub redraw_debounce: Duration,
     /// Font used for the shell
     ///
     /// Defaults to [PROFONT_12_POINT]
@@ -132,6 +136,7 @@ impl GraphicalShellSettings {
             forth_settings: Default::default(),
             disp_width_px: width_px,
             disp_height_px: height_px,
+            redraw_debounce: Duration::from_millis(50),
             font: PROFONT_12_POINT,
         }
     }
@@ -146,6 +151,7 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
         forth_settings,
         disp_width_px,
         disp_height_px,
+        redraw_debounce,
         font,
     } = settings;
 
@@ -153,6 +159,7 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
     let mut disp_hdl = EmbDisplayClient::from_registry(k).await;
     let char_y = font.character_size.height;
     let char_x = font.character_size.width + font.character_spacing;
+
     // Draw titlebar
     {
         let mut fc_0 = MonoChunk::allocate_mono(FrameLocSize {
@@ -192,10 +199,7 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
         .into_styled(line_style)
         .draw(&mut fc_0)
         .unwrap();
-
-        if let Err(e) = disp_hdl.draw(fc_0).await {
-            error!("GUI error {e:?}");
-        };
+        disp_hdl.draw(fc_0).await.unwrap();
     }
 
     let style = ring_drawer::BwStyle {
@@ -223,101 +227,129 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
     })
     .await;
 
-    let mut any = true;
-
-    // TODO: https://github.com/tosc-rs/mnemos/issues/255
-    let interval = Duration::from_secs(1) / 20;
-
     loop {
-        if any {
-            ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
-            match disp_hdl.draw_mono(fc_0).await {
-                Ok(fc) => fc_0 = fc,
-                Err(e) => {
-                    error!("GUI error {e:?}");
-                    return;
-                }
-            }
-            any = false;
-        }
+        // Draw to the display
+        ring_drawer::drawer_bw(&mut fc_0, &rline, style.clone()).unwrap();
+        fc_0 = disp_hdl.draw_mono(fc_0).await.unwrap();
 
+        // Poll ONCE until there is progress, with unlimited time
+        io_poll(PollStyle::OneShot, &mut keyboard, &mut rline, &tid_io).await;
+
+        // SOMETHING happened, so now try and grab as many things as possible
+        // until the debounce timer expires
         let _ = k
             .timeout(
-                interval,
-                io_poll(&mut any, &mut keyboard, &mut rline, &tid_io),
+                redraw_debounce,
+                io_poll(PollStyle::Forever, &mut keyboard, &mut rline, &tid_io),
             )
             .await;
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum Productive {
+    No,
+    Yes,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum PollStyle {
+    OneShot,
+    Forever,
+}
+
+/// Poll the IO interfaces until something interesting happens.
+///
+/// If called with `OneShot` style: return as soon as SOMETHING
+/// productive occurs.
+///
+/// If called with `Forever` style: Never return, requires the
+/// use of an outer timeout.
 async fn io_poll(
-    any: &mut bool,
+    style: PollStyle,
     keyboard: &mut KeyClient,
     rline: &mut RingLine<16, 46>,
     tid_io: &BidiHandle,
 ) {
     loop {
-        // loop *just* for skipping released key events
-        futures::select_biased! {
-            event = keyboard.next().fuse() => {
-
-                let Ok(event) = event else {
-                    tracing::error!("Keyboard service is dead???");
-                    continue;
-                };
-                tracing::info!(?event);
-                if event.kind == key_event::Kind::Released {
-                    continue;
-                }
-
-                *any = true;
-
-                if matches!(event.code, key_event::KeyCode::Backspace | key_event::KeyCode::Delete) {
-                    rline.pop_local_char();
-                } else {
-                    let Some(ch) = event.code.into_char() else {
-                        continue;
-                    };
-                    if !ch.is_ascii() {
-                        tracing::warn!("skipping non-ASCII character: {ch:?}");
-                        continue;
-                    }
-
-                    let b = ch as u8;
-                    match rline.append_local_char(b) {
-                        Ok(_) => {}
-                        // backspace
-                        Err(_) if b == 0x7F => rline.pop_local_char(),
-                        Err(_) if b == b'\n' => {
-                            let needed = rline.local_editing_len();
-                            if needed != 0 {
-                                let mut tid_io_wgr = tid_io.producer().send_grant_exact(needed).await;
-                                rline.copy_local_editing_to(&mut tid_io_wgr).unwrap();
-                                tid_io_wgr.commit(needed);
-                                rline.submit_local_editing();
-                            }
-                        }
-                        Err(error) => {
-                            tracing::warn!(?error, "Error appending char: {ch:?}");
-                        }
-                    }
-                }
-
-            },
+        let was_productive = futures::select_biased! {
+            event = keyboard.next().fuse() => kbd_event(event, rline, tid_io).await,
             output = tid_io.consumer().read_grant().fuse() => {
-                let len = output.len();
-                tracing::trace!(len, "Received output from tid_io");
-                for &b in output.iter() {
-                    // TODO(eliza): what if this errors lol
-                    if b == b'\n' {
-                        rline.submit_remote_editing();
-                    } else {
-                        let _ = rline.append_remote_char(b);
-                    }
-                }
-                output.release(len);
+                stdout_event(output, rline).await
+            }
+        };
 
-                *any = true;
+        if let (Productive::Yes, PollStyle::OneShot) = (was_productive, style) {
+            return;
+        }
+    }
+}
+
+async fn stdout_event(output: GrantR, rline: &mut RingLine<16, 46>) -> Productive {
+    let len = output.len();
+    tracing::trace!(len, "Received output from tid_io");
+    for &b in output.iter() {
+        // TODO(eliza): what if this errors lol
+        if b == b'\n' {
+            rline.submit_remote_editing();
+        } else {
+            let _ = rline.append_remote_char(b);
+        }
+    }
+    output.release(len);
+    Productive::Yes
+}
+
+async fn kbd_event(
+    event: Result<KeyEvent, KeyClientError>,
+    rline: &mut RingLine<16, 46>,
+    tid_io: &BidiHandle,
+) -> Productive {
+    let Ok(event) = event else {
+        tracing::error!("Keyboard service is dead???");
+        return Productive::No;
+    };
+    tracing::info!(?event);
+    if event.kind == key_event::Kind::Released {
+        return Productive::No;
+    }
+
+    if matches!(
+        event.code,
+        key_event::KeyCode::Backspace | key_event::KeyCode::Delete
+    ) {
+        rline.pop_local_char();
+        Productive::Yes
+    } else {
+        let Some(ch) = event.code.into_char() else {
+            return Productive::No;
+        };
+        if !ch.is_ascii() {
+            tracing::warn!("skipping non-ASCII character: {ch:?}");
+            return Productive::No;
+        }
+
+        let b = ch as u8;
+        match rline.append_local_char(b) {
+            Ok(_) => Productive::Yes,
+            // backspace
+            Err(_) if b == 0x7F => {
+                rline.pop_local_char();
+                Productive::Yes
+            }
+            Err(_) if b == b'\n' => {
+                let needed = rline.local_editing_len();
+                if needed != 0 {
+                    let mut tid_io_wgr = tid_io.producer().send_grant_exact(needed).await;
+                    rline.copy_local_editing_to(&mut tid_io_wgr).unwrap();
+                    tid_io_wgr.commit(needed);
+                    rline.submit_local_editing();
+                }
+                Productive::Yes
+            }
+            Err(error) => {
+                tracing::warn!(?error, "Error appending char: {ch:?}");
+                Productive::No
             }
         }
     }

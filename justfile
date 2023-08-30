@@ -32,9 +32,7 @@ _rustflags := env_var_or_default("RUSTFLAGS", "")
 
 # If we're running in Github Actions and cargo-action-fmt is installed, then add
 # a command suffix that formats errors.
-#
-# Clippy version also gets -Dwarnings.
-_fmt_clippy := if env_var_or_default("GITHUB_ACTIONS", "") != "true" { "-- -Dwarnings" } else {
+_fmt_clippy := if env_var_or_default("GITHUB_ACTIONS", "") != "true" { "" } else {
     ```
     if command -v cargo-action-fmt >/dev/null 2>&1; then
         echo "--message-format=json -- -Dwarnings | cargo-action-fmt"
@@ -59,6 +57,9 @@ _espbuddy_pkg := "mnemos-esp32c3-buddy"
 _x86_pkg := "mnemos-x86_64-bootloader"
 _x86_bootloader_pkg := "mnemos-x86_64-bootloader"
 
+_pomelo_pkg := "pomelo"
+_pomelo_index_path := "platforms"/_pomelo_pkg/"index.html"
+
 # arguments to pass to all RustDoc invocations
 _rustdoc := _cargo + " doc --no-deps --all-features"
 
@@ -70,7 +71,7 @@ default:
     @just --list
 
 # check all crates, across workspaces
-check *ARGS: && (check-crate _d1_pkg ARGS) (check-crate _espbuddy_pkg ARGS) (check-crate _x86_pkg ARGS) (check-crate _x86_bootloader_pkg ARGS)
+check *ARGS: && (check-crate _d1_pkg ARGS) (check-crate _espbuddy_pkg ARGS) (check-crate _x86_pkg ARGS) (check-crate _x86_bootloader_pkg ARGS) (check-crate _pomelo_pkg ARGS)
     #!/usr/bin/env bash
     set -euxo pipefail
     {{ _cargo }} check \
@@ -89,7 +90,7 @@ check-crate crate *ARGS:
         {{ _fmt_check_doc }}
 
 # run Clippy checks for all crates, across workspaces.
-clippy *ARGS: && (clippy-crate _d1_pkg ARGS) (clippy-crate _espbuddy_pkg ARGS) (clippy-crate _x86_pkg ARGS) (clippy-crate _x86_bootloader_pkg ARGS)
+clippy *ARGS: && (clippy-crate _d1_pkg ARGS) (clippy-crate _espbuddy_pkg ARGS) (clippy-crate _x86_pkg ARGS) (clippy-crate _x86_bootloader_pkg ARGS) (clippy-crate _pomelo_pkg ARGS)
     #!/usr/bin/env bash
     set -euxo pipefail
     {{ _cargo }} clippy \
@@ -171,7 +172,14 @@ melpomene *FLAGS:
     {{ _cargo }} run --profile {{ profile }} --bin melpomene -- {{ FLAGS }}
 
 # build all RustDoc documentation
-all-docs *FLAGS: (docs FLAGS) (docs "-p " + _d1_pkg + FLAGS) (docs "-p " + _espbuddy_pkg + FLAGS)  (docs "-p " + _x86_bootloader_pkg + FLAGS)
+all-docs *FLAGS: (docs FLAGS) (docs "-p " + _d1_pkg + FLAGS) (docs "-p " + _espbuddy_pkg + FLAGS)  (docs "-p " + _x86_bootloader_pkg + FLAGS) (docs "-p " + _pomelo_pkg + FLAGS)
+
+# serve Pomelo and open it in the browser
+pomelo *ARGS="--release --open": (trunk "serve " + ARGS + " " + _pomelo_index_path)
+
+# run an arbitrary Trunk command (used for running WASM projects, such as pomelo)
+trunk CMD: (_get-cargo-bin "trunk")
+    trunk {{ CMD }}
 
 # run RustDoc
 docs *FLAGS:
@@ -185,7 +193,6 @@ docs *FLAGS:
 mdbook CMD="build --open": (_get-cargo-bin "mdbook")
     ./scripts/rfc2book.py
     cd book && mdbook {{ CMD }}
-
 
 # Run an Oranda command, generating the book's RFC section first.
 oranda CMD="dev": (_get-cargo-bin "oranda")
@@ -217,7 +224,7 @@ _get-cargo-bin name:
     set -euo pipefail
     source "./scripts/_util.sh"
 
-    if command -v {{ name }}; then
+    if command -v {{ name }} >/dev/null 2>&1; then
         status "Found" "{{ name }}"
         exit 0
     fi

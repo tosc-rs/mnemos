@@ -16,14 +16,28 @@
       url = "github:numtide/flake-utils";
       inputs.nixpkgs.follows = "nixpkgs";
     };
+
+    # see https://fasterthanli.me/series/building-a-rust-service-with-nix/part-10#a-flake-with-a-dev-shell
+    rust-overlay = {
+      url = "github:oxalica/rust-overlay";
+      inputs = {
+        nixpkgs.follows = "nixpkgs";
+        flake-utils.follows = "flake-utils";
+      };
+    };
   };
 
-  outputs = { self, nixpkgs, flake-utils, oranda }:
+  outputs = { self, nixpkgs, flake-utils, oranda, rust-overlay }:
     flake-utils.lib.eachDefaultSystem (system:
-      let pkgs = import nixpkgs { inherit system; };
+      let
+        overlays = [ (import rust-overlay) ];
+        pkgs = import nixpkgs { inherit system overlays; };
+        # use the Rust toolchain specified in the project's rust-toolchain.toml
+        rustToolchain = pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile
+          ./rust-toolchain.toml;
       in {
         devShell = with pkgs;
-          mkShell {
+          mkShell rec {
             name = "mnemos-dev";
 
             nativeBuildInputs = [
@@ -32,21 +46,11 @@
               pkg-config
               cmake
 
-              # these are in nativeBuildInputs as they are dependencies of the
-              # host tools.
-              # TODO(eliza): add separate packages for each of crowtty,
-              # melpomene, and other host tools...
-              systemd
-              udev
-              SDL2
-              SDL2.dev
-
               # compilers
-              rustup
+              rustToolchain
               clang
 
               # devtools
-              rust-analyzer
               just
               cargo-nextest
               # rust esp32 tools
@@ -57,13 +61,26 @@
               # for building the website
               oranda.packages.${system}.default
               python3 # needed by rfc2book
+              # for building pomelo
+              trunk
             ];
 
-            buildInputs = [ libclang zlib ];
+            buildInputs = [
+              libclang
+              zlib
+              # dependencies of the host tools
+              # TODO(eliza): add separate packages for each of crowtty,
+              # melpomene, and other host tools...
+              systemd
+              udev.dev
+              SDL2
+              SDL2.dev
+            ];
 
             # Fix missing OpenSSL
             PKG_CONFIG_PATH = "${pkgs.openssl.dev}/lib/pkgconfig";
             LIBCLANG_PATH = "${llvmPackages.libclang.lib}/lib";
+            LD_LIBRARY_PATH = "${lib.makeLibraryPath buildInputs}";
           };
       });
 }
