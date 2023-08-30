@@ -59,6 +59,8 @@ _espbuddy_pkg := "mnemos-esp32c3-buddy"
 _x86_pkg := "mnemos-x86_64-bootloader"
 _x86_bootloader_pkg := "mnemos-x86_64-bootloader"
 
+_mn_pkg := "manganese"
+
 # arguments to pass to all RustDoc invocations
 _rustdoc := _cargo + " doc --no-deps --all-features"
 
@@ -70,7 +72,7 @@ default:
     @just --list
 
 # check all crates, across workspaces
-check *ARGS: && (check-crate _d1_pkg ARGS) (check-crate _espbuddy_pkg ARGS) (check-crate _x86_pkg ARGS) (check-crate _x86_bootloader_pkg ARGS)
+check *ARGS: && (check-crate _d1_pkg ARGS) (check-crate _espbuddy_pkg ARGS) (check-crate _x86_pkg ARGS) (check-crate _x86_bootloader_pkg ARGS) (check-crate _mn_pkg ARGS)
     #!/usr/bin/env bash
     set -euxo pipefail
     {{ _cargo }} check \
@@ -83,13 +85,14 @@ check-crate crate *ARGS:
     #!/usr/bin/env bash
     set -euxo pipefail
     {{ _cargo }} check \
-        --lib --bins --examples --tests --benches --all-features \
         --package {{ crate }} \
+        {{ if crate == _mn_pkg { "" } else { "--all-features --lib" } }} \
+        --bins --examples --tests --benches \
         {{ ARGS }} \
         {{ _fmt_check_doc }}
 
 # run Clippy checks for all crates, across workspaces.
-clippy *ARGS: && (clippy-crate _d1_pkg ARGS) (clippy-crate _espbuddy_pkg ARGS) (clippy-crate _x86_pkg ARGS) (clippy-crate _x86_bootloader_pkg ARGS)
+clippy *ARGS: && (clippy-crate _d1_pkg ARGS) (clippy-crate _espbuddy_pkg ARGS) (clippy-crate _x86_pkg ARGS) (clippy-crate _x86_bootloader_pkg ARGS) (clippy-crate _mn_pkg ARGS)
     #!/usr/bin/env bash
     set -euxo pipefail
     {{ _cargo }} clippy \
@@ -103,8 +106,9 @@ clippy-crate crate *ARGS:
     #!/usr/bin/env bash
     set -euxo pipefail
     {{ _cargo }} clippy \
-        --lib --bins --examples --tests --benches \
         --package {{ crate }} \
+        {{ if crate == _mn_pkg { "" } else { "--all-features --lib" } }} \
+        --bins --examples --tests --benches \
         {{ ARGS }} \
         {{ _fmt_clippy }}
 
@@ -122,6 +126,7 @@ fmt:
     {{ _cargo }} fmt --package {{ _espbuddy_pkg }}
     {{ _cargo }} fmt --package {{ _x86_pkg }}
     {{ _cargo }} fmt --package {{ _x86_bootloader_pkg }}
+    {{ _cargo }} fmt --package {{ _mn_pkg }}
 
 # build a Mnemos binary for the Allwinner D1
 build-d1 board='mq-pro': (_get-cargo-command "objcopy" "cargo-binutils")
@@ -174,7 +179,7 @@ melpomene *FLAGS:
     {{ _cargo }} run --profile {{ profile }} --bin melpomene -- {{ FLAGS }}
 
 # build all RustDoc documentation
-all-docs *FLAGS: (docs FLAGS) (docs "-p " + _d1_pkg + FLAGS) (docs "-p " + _espbuddy_pkg + FLAGS)  (docs "-p " + _x86_bootloader_pkg + FLAGS)
+all-docs *FLAGS: (docs FLAGS) (docs "-p " + _d1_pkg + FLAGS) (docs "-p " + _espbuddy_pkg + FLAGS) (docs "-p " + _x86_bootloader_pkg + FLAGS) ( docs "-p" + _mn_pkg + FLAGS)
 
 # run RustDoc
 docs *FLAGS:

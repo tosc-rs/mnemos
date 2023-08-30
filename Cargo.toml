@@ -45,11 +45,11 @@ default-members = [
     "source/*",
 
     # tools
-    # TODO(eliza): maybe we should skip manganese by default so we don't always build its bin deps?
-    "tools/*",
-    # "tools/crowtty",
-    # "tools/dumbloader",
-    # "tools/f3repl",
+    # note that this skips `manganese` by default, so that we don't build its
+    # dependency features when running `cargo check --all-features` and similar.
+    "tools/crowtty",
+    "tools/dumbloader",
+    "tools/f3repl",
 
     # platforms
     "platforms/allwinner-d1/core",
