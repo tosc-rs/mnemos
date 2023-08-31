@@ -10,17 +10,18 @@
 //! of use.
 use core::time::Duration;
 
+use embedded_graphics::{
+    pixelcolor::{BinaryColor, Gray8},
+    prelude::*,
+};
+use uuid::Uuid;
+
 use crate::{
     comms::oneshot::Reusable,
     mnemos_alloc::containers::HeapArray,
     registry::{self, Envelope, KernelHandle, RegisteredDriver},
     Kernel,
 };
-use embedded_graphics::{
-    pixelcolor::{BinaryColor, Gray8},
-    prelude::*,
-};
-use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Service Definition

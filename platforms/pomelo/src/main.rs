@@ -5,21 +5,26 @@ use futures::{
     channel::mpsc::{self},
     FutureExt,
 };
-use futures_util::{select, StreamExt};
+use futures_util::select;
 use gloo::timers::future::TimeoutFuture;
 use gloo_utils::format::JsValueSerdeExt;
-use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
+    comms::kchannel::KChannel,
+    daemons::shells::{graphical_shell_mono, GraphicalShellSettings},
     forth::{self, Forth},
+    mnemos_alloc::heap::MnemosAlloc,
     services::serial_mux::{PortHandle, WellKnown},
-    Kernel, KernelSettings,
+    Kernel, KernelServiceSettings, KernelSettings,
 };
 use pomelo::{
-    sim_drivers::serial::Serial,
+    sim_drivers::{
+        emb_display::SimDisplay,
+        io::{irq_async, IRQ_TX},
+        serial::Serial,
+    },
     term_iface::{init_term, to_term, Command, SERMUX_TX},
 };
-#[allow(unused_imports)]
-use tracing::{debug, error, info, trace, Instrument, Level};
+use tracing::{debug, info, trace, Level};
 use tracing_subscriber::{
     filter::{self},
     prelude::*,
@@ -43,6 +48,7 @@ fn setup_tracing() {
     tracing::subscriber::set_global_default(subscriber).unwrap();
 }
 fn main() {
+    console_error_panic_hook::set_once();
     setup_tracing();
 
     let _span: tracing::span::EnteredSpan = tracing::info_span!("Pomelo").entered();
@@ -72,7 +78,12 @@ async fn kernel_entry() {
     };
 
     // Simulates the kernel main loop being woken by an IRQ.
-    let (irq_tx, irq_rx) = mpsc::channel::<()>(4);
+    let (irq_tx, irq_rx) = KChannel::new_async(4).await.split();
+    IRQ_TX.set(irq_tx.clone()).ok();
+
+    // TODO: something in the init sequence is not waking up the kernel when it should.
+    // work around for now by forcing one irq
+    irq_async().await;
 
     // Initialize the virtual serial port mux
     const SERIAL_FRAME_SIZE: usize = 512;
@@ -80,6 +91,7 @@ async fn kernel_entry() {
     SERMUX_TX.set(tx.clone()).unwrap();
 
     // Initialize a loopback UART
+    // TODO this vs. default services
     kernel
         .initialize({
             async move {
@@ -89,7 +101,6 @@ async fn kernel_entry() {
                     256,
                     SERIAL_FRAME_SIZE * 2, // *1 is not quite enough, required overhead to be +10 bytes for cobs + sermux
                     WellKnown::Loopback.into(),
-                    irq_tx.clone(),
                     rx.into_stream(),
                     to_term,
                 )
@@ -100,18 +111,38 @@ async fn kernel_entry() {
         })
         .unwrap();
 
-    kernel.initialize_default_services(Default::default());
+    let mut service_settings: KernelServiceSettings = Default::default();
+    service_settings.sermux_hello.enabled = false;
+    kernel.initialize_default_services(service_settings);
+    let width = 240;
+    let height = 240;
+    kernel
+        .initialize({
+            async move {
+                SimDisplay::register(kernel, height, height).await.unwrap();
+            }
+        })
+        .unwrap();
+
+    let mut guish = GraphicalShellSettings::with_display_size(width, height);
+
+    guish.capacity = Default::default();
+    guish.forth_settings = Default::default();
+    kernel
+        .initialize(graphical_shell_mono(kernel, guish))
+        .unwrap();
 
     // go forth and replduce
-    spawn_local(async move {
-        let port = PortHandle::open(kernel, WellKnown::ForthShell0.into(), 256)
-            .await
-            .unwrap();
-        let (task, tid_io) = Forth::new(kernel, forth::Params::default())
-            .await
-            .expect("Forth spawning must succeed");
-        kernel.spawn(task.run()).await;
-        kernel
+    kernel
+        .spawn(async move {
+            let port = PortHandle::open(kernel, WellKnown::ForthShell0.into(), 256)
+                .await
+                .unwrap();
+            let (task, tid_io) = Forth::new(kernel, forth::Params::default())
+                .await
+                .expect("Forth spawning must succeed");
+            kernel.spawn(task.run()).await;
+            kernel
             .spawn(async move {
                 loop {
                     futures::select_biased! {
@@ -133,7 +164,8 @@ async fn kernel_entry() {
                 }
             })
             .await;
-    });
+        })
+        .await;
 
     // link to browser terminal: receive commands, dispatch bacon
     let eternal_cb: Closure<dyn Fn(JsValue)> = Closure::new(|val: JsValue| {
@@ -144,7 +176,6 @@ async fn kernel_entry() {
     init_term(&eternal_cb);
     eternal_cb.forget();
 
-    let mut irq_rx = irq_rx.into_stream().fuse();
     let timer = kernel.timer();
     loop {
         let mut then = chrono::Local::now();
@@ -154,33 +185,36 @@ async fn kernel_entry() {
             .to_std()
             .unwrap();
         trace!("timer - before sleep: advance {dt:?}");
-        let next_turn = timer
-            .force_advance(dt)
-            .time_to_next_deadline()
-            .unwrap_or(Duration::from_secs(1));
-        trace!("timer: before sleep: next turn in {next_turn:?}");
-        let mut next_fut = TimeoutFuture::new(
-            next_turn
-                .as_millis()
-                .try_into()
-                .expect("next turn is too far in the future"),
-        )
-        .fuse();
+        let next_turn = timer.force_advance(dt);
 
-        then = chrono::Local::now();
-        let now = select! {
-            _ = irq_rx.next() => {
-                trace!("timer: WAKE: \"irq\" {tick:?}");
-                chrono::Local::now()
-            },
-            _ = next_fut => {
-                let tick = kernel.tick();
-                trace!("timer: WAKE: timer {tick:?}");
-                chrono::Local::now()
+        trace!("timer: before sleep: next turn in {next_turn:?}");
+
+        if next_turn.expired == 0 || !tick.has_remaining {
+            trace!("timer: sleeping");
+            let next_turn = next_turn
+                .time_to_next_deadline()
+                .unwrap_or(Duration::from_millis(1000));
+            let mut next_fut = TimeoutFuture::new(
+                next_turn
+                    .as_millis()
+                    .try_into()
+                    .expect("next turn is too far in the future"),
+            )
+            .fuse();
+
+            then = chrono::Local::now();
+            select! {
+                _ = irq_rx.dequeue_async().fuse() => {
+                    trace!("timer: WAKE: \"irq\" {tick:?}");
+                },
+                _ = next_fut => {
+                    trace!("timer: WAKE: timer {tick:?}");
+                }
             }
-        };
-        let dt = now.signed_duration_since(then).to_std().unwrap();
-        trace!("timer: slept for {dt:?}");
-        kernel.timer().force_advance(dt);
+            let now = chrono::Local::now();
+            let dt = now.signed_duration_since(then).to_std().unwrap();
+            trace!("timer: slept for {dt:?}");
+            kernel.timer().force_advance(dt);
+        }
     }
 }
