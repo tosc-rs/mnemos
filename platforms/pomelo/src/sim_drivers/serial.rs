@@ -31,16 +31,15 @@ impl Serial {
         recv_callback: fn(String),
     ) -> Result<(), registry::RegistrationError> {
         let (a_ring, b_ring) = new_bidi_channel(incoming_size, outgoing_size).await;
-        let (prod, cons) = KChannel::<Message<SimpleSerialService>>::new_async(2)
-            .await
-            .split();
+        let (listener, registration) = registry::Listener::new(2).await;
+        let cons = listener.into_request_stream(2).await;
 
         kernel
             .spawn(async move {
                 let handle = b_ring;
 
                 // Reply to the first request, giving away the serial port
-                let req = cons.dequeue_async().await.map_err(drop).unwrap();
+                let req = cons.next_request().await;
                 let Request::GetPort = req.msg.body;
                 let resp = req.msg.reply_with(Ok(Response::PortHandle { handle }));
 
@@ -48,7 +47,7 @@ impl Serial {
                 trace!("sent serial port handle");
                 // And deny all further requests after the first
                 loop {
-                    let req = cons.dequeue_async().await.map_err(drop).unwrap();
+                    let req = cons.next_request().await;
                     let Request::GetPort = req.msg.body;
                     let resp = req
                         .msg
@@ -71,7 +70,7 @@ impl Serial {
             )
             .await;
         kernel
-            .with_registry(|reg| reg.register_konly::<SimpleSerialService>(&prod))
+            .with_registry(|reg| reg.register_konly::<SimpleSerialService>(registration))
             .await
     }
 }

@@ -34,7 +34,7 @@ use melpo_config::DisplayConfig;
 use mnemos_alloc::containers::{Arc, HeapArray};
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
-    registry::Message,
+    registry::{self, Message},
     services::{
         emb_display::{
             DisplayMetadata, EmbDisplayService, FrameChunk, FrameError, FrameKind, MonoChunk,
@@ -66,11 +66,12 @@ impl SimDisplay {
         height: u32,
     ) -> Result<(), FrameError> {
         tracing::debug!("initializing SimDisplay server ({width}x{height})...");
+        let (listener, registration) = registry::Listener::new(settings.kchannel_depth).await;
+        let cmd = listener.into_request_stream(settings.kchannel_depth).await;
 
-        let (cmd_prod, cmd_cons) = KChannel::new_async(settings.kchannel_depth).await.split();
         let commander = CommanderTask {
             kernel,
-            cmd: cmd_cons,
+            cmd,
             width,
             height,
         };
@@ -78,7 +79,7 @@ impl SimDisplay {
         kernel.spawn(commander.run(width, height, settings)).await;
 
         kernel
-            .with_registry(|reg| reg.register_konly::<EmbDisplayService>(&cmd_prod))
+            .with_registry(|reg| reg.register_konly::<EmbDisplayService>(registration))
             .await
             .map_err(|_| FrameError::DisplayAlreadyExists)?;
 
@@ -97,7 +98,7 @@ impl SimDisplay {
 /// framebuffer.
 struct CommanderTask {
     kernel: &'static Kernel,
-    cmd: KConsumer<Message<EmbDisplayService>>,
+    cmd: registry::listener::RequestStream<EmbDisplayService>,
     width: u32,
     height: u32,
 }
@@ -158,7 +159,7 @@ impl CommanderTask {
     /// sent us a message and "hung up" without waiting for a response.
     async fn message_loop(&self, mutex: Arc<Mutex<Option<Context>>>) {
         loop {
-            let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
+            let msg = self.cmd.next_request().await;
             let (req, env, reply_tx) = msg.split();
             match req {
                 Request::Draw(FrameChunk::Mono(fc)) => {

@@ -14,7 +14,7 @@ use crate::dmac::{
 };
 use d1_pac::{GPIO, SPI_DBI};
 use kernel::{
-    comms::{kchannel::KChannel, oneshot::Reusable},
+    comms::oneshot::Reusable,
     maitake::sync::WaitCell,
     mnemos_alloc::containers::FixedVec,
     registry::{self, uuid, Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo, Uuid},
