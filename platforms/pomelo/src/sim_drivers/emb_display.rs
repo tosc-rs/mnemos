@@ -31,7 +31,7 @@ use embedded_graphics_web_simulator::{
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
     mnemos_alloc::containers::HeapArray,
-    registry::{self, listener, Envelope, Message, OpenEnvelope, ReplyTo},
+    registry::{self, listener, Envelope, OpenEnvelope, ReplyTo},
     services::{
         emb_display::{
             DisplayMetadata, EmbDisplayService, FrameChunk, FrameError, FrameKind, MonoChunk,

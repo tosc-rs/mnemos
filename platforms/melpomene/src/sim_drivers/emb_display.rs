@@ -33,8 +33,7 @@ use maitake::sync::Mutex;
 use melpo_config::DisplayConfig;
 use mnemos_alloc::containers::{Arc, HeapArray};
 use mnemos_kernel::{
-    comms::kchannel::{KChannel, KConsumer},
-    registry::{self, Message},
+    registry,
     services::{
         emb_display::{
             DisplayMetadata, EmbDisplayService, FrameChunk, FrameError, FrameKind, MonoChunk,

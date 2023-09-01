@@ -16,13 +16,10 @@ use crate::dmac::{
     Channel, ChannelMode,
 };
 use kernel::{
-    comms::{
-        bbq::{new_bidi_channel, BidiHandle, Consumer, GrantW, SpscProducer},
-        kchannel::{KChannel, KConsumer},
-    },
+    comms::bbq::{new_bidi_channel, BidiHandle, Consumer, GrantW, SpscProducer},
     maitake::sync::WaitCell,
     mnemos_alloc::containers::Box,
-    registry::{self, Message},
+    registry,
     services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     Kernel,
 };

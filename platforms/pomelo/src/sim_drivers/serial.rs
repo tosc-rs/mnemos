@@ -6,11 +6,8 @@ use futures::{
 };
 use futures_util::{FutureExt, Stream, StreamExt};
 use mnemos_kernel::{
-    comms::{
-        bbq::{new_bidi_channel, BidiHandle},
-        kchannel::KChannel,
-    },
-    registry::{self, Message},
+    comms::bbq::{new_bidi_channel, BidiHandle},
+    registry,
     services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     Kernel,
 };

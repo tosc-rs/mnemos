@@ -2,12 +2,9 @@ use esp32c3_hal::{peripherals::USB_DEVICE, prelude::*};
 
 use futures::FutureExt;
 use kernel::{
-    comms::{
-        bbq::{new_bidi_channel, BidiHandle, GrantW},
-        kchannel::{KChannel, KConsumer},
-    },
+    comms::bbq::{new_bidi_channel, BidiHandle, GrantW},
     maitake::sync::WaitCell,
-    registry::{self, Message},
+    registry,
     services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     Kernel,
 };

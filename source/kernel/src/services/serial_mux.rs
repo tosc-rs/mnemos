@@ -375,7 +375,7 @@ impl MuxingInfo {
 // impl CommanderTask
 
 impl CommanderTask {
-    async fn run(mut self) {
+    async fn run(self) {
         loop {
             let Message { msg: req, reply } = self.cmd.next_request().await;
             match req.body {
