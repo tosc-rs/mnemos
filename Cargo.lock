@@ -5040,6 +5040,7 @@ dependencies = [
  "tracing 0.1.37",
  "tracing-core 0.1.31",
  "tracing-serde-structured",
+ "tracing-subscriber",
  "uuid 1.4.1",
  "vergen",
 ]

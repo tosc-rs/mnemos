@@ -67,7 +67,7 @@
 //! The pieces that exist currently are likely to be removed or reworked heavily before they are
 //! usable, and should be considered nonfunctional at the moment.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![allow(clippy::missing_safety_doc)]
 #![feature(impl_trait_in_assoc_type)]
 #![feature(async_fn_in_trait)] // needed for `embedded-hal-async`
@@ -84,6 +84,9 @@ pub mod retry;
 #[cfg(feature = "serial-trace")]
 pub mod serial_trace;
 pub mod services;
+
+#[cfg(test)]
+pub(crate) mod test_util;
 
 use abi::{
     bbqueue_ipc::BBBuffer,

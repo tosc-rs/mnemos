@@ -141,3 +141,16 @@ vergen = { version = "8.0.0", features = ["cargo", "git", "gitcl", "rustc",] }
 version = "0.3.21"
 features = ["async-await", "executor"]
 default-features = false
+
+[dev-dependencies.mnemos-alloc]
+version = "0.1.0"
+features = ["use-std"]
+path = "../alloc"
+
+[dev-dependencies.tracing-subscriber]
+version = "0.3.17"
+features = ["fmt", "env-filter"]
+
+[dev-dependencies.postcard]
+version = "1.0.1"
+features = ["use-std"]

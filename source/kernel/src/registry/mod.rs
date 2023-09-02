@@ -20,8 +20,10 @@ use crate::comms::{
 };
 
 pub mod listener;
-
 pub use self::listener::{Listener, Registration};
+
+#[cfg(test)]
+mod tests;
 
 /// A partial list of known UUIDs of driver services
 pub mod known_uuids {
@@ -608,9 +610,9 @@ impl Registry {
     /// Driver services registered with [Registry::register_konly] cannot be retrieved via
     /// a call to [Registry::connect_userspace_with_hello].
     #[tracing::instrument(
-        name = "Registry::connect_userspace",
+        name = "Registry::connect_userspace_with_hello",
         level = "debug",
-        skip(self),
+        skip(self, scheduler),
         fields(uuid = ?RD::UUID),
     )]
     pub async fn connect_userspace_with_hello<RD>(
