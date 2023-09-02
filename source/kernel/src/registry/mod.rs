@@ -58,9 +58,11 @@ pub mod known_uuids {
 
 /// A marker trait designating a registerable driver service.
 ///
-/// Typically used with [Registry::register] or [Registry::register_konly].
-/// Can typically be retrieved by [Registry::get] or [Registry::get_userspace]
-/// After the service has been registered.
+/// Typically used with [`Registry::register`] or [`Registry::register_konly`].
+/// A connection to the service can be established using [`Registry::connect`],
+/// [`Registry::connect_with_hello`], or
+/// [`Registry::connect_userspace_with_hello`] (depending on the service), after
+/// the service has been registered..
 pub trait RegisteredDriver {
     /// This is the type of the request sent TO the driver service
     type Request: 'static;
@@ -71,10 +73,22 @@ pub trait RegisteredDriver {
     /// This is the type of an UNSUCCESSFUL response sent FROM the driver service
     type Error: 'static;
 
+    /// An initial message sent to the service by a client when establishing a
+    /// connection.
+    ///
+    /// This may be used by the service to route connections to specific
+    /// resources owned by that service, or to determine whether or not the
+    /// connection can be established. If the service does not require initial
+    /// data from the client, this type can be set to [`()`].
     // XXX(eliza): ideally, we could default `Hello` to () and `ConnectError` to
     // `Infallible`...do we want to do that? it requires a nightly feature.
     type Hello: 'static;
 
+    /// Errors returned by the service if an incoming connection handshake is
+    /// rejected.
+    ///
+    /// If the service does not reject connections, this should be set to
+    /// [`core::convert::Infallible`].
     type ConnectError: 'static;
 
     /// This is the UUID of the driver service
@@ -250,6 +264,8 @@ pub enum RegistrationError {
     RegistryFull,
 }
 
+/// Errors returned by [`Registry::connect`] and
+/// [`Registry::connect_with_hello`].
 pub enum ConnectError<D: RegisteredDriver> {
     /// No [`RegisteredDriver`] of this type was found!
     NotFound,
@@ -260,9 +276,14 @@ pub enum ConnectError<D: RegisteredDriver> {
     DriverDead,
 }
 
+/// Errors returned by [`Registry::connect_userspace_with_hello`]
 pub enum UserConnectError<D: RegisteredDriver> {
+    /// A connection error occurred: either the driver was not found in the
+    /// registry, it was no longer running, or it rejected the connection.
     Connect(ConnectError<D>),
-    Handler(UserHandlerError),
+    /// Deserializing the userspace `Hello` message failed.
+    DeserializationFailed(postcard::Error),
+    /// The requested driver is not exposed.
     NotUserspace,
 }
 
@@ -334,7 +355,7 @@ type ErasedHandshake = unsafe fn(
     &[u8],
     &ErasedKProducer,
     ptr::NonNull<()>,
-) -> maitake::task::JoinHandle<Result<(), UserHandlerError>>;
+) -> maitake::task::JoinHandle<Result<(), postcard::Error>>;
 
 /// The payload of a registry item.
 ///
@@ -476,10 +497,10 @@ impl Registry {
     ///
     /// # Returns
     ///
-    /// - [`Ok`]`(`[KernelHandle`]`<RD>)` if the requested service was found and
+    /// - [`Ok`]`(`[KernelHandle`]`)` if the requested service was found and
     ///   a connection was successfully established.
     ///
-    /// - [`Err`]`(`[`ConnectError`]`<RD>)` if the requested service was not
+    /// - [`Err`]`(`[`ConnectError`]`)` if the requested service was not
     ///   found in the registry, or if the service [rejected] the incoming
     ///   connection.
     ///
@@ -556,10 +577,10 @@ impl Registry {
     ///
     /// # Returns
     ///
-    /// - [`Ok`]`(`[KernelHandle`]`<RD>)` if the requested service was found and
+    /// - [`Ok`]`(`[KernelHandle`]`)` if the requested service was found and
     ///   a connection was successfully established.
     ///
-    /// - [`Err`]`(`[`ConnectError`]`<RD>)` if the requested service was not
+    /// - [`Err`]`(`[`ConnectError`]`)` if the requested service was not
     ///   found in the registry, or if the service [rejected] the incoming
     ///   connection.
     ///
@@ -578,13 +599,14 @@ impl Registry {
     }
 
     /// Get a handle capable of processing serialized userspace messages to a
-    /// registered driver service.
+    /// registered driver service, given a byte buffer for the userspace
+    /// [`RegisteredDriver::Hello`] message.
     ///
     /// The driver service MUST have already been registered using [Registry::register] or
     /// prior to making this call, otherwise no handle will be returned.
     ///
     /// Driver services registered with [Registry::register_konly] cannot be retrieved via
-    /// a call to [Registry::connect_userspace].
+    /// a call to [Registry::connect_userspace_with_hello].
     #[tracing::instrument(
         name = "Registry::connect_userspace",
         level = "debug",
@@ -627,14 +649,8 @@ impl Registry {
             // never cancel it.
             Err(_) => unreachable!("handshake task should not be canceled"),
             // Couldn't deserialize the userspace handshake bytes!
-            Ok(Err(UserHandlerError::DeserializationFailed)) => {
-                return Err(UserConnectError::Handler(
-                    UserHandlerError::DeserializationFailed,
-                ))
-            }
-            // This error is never returned.
-            Ok(Err(UserHandlerError::QueueFull)) => {
-                unreachable!("erased_handshake never returns QueueFull!")
+            Ok(Err(error)) => {
+                return Err(UserConnectError::DeserializationFailed(error));
             }
             // Safe to touch the out pointer!
             Ok(Ok(())) => unsafe {
@@ -989,7 +1005,7 @@ unsafe fn erased_user_handshake<RD>(
     hello_bytes: &[u8],
     conn_tx: &ErasedKProducer,
     outptr: core::ptr::NonNull<()>,
-) -> maitake::task::JoinHandle<Result<(), UserHandlerError>>
+) -> maitake::task::JoinHandle<Result<(), postcard::Error>>
 where
     RD: RegisteredDriver + 'static,
     RD::Hello: Serialize + DeserializeOwned,
@@ -1003,7 +1019,7 @@ where
 
     // spawn a task to allow us to perform async work from a type-erased context
     scheduler.spawn(async move {
-        let hello = hello.map_err(|_| UserHandlerError::DeserializationFailed)?;
+        let hello = hello?;
 
         // TODO(eliza): it would be nice if we could reuse the oneshot receiver
         // every time this driver is connected to? This would require type
@@ -1130,7 +1146,7 @@ where
 {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::Handler(this), Self::Handler(that)) => this == that,
+            (Self::DeserializationFailed(this), Self::DeserializationFailed(that)) => this == that,
             (Self::Connect(this), Self::Connect(that)) => this == that,
             (Self::NotUserspace, Self::NotUserspace) => true,
             _ => false,
@@ -1152,9 +1168,9 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Handler(err) => write!(
+            Self::DeserializationFailed(err) => write!(
                 f,
-                "UserConnectError::<{}>::Handler({err:?})",
+                "UserConnectError::<{}>::DeserializationFailed({err:?})",
                 any::type_name::<D>()
             ),
             Self::Connect(err) => write!(f, "UserConnectError::Connect({err:?})"),
@@ -1175,7 +1191,11 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Connect(err) => write!(f, "failed to connect from userspace: {err}"),
-            Self::Handler(err) => write!(f, "failed to connect from userspace: {err}"),
+            Self::DeserializationFailed(err) => write!(
+                f,
+                "failed to deserialize userspace Hello for the {} service: {err}",
+                any::type_name::<D>()
+            ),
             Self::NotUserspace => write!(
                 f,
                 "the {} service is not exposed to userspace",

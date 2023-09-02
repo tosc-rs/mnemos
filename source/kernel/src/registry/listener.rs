@@ -1,3 +1,6 @@
+//! A [`Listener`] is used by a [`RegisteredDriver`] to [accept incoming
+//! connections](Handshake) from clients.
+#![warn(missing_docs)]
 use super::{Message, RegisteredDriver};
 use crate::comms::{
     kchannel::{KChannel, KConsumer, KProducer},
@@ -99,6 +102,11 @@ type Channel<D> = KProducer<Message<D>>;
 // === impl Listener ===
 
 impl<D: RegisteredDriver> Listener<D> {
+    /// Returns a new `Listener` and an associated [`Registration`].
+    ///
+    /// The `Listener`'s channel will have capacity for up to
+    /// `incoming_capacity` un-accepted connections before clients have to wait
+    /// to send a connection.
     pub async fn new(incoming_capacity: usize) -> (Self, Registration<D>) {
         let (tx, rx) = KChannel::new(incoming_capacity).split();
         let registration = Registration { tx };
@@ -113,7 +121,7 @@ impl<D: RegisteredDriver> Listener<D> {
     /// will yield until one is ready.
     ///
     /// To return an incoming connection if one is available, *without* waiting,
-    /// use the [`try_next`](Self::try_next) method.
+    /// use the [`try_handshake`](Self::try_handshake) method.
     pub async fn handshake(&self) -> Handshake<D> {
         self.rx
             .dequeue_async()
@@ -126,14 +134,14 @@ impl<D: RegisteredDriver> Listener<D> {
     /// Attempts to return the next incoming [`Handshake`], without waiting.
     ///
     /// To asynchronously wait until the next incoming connection is available,
-    /// use [`next`](Self::next) instead..
+    /// use [`handshake`](Self::handshake) instead..
     ///
     /// # Returns
     ///
-    /// - [`Some`]`(`[`Handshake`]`<D>)` if a new incoming connection is
+    /// - [`Some`]`(`[`Handshake`]`)` if a new incoming connection is
     ///   available without waiting.
     /// - [`None`] if no incoming connection is available without waiting.
-    pub async fn try_next(&self) -> Option<Handshake<D>> {
+    pub async fn try_handshake(&self) -> Option<Handshake<D>> {
         self.rx.dequeue_sync()
     }
 
@@ -191,10 +199,6 @@ impl<D: RegisteredDriver> Handshake<D> {
     ///   client.
     pub fn reject(self, error: D::ConnectError) -> Result<(), AcceptError> {
         self.accept.reject(error)
-    }
-
-    pub fn split(self) -> (D::Hello, Accept<D>) {
-        (self.hello, self.accept)
     }
 }
 
