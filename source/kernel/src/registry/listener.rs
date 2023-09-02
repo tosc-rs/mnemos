@@ -6,6 +6,7 @@ use crate::comms::{
 use futures::{select_biased, FutureExt};
 
 /// A listener for incoming connection [`Handshake`]s to a [`RegisteredDriver`].
+#[must_use = "a `Listener` does nothing if incoming connections are not accepted"]
 pub struct Listener<D: RegisteredDriver> {
     rx: KConsumer<Handshake<D>>,
 }
@@ -14,6 +15,7 @@ pub struct Listener<D: RegisteredDriver> {
 /// [`Registry::register`] in order to add the driver to the registry.
 ///
 /// [`Registry::register`]: crate::registry::Registry::register
+#[must_use = "a `Registration` does nothing if not registered with a `Registry`"]
 pub struct Registration<D: RegisteredDriver> {
     pub(super) tx: KProducer<Handshake<D>>,
 }
@@ -26,6 +28,7 @@ pub struct Registration<D: RegisteredDriver> {
 /// potentially using the value of the [`Hello`] message to make this decision.
 ///
 /// [`Hello`]: RegisteredDriver::Hello
+#[must_use = "a `Handshake` does nothing if not `accept`ed or `reject`ed"]
 #[non_exhaustive]
 pub struct Handshake<D: RegisteredDriver> {
     /// The [`RegisteredDriver::Hello`] message sent by the client to identify
@@ -44,6 +47,7 @@ pub struct Handshake<D: RegisteredDriver> {
 }
 
 /// Accepts or rejects an incoming connection [`Handshake`].
+#[must_use = "an `Accept` does nothing if not `accept`ed or `reject`ed"]
 pub struct Accept<D: RegisteredDriver> {
     pub(super) reply: oneshot::Sender<Result<Channel<D>, D::ConnectError>>,
 }
@@ -76,6 +80,7 @@ pub struct Accept<D: RegisteredDriver> {
 /// [`reject`]: Handshake::reject
 /// [`Hello`]: RegisteredDriver::Hello
 /// [`ConnectError`]: RegisteredDriver::ConnectError
+#[must_use = "a `RequestStream` does nothing if `next_request` is not called"]
 pub struct RequestStream<D: RegisteredDriver> {
     chan: KConsumer<Message<D>>,
     listener: Listener<D>,
