@@ -1044,6 +1044,17 @@ where
     })
 }
 
+// UserHandlerError
+
+impl fmt::Display for UserHandlerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::QueueFull => f.pad("service queue full"),
+            Self::DeserializationFailed => f.pad("failed to deserialize user request"),
+        }
+    }
+}
+
 // ConnectError
 
 impl<D> PartialEq for ConnectError<D>
@@ -1104,6 +1115,70 @@ where
             Self::Rejected(err) => write!(
                 f,
                 "the {} service rejected the connection: {err}",
+                any::type_name::<D>()
+            ),
+        }
+    }
+}
+
+// UserConnectError
+
+impl<D> PartialEq for UserConnectError<D>
+where
+    D: RegisteredDriver,
+    D::ConnectError: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Handler(this), Self::Handler(that)) => this == that,
+            (Self::Connect(this), Self::Connect(that)) => this == that,
+            (Self::NotUserspace, Self::NotUserspace) => true,
+            _ => false,
+        }
+    }
+}
+
+impl<D> Eq for UserConnectError<D>
+where
+    D: RegisteredDriver,
+    D::ConnectError: Eq,
+{
+}
+
+impl<D> fmt::Debug for UserConnectError<D>
+where
+    D: RegisteredDriver,
+    D::ConnectError: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Handler(err) => write!(
+                f,
+                "UserConnectError::<{}>::Handler({err:?})",
+                any::type_name::<D>()
+            ),
+            Self::Connect(err) => write!(f, "UserConnectError::Connect({err:?})"),
+            Self::NotUserspace => write!(
+                f,
+                "UserConnectError::<{}>::NotUserspace",
+                any::type_name::<D>()
+            ),
+        }
+    }
+}
+
+impl<D> fmt::Display for UserConnectError<D>
+where
+    D: RegisteredDriver,
+    D::ConnectError: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Connect(err) => write!(f, "failed to connect from userspace: {err}"),
+            Self::Handler(err) => write!(f, "failed to connect from userspace: {err}"),
+            Self::NotUserspace => write!(
+                f,
+                "the {} service is not exposed to userspace",
                 any::type_name::<D>()
             ),
         }
