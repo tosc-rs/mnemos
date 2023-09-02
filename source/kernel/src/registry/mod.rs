@@ -2,6 +2,7 @@ use core::{
     any::{self, TypeId},
     fmt,
     marker::PhantomData,
+    mem, ptr,
 };
 
 use crate::comms::{kchannel, oneshot::Reusable};
@@ -259,6 +260,12 @@ pub enum ConnectError<D: RegisteredDriver> {
     DriverDead,
 }
 
+pub enum UserConnectError<D: RegisteredDriver> {
+    Connect(ConnectError<D>),
+    Handler(UserHandlerError),
+    NotUserspace,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub enum OneshotRequestError {
     /// An error occurred while acquiring a sender.
@@ -300,7 +307,7 @@ impl<T> From<EnqueueError<T>> for ReplyError {
 /// successful) to a given driver service.
 pub struct UserspaceHandle {
     req_producer_leaked: ErasedKProducer,
-    req_deser: ErasedDeserHandler,
+    req_deser: ErasedReqDeser,
     service_id: ServiceId,
     client_id: ClientId,
 }
@@ -314,13 +321,20 @@ pub struct KernelHandle<RD: RegisteredDriver> {
     request_ctr: u32,
 }
 
-type ErasedDeserHandler = unsafe fn(
+type ErasedReqDeser = unsafe fn(
     UserRequest<'_>,
     &ErasedKProducer,
     &bbq::MpscProducer,
     ServiceId,
     ClientId,
 ) -> Result<(), UserHandlerError>;
+
+type ErasedHandshake = unsafe fn(
+    &maitake::scheduler::LocalScheduler,
+    &[u8],
+    &ErasedKProducer,
+    ptr::NonNull<()>,
+) -> maitake::task::JoinHandle<Result<(), UserHandlerError>>;
 
 /// The payload of a registry item.
 ///
@@ -330,8 +344,19 @@ type ErasedDeserHandler = unsafe fn(
 struct RegistryValue {
     req_resp_tuple_id: TypeId,
     conn_prod: ErasedKProducer,
-    req_deser: Option<ErasedDeserHandler>,
+    user_vtable: Option<UserVtable>,
     service_id: ServiceId,
+}
+
+/// A [virtual function pointer table][vtable] (vtable) that specifies how
+/// userspace requests are serialized and deserialized.
+///
+/// [vtable]: https://en.wikipedia.org/wiki/Virtual_method_table
+struct UserVtable {
+    /// Deserializes userspace requests.
+    req_deser: ErasedReqDeser,
+    /// Deserializes handshakes from userspace.
+    handshake: ErasedHandshake,
 }
 
 /// Right now we don't use a real HashMap, but rather a hand-rolled index map.
@@ -386,7 +411,7 @@ impl Registry {
                 value: RegistryValue {
                     req_resp_tuple_id: RD::type_id().type_of(),
                     conn_prod,
-                    req_deser: None,
+                    user_vtable: None,
                     service_id: ServiceId(self.counter),
                 },
             })
@@ -412,7 +437,9 @@ impl Registry {
         registration: listener::Registration<RD>,
     ) -> Result<(), RegistrationError>
     where
-        RD: RegisteredDriver,
+        RD: RegisteredDriver + 'static,
+        RD::Hello: Serialize + DeserializeOwned,
+        RD::ConnectError: Serialize + DeserializeOwned,
         RD::Request: Serialize + DeserializeOwned,
         RD::Response: Serialize + DeserializeOwned,
     {
@@ -427,7 +454,7 @@ impl Registry {
                 value: RegistryValue {
                     req_resp_tuple_id: RD::type_id().type_of(),
                     conn_prod,
-                    req_deser: Some(map_deser::<RD>),
+                    user_vtable: Some(UserVtable::new::<RD>()),
                     service_id: ServiceId(self.counter),
                 },
             })
@@ -467,15 +494,7 @@ impl Registry {
         &mut self,
         hello: RD::Hello,
     ) -> Result<KernelHandle<RD>, ConnectError<RD>> {
-        let item = self
-            .items
-            .as_slice()
-            .iter()
-            .find(|i| i.key == RD::UUID)
-            .ok_or(ConnectError::NotFound)?;
-        if item.value.req_resp_tuple_id != RD::type_id().type_of() {
-            return Err(ConnectError::NotFound);
-        }
+        let item = Self::get(&self.items)?;
 
         // cast the erased connection sender back to a typed sender.
         let tx = unsafe {
@@ -572,23 +591,93 @@ impl Registry {
         skip(self),
         fields(uuid = ?RD::UUID),
     )]
-    pub fn connect_userspace<RD>(&mut self) -> Option<UserspaceHandle>
+    pub async fn connect_userspace_with_hello<RD>(
+        &mut self,
+        scheduler: &maitake::scheduler::LocalScheduler,
+        user_hello: &[u8],
+    ) -> Result<UserspaceHandle, UserConnectError<RD>>
     where
         RD: RegisteredDriver,
+        RD::Hello: Serialize + DeserializeOwned,
+        RD::ConnectError: Serialize + DeserializeOwned,
         RD::Request: Serialize + DeserializeOwned,
         RD::Response: Serialize + DeserializeOwned,
     {
-        todo!("eliza: make this work with the new listener/accept design")
-        // let item = self.items.as_slice().iter().find(|i| i.key == RD::UUID)?;
-        // let client_id = self.counter;
-        // info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
-        // self.counter = self.counter.wrapping_add(1);
-        // Some(UserspaceHandle {
-        //     req_producer_leaked: item.value.req_prod.clone(),
-        //     req_deser: item.value.req_deser?,
-        //     service_id: item.value.service_id,
-        //     client_id: ClientId(client_id),
-        // })
+        let item = Self::get::<RD>(&self.items).map_err(UserConnectError::Connect)?;
+        let vtable = item
+            .value
+            .user_vtable
+            .as_ref()
+            // if the registry item has no userspace vtable, it's not exposed to
+            // userspace.
+            // this is *weird*, since this method requires that `RD`'s message
+            // types be serializable/deserializable, but it's possible that the
+            // driver was (accidentally?) registered with `register_konly` even
+            // though it didn't *need* to be due to serializability...
+            .ok_or(UserConnectError::NotUserspace)?;
+
+        let mut handshake_result = mem::MaybeUninit::<UserHandshakeResult<RD>>::uninit();
+        let outptr = ptr::NonNull::from(&mut handshake_result).cast::<()>();
+
+        let handshake =
+            unsafe { (vtable.handshake)(scheduler, user_hello, &item.value.conn_prod, outptr) };
+        let req_producer_leaked = match handshake.await {
+            // Outer `Result` is the `JoinError` from `maitake` --- it should
+            // always succeed, because we own the task's joinhandle, and we
+            // never cancel it.
+            Err(_) => unreachable!("handshake task should not be canceled"),
+            // Couldn't deserialize the userspace handshake bytes!
+            Ok(Err(UserHandlerError::DeserializationFailed)) => {
+                return Err(UserConnectError::Handler(
+                    UserHandlerError::DeserializationFailed,
+                ))
+            }
+            // This error is never returned.
+            Ok(Err(UserHandlerError::QueueFull)) => {
+                unreachable!("erased_handshake never returns QueueFull!")
+            }
+            // Safe to touch the out pointer!
+            Ok(Ok(())) => unsafe {
+                // Safety: `handshake_result` is guaranteed to be initialized by
+                // `erased_handshake` if and only if its future completes with
+                // an `Ok(())`. and it did!
+                handshake_result
+                    .assume_init()
+                    .map_err(UserConnectError::Connect)?
+                    .type_erase()
+            },
+        };
+
+        let client_id = self.counter;
+        info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
+        self.counter = self.counter.wrapping_add(1);
+
+        Ok(UserspaceHandle {
+            req_producer_leaked,
+            req_deser: vtable.req_deser,
+            service_id: item.value.service_id,
+            client_id: ClientId(client_id),
+        })
+    }
+
+    // This isn't a method on `self` because it borrows `items`, and if it
+    // borrowed `self`, it would also borrow `self.counter`, which we need to be
+    // able to mutate while borrowing `self`.
+    // TODO(eliza): could fix that by just making the counter atomic...
+    fn get<RD: RegisteredDriver>(
+        items: &FixedVec<RegistryItem>,
+    ) -> Result<&RegistryItem, ConnectError<RD>> {
+        let item = items
+            .as_slice()
+            .iter()
+            .find(|i| i.key == RD::UUID)
+            .ok_or(ConnectError::NotFound)?;
+
+        if item.value.req_resp_tuple_id != RD::type_id().type_of() {
+            return Err(ConnectError::NotFound);
+        }
+
+        Ok(item)
     }
 }
 
@@ -806,7 +895,23 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
     }
 }
 
-// -- other --
+// UserVtable
+
+impl UserVtable {
+    const fn new<RD>() -> Self
+    where
+        RD: RegisteredDriver + 'static,
+        RD::Hello: Serialize + DeserializeOwned,
+        RD::ConnectError: Serialize + DeserializeOwned,
+        RD::Request: Serialize + DeserializeOwned,
+        RD::Response: Serialize + DeserializeOwned,
+    {
+        Self {
+            req_deser: map_deser::<RD>,
+            handshake: erased_user_handshake::<RD>,
+        }
+    }
+}
 
 /// A monomorphizable function that allows us to store the serialization type within
 /// the function itself, allowing for a type-erased function pointer to be stored
@@ -860,6 +965,83 @@ where
     req_prod
         .enqueue_sync(msg)
         .map_err(|_| UserHandlerError::QueueFull)
+}
+
+type UserHandshakeResult<RD> = Result<KProducer<Message<RD>>, ConnectError<RD>>;
+
+/// Perform a type-erased userspace handshake, deserializing the
+/// [`RegisteredDriver::Hello`] message from `hello_bytes` and returning a
+/// future that writes the handshake result to the provided `outptr`, if the
+/// future completes successfully.
+///
+/// # Safety
+///
+/// - This function MUST be called with a [`RegisteredDriver`] type matching the
+///   type used to create the [`ErasedKProducer`].
+/// - `outptr` MUST be a valid pointer to a
+///   [`mem::MaybeUninit`]`<`[`UserHandshakeResult`]`<RD>>`, and  MUST live as
+///   long as the future returned from this function.
+/// - `outptr` is guaranteed to be initialized IF AND ONLY IF the future
+///   returned by this method returns [`Ok`]`(())`. If this method returns an
+///   [`Err`], `outptr` will NOT be initialized.
+unsafe fn erased_user_handshake<RD>(
+    scheduler: &maitake::scheduler::LocalScheduler,
+    hello_bytes: &[u8],
+    conn_tx: &ErasedKProducer,
+    outptr: core::ptr::NonNull<()>,
+) -> maitake::task::JoinHandle<Result<(), UserHandlerError>>
+where
+    RD: RegisteredDriver + 'static,
+    RD::Hello: Serialize + DeserializeOwned,
+    RD::ConnectError: Serialize + DeserializeOwned,
+    RD::Request: Serialize + DeserializeOwned,
+    RD::Response: Serialize + DeserializeOwned,
+{
+    let conn_tx = conn_tx.clone_typed::<listener::Handshake<RD>>();
+    // Deserialize the request, if it doesn't have the right contents, deserialization will fail.
+    let hello: Result<RD::Hello, _> = postcard::from_bytes(hello_bytes);
+
+    // spawn a task to allow us to perform async work from a type-erased context
+    scheduler.spawn(async move {
+        let hello = hello.map_err(|_| UserHandlerError::DeserializationFailed)?;
+
+        // TODO(eliza): it would be nice if we could reuse the oneshot receiver
+        // every time this driver is connected to? This would require type
+        // erasing it...
+        let rx = Reusable::new_async().await;
+        let reply = rx
+            .sender()
+            .await
+            .expect("we just created the oneshot, so this should never fail");
+
+        // send the connection request...
+        conn_tx.enqueue_async(listener::Handshake {
+            hello,
+            accept: listener::Accept { reply }
+        }).await.map_err(|err| match err {
+            kchannel::EnqueueError::Closed(_) => todo!(),
+            kchannel::EnqueueError::Full(_) => unreachable!("the channel should not be full, as we are using `enqueue_async`, which waits for capacity")
+        })?;
+
+        // ...and wait for a response with an established connection.
+        let result = rx
+            .receive()
+            .await
+            // this is a `Reusable<Result<KProducer, RD::ConnectError>>>`, so
+            // the outer `Result` is the error returned by `receive()`...
+            .map_err(|_| ConnectError::DriverDead)
+            // ...and the inner result is the connect error returned by the service.
+            .and_then(|res| res.map_err(ConnectError::Rejected));
+
+        outptr
+            // Safety: the caller is responsible for ensuring the out pointer is
+            // correctly typed.
+            .cast::<mem::MaybeUninit<UserHandshakeResult<RD>>>()
+            .as_mut()
+            .write(result);
+
+        Ok(())
+    })
 }
 
 // ConnectError
