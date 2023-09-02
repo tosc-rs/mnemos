@@ -462,7 +462,7 @@ impl Registry {
             // Safety: we just checked that the type IDs match above.
             item.value
                 .conn_prod
-                .clone_typed::<listener::Connection<RD>>()
+                .clone_typed::<listener::Handshake<RD>>()
         };
 
         // TODO(eliza): it would be nice if we could reuse the oneshot receiver
@@ -474,7 +474,7 @@ impl Registry {
             .await
             .expect("we just created the oneshot, so this should never fail");
         // send the connection request...
-        tx.enqueue_async(listener::Connection {
+        tx.enqueue_async(listener::Handshake {
             hello,
             accept: listener::Accept { reply }
         }).await.map_err(|err| match err {

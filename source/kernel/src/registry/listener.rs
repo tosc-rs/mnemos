@@ -5,26 +5,26 @@ use crate::comms::{
 };
 use futures::{select_biased, FutureExt};
 
-/// A listener for incoming [`Connection`]s to a [`RegisteredDriver`].
+/// A listener for incoming connection [`Handshake`]s to a [`RegisteredDriver`].
 pub struct Listener<D: RegisteredDriver> {
-    rx: KConsumer<Connection<D>>,
+    rx: KConsumer<Handshake<D>>,
 }
 
 /// A registration for a [`RegisteredDriver`]. This type is provided to
 /// [`Registry::register`] in order to add the driver to the registry.
 pub struct Registration<D: RegisteredDriver> {
-    pub(super) tx: KProducer<Connection<D>>,
+    pub(super) tx: KProducer<Handshake<D>>,
 }
 
 /// A connection request received from a [`Listener`].
 #[non_exhaustive]
-pub struct Connection<D: RegisteredDriver> {
+pub struct Handshake<D: RegisteredDriver> {
     pub hello: D::Hello,
     pub accept: Accept<D>,
     // TODO(eliza): consider adding client metadata here?
 }
 
-/// Accepts or rejects an incoming [`Connection`].
+/// Accepts or rejects an incoming connection [`Handshake`].
 pub struct Accept<D: RegisteredDriver> {
     pub(super) reply: oneshot::Sender<Result<Channel<D>, D::ConnectError>>,
 }
@@ -54,7 +54,7 @@ pub struct Accept<D: RegisteredDriver> {
 /// usable with that `RegisteredDriver` in cases where the implementation does
 /// not need those features.
 ///
-/// [`reject`]: Connection::reject
+/// [`reject`]: Handshake::reject
 /// [`Hello`]: RegisteredDriver::Hello
 /// [`ConnectError`]: RegisteredDriver::ConnectError
 pub struct RequestStream<D: RegisteredDriver> {
@@ -79,14 +79,14 @@ impl<D: RegisteredDriver> Listener<D> {
         (listener, registration)
     }
 
-    pub async fn next(&self) -> Connection<D> {
+    pub async fn next(&self) -> Handshake<D> {
         self.rx
             .dequeue_async()
             .await
             .expect("the kernel should never drop the sender end of a service's incoming channel!")
     }
 
-    pub async fn try_next(&self) -> Option<Connection<D>> {
+    pub async fn try_next(&self) -> Option<Handshake<D>> {
         self.rx.dequeue_sync()
     }
 
@@ -116,7 +116,7 @@ impl<D: RegisteredDriver> Listener<D> {
 
 // === impl Connection ===
 
-impl<D: RegisteredDriver> Connection<D> {
+impl<D: RegisteredDriver> Handshake<D> {
     /// Accept the connection, returning the provided `channel` to the client.
     pub fn accept(self, channel: Channel<D>) -> Result<(), AcceptError> {
         self.accept.accept(channel)
