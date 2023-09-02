@@ -109,7 +109,7 @@ impl<D: RegisteredDriver> Listener<D> {
     ///
     /// To return an incoming connection if one is available, *without* waiting,
     /// use the [`try_next`](Self::try_next) method.
-    pub async fn next(&self) -> Handshake<D> {
+    pub async fn handshake(&self) -> Handshake<D> {
         self.rx
             .dequeue_async()
             .await
@@ -265,11 +265,11 @@ impl<D: RegisteredDriver> RequestStream<D> {
                             // die --- new receivers may be created by new
                             // incoming connections. So, wait for the next
                             // connection request.
-                            self.listener.next().await
+                            self.listener.handshake().await
                         }
                     }
                 },
-                conn = self.listener.next().fuse() => {
+                conn = self.listener.handshake().fuse() => {
                     conn
                 }
             };
