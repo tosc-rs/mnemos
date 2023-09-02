@@ -132,7 +132,7 @@ impl KeyClient {
         let mut handle = kernel
             .registry()
             .await
-            .get::<KeyboardService>()
+            .connect::<KeyboardService>()
             .await
             .ok()?;
         let reply = oneshot::Reusable::new_async().await;

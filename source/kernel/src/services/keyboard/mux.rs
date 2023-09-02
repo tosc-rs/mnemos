@@ -98,7 +98,11 @@ impl KeyboardMuxClient {
     pub async fn from_registry_no_retry(
         kernel: &'static Kernel,
     ) -> Result<Self, registry::ConnectError<KeyboardMuxService>> {
-        let handle = kernel.registry().await.get::<KeyboardMuxService>().await?;
+        let handle = kernel
+            .registry()
+            .await
+            .connect::<KeyboardMuxService>()
+            .await?;
         Ok(Self {
             handle,
             reply: Reusable::new_async().await,

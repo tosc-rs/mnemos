@@ -64,7 +64,11 @@ impl SimpleSerialClient {
     pub async fn from_registry(
         kernel: &'static Kernel,
     ) -> Result<Self, registry::ConnectError<SimpleSerialService>> {
-        let kprod = kernel.registry().await.get::<SimpleSerialService>().await?;
+        let kprod = kernel
+            .registry()
+            .await
+            .connect::<SimpleSerialService>()
+            .await?;
 
         Ok(SimpleSerialClient {
             kprod,

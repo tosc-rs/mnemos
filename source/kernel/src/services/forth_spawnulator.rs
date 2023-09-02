@@ -100,7 +100,11 @@ impl SpawnulatorClient {
     pub async fn from_registry_no_retry(
         kernel: &'static Kernel,
     ) -> Result<Self, registry::ConnectError<SpawnulatorService>> {
-        let prod = kernel.registry().await.get::<SpawnulatorService>().await?;
+        let prod = kernel
+            .registry()
+            .await
+            .connect::<SpawnulatorService>()
+            .await?;
 
         Ok(SpawnulatorClient {
             hdl: prod,

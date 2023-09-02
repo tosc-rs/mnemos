@@ -107,7 +107,11 @@ impl EmbDisplayClient {
     pub async fn from_registry_no_retry(
         kernel: &'static Kernel,
     ) -> Result<Self, registry::ConnectError<EmbDisplayService>> {
-        let prod = kernel.registry().await.get::<EmbDisplayService>().await?;
+        let prod = kernel
+            .registry()
+            .await
+            .connect::<EmbDisplayService>()
+            .await?;
 
         Ok(EmbDisplayClient {
             prod,

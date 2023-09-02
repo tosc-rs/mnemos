@@ -327,7 +327,7 @@ impl I2cClient {
     pub async fn from_registry_no_retry(
         kernel: &'static Kernel,
     ) -> Result<Self, registry::ConnectError<I2cService>> {
-        let handle = kernel.registry().await.get::<I2cService>().await?;
+        let handle = kernel.registry().await.connect::<I2cService>().await?;
 
         Ok(I2cClient {
             handle,

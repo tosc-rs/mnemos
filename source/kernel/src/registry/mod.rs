@@ -20,7 +20,7 @@ use crate::comms::{
 
 pub mod listener;
 
-pub use self::listener::Listener;
+pub use self::listener::{Listener, Registration};
 
 /// A partial list of known UUIDs of driver services
 pub mod known_uuids {
@@ -437,13 +437,33 @@ impl Registry {
         Ok(())
     }
 
+    /// Get a kernelspace (including drivers) handle of a given driver service,
+    /// which does not require sending a [`RegisteredDriver::Hello`] message.
+    ///
+    /// This can be used by drivers and tasks to interface with a registered driver
+    /// service.
+    ///
+    /// The driver service MUST have already been registered using [Registry::register] or
+    /// [Registry::register_konly] prior to making this call, otherwise no handle will
+    /// be returned.
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[KernelHandle`]`<RD>)` if the requested service was found and
+    ///   a connection was successfully established.
+    ///
+    /// - [`Err`]`(`[`ConnectError`]`<RD>)` if the requested service was not
+    ///   found in the registry, or if the service [rejected] the incoming
+    ///   connection.
+    ///
+    /// [rejected]: listener::Handshake::reject
     #[tracing::instrument(
-        name = "Registry::get_with_hello",
+        name = "Registry::connect_with_hello",
         level = "debug",
         skip(self, hello),
         fields(uuid = ?RD::UUID),
     )]
-    pub async fn get_with_hello<RD: RegisteredDriver>(
+    pub async fn connect_with_hello<RD: RegisteredDriver>(
         &mut self,
         hello: RD::Hello,
     ) -> Result<KernelHandle<RD>, ConnectError<RD>> {
@@ -502,7 +522,11 @@ impl Registry {
         res
     }
 
-    /// Get a kernelspace (including drivers) handle of a given driver service.
+    /// Get a kernelspace (including drivers) handle of a given driver service,
+    /// which does not require sending a [`RegisteredDriver::Hello`] message.
+    ///
+    /// This method is equivalent to [`Registry::connect_with_hello`] when the
+    /// [`RegisteredDriver::Hello`] type is [`()`].
     ///
     /// This can be used by drivers and tasks to interface with a registered driver
     /// service.
@@ -510,17 +534,28 @@ impl Registry {
     /// The driver service MUST have already been registered using [Registry::register] or
     /// [Registry::register_konly] prior to making this call, otherwise no handle will
     /// be returned.
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[KernelHandle`]`<RD>)` if the requested service was found and
+    ///   a connection was successfully established.
+    ///
+    /// - [`Err`]`(`[`ConnectError`]`<RD>)` if the requested service was not
+    ///   found in the registry, or if the service [rejected] the incoming
+    ///   connection.
+    ///
+    /// [rejected]: listener::Handshake::reject
     #[tracing::instrument(
-        name = "Registry::get",
+        name = "Registry::connect",
         level = "debug",
         skip(self),
         fields(uuid = ?RD::UUID),
     )]
-    pub async fn get<RD>(&mut self) -> Result<KernelHandle<RD>, ConnectError<RD>>
+    pub async fn connect<RD>(&mut self) -> Result<KernelHandle<RD>, ConnectError<RD>>
     where
         RD: RegisteredDriver<Hello = ()>,
     {
-        self.get_with_hello(()).await
+        self.connect_with_hello(()).await
     }
 
     /// Get a handle capable of processing serialized userspace messages to a
@@ -530,14 +565,14 @@ impl Registry {
     /// prior to making this call, otherwise no handle will be returned.
     ///
     /// Driver services registered with [Registry::register_konly] cannot be retrieved via
-    /// a call to [Registry::get_userspace].
+    /// a call to [Registry::connect_userspace].
     #[tracing::instrument(
-        name = "Registry::get_userspace",
+        name = "Registry::connect_userspace",
         level = "debug",
         skip(self),
         fields(uuid = ?RD::UUID),
     )]
-    pub fn get_userspace<RD>(&mut self) -> Option<UserspaceHandle>
+    pub fn connect_userspace<RD>(&mut self) -> Option<UserspaceHandle>
     where
         RD: RegisteredDriver,
         RD::Request: Serialize + DeserializeOwned,

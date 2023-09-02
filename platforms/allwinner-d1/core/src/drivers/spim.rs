@@ -227,7 +227,7 @@ impl SpiSenderClient {
     pub async fn from_registry(
         kernel: &'static Kernel,
     ) -> Result<SpiSenderClient, registry::ConnectError<SpiSender>> {
-        let hdl = kernel.registry().await.get().await?;
+        let hdl = kernel.registry().await.connect().await?;
 
         Ok(SpiSenderClient {
             hdl,

@@ -111,7 +111,11 @@ impl SerialMuxClient {
     pub async fn from_registry_no_retry(
         kernel: &'static Kernel,
     ) -> Result<Self, registry::ConnectError<SerialMuxService>> {
-        let prod = kernel.registry().await.get::<SerialMuxService>().await?;
+        let prod = kernel
+            .registry()
+            .await
+            .connect::<SerialMuxService>()
+            .await?;
 
         Ok(SerialMuxClient {
             prod,
