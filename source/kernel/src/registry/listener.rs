@@ -12,14 +12,33 @@ pub struct Listener<D: RegisteredDriver> {
 
 /// A registration for a [`RegisteredDriver`]. This type is provided to
 /// [`Registry::register`] in order to add the driver to the registry.
+///
+/// [`Registry::register`]: crate::registry::Registry::register
 pub struct Registration<D: RegisteredDriver> {
     pub(super) tx: KProducer<Handshake<D>>,
 }
 
 /// A connection request received from a [`Listener`].
+///
+/// A `Handshake` contains a [`Hello`] message sent by the client, which can
+/// be used to identify the requested connection. The service may choose to
+/// [`accept`](Self::accept) or [`reject`](Self::reject) the connection,
+/// potentially using the value of the [`Hello`] message to make this decision.
+///
+/// [`Hello`]: RegisteredDriver::Hello
 #[non_exhaustive]
 pub struct Handshake<D: RegisteredDriver> {
+    /// The [`RegisteredDriver::Hello`] message sent by the client to identify
+    /// the requested incoming connection.
     pub hello: D::Hello,
+
+    /// [Accepts](Accept::accept) or [rejects](Accept::reject) the handshake.
+    ///
+    /// The [`Handshake::accept`] and [`Handshake::reject`] methods may be used
+    /// to accept the handshake, but the [`Accept`] type provides these methods
+    /// on a separate type, so that the [`Hello` message](#structfield.hello)
+    /// can be moved out of the `Handshake` value while still allowing the
+    /// connection to be accepted.
     pub accept: Accept<D>,
     // TODO(eliza): consider adding client metadata here?
 }
@@ -79,20 +98,40 @@ impl<D: RegisteredDriver> Listener<D> {
         (listener, registration)
     }
 
+    /// Awaits the next incoming [`Handshake`] to this listener.
+    ///
+    /// This method returns a [`Handshake`] when a new incoming connection
+    /// request is received. If no incoming connection is available, this method
+    /// will yield until one is ready.
+    ///
+    /// To return an incoming connection if one is available, *without* waiting,
+    /// use the [`try_next`](Self::try_next) method.
     pub async fn next(&self) -> Handshake<D> {
         self.rx
             .dequeue_async()
             .await
+            // The sender end of the incoming connection channel is owned by the
+            // kernel, so this never closes.
             .expect("the kernel should never drop the sender end of a service's incoming channel!")
     }
 
+    /// Attempts to return the next incoming [`Handshake`], without waiting.
+    ///
+    /// To asynchronously wait until the next incoming connection is available,
+    /// use [`next`](Self::next) instead..
+    ///
+    /// # Returns
+    ///
+    /// - [`Some`]`(`[`Handshake`]`<D>)` if a new incoming connection is
+    ///   available without waiting.
+    /// - [`None`] if no incoming connection is available without waiting.
     pub async fn try_next(&self) -> Option<Handshake<D>> {
         self.rx.dequeue_sync()
     }
 
     /// Converts this `Listener` into a [`RequestStream`] --- a simple stream of
-    /// incoming requests, which [accepts](Self::accept) all connections with
-    /// the same channel.
+    /// incoming requests, which [accepts](Handshake::accept) all connections
+    /// with the same [`KChannel`].
     ///
     /// The next request from any client may be awaited from the
     /// [`RequestStream`] using the [`RequestStream::next_request`] method.
@@ -114,7 +153,7 @@ impl<D: RegisteredDriver> Listener<D> {
     }
 }
 
-// === impl Connection ===
+// === impl Handshake ===
 
 impl<D: RegisteredDriver> Handshake<D> {
     /// Accept the connection, returning the provided `channel` to the client.
