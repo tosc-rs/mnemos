@@ -81,6 +81,9 @@ pub struct RequestStream<D: RegisteredDriver> {
     listener: Listener<D>,
 }
 
+/// Errors returned by [`Handshake::accept`], [`Accept::accept`],
+/// [`Handshake::reject`], and [`Accept::reject`].
+#[derive(Debug, Eq, PartialEq)]
 pub enum AcceptError {
     /// The client of the connection has cancelled the connection.
     Canceled,
@@ -157,11 +160,30 @@ impl<D: RegisteredDriver> Listener<D> {
 
 impl<D: RegisteredDriver> Handshake<D> {
     /// Accept the connection, returning the provided `channel` to the client.
+    ///
+    /// Any requests sent by the client once the connection has been accepted
+    /// will now be received by the [`KConsumer`] corresponding to the provided
+    /// [`KProducer`].
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[`()`]`)` if the connection was successfully accepted.
+    /// - [`Err`]`(`[`AcceptError`]`)` if the connection was canceled by the
+    ///   client. In this case, the client is no longer interested in the
+    ///   connection (and may or may not still exist), and the service may
+    ///   ignore this connection request.
     pub fn accept(self, channel: Channel<D>) -> Result<(), AcceptError> {
         self.accept.accept(channel)
     }
 
     /// Reject the connection, returning the provided `error` to the client.
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[`()`]`)` if the connection was successfully rejected and the
+    ///   error was received by the client.
+    /// - [`Err`]`(`[`AcceptError`]`)` if the connection was canceled by the
+    ///   client.
     pub fn reject(self, error: D::ConnectError) -> Result<(), AcceptError> {
         self.accept.reject(error)
     }
@@ -175,6 +197,18 @@ impl<D: RegisteredDriver> Handshake<D> {
 
 impl<D: RegisteredDriver> Accept<D> {
     /// Accept the connection, returning the provided `channel` to the client.
+    ///
+    /// Any requests sent by the client once the connection has been accepted
+    /// will now be received by the [`KConsumer`] corresponding to the provided
+    /// [`KProducer`].
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[`()`]`)` if the connection was successfully accepted.
+    /// - [`Err`]`(`[`AcceptError`]`)` if the connection was canceled by the
+    ///   client. In this case, the client is no longer interested in the
+    ///   connection (and may or may not still exist), and the service may
+    ///   ignore this connection request.
     pub fn accept(self, channel: Channel<D>) -> Result<(), AcceptError> {
         match self.reply.send(Ok(channel)) {
             Ok(()) => Ok(()),
@@ -186,6 +220,13 @@ impl<D: RegisteredDriver> Accept<D> {
     }
 
     /// Reject the connection, returning the provided `error` to the client.
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[`()`]`)` if the connection was successfully rejected and the
+    ///   error was received by the client.
+    /// - [`Err`]`(`[`AcceptError`]`)` if the connection was canceled by the
+    ///   client.
     pub fn reject(self, error: D::ConnectError) -> Result<(), AcceptError> {
         match self.reply.send(Err(error)) {
             Ok(()) => Ok(()),
