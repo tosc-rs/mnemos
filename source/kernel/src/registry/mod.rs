@@ -1116,17 +1116,17 @@ where
     D::ConnectError: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DriverDead => {
-                write!(f, "ConnectError::<{}>::DriverDead", any::type_name::<D>())
+        let mut dbs = match self {
+            Self::DriverDead => f.debug_struct("DriverDead"),
+            Self::NotFound => f.debug_struct("NotFound"),
+            Self::Rejected(error) => {
+                let mut d = f.debug_struct("Rejected");
+                d.field("error", error);
+                d
             }
-            Self::NotFound => write!(f, "ConnectError::<{}>::NotFound", any::type_name::<D>()),
-            Self::Rejected(err) => write!(
-                f,
-                "ConnectError::<{}>::Rejected({err:?})",
-                any::type_name::<D>()
-            ),
-        }
+        };
+        dbs.field("svc", &mycelium_util::fmt::display(any::type_name::<D>()))
+            .finish()
     }
 }
 
@@ -1136,18 +1136,11 @@ where
     D::ConnectError: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = any::type_name::<D>();
         match self {
-            Self::DriverDead => write!(f, "the {} service has terminated", any::type_name::<D>()),
-            Self::NotFound => write!(
-                f,
-                "no {} service found in the registry",
-                any::type_name::<D>()
-            ),
-            Self::Rejected(err) => write!(
-                f,
-                "the {} service rejected the connection: {err}",
-                any::type_name::<D>()
-            ),
+            Self::DriverDead => write!(f, "the {name} service has terminated"),
+            Self::NotFound => write!(f, "no {name} service found in the registry",),
+            Self::Rejected(err) => write!(f, "the {name} service rejected the connection: {err}",),
         }
     }
 }
@@ -1183,17 +1176,16 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DeserializationFailed(err) => write!(
-                f,
-                "UserConnectError::<{}>::DeserializationFailed({err:?})",
-                any::type_name::<D>()
-            ),
-            Self::Connect(err) => write!(f, "UserConnectError::Connect({err:?})"),
-            Self::NotUserspace => write!(
-                f,
-                "UserConnectError::<{}>::NotUserspace",
-                any::type_name::<D>()
-            ),
+            Self::DeserializationFailed(error) => f
+                .debug_struct("DeserializationFailed")
+                .field("error", error)
+                .field("svc", &mycelium_util::fmt::display(any::type_name::<D>()))
+                .finish(),
+            Self::Connect(err) => f.debug_tuple("Connect").field(err).finish(),
+            Self::NotUserspace => f
+                .debug_tuple("NotUserspace")
+                .field(&mycelium_util::fmt::display(any::type_name::<D>()))
+                .finish(),
         }
     }
 }
