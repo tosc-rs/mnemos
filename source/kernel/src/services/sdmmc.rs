@@ -28,7 +28,7 @@ pub struct SdmmcService;
 impl RegisteredDriver for SdmmcService {
     type Request = Command;
     type Response = Response;
-    type Error = core::convert::Infallible;
+    type Error = Error;
 
     const UUID: Uuid = known_uuids::kernel::SDMMC;
 }
@@ -37,48 +37,93 @@ impl RegisteredDriver for SdmmcService {
 // Message and Error Types
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Control or data command.
-/// This is the same for SD and MMC (?), but the content should be different.
-/// For data command, should also contain the buffers to read/write?
+/// Parameters for building a command to be sent to the card.
+///
+/// The command format must follow the SD specification and is sent on the `CMD` line.
+/// It is 48-bit in length, containing a 6-bit command index and 32-bit argument.
+/// Besides that it includes 7-bit CRC and start, transmission and end bit.
+///
+/// The command structure is the same for SD memory, SDIO and MMC (?),
+/// but the content can be very different.
+/// Therefore the content of the commands is decided here in the kernel service,
+/// while the platform driver has the low-level implementation
+/// for how to physically send the necessary bits to the card.
 pub struct Command {
     /// The numeric value of the command
-    command: u8,
-    /// Argument value that should be sent on the control line
-    argument: u32,
+    pub index: u8,
+    /// The argument value for the command
+    pub argument: u32,
     /// The type of command
-    cmd_type: CommandType,
-    /// The expected length of the response
-    rsp_size: ResponseLength,
-    /// Will the card respond with a CRC that needs to be checked
-    crc: bool,
-    /// Incoming or outgoing data
-    buffer: Option<FixedVec<u8>>,
+    pub kind: CommandKind,
+    /// The expected type of the response
+    pub rsp_type: ResponseType,
+    /// Whether the response CRC needs to be checked
+    pub rsp_crc: bool,
+    /// Optional buffer for incoming or outgoing data
+    pub buffer: Option<FixedVec<u8>>,
 }
 
 /// TODO
-pub enum CommandType {
+#[derive(Debug, Eq, PartialEq)]
+pub enum CommandKind {
+    /// Command without data transfer
     Control,
-    Read,
-    Write,
+    /// Command for reading data, contains the number of bytes to read
+    Read(u32),
+    /// Command for writing data, contains the number of bytes to write
+    Write(u32),
 }
 
 /// TODO
-pub enum ResponseLength {
-    /// 48-bits
+#[derive(Debug, Eq, PartialEq)]
+pub enum ResponseType {
+    /// No Response
+    None,
+    /// Response with 48-bit length
     Short,
-    /// 136-bits
+    /// Response with 48-bit length + check *busy* after response
+    ShortWithBusySignal,
+    /// Response with 136-bit length
     Long,
 }
 
 /// Response returned by the card, can be short or long, depending on command.
 /// For read command, you can find the data in previous buffer?
 #[must_use]
-pub struct Response {
+pub enum Response {
+    /// The 32-bit value from the 48-bit response.
+    Short(u32),
+    /// The 128-bit value from the 136-bit response.
+    // TODO: make this `u128`?
+    Long([u32; 4]),
 }
 
 /// TODO
 #[derive(Debug, Eq, PartialEq)]
 pub enum Error {
+    /// TODO
+    Busy,
+    /// TODO
+    Response,
+    /// TODO
+    Data,
+    /// TODO
+    Timeout,
+    /// TODO
+    Other,
+}
+
+impl Default for Command {
+    fn default() -> Self {
+        Command {
+            index: 0,
+            argument: 0,
+            kind: CommandKind::Control,
+            rsp_type: ResponseType::None,
+            rsp_crc: false,
+            buffer: None,
+        }
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -89,6 +134,55 @@ pub enum Error {
 pub struct SdCardClient {
     handle: KernelHandle<SdmmcService>,
     reply: Reusable<Envelope<Result<Response, Error>>>,
+}
+
+impl SdCardClient {
+    /// Obtain an `SdCardClient`
+    ///
+    /// If the [`SdmmcService`] hasn't been registered yet, we will retry until it
+    /// has been registered.
+    pub async fn from_registry(kernel: &'static Kernel) -> Self {
+        loop {
+            match SdCardClient::from_registry_no_retry(kernel).await {
+                Some(client) => return client,
+                None => {
+                    // SMHC0 probably isn't registered yet. Try again in a bit
+                    kernel.sleep(Duration::from_millis(10)).await;
+                }
+            }
+        }
+    }
+
+    /// Obtain an `SdCardClient`
+    ///
+    /// Does NOT attempt to get an [`SdmmcService`] handle more than once.
+    ///
+    /// Prefer [`SdCardClient::from_registry`] unless you will not be spawning one
+    /// around the same time as obtaining a client.
+    pub async fn from_registry_no_retry(kernel: &'static Kernel) -> Option<Self> {
+        let handle = kernel
+            .with_registry(|reg| reg.get::<SdmmcService>())
+            .await?;
+
+        Some(Self {
+            handle,
+            reply: Reusable::new_async().await,
+        })
+    }
+
+    pub async fn reset(&mut self) {
+        let response = self
+            .handle
+            .request_oneshot(Command::default(), &self.reply)
+            .await
+            .map_err(|error| {
+                tracing::warn!(?error, "failed to send request to SD/MMC service");
+                Error::Other // TODO
+            })
+            .and_then(|resp| resp.body);
+    }
+
+    pub async fn initialize(&mut self) {}
 }
 
 /// A client for SDIO cards using the [`SdmmcService`].
