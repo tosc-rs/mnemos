@@ -96,8 +96,9 @@ pub trait RegisteredDriver {
     /// This is the UUID of the driver service
     const UUID: Uuid;
 
-    /// Get the type_id used to make sure that driver instances are correctly typed.
-    /// Corresponds to the same type ID as `(Self::Request, Self::Response, Self::Error)`
+    /// Get the [`TypeId`] used to make sure that driver instances are correctly typed.
+    /// Corresponds to the same type ID as `(`[`Self::Request`]`, `[`Self::Response`]`,
+    /// `[`Self::Error`]`, `[`Self::Hello`]`, `[`Self::ConnectError`]`)`.
     fn type_id() -> RegistryType {
         RegistryType {
             tuple_type_id: TypeId::of::<(
