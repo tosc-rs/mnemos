@@ -522,7 +522,7 @@ impl Registry {
         &self,
         hello: RD::Hello,
     ) -> Result<KernelHandle<RD>, ConnectError<RD>> {
-        let item = Self::get(&self.items)?;
+        let item = self.get::<RD>()?;
 
         // cast the erased connection sender back to a typed sender.
         let tx = unsafe {
@@ -628,7 +628,7 @@ impl Registry {
         RD::Request: Serialize + DeserializeOwned,
         RD::Response: Serialize + DeserializeOwned,
     {
-        let item = Self::get::<RD>(&self.items).map_err(UserConnectError::Connect)?;
+        let item = self.get::<RD>().map_err(UserConnectError::Connect)?;
         let vtable = item
             .value
             .user_vtable
@@ -684,14 +684,8 @@ impl Registry {
         })
     }
 
-    // This isn't a method on `self` because it borrows `items`, and if it
-    // borrowed `self`, it would also borrow `self.counter`, which we need to be
-    // able to mutate while borrowing `self`.
-    // TODO(eliza): could fix that by just making the counter atomic...
-    fn get<RD: RegisteredDriver>(
-        items: &FixedVec<RegistryItem>,
-    ) -> Result<&RegistryItem, ConnectError<RD>> {
-        let Some(item) = items.as_slice().iter().find(|i| i.key == RD::UUID) else {
+    fn get<RD: RegisteredDriver>(&self) -> Result<&RegistryItem, ConnectError<RD>> {
+        let Some(item) = self.items.as_slice().iter().find(|i| i.key == RD::UUID) else {
             tracing::debug!(
                 svc = %any::type_name::<RD>(),
                 uuid = ?RD::UUID,
