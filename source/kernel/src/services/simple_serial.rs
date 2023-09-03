@@ -64,10 +64,20 @@ impl SimpleSerialClient {
     pub async fn from_registry(
         kernel: &'static Kernel,
     ) -> Result<Self, registry::ConnectError<SimpleSerialService>> {
+        let kprod = kernel.registry().connect::<SimpleSerialService>(()).await?;
+
+        Ok(SimpleSerialClient {
+            kprod,
+            rosc: Reusable::new_async().await,
+        })
+    }
+
+    pub async fn from_registry_no_retry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<SimpleSerialService>> {
         let kprod = kernel
             .registry()
-            .await
-            .connect::<SimpleSerialService>()
+            .try_connect::<SimpleSerialService>(())
             .await?;
 
         Ok(SimpleSerialClient {

@@ -36,8 +36,7 @@ use mnemos_kernel::{
     registry,
     services::{
         emb_display::{
-            DisplayMetadata, EmbDisplayService, FrameChunk, FrameError, FrameKind, MonoChunk,
-            Request, Response,
+            DisplayMetadata, EmbDisplayService, FrameChunk, FrameKind, MonoChunk, Request, Response,
         },
         keyboard::{
             key_event::{self, KeyCode, Modifiers},
@@ -63,12 +62,12 @@ impl SimDisplay {
         settings: DisplayConfig,
         width: u32,
         height: u32,
-    ) -> Result<(), FrameError> {
+    ) -> Result<(), registry::RegistrationError> {
         tracing::debug!("initializing SimDisplay server ({width}x{height})...");
         let cmd = kernel
-            .bind_konly_service(settings.kchannel_depth)
-            .await
-            .map_err(|_| FrameError::DisplayAlreadyExists)?
+            .registry()
+            .bind_konly(settings.kchannel_depth)
+            .await?
             .into_request_stream(settings.kchannel_depth)
             .await;
 
@@ -245,7 +244,9 @@ async fn render_loop(
     frames_per_second: usize,
 ) {
     let mut idle_ticks = 0;
-    let mut keymux = KeyboardMuxClient::from_registry(kernel).await;
+    let mut keymux = KeyboardMuxClient::from_registry(kernel)
+        .await
+        .expect("no keyboard mux service!");
     let mut first_done = false;
     let sleep_time = Duration::from_micros(1_000_000 / (frames_per_second as u64));
     loop {

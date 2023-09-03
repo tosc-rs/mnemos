@@ -181,7 +181,8 @@ impl UsbSerialServer {
 
         k.spawn(self.worker(fifo_a)).await;
 
-        k.register_konly::<SimpleSerialService>(registration)
+        k.registry()
+            .register_konly::<SimpleSerialService>(registration)
             .await?;
 
         Ok(())

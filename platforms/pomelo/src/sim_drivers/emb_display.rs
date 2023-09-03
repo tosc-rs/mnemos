@@ -39,7 +39,7 @@ use mnemos_kernel::{
         },
         keyboard::{
             key_event::{self, KeyCode, Modifiers},
-            mux::KeyboardMuxClient,
+            mux::{KeyboardMuxClient, KeyboardMuxService},
             KeyEvent,
         },
     },
@@ -77,6 +77,13 @@ async fn draw_complete_handler(rx: KConsumer<DrawCompleteData>) {
         }
     }
 }
+
+#[derive(Debug)]
+pub enum RegistrationError {
+    Register(registry::RegistrationError),
+    NoKeymux(registry::ConnectError<KeyboardMuxService>),
+}
+
 impl SimDisplay {
     /// Register the driver instance
     ///
@@ -87,24 +94,28 @@ impl SimDisplay {
         kernel: &'static Kernel,
         width: u32,
         height: u32,
-    ) -> Result<(), FrameError> {
+    ) -> Result<(), RegistrationError> {
         tracing::debug!("initializing SimDisplay server ({width}x{height})...");
 
+        let keymux = KeyboardMuxClient::from_registry(kernel)
+            .await
+            .map_err(RegistrationError::NoKeymux)?;
+
+        let cmd = kernel
+            .registry()
+            .bind_konly(2)
+            .await
+            .map_err(RegistrationError::Register)?
+            .into_request_stream(2)
+            .await;
+
         // TODO settings.kchannel_depth
-        let (listener, registration) = registry::Listener::new(2).await;
-        let cmd = listener.into_request_stream(2).await;
         let commander = CommanderTask { cmd, width, height };
 
         kernel.spawn(commander.run(kernel, width, height)).await;
 
         let (key_tx, key_rx) = KChannel::new_async(32).await.split();
-        let keymux = KeyboardMuxClient::from_registry(kernel).await;
         kernel.spawn(key_event_handler(key_rx, keymux)).await;
-
-        kernel
-            .register_konly::<EmbDisplayService>(registration)
-            .await
-            .map_err(|_| FrameError::DisplayAlreadyExists)?;
 
         // listen for key events
         let on_keydown = Closure::<dyn FnMut(_)>::new(move |event: web_sys::KeyboardEvent| {

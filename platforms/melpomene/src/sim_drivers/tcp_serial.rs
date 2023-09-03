@@ -26,7 +26,8 @@ impl TcpSerial {
         let (a_ring, b_ring) =
             new_bidi_channel(settings.incoming_size, settings.outgoing_size).await;
         let reqs = kernel
-            .bind_konly_service::<SimpleSerialService>(settings.kchannel_depth)
+            .registry()
+            .bind_konly::<SimpleSerialService>(settings.kchannel_depth)
             .await?
             .into_request_stream(settings.kchannel_depth)
             .await;

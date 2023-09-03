@@ -305,7 +305,8 @@ impl I2c0 {
         queued: usize,
     ) -> Result<(), registry::RegistrationError> {
         let rx = kernel
-            .bind_konly_service::<I2cService>(queued)
+            .registry()
+            .bind_konly::<I2cService>(queued)
             .await?
             .into_request_stream(queued)
             .await;

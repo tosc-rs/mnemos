@@ -322,7 +322,8 @@ impl MnemosContext {
                     SpawnulatorClient::from_registry(kernel),
                 )
                 .await
-                .expect("Spawnulator client timed out - is the spawnulator running?"),
+                .expect("Spawnulator client timed out - is the spawnulator running?")
+                .expect("failed to get spawnulator"),
         }
     }
 }
@@ -414,7 +415,9 @@ async fn sermux_open_port(forth: &mut forth3::Forth<MnemosContext>) -> Result<()
     // We could codify that zero is an invalid BOH_TOKEN, and put zero on the
     // stack instead, to allow userspace to handle errors if wanted.
     //
-    let mut mux_hdl = SerialMuxClient::from_registry(forth.host_ctxt.kernel).await;
+    let mut mux_hdl = SerialMuxClient::from_registry(forth.host_ctxt.kernel)
+        .await
+        .map_err(|_| forth3::Error::InternalError)?;
 
     let port = mux_hdl
         .open_port(port, sz)

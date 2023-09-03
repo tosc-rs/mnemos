@@ -98,14 +98,13 @@ pub use embedded_hal_async;
 pub use maitake;
 use maitake::{
     scheduler::LocalScheduler,
-    sync::{RwLock, RwLockReadGuard, RwLockWriteGuard},
     task::{BoxStorage, JoinHandle, Storage},
     time::{Duration, Sleep, Timeout, Timer},
 };
 pub use mnemos_alloc;
 use mnemos_alloc::containers::Box;
-use registry::{Listener, RegisteredDriver, Registry};
-use serde::{de::DeserializeOwned, Deserialize, Serialize};
+use registry::Registry;
+use serde::{Deserialize, Serialize};
 use services::{
     forth_spawnulator::{SpawnulatorServer, SpawnulatorSettings},
     keyboard::mux::{KeyboardMuxServer, KeyboardMuxSettings},
@@ -133,8 +132,8 @@ pub struct Kernel {
     /// Items that do not require a lock to access, and must only
     /// be accessed with shared refs
     inner: KernelInner,
-    /// The run-time driver registry, accessed via an async [`RwLock`].
-    registry: RwLock<Registry>,
+    /// The run-time driver registry.
+    registry: Registry,
 }
 
 unsafe impl Sync for Kernel {}
@@ -175,11 +174,8 @@ impl Kernel {
             timer: Timer::new(settings.timer_granularity),
         };
 
-        let new_kernel = Box::try_new(Kernel {
-            inner,
-            registry: RwLock::new(registry),
-        })
-        .map_err(|_| "Kernel allocation failed.")?;
+        let new_kernel =
+            Box::try_new(Kernel { inner, registry }).map_err(|_| "Kernel allocation failed.")?;
 
         Ok(new_kernel)
     }
@@ -227,129 +223,11 @@ impl Kernel {
         self.spawn_allocated(bx)
     }
 
-    /// Registers a new kernel-only [`RegisteredDriver`] with the kernel's
-    /// service [`Registry`].
-    ///
-    /// This is equivalent to calling
-    /// ```rust
-    /// # use serde::{Serialize, de::DeserializeOwned};
-    /// # use kernel::{Kernel, registry::{RegisteredDriver, Registration}};
-    /// # async fn example<RD>() -> Result<(), kernel::registry::RegistrationError>
-    /// # where RD: RegisteredDriver {
-    /// # let kernel: Kernel = unimplemented!("this test never actually creates a kernel");
-    /// # let registration: Registration<RD> = unimplemented!();
-    /// kernel.with_registry(|registry| { registry.register_konly::<RD>(registration) }).await
-    /// # }
-    /// ```
-    pub async fn register_konly<RD>(
-        &'static self,
-        registration: registry::Registration<RD>,
-    ) -> Result<(), registry::RegistrationError>
-    where
-        RD: RegisteredDriver,
-    {
-        self.registry_mut().await.register_konly(registration)
-    }
-
-    /// Registers a new [`RegisteredDriver`] with the kernel's service [`Registry`].
-    ///
-    /// This is equivalent to calling
-    /// ```rust
-    /// # use serde::{Serialize, de::DeserializeOwned};
-    /// # use kernel::{Kernel, registry::{RegisteredDriver, Registration}};
-    /// # async fn example<RD>() -> Result<(), kernel::registry::RegistrationError>
-    /// # where
-    /// # RD: RegisteredDriver + 'static,
-    /// # RD::Hello: Serialize + DeserializeOwned,
-    /// # RD::ConnectError: Serialize + DeserializeOwned,
-    /// # RD::Request: Serialize + DeserializeOwned,
-    /// # RD::Response: Serialize + DeserializeOwned,
-    /// # {
-    /// # let kernel: Kernel = unimplemented!("this test never actually creates a kernel");
-    /// # let registration: Registration<RD> = unimplemented!();
-    /// kernel.with_registry(|registry| { registry.register::<RD>(registration) }).await
-    /// # }
-    /// ```
-    pub async fn register<RD>(
-        &'static self,
-        registration: registry::Registration<RD>,
-    ) -> Result<(), registry::RegistrationError>
-    where
-        RD: RegisteredDriver + 'static,
-        RD::Hello: Serialize + DeserializeOwned,
-        RD::ConnectError: Serialize + DeserializeOwned,
-        RD::Request: Serialize + DeserializeOwned,
-        RD::Response: Serialize + DeserializeOwned,
-    {
-        self.registry_mut().await.register(registration)
-    }
-
-    /// Bind a kernel-only [`Listener`] for a driver service of type `RD`.
-    ///
-    /// This is a helper method which creates a [`Listener`] using
-    /// [`Listener::new`] and then registers that [`Listener`]'s
-    /// [`listener::Registration`] with the kernel's [`Registry`] using
-    /// [`Registry::register_konly`].
-    ///
-    /// Driver services registered with [`Kernel::bind_konly_service`] can NOT
-    /// be queried or interfaced with from Userspace. If a registered service
-    /// has request and response types that are serializable, it can instead be
-    /// registered with [`Kernel::bind_service`], which allows for userspace
-    /// access.
-    ///
-    /// [`listener::Registration`]: registry::listener::Registration
-    pub async fn bind_konly_service<RD>(
-        &self,
-        capacity: usize,
-    ) -> Result<Listener<RD>, registry::RegistrationError>
-    where
-        RD: RegisteredDriver,
-    {
-        let (listener, registration) = Listener::new(capacity).await;
-        self.registry_mut().await.register_konly(registration)?;
-        Ok(listener)
-    }
-
-    /// Bind a [`Listener`] for a driver service of type `RD`.
-    ///
-    /// This is a helper method which creates a [`Listener`] using
-    /// [`Listener::new`] and then registers that [`Listener`]'s
-    /// [`listener::Registration`] with the registry using
-    /// [`Registry::register`].
-    ///
-    /// Driver services registered with [`Registry::bind`] can be accessed both
-    /// by the kernel and by userspace. This requires that the
-    /// [`RegisteredDriver`]'s message types implement [`Serialize`] and
-    /// [`DeserializeOwned`]. Driver services whose message types are *not*
-    /// serializable may still bind listeners using
-    /// [`Kernel::bind_konly_service`], but these listeners will not be
-    /// accessible from userspace.
-    ///
-    /// [`listener::Registration`]: registry::listener::Registration
-    pub async fn bind_service<RD>(
-        &mut self,
-        capacity: usize,
-    ) -> Result<Listener<RD>, registry::RegistrationError>
-    where
-        RD: RegisteredDriver + 'static,
-        RD::Hello: Serialize + DeserializeOwned,
-        RD::ConnectError: Serialize + DeserializeOwned,
-        RD::Request: Serialize + DeserializeOwned,
-        RD::Response: Serialize + DeserializeOwned,
-    {
-        let (listener, registration) = Listener::new(capacity).await;
-        self.registry_mut().await.register(registration)?;
-        Ok(listener)
-    }
-
     /// Immutably borrow the kernel's [`Registry`].
-    pub async fn registry(&self) -> RwLockReadGuard<'_, Registry> {
-        self.registry.read().await
-    }
-
-    /// Mutably borrow the kernel's [`Registry`].
-    pub async fn registry_mut(&self) -> RwLockWriteGuard<'_, Registry> {
-        self.registry.write().await
+    #[inline]
+    #[must_use]
+    pub fn registry(&self) -> &Registry {
+        &self.registry
     }
 
     #[track_caller]

@@ -8,8 +8,6 @@
 //!
 //! See the docs of [FrameChunk] and [EmbDisplayClient] for additional details
 //! of use.
-use core::time::Duration;
-
 use embedded_graphics::{
     pixelcolor::{BinaryColor, Gray8},
     prelude::*,
@@ -62,9 +60,6 @@ pub enum Response {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum FrameError {
-    /// Failed to register a display, the kernel reported that there is already
-    /// an existing EmbDisplay
-    DisplayAlreadyExists,
     /// We are still waiting for a response from the last request
     Busy,
     /// Internal Error
@@ -86,18 +81,15 @@ impl EmbDisplayClient {
     /// [`EmbDisplayService`].
     ///
     /// Will retry until success
-    pub async fn from_registry(kernel: &'static Kernel) -> Self {
-        loop {
-            match Self::from_registry_no_retry(kernel).await {
-                Ok(me) => return me,
-                Err(registry::ConnectError::Rejected(_)) => {
-                    unreachable!("the EmbDisplayService does not return connect errors!")
-                }
-                Err(_) => {
-                    kernel.sleep(Duration::from_millis(10)).await;
-                }
-            }
-        }
+    pub async fn from_registry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<EmbDisplayService>> {
+        let prod = kernel.registry().connect::<EmbDisplayService>(()).await?;
+
+        Ok(EmbDisplayClient {
+            prod,
+            reply: Reusable::new_async().await,
+        })
     }
 
     /// Obtain a new client handle by querying the registry for a registered
@@ -109,8 +101,7 @@ impl EmbDisplayClient {
     ) -> Result<Self, registry::ConnectError<EmbDisplayService>> {
         let prod = kernel
             .registry()
-            .await
-            .connect::<EmbDisplayService>()
+            .try_connect::<EmbDisplayService>(())
             .await?;
 
         Ok(EmbDisplayClient {

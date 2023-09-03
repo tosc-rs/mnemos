@@ -5,9 +5,6 @@
 //! This module includes the service definition, client definition, as well
 //! as a server definition that relies on the [`SimpleSerial`][crate::services::simple_serial]
 //! service to provide the service implementation.
-
-use core::time::Duration;
-
 use crate::comms::bbq::GrantR;
 use crate::{
     comms::{bbq, oneshot::Reusable},
@@ -88,18 +85,15 @@ impl SerialMuxClient {
     /// Obtain a `SerialMuxClient`
     ///
     /// If the [`SerialMuxServer`] hasn't been registered yet, we will retry until it has been
-    pub async fn from_registry(kernel: &'static Kernel) -> Self {
-        loop {
-            match Self::from_registry_no_retry(kernel).await {
-                Ok(me) => return me,
-                Err(registry::ConnectError::Rejected(_)) => {
-                    unreachable!("the SerialMuxService does not return connect errors!")
-                }
-                Err(_) => {
-                    kernel.sleep(Duration::from_millis(10)).await;
-                }
-            }
-        }
+    pub async fn from_registry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<SerialMuxService>> {
+        let prod = kernel.registry().connect::<SerialMuxService>(()).await?;
+
+        Ok(SerialMuxClient {
+            prod,
+            reply: Reusable::new_async().await,
+        })
     }
 
     /// Obtain a `SerialMuxClient`
@@ -113,8 +107,7 @@ impl SerialMuxClient {
     ) -> Result<Self, registry::ConnectError<SerialMuxService>> {
         let prod = kernel
             .registry()
-            .await
-            .connect::<SerialMuxService>()
+            .try_connect::<SerialMuxService>(())
             .await?;
 
         Ok(SerialMuxClient {
@@ -145,7 +138,7 @@ impl PortHandle {
     /// If you need to open multiple ports at once, probably get a [SerialMuxClient] instead
     /// to reuse it for both ports
     pub async fn open(kernel: &'static Kernel, port_id: u16, capacity: usize) -> Option<Self> {
-        let mut client = SerialMuxClient::from_registry(kernel).await;
+        let mut client = SerialMuxClient::from_registry(kernel).await.ok()?;
         client.open_port(port_id, capacity).await
     }
 
@@ -208,19 +201,10 @@ impl SerialMuxServer {
         kernel: &'static Kernel,
         settings: SerialMuxSettings,
     ) -> Result<(), RegistrationError> {
-        loop {
-            match SerialMuxServer::register_no_retry(kernel, settings).await {
-                Ok(_) => break,
-                Err(RegistrationError::Connect(registry::ConnectError::NotFound)) => {
-                    // Uart probably isn't registered yet. Try again in a bit
-                    kernel.sleep(Duration::from_millis(10)).await;
-                }
-                Err(e) => {
-                    panic!("uhhhh {e:?}");
-                }
-            }
-        }
-        Ok(())
+        let serial_handle = SimpleSerialClient::from_registry(kernel)
+            .await
+            .map_err(RegistrationError::Connect)?;
+        Self::register_inner(kernel, settings, serial_handle).await
     }
 
     /// Register the SerialMuxServer.
@@ -233,21 +217,28 @@ impl SerialMuxServer {
     /// spawning one around the same time as registering this server.
     pub async fn register_no_retry(
         kernel: &'static Kernel,
+        settings: SerialMuxSettings,
+    ) -> Result<(), RegistrationError> {
+        let serial_handle = SimpleSerialClient::from_registry_no_retry(kernel)
+            .await
+            .map_err(RegistrationError::Connect)?;
+        Self::register_inner(kernel, settings, serial_handle).await
+    }
+
+    async fn register_inner(
+        kernel: &'static Kernel,
         SerialMuxSettings {
             max_ports,
             max_frame,
             ..
         }: SerialMuxSettings,
+        mut serial_handle: SimpleSerialClient,
     ) -> Result<(), RegistrationError> {
         let max_ports = max_ports as usize;
-        let mut serial_handle = SimpleSerialClient::from_registry(kernel)
-            .await
-            .map_err(RegistrationError::Connect)?;
         let serial_port = serial_handle
             .get_port()
             .await
             .ok_or(RegistrationError::NoSerialPortAvailable)?;
-
         let (sprod, scons) = serial_port.split();
         let sprod = sprod.into_mpmc_producer().await;
 
@@ -255,7 +246,8 @@ impl SerialMuxServer {
         let imutex = Arc::new(Mutex::new(MuxingInfo { ports, max_frame })).await;
 
         let listener = kernel
-            .bind_konly_service::<SerialMuxService>(max_ports)
+            .registry()
+            .bind_konly::<SerialMuxService>(max_ports)
             .await
             .map_err(|_| RegistrationError::MuxAlreadyRegistered)?;
 

@@ -27,9 +27,13 @@ impl Serial {
         recv: mpsc::Receiver<u8>,
         recv_callback: fn(String),
     ) -> Result<(), registry::RegistrationError> {
+        let cons = kernel
+            .registry()
+            .bind_konly::<SimpleSerialService>(2)
+            .await?
+            .into_request_stream(2)
+            .await;
         let (a_ring, b_ring) = new_bidi_channel(incoming_size, outgoing_size).await;
-        let (listener, registration) = registry::Listener::new(2).await;
-        let cons = listener.into_request_stream(2).await;
 
         kernel
             .spawn(async move {
@@ -66,9 +70,7 @@ impl Serial {
                 .instrument(info_span!("Serial", ?port)),
             )
             .await;
-        kernel
-            .register_konly::<SimpleSerialService>(registration)
-            .await
+        Ok(())
     }
 }
 

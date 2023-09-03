@@ -17,12 +17,11 @@ use crate::{
     mnemos_alloc::containers::FixedVec,
     registry::{
         self, known_uuids, listener, Envelope, KernelHandle, OneshotRequestError, RegisteredDriver,
-        RegistrationError,
     },
     services::serial_mux,
     Kernel,
 };
-use core::{convert::Infallible, time::Duration};
+use core::convert::Infallible;
 use futures::{future, FutureExt};
 use serde::{Deserialize, Serialize};
 use tracing::Level;
@@ -75,18 +74,14 @@ impl KeyboardMuxClient {
     ///
     /// If the [`KeyboardMuxService`] hasn't been registered yet, we will retry until it
     /// has been registered.
-    pub async fn from_registry(kernel: &'static Kernel) -> Self {
-        loop {
-            match Self::from_registry_no_retry(kernel).await {
-                Ok(me) => return me,
-                Err(registry::ConnectError::Rejected(_)) => {
-                    unreachable!("the KeyboardMuxService does not return connect errors!")
-                }
-                Err(_) => {
-                    kernel.sleep(Duration::from_millis(10)).await;
-                }
-            }
-        }
+    pub async fn from_registry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<KeyboardMuxService>> {
+        let handle = kernel.registry().connect::<KeyboardMuxService>(()).await?;
+        Ok(Self {
+            handle,
+            reply: Reusable::new_async().await,
+        })
     }
 
     /// Obtain an `KeyboardMuxClient`
@@ -100,8 +95,7 @@ impl KeyboardMuxClient {
     ) -> Result<Self, registry::ConnectError<KeyboardMuxService>> {
         let handle = kernel
             .registry()
-            .await
-            .connect::<KeyboardMuxService>()
+            .try_connect::<KeyboardMuxService>(())
             .await?;
         Ok(Self {
             handle,
@@ -153,6 +147,14 @@ pub struct KeyboardMuxSettings {
     pub sermux_port: Option<u16>,
 }
 
+#[derive(Debug)]
+pub enum RegistrationError {
+    RegisterMux(registry::RegistrationError),
+    RegisterKeyboard(registry::RegistrationError),
+    NoSermux(registry::ConnectError<serial_mux::SerialMuxService>),
+    NoSermuxPort,
+}
+
 impl KeyboardMuxServer {
     /// Register the `KeyboardMuxServer`.
     ///
@@ -170,19 +172,25 @@ impl KeyboardMuxServer {
         settings: KeyboardMuxSettings,
     ) -> Result<(), RegistrationError> {
         let key_rx = kernel
-            .bind_konly_service::<KeyboardMuxService>(settings.buffer_capacity)
-            .await?
+            .registry()
+            .bind_konly::<KeyboardMuxService>(settings.buffer_capacity)
+            .await
+            .map_err(RegistrationError::RegisterMux)?
             .into_request_stream(settings.buffer_capacity)
             .await;
         let sub_rx = kernel
-            .bind_konly_service::<KeyboardService>(8)
-            .await?
+            .registry()
+            .bind_konly::<KeyboardService>(8)
+            .await
+            .map_err(RegistrationError::RegisterKeyboard)?
             .into_request_stream(8)
             .await;
 
         let subscriptions = FixedVec::new(settings.max_keyboards).await;
         let sermux_port = if let Some(port) = settings.sermux_port {
-            let mut client = serial_mux::SerialMuxClient::from_registry(kernel).await;
+            let mut client = serial_mux::SerialMuxClient::from_registry(kernel)
+                .await
+                .map_err(RegistrationError::NoSermux)?;
             tracing::info!("opening Serial Mux port {port}");
             Some(
                 client

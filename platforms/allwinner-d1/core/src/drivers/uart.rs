@@ -184,7 +184,8 @@ impl D1Uart {
         let (fifo_a, fifo_b) = new_bidi_channel(cap_in, cap_out).await;
 
         let reqs = k
-            .bind_konly_service::<SimpleSerialService>(4)
+            .registry()
+            .bind_konly::<SimpleSerialService>(4)
             .await?
             .into_request_stream(4)
             .await;
