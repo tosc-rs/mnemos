@@ -30,7 +30,7 @@ use embedded_graphics::{pixelcolor::Gray8, prelude::*, primitives::Rectangle};
 use kernel::{
     maitake::sync::{Mutex, WaitQueue},
     mnemos_alloc::containers::{Arc, FixedVec},
-    registry::{self, listener},
+    registry::listener,
     services::emb_display::{
         DisplayMetadata, EmbDisplayService, FrameChunk, FrameError, FrameKind, MonoChunk, Request,
         Response,
@@ -87,9 +87,14 @@ impl SharpDisplay {
         }))
         .await;
 
-        let (listener, registration) = registry::Listener::new(2).await;
+        let cmd = kernel
+            .bind_konly_service(2)
+            .await
+            .map_err(|_| FrameError::DisplayAlreadyExists)?
+            .into_request_stream(2)
+            .await;
         let commander = CommanderTask {
-            cmd: listener.into_request_stream(2).await,
+            cmd,
             ctxt: ctxt.clone(),
             height: HEIGHT as u32,
             width: WIDTH as u32,
@@ -109,11 +114,6 @@ impl SharpDisplay {
         kernel.spawn(commander.cmd_run()).await;
         kernel.spawn(vcom.vcom_run()).await;
         kernel.spawn(draw.draw_run()).await;
-
-        kernel
-            .with_registry(|reg| reg.register_konly::<EmbDisplayService>(registration))
-            .await
-            .map_err(|_| FrameError::DisplayAlreadyExists)?;
 
         Ok(())
     }

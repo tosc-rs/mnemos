@@ -134,11 +134,6 @@ impl SpawnulatorClient {
 
 pub struct SpawnulatorServer;
 
-#[derive(Debug)]
-pub enum RegistrationError {
-    SpawnulatorAlreadyRegistered,
-}
-
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct SpawnulatorSettings {
     #[serde(default)]
@@ -159,18 +154,18 @@ impl SpawnulatorServer {
     pub async fn register(
         kernel: &'static Kernel,
         settings: SpawnulatorSettings,
-    ) -> Result<(), RegistrationError> {
-        let (listener, r) = registry::Listener::new(settings.capacity).await;
-        let vms = listener.into_request_stream(settings.capacity).await;
+    ) -> Result<(), registry::RegistrationError> {
+        let vms = kernel
+            .bind_konly_service::<SpawnulatorService>(settings.capacity)
+            .await?
+            .into_request_stream(settings.capacity)
+            .await;
         tracing::debug!("who spawns the spawnulator?");
         kernel
             .spawn(SpawnulatorServer::spawnulate(kernel, vms))
             .await;
         tracing::debug!("spawnulator spawnulated!");
-        kernel
-            .with_registry(|reg| reg.register_konly::<SpawnulatorService>(r))
-            .await
-            .map_err(|_| RegistrationError::SpawnulatorAlreadyRegistered)?;
+
         tracing::info!("ForthSpawnulatorService registered");
         Ok(())
     }

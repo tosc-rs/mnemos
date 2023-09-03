@@ -109,9 +109,11 @@ impl SpiSenderServer {
         kernel: &'static Kernel,
         queued: usize,
     ) -> Result<(), registry::RegistrationError> {
-        let (listener, registration) = registry::Listener::new(queued).await;
-
-        let reqs = listener.into_request_stream(queued).await;
+        let reqs = kernel
+            .bind_konly_service::<SpiSender>(queued)
+            .await?
+            .into_request_stream(queued)
+            .await;
         kernel
             .spawn(async move {
                 let spi = unsafe { &*SPI_DBI::PTR };
@@ -197,10 +199,6 @@ impl SpiSenderServer {
                 Result::<(), ()>::Ok(())
             })
             .await;
-
-        kernel
-            .with_registry(move |reg| reg.register_konly::<SpiSender>(registration))
-            .await?;
 
         Ok(())
     }

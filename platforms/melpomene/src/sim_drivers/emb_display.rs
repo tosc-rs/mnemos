@@ -65,8 +65,12 @@ impl SimDisplay {
         height: u32,
     ) -> Result<(), FrameError> {
         tracing::debug!("initializing SimDisplay server ({width}x{height})...");
-        let (listener, registration) = registry::Listener::new(settings.kchannel_depth).await;
-        let cmd = listener.into_request_stream(settings.kchannel_depth).await;
+        let cmd = kernel
+            .bind_konly_service(settings.kchannel_depth)
+            .await
+            .map_err(|_| FrameError::DisplayAlreadyExists)?
+            .into_request_stream(settings.kchannel_depth)
+            .await;
 
         let commander = CommanderTask {
             kernel,
@@ -76,11 +80,6 @@ impl SimDisplay {
         };
 
         kernel.spawn(commander.run(width, height, settings)).await;
-
-        kernel
-            .with_registry(|reg| reg.register_konly::<EmbDisplayService>(registration))
-            .await
-            .map_err(|_| FrameError::DisplayAlreadyExists)?;
 
         tracing::info!("SimDisplayServer initialized!");
 

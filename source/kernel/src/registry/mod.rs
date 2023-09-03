@@ -7,6 +7,7 @@ use core::{
 
 use crate::comms::{kchannel, oneshot::Reusable};
 use mnemos_alloc::containers::FixedVec;
+use portable_atomic::{AtomicU32, Ordering};
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use spitebuf::EnqueueError;
@@ -119,7 +120,7 @@ pub struct RegistryType {
 /// The driver registry used by the kernel.
 pub struct Registry {
     items: FixedVec<RegistryItem>,
-    counter: u32,
+    counter: AtomicU32,
 }
 
 // TODO: This probably goes into the ABI crate, here is fine for now
@@ -405,8 +406,57 @@ impl Registry {
     pub fn new(max_items: usize) -> Self {
         Self {
             items: FixedVec::try_new(max_items).unwrap(),
-            counter: 0,
+            counter: AtomicU32::new(0),
         }
+    }
+
+    /// Bind a kernel-only [`Listener`] for a driver service of type `RD`.
+    ///
+    /// This is a helper method which creates a [`Listener`] using
+    /// [`Listener::new`] and then registers that [`Listener`]'s
+    /// [`listener::Registration`] with the registry using
+    /// [`Registry::register_konly`].
+    ///
+    /// Driver services registered with [`Registry::bind_konly`] can NOT be queried
+    /// or interfaced with from Userspace. If a registered service has request
+    /// and response types that are serializable, it can instead be registered
+    /// with [`Registry::bind`] which allows for userspace access.
+    pub async fn bind_konly<RD>(
+        &mut self,
+        capacity: usize,
+    ) -> Result<Listener<RD>, RegistrationError>
+    where
+        RD: RegisteredDriver,
+    {
+        let (listener, registration) = Listener::new(capacity).await;
+        self.register_konly(registration)?;
+        Ok(listener)
+    }
+
+    /// Bind a [`Listener`] for a driver service of type `RD`.
+    ///
+    /// This is a helper method which creates a [`Listener`] using
+    /// [`Listener::new`] and then registers that [`Listener`]'s
+    /// [`listener::Registration`] with the registry using
+    /// [`Registry::register`].
+    ///
+    /// Driver services registered with [`Registry::bind`] can be accessed both
+    /// by the kernel and by userspace. This requires that the
+    /// [`RegisteredDriver`]'s message types implement [`Serialize`] and
+    /// [`DeserializeOwned`]. Driver services whose message types are *not*
+    /// serializable may still bind listeners using [`Registry::bind_konly`],
+    /// but these listeners will not be accessible from userspace.
+    pub async fn bind<RD>(&mut self, capacity: usize) -> Result<Listener<RD>, RegistrationError>
+    where
+        RD: RegisteredDriver + 'static,
+        RD::Hello: Serialize + DeserializeOwned,
+        RD::ConnectError: Serialize + DeserializeOwned,
+        RD::Request: Serialize + DeserializeOwned,
+        RD::Response: Serialize + DeserializeOwned,
+    {
+        let (listener, registration) = Listener::new(capacity).await;
+        self.register(registration)?;
+        Ok(listener)
     }
 
     /// Register a driver service ONLY for use in the kernel, including drivers.
@@ -429,6 +479,8 @@ impl Registry {
             return Err(RegistrationError::UuidAlreadyRegistered);
         }
         let conn_prod = registration.tx.type_erase();
+
+        let service_id = self.counter.fetch_add(1, Ordering::Relaxed);
         self.items
             .try_push(RegistryItem {
                 key: RD::UUID,
@@ -436,12 +488,11 @@ impl Registry {
                     req_resp_tuple_id: RD::type_id().type_of(),
                     conn_prod,
                     user_vtable: None,
-                    service_id: ServiceId(self.counter),
+                    service_id: ServiceId(service_id),
                 },
             })
             .map_err(|_| RegistrationError::RegistryFull)?;
-        info!(uuid = ?RD::UUID, service_id = self.counter, "Registered KOnly");
-        self.counter = self.counter.wrapping_add(1);
+        info!(uuid = ?RD::UUID, service_id, "Registered KOnly");
         Ok(())
     }
 
@@ -471,6 +522,7 @@ impl Registry {
             return Err(RegistrationError::UuidAlreadyRegistered);
         }
 
+        let service_id = self.counter.fetch_add(1, Ordering::Relaxed);
         let conn_prod = registration.tx.type_erase();
         self.items
             .try_push(RegistryItem {
@@ -479,12 +531,13 @@ impl Registry {
                     req_resp_tuple_id: RD::type_id().type_of(),
                     conn_prod,
                     user_vtable: Some(UserVtable::new::<RD>()),
-                    service_id: ServiceId(self.counter),
+                    service_id: ServiceId(service_id),
                 },
             })
             .map_err(|_| RegistrationError::RegistryFull)?;
-        info!(svc = %any::type_name::<RD>(), uuid = ?RD::UUID, service_id = self.counter, "Registered");
-        self.counter = self.counter.wrapping_add(1);
+
+        info!(svc = %any::type_name::<RD>(), uuid = ?RD::UUID, service_id, "Registered");
+
         Ok(())
     }
 
@@ -515,10 +568,10 @@ impl Registry {
         fields(svc = %any::type_name::<RD>()),
     )]
     pub async fn connect_with_hello<RD: RegisteredDriver>(
-        &mut self,
+        &self,
         hello: RD::Hello,
     ) -> Result<KernelHandle<RD>, ConnectError<RD>> {
-        let item = Self::get(&self.items)?;
+        let item = self.get::<RD>()?;
 
         // cast the erased connection sender back to a typed sender.
         let tx = unsafe {
@@ -554,14 +607,15 @@ impl Registry {
             // ...and the inner `Result` is the error returned by the driver.
             .map_err(ConnectError::Rejected)?;
 
+        let client_id = self.counter.fetch_add(1, Ordering::Relaxed);
         let res = Ok(KernelHandle {
             prod,
             service_id: item.value.service_id,
-            client_id: ClientId(self.counter),
+            client_id: ClientId(client_id),
             request_ctr: 0,
         });
-        info!(svc = %any::type_name::<RD>(), uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
-        self.counter = self.counter.wrapping_add(1);
+        info!(svc = %any::type_name::<RD>(), uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id, "Got KernelHandle from Registry");
+
         res
     }
 
@@ -588,7 +642,8 @@ impl Registry {
     ///   connection.
     ///
     /// [rejected]: listener::Handshake::reject
-    pub async fn connect<RD>(&mut self) -> Result<KernelHandle<RD>, ConnectError<RD>>
+
+    pub async fn connect<RD>(&self) -> Result<KernelHandle<RD>, ConnectError<RD>>
     where
         RD: RegisteredDriver<Hello = ()>,
     {
@@ -611,7 +666,7 @@ impl Registry {
         fields(svc = %any::type_name::<RD>()),
     )]
     pub async fn connect_userspace_with_hello<RD>(
-        &mut self,
+        &self,
         scheduler: &maitake::scheduler::LocalScheduler,
         user_hello: &[u8],
     ) -> Result<UserspaceHandle, UserConnectError<RD>>
@@ -622,7 +677,7 @@ impl Registry {
         RD::Request: Serialize + DeserializeOwned,
         RD::Response: Serialize + DeserializeOwned,
     {
-        let item = Self::get::<RD>(&self.items).map_err(UserConnectError::Connect)?;
+        let item = self.get::<RD>().map_err(UserConnectError::Connect)?;
         let vtable = item
             .value
             .user_vtable
@@ -661,15 +716,14 @@ impl Registry {
             },
         };
 
-        let client_id = self.counter;
+        let client_id = self.counter.fetch_add(1, Ordering::Relaxed);
         info!(
             svc = %any::type_name::<RD>(),
             uuid = ?RD::UUID,
             service_id = item.value.service_id.0,
-            client_id = self.counter,
+            client_id,
             "Got KernelHandle from Registry",
         );
-        self.counter = self.counter.wrapping_add(1);
 
         Ok(UserspaceHandle {
             req_producer_leaked,
@@ -679,14 +733,8 @@ impl Registry {
         })
     }
 
-    // This isn't a method on `self` because it borrows `items`, and if it
-    // borrowed `self`, it would also borrow `self.counter`, which we need to be
-    // able to mutate while borrowing `self`.
-    // TODO(eliza): could fix that by just making the counter atomic...
-    fn get<RD: RegisteredDriver>(
-        items: &FixedVec<RegistryItem>,
-    ) -> Result<&RegistryItem, ConnectError<RD>> {
-        let Some(item) = items.as_slice().iter().find(|i| i.key == RD::UUID) else {
+    fn get<RD: RegisteredDriver>(&self) -> Result<&RegistryItem, ConnectError<RD>> {
+        let Some(item) = self.items.as_slice().iter().find(|i| i.key == RD::UUID) else {
             tracing::debug!(
                 svc = %any::type_name::<RD>(),
                 uuid = ?RD::UUID,

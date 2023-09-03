@@ -253,7 +253,12 @@ impl SerialMuxServer {
 
         let ports = FixedVec::new(max_ports).await;
         let imutex = Arc::new(Mutex::new(MuxingInfo { ports, max_frame })).await;
-        let (listener, registration) = registry::Listener::new(max_ports).await;
+
+        let listener = kernel
+            .bind_konly_service::<SerialMuxService>(max_ports)
+            .await
+            .map_err(|_| RegistrationError::MuxAlreadyRegistered)?;
+
         let buf = FixedVec::new(max_frame).await;
         let commander = CommanderTask {
             cmd: listener.into_request_stream(max_ports).await,
@@ -273,11 +278,6 @@ impl SerialMuxServer {
                 muxer.run().await;
             })
             .await;
-
-        kernel
-            .with_registry(|reg| reg.register_konly::<SerialMuxService>(registration))
-            .await
-            .map_err(|_| RegistrationError::MuxAlreadyRegistered)?;
 
         Ok(())
     }

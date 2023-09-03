@@ -102,7 +102,7 @@ impl SimDisplay {
         kernel.spawn(key_event_handler(key_rx, keymux)).await;
 
         kernel
-            .with_registry(|reg| reg.register_konly::<EmbDisplayService>(registration))
+            .register_konly::<EmbDisplayService>(registration)
             .await
             .map_err(|_| FrameError::DisplayAlreadyExists)?;
 

@@ -304,14 +304,14 @@ impl I2c0 {
         kernel: &'static Kernel,
         queued: usize,
     ) -> Result<(), registry::RegistrationError> {
-        let (listener, registration) = registry::Listener::new(queued).await;
-        let rx = listener.into_request_stream(queued).await;
+        let rx = kernel
+            .bind_konly_service::<I2cService>(queued)
+            .await?
+            .into_request_stream(queued)
+            .await;
 
         kernel.spawn(self.run(rx)).await;
         tracing::info!("TWI driver task spawned");
-        kernel
-            .with_registry(move |reg| reg.register_konly::<I2cService>(registration))
-            .await?;
 
         Ok(())
     }

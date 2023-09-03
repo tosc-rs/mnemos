@@ -48,9 +48,7 @@ fn konly_connect() {
         })
         .await;
 
-        k.with_registry(|r| r.register_konly(registration))
-            .await
-            .unwrap();
+        k.register_konly(registration).await.unwrap();
 
         let reply = comms::oneshot::Reusable::new_async().await;
         let mut client1 = k
@@ -145,7 +143,7 @@ fn user_connect() {
         })
         .await;
 
-        k.with_registry(|r| r.register(registration)).await.unwrap();
+        k.register(registration).await.unwrap();
 
         #[tracing::instrument(skip(k), err(Debug))]
         async fn user_connect(
