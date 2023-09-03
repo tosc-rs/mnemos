@@ -410,6 +410,55 @@ impl Registry {
         }
     }
 
+    /// Bind a kernel-only [`Listener`] for a driver service of type `RD`.
+    ///
+    /// This is a helper method which creates a [`Listener`] using
+    /// [`Listener::new`] and then registers that [`Listener`]'s
+    /// [`listener::Registration`] with the registry using
+    /// [`Registry::register_konly`].
+    ///
+    /// Driver services registered with [`Registry::bind_konly`] can NOT be queried
+    /// or interfaced with from Userspace. If a registered service has request
+    /// and response types that are serializable, it can instead be registered
+    /// with [`Registry::bind`] which allows for userspace access.
+    pub async fn bind_konly<RD>(
+        &mut self,
+        capacity: usize,
+    ) -> Result<Listener<RD>, RegistrationError>
+    where
+        RD: RegisteredDriver,
+    {
+        let (listener, registration) = Listener::new(capacity).await;
+        self.register_konly(registration)?;
+        Ok(listener)
+    }
+
+    /// Bind a [`Listener`] for a driver service of type `RD`.
+    ///
+    /// This is a helper method which creates a [`Listener`] using
+    /// [`Listener::new`] and then registers that [`Listener`]'s
+    /// [`listener::Registration`] with the registry using
+    /// [`Registry::register`].
+    ///
+    /// Driver services registered with [`Registry::bind`] can be accessed both
+    /// by the kernel and by userspace. This requires that the
+    /// [`RegisteredDriver`]'s message types implement [`Serialize`] and
+    /// [`DeserializeOwned`]. Driver services whose message types are *not*
+    /// serializable may still bind listeners using [`Registry::bind_konly`],
+    /// but these listeners will not be accessible from userspace.
+    pub async fn bind<RD>(&mut self, capacity: usize) -> Result<Listener<RD>, RegistrationError>
+    where
+        RD: RegisteredDriver + 'static,
+        RD::Hello: Serialize + DeserializeOwned,
+        RD::ConnectError: Serialize + DeserializeOwned,
+        RD::Request: Serialize + DeserializeOwned,
+        RD::Response: Serialize + DeserializeOwned,
+    {
+        let (listener, registration) = Listener::new(capacity).await;
+        self.register(registration)?;
+        Ok(listener)
+    }
+
     /// Register a driver service ONLY for use in the kernel, including drivers.
     ///
     /// Driver services registered with [Registry::register_konly] can NOT be queried
