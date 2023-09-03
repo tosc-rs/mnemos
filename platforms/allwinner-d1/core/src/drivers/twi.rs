@@ -309,9 +309,7 @@ impl I2c0 {
 
         kernel.spawn(self.run(rx)).await;
         tracing::info!("TWI driver task spawned");
-        kernel
-            .with_registry(move |reg| reg.register_konly::<I2cService>(registration))
-            .await?;
+        kernel.register_konly(registration).await?;
 
         Ok(())
     }

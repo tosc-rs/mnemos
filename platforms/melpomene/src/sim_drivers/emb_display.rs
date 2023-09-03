@@ -78,7 +78,7 @@ impl SimDisplay {
         kernel.spawn(commander.run(width, height, settings)).await;
 
         kernel
-            .with_registry(|reg| reg.register_konly::<EmbDisplayService>(registration))
+            .register_konly(registration)
             .await
             .map_err(|_| FrameError::DisplayAlreadyExists)?;
 

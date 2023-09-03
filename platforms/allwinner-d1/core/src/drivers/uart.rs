@@ -195,8 +195,7 @@ impl D1Uart {
         let old = UART_RX.swap(leaked_prod, Ordering::AcqRel);
         assert_eq!(old, null_mut());
 
-        k.with_registry(|reg| reg.register_konly::<SimpleSerialService>(registration))
-            .await?;
+        k.register_konly(registration).await?;
 
         Ok(())
     }

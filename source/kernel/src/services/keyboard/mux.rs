@@ -200,13 +200,10 @@ impl KeyboardMuxServer {
             )
             .await;
 
-        kernel
-            .with_registry(|reg| {
-                reg.register_konly::<KeyboardMuxService>(key_tx)?;
-                reg.register_konly::<KeyboardService>(sub_tx)?;
-                Ok(())
-            })
-            .await?;
+        let mut registry = kernel.registry_mut().await;
+        registry.register_konly::<KeyboardMuxService>(key_tx)?;
+        registry.register_konly::<KeyboardService>(sub_tx)?;
+
         tracing::info!("KeyboardMuxServer registered!");
         Ok(())
     }

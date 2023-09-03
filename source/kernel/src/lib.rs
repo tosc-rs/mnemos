@@ -98,7 +98,7 @@ pub use embedded_hal_async;
 pub use maitake;
 use maitake::{
     scheduler::LocalScheduler,
-    sync::Mutex,
+    sync::{RwLock, RwLockReadGuard, RwLockWriteGuard},
     task::{BoxStorage, JoinHandle, Storage},
     time::{Duration, Sleep, Timeout, Timer},
 };
@@ -133,8 +133,8 @@ pub struct Kernel {
     /// Items that do not require a lock to access, and must only
     /// be accessed with shared refs
     inner: KernelInner,
-    /// The run-time driver registry, accessed via an async Mutex
-    registry: Mutex<Registry>,
+    /// The run-time driver registry, accessed via an async [`RwLock`].
+    registry: RwLock<Registry>,
 }
 
 unsafe impl Sync for Kernel {}
@@ -177,7 +177,7 @@ impl Kernel {
 
         let new_kernel = Box::try_new(Kernel {
             inner,
-            registry: Mutex::new(registry),
+            registry: RwLock::new(registry),
         })
         .map_err(|_| "Kernel allocation failed.")?;
 
@@ -227,14 +227,6 @@ impl Kernel {
         self.spawn_allocated(bx)
     }
 
-    pub async fn with_registry<F, R>(&'static self, f: F) -> R
-    where
-        F: FnOnce(&mut Registry) -> R,
-    {
-        let mut guard = self.registry.lock().await;
-        f(&mut guard)
-    }
-
     /// Registers a new kernel-only [`RegisteredDriver`] with the kernel's
     /// service [`Registry`].
     ///
@@ -256,8 +248,7 @@ impl Kernel {
     where
         RD: RegisteredDriver,
     {
-        self.with_registry(|registry| registry.register_konly(registration))
-            .await
+        self.registry_mut().await.register_konly(registration)
     }
 
     /// Registers a new [`RegisteredDriver`] with the kernel's service [`Registry`].
@@ -290,12 +281,17 @@ impl Kernel {
         RD::Request: Serialize + DeserializeOwned,
         RD::Response: Serialize + DeserializeOwned,
     {
-        self.with_registry(|registry| registry.register(registration))
-            .await
+        self.registry_mut().await.register(registration)
     }
 
-    pub async fn registry(&'static self) -> maitake::sync::MutexGuard<'_, Registry> {
-        self.registry.lock().await
+    /// Immutably borrow the kernel's [`Registry`].
+    pub async fn registry(&'static self) -> RwLockReadGuard<'_, Registry> {
+        self.registry.read().await
+    }
+
+    /// Mutably borrow the kernel's [`Registry`].
+    pub async fn registry_mut(&'static self) -> RwLockWriteGuard<'_, Registry> {
+        self.registry.write().await
     }
 
     #[track_caller]

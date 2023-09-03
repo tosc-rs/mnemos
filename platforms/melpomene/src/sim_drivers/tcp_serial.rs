@@ -80,7 +80,7 @@ impl TcpSerial {
         );
 
         kernel
-            .with_registry(|reg| reg.register_konly::<SimpleSerialService>(registration))
+            .register_konly::<SimpleSerialService>(registration)
             .await
     }
 }

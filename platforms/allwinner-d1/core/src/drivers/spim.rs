@@ -198,9 +198,7 @@ impl SpiSenderServer {
             })
             .await;
 
-        kernel
-            .with_registry(move |reg| reg.register_konly::<SpiSender>(registration))
-            .await?;
+        kernel.register_konly::<SpiSender>(registration).await?;
 
         Ok(())
     }

@@ -275,7 +275,7 @@ impl SerialMuxServer {
             .await;
 
         kernel
-            .with_registry(|reg| reg.register_konly::<SerialMuxService>(registration))
+            .register_konly::<SerialMuxService>(registration)
             .await
             .map_err(|_| RegistrationError::MuxAlreadyRegistered)?;
 

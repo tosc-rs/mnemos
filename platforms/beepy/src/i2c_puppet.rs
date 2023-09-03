@@ -414,9 +414,10 @@ impl I2cPuppetServer {
         }
 
         kernel
-            .with_registry(|reg| reg.register_konly::<I2cPuppetService>(registration))
+            .register_konly(registration)
             .await
             .map_err(RegistrationError::Registry)?;
+
         Ok(())
     }
 

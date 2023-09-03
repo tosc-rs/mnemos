@@ -111,7 +111,7 @@ impl SharpDisplay {
         kernel.spawn(draw.draw_run()).await;
 
         kernel
-            .with_registry(|reg| reg.register_konly::<EmbDisplayService>(registration))
+            .register_konly::<EmbDisplayService>(registration)
             .await
             .map_err(|_| FrameError::DisplayAlreadyExists)?;
 

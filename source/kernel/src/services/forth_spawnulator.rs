@@ -168,7 +168,7 @@ impl SpawnulatorServer {
             .await;
         tracing::debug!("spawnulator spawnulated!");
         kernel
-            .with_registry(|reg| reg.register_konly::<SpawnulatorService>(r))
+            .register_konly::<SpawnulatorService>(r)
             .await
             .map_err(|_| RegistrationError::SpawnulatorAlreadyRegistered)?;
         tracing::info!("ForthSpawnulatorService registered");
