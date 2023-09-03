@@ -19,7 +19,7 @@ use kernel::{
     comms::kchannel::{KChannel, KConsumer},
     mnemos_alloc::containers::FixedVec,
     registry,
-    services::sdmmc::{Command, Request, SdmmcService},
+    services::sdmmc::{self, SdmmcService},
     tracing, Kernel,
 };
 
@@ -51,15 +51,37 @@ struct SmhcData {
 static SMHC0_ISR: IsrData = IsrData {
     data: UnsafeCell::new(SmhcData {
         state: State::Idle,
-        op: SmhcOp::None,
+        op: SmhcOp::Control,
         err: None,
         waker: None,
     }),
 };
 
 enum SmhcOp {
-    // TODO
-    None,
+    Control,
+    Read {
+        buf: FixedVec<u8>,
+        cnt: u32,
+        auto_stop: bool,
+    },
+    Write {
+        buf: FixedVec<u8>,
+        cnt: u32,
+        auto_stop: bool,
+    },
+}
+
+/// TODO
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[allow(dead_code)]
+enum State {
+    Idle,
+    /// Waiting for command to be completed.
+    WaitForCommand,
+    /// Waiting for data transfer to be completed.
+    WaitForDataTransfer,
+    /// Waiting for the auto-stop command to be sent and completed.
+    WaitForAutoStop,
 }
 
 /// TODO
@@ -95,14 +117,6 @@ pub enum ErrorKind {
     Other,
 }
 
-/// TODO
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-#[allow(dead_code)]
-enum State {
-    Idle,
-    // TODO
-}
-
 impl Smhc {
     /// Initialize SMHC0 for SD cards.
     ///
@@ -135,6 +149,23 @@ impl Smhc {
             w
         });
         ccu.enable_module(&mut smhc);
+
+        // Enable interrupts that are relevant for an SD card
+        smhc.smhc_intmask.write(|w| {
+            w.dee_int_en().set_bit();
+            w.acd_int_en().set_bit();
+            w.dse_bc_int_en().set_bit();
+            w.cb_iw_int_en().set_bit();
+            w.fu_fo_int_en().set_bit();
+            w.dsto_vsd_int_en().set_bit();
+            w.dto_bds_int_en().set_bit();
+            w.dce_int_en().set_bit();
+            w.rce_int_en().set_bit();
+            w.dtc_int_en().set_bit();
+            w.cc_int_en().set_bit();
+            w.re_int_en().set_bit();
+            w
+        });
 
         Self::init(
             unsafe { &*SMHC0::ptr() },
@@ -181,7 +212,7 @@ impl Smhc {
         // Set card clock = module clock / 2
         smhc.smhc_clkdiv.modify(|_, w| w.cclk_div().variant(1));
 
-        // Set the sample delay to 0 (also done in Linux and Allwinner BSP)
+        // Set the sample delay to 0 (as done in Linux and Allwinner BSP)
         smhc.smhc_smap_dl.write(|w| {
             w.samp_dl_sw().variant(0);
             w.samp_dl_sw_en().set_bit()
@@ -204,9 +235,10 @@ impl Smhc {
         }
     }
 
-    fn handle_smhc0_interrupt() {
+    pub fn handle_smhc0_interrupt() {
         let _isr = kernel::isr::Isr::enter();
         let smhc = unsafe { &*SMHC0::ptr() };
+        // safety: it's okay to do this since this function can only be called from inside the ISR.
         let data = unsafe { &mut (*SMHC0_ISR.data.get()) };
 
         data.advance_isr(smhc, 0);
@@ -227,15 +259,89 @@ impl Smhc {
     #[tracing::instrument(name = "SMHC", level = tracing::Level::INFO, skip(self, rx))]
     async fn run(self, rx: KConsumer<registry::Message<SdmmcService>>) {
         tracing::info!("starting SMHC driver task");
-        while let Ok(registry::Message { msg, reply }) = rx.dequeue_async().await {
-            todo!()
+        while let Ok(registry::Message { mut msg, reply }) = rx.dequeue_async().await {
+            let response = self.command(msg.body).await;
+            // TODO: we don't need `msg.body` anymore, but since it has been moved
+            // we need to supply another value if we want to use `msg` later to reply.
+            msg.body = sdmmc::Command::default();
+            if let Err(error) = reply.reply_konly(msg.reply_with(response)).await {
+                tracing::warn!(?error, "client hung up...");
+            }
         }
     }
 
-    // #[tracing::instrument(level = tracing::Level::DEBUG, skip(self, txn))]
-    // async fn transaction(&self, txn: KConsumer<Transfer>) {
-    //     todo!()
-    // }
+    #[tracing::instrument(level = tracing::Level::DEBUG, skip(self, params))]
+    async fn command(&self, params: sdmmc::Command) -> Result<sdmmc::Response, sdmmc::Error> {
+        if self.smhc.smhc_cmd.read().cmd_load().bit_is_set() {
+            return Err(sdmmc::Error::Busy);
+        }
+
+        let cmd_idx = params.index;
+        // TODO: naive `auto_stop` selection, probably only works in case of SD memory cards.
+        // Should this (auto_stop select) be part of the params?
+        let (data_trans, trans_dir, auto_stop) = match params.kind {
+            sdmmc::CommandKind::Control => (false, false, false),
+            sdmmc::CommandKind::Read(len) => (true, false, len > 512),
+            sdmmc::CommandKind::Write(len) => (true, true, len > 512),
+        };
+        let chk_resp_crc = params.rsp_crc;
+        let long_resp = params.rsp_type == sdmmc::ResponseType::Long;
+        let resp_rcv = params.rsp_type != sdmmc::ResponseType::None;
+
+        // Configure and start command
+        self.smhc.smhc_cmd.write(|w| {
+            w.cmd_load().set_bit();
+            w.wait_pre_over().wait();
+            w.stop_cmd_flag().bit(auto_stop);
+            w.data_trans().bit(data_trans);
+            w.trans_dir().bit(trans_dir);
+            w.chk_resp_crc().bit(chk_resp_crc);
+            w.long_resp().bit(long_resp);
+            w.resp_rcv().bit(resp_rcv);
+            w.cmd_idx().variant(cmd_idx);
+            w
+        });
+
+        // Now wait for completion or error interrupt
+        let mut guard = self.isr.lock(self.smhc);
+        guard.data.state = State::WaitForCommand;
+        guard.data.op = match (params.kind, params.buffer) {
+            (sdmmc::CommandKind::Control, _) => SmhcOp::Control,
+            (sdmmc::CommandKind::Read(cnt), Some(buf)) => SmhcOp::Read {
+                buf,
+                cnt,
+                auto_stop,
+            },
+            (sdmmc::CommandKind::Write(cnt), Some(buf)) => SmhcOp::Write {
+                buf,
+                cnt,
+                auto_stop,
+            },
+            _ => {
+                tracing::warn!("did not provide a buffer for read/write");
+                return Err(sdmmc::Error::Other);
+            }
+        };
+
+        guard.wait_for_irq().await;
+        tracing::trace!("SMHC operation completed");
+        let res = if let Some(error) = guard.data.err.take() {
+            tracing::warn!(?error, "SMHC error");
+            Err(sdmmc::Error::Other) // TODO
+        } else {
+            if long_resp {
+                Ok(sdmmc::Response::Long([
+                    self.smhc.smhc_resp0.read().bits(),
+                    self.smhc.smhc_resp1.read().bits(),
+                    self.smhc.smhc_resp2.read().bits(),
+                    self.smhc.smhc_resp3.read().bits(),
+                ]))
+            } else {
+                Ok(sdmmc::Response::Short(self.smhc.smhc_resp0.read().bits()))
+            }
+        };
+        res
+    }
 }
 
 impl IsrData {
@@ -256,9 +362,18 @@ impl Drop for SmhcDataGuard<'_> {
 
 impl SmhcDataGuard<'_> {
     async fn wait_for_irq(&mut self) {
+        let mut waiting = false;
         futures::future::poll_fn(|cx| {
-            // TODO
-            Poll::Ready(())
+            if waiting {
+                self.smhc.smhc_ctrl.modify(|_, w| w.ine_enb().disable());
+                return Poll::Ready(());
+            }
+
+            self.data.waker = Some(cx.waker().clone());
+            waiting = true;
+            self.smhc.smhc_ctrl.modify(|_, w| w.ine_enb().enable());
+
+            Poll::Pending
         })
         .await;
     }
@@ -280,6 +395,24 @@ impl DerefMut for SmhcDataGuard<'_> {
 
 impl SmhcData {
     fn advance_isr(&mut self, smhc: &smhc::RegisterBlock, num: u8) {
-        todo!()
+        let mut needs_wake = false;
+        tracing::trace!(state = ?self.state, smhc = num, "SMHC{num} interrupt");
+
+        match self.state {
+            State::Idle => (),
+            State::WaitForCommand => (),
+            State::WaitForDataTransfer => (),
+            State::WaitForAutoStop => (),
+        }
+
+        if needs_wake {
+            if let Some(waker) = self.waker.take() {
+                waker.wake();
+                // If we are waking the driver task, we need to disable interrupts
+                // until the driver can prepare the next phase of the transaction.
+                smhc.smhc_ctrl.modify(|_, w| w.ine_enb().disable());
+            }
+        }
+        // TODO
     }
 }
