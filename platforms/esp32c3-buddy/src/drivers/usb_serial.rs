@@ -2,12 +2,9 @@ use esp32c3_hal::{peripherals::USB_DEVICE, prelude::*};
 
 use futures::FutureExt;
 use kernel::{
-    comms::{
-        bbq::{new_bidi_channel, BidiHandle, GrantW},
-        kchannel::{KChannel, KConsumer},
-    },
+    comms::bbq::{new_bidi_channel, BidiHandle, GrantW},
     maitake::sync::WaitCell,
-    registry::{self, Message},
+    registry,
     services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     Kernel,
 };
@@ -60,26 +57,23 @@ impl UsbSerialServer {
         Self { dev }
     }
 
-    async fn serial_server(handle: BidiHandle, kcons: KConsumer<Message<SimpleSerialService>>) {
-        loop {
-            // esp_println::println!("get port");
-            if let Ok(req) = kcons.dequeue_async().await {
-                let Request::GetPort = req.msg.body;
-                let resp = req.msg.reply_with(Ok(Response::PortHandle { handle }));
-                let _ = req.reply.reply_konly(resp).await;
-                break;
-            }
-        }
+    async fn serial_server(
+        handle: BidiHandle,
+        reqs: registry::listener::RequestStream<SimpleSerialService>,
+    ) {
+        let req = reqs.next_request().await;
+        let Request::GetPort = req.msg.body;
+        let resp = req.msg.reply_with(Ok(Response::PortHandle { handle }));
+        let _ = req.reply.reply_konly(resp).await;
 
         // And deny all further requests after the first
         loop {
-            if let Ok(req) = kcons.dequeue_async().await {
-                let Request::GetPort = req.msg.body;
-                let resp = req
-                    .msg
-                    .reply_with(Err(SimpleSerialError::AlreadyAssignedPort));
-                let _ = req.reply.reply_konly(resp).await;
-            }
+            let req = reqs.next_request().await;
+            let Request::GetPort = req.msg.body;
+            let resp = req
+                .msg
+                .reply_with(Err(SimpleSerialError::AlreadyAssignedPort));
+            let _ = req.reply.reply_konly(resp).await;
         }
     }
 
@@ -179,16 +173,15 @@ impl UsbSerialServer {
         cap_in: usize,
         cap_out: usize,
     ) -> Result<(), registry::RegistrationError> {
-        let (kprod, kcons) = KChannel::<Message<SimpleSerialService>>::new_async(4)
-            .await
-            .split();
+        let (listener, registration) = registry::Listener::new(4).await;
+        let reqs = listener.into_request_stream(4).await;
         let (fifo_a, fifo_b) = new_bidi_channel(cap_in, cap_out).await;
 
-        k.spawn(Self::serial_server(fifo_b, kcons)).await;
+        k.spawn(Self::serial_server(fifo_b, reqs)).await;
 
         k.spawn(self.worker(fifo_a)).await;
 
-        k.with_registry(|reg| reg.register_konly::<SimpleSerialService>(&kprod))
+        k.with_registry(|reg| reg.register_konly::<SimpleSerialService>(registration))
             .await?;
 
         Ok(())

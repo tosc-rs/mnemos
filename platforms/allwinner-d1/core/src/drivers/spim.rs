@@ -14,7 +14,7 @@ use crate::dmac::{
 };
 use d1_pac::{GPIO, SPI_DBI};
 use kernel::{
-    comms::{kchannel::KChannel, oneshot::Reusable},
+    comms::oneshot::Reusable,
     maitake::sync::WaitCell,
     mnemos_alloc::containers::FixedVec,
     registry::{self, uuid, Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo, Uuid},
@@ -95,6 +95,8 @@ impl RegisteredDriver for SpiSender {
     type Request = SpiSenderRequest;
     type Response = SpiSenderResponse;
     type Error = SpiSenderError;
+    type Hello = ();
+    type ConnectError = core::convert::Infallible;
 
     const UUID: Uuid = uuid!("b5fd3487-08c4-4c0c-ae97-65dd1b151138");
 }
@@ -107,11 +109,11 @@ impl SpiSenderServer {
         kernel: &'static Kernel,
         queued: usize,
     ) -> Result<(), registry::RegistrationError> {
-        let (kprod, kcons) = KChannel::new_async(queued).await.split();
+        let (listener, registration) = registry::Listener::new(queued).await;
 
+        let reqs = listener.into_request_stream(queued).await;
         kernel
             .spawn(async move {
-                let kcons = kcons;
                 let spi = unsafe { &*SPI_DBI::PTR };
 
                 let txd_ptr: *mut u32 = spi.spi_txd.as_ptr();
@@ -119,9 +121,7 @@ impl SpiSenderServer {
                 let txd_ptr: *mut () = txd_ptr.cast();
 
                 loop {
-                    let msg: Message<SpiSender> = kcons.dequeue_async().await.unwrap();
-                    // println!("DEQUEUE");
-                    let Message { msg, reply } = msg;
+                    let Message { msg, reply } = reqs.next_request().await;
                     let SpiSenderRequest::Send(ref payload) = msg.body;
 
                     let len = payload.as_slice().len();
@@ -199,7 +199,7 @@ impl SpiSenderServer {
             .await;
 
         kernel
-            .with_registry(move |reg| reg.register_konly::<SpiSender>(&kprod))
+            .with_registry(move |reg| reg.register_konly::<SpiSender>(registration))
             .await?;
 
         Ok(())
@@ -224,8 +224,10 @@ pub struct SpiSenderClient {
 }
 
 impl SpiSenderClient {
-    pub async fn from_registry(kernel: &'static Kernel) -> Result<SpiSenderClient, ()> {
-        let hdl = kernel.with_registry(|reg| reg.get()).await.ok_or(())?;
+    pub async fn from_registry(
+        kernel: &'static Kernel,
+    ) -> Result<SpiSenderClient, registry::ConnectError<SpiSender>> {
+        let hdl = kernel.registry().await.connect().await?;
 
         Ok(SpiSenderClient {
             hdl,

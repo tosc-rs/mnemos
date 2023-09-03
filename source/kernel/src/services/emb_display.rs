@@ -39,6 +39,8 @@ impl RegisteredDriver for EmbDisplayService {
     type Request = Request;
     type Response = Response;
     type Error = FrameError;
+    type Hello = ();
+    type ConnectError = core::convert::Infallible;
     const UUID: Uuid = registry::known_uuids::kernel::EMB_DISPLAY_V2;
 }
 
@@ -87,8 +89,11 @@ impl EmbDisplayClient {
     pub async fn from_registry(kernel: &'static Kernel) -> Self {
         loop {
             match Self::from_registry_no_retry(kernel).await {
-                Some(me) => return me,
-                None => {
+                Ok(me) => return me,
+                Err(registry::ConnectError::Rejected(_)) => {
+                    unreachable!("the EmbDisplayService does not return connect errors!")
+                }
+                Err(_) => {
                     kernel.sleep(Duration::from_millis(10)).await;
                 }
             }
@@ -99,12 +104,16 @@ impl EmbDisplayClient {
     /// [`EmbDisplayService`].
     ///
     /// Will not retry if not immediately successful
-    pub async fn from_registry_no_retry(kernel: &'static Kernel) -> Option<Self> {
+    pub async fn from_registry_no_retry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<EmbDisplayService>> {
         let prod = kernel
-            .with_registry(|reg| reg.get::<EmbDisplayService>())
+            .registry()
+            .await
+            .connect::<EmbDisplayService>()
             .await?;
 
-        Some(EmbDisplayClient {
+        Ok(EmbDisplayClient {
             prod,
             reply: Reusable::new_async().await,
         })

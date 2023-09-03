@@ -35,6 +35,8 @@ impl RegisteredDriver for I2cPuppetService {
     type Request = Request;
     type Response = Response;
     type Error = Error;
+    type Hello = ();
+    type ConnectError = core::convert::Infallible;
 
     const UUID: Uuid = uuid!("f5f26c40-6079-4233-8894-39887b878dec");
 }
@@ -109,8 +111,11 @@ impl I2cPuppetClient {
     pub async fn from_registry(kernel: &'static Kernel) -> Self {
         loop {
             match I2cPuppetClient::from_registry_no_retry(kernel).await {
-                Some(port) => return port,
-                None => {
+                Ok(port) => return port,
+                Err(registry::ConnectError::Rejected(_)) => {
+                    unreachable!("the KeyboardMuxService does not return connect errors!")
+                }
+                Err(_) => {
                     // I2C probably isn't registered yet. Try again in a bit
                     kernel.sleep(Duration::from_millis(10)).await;
                 }
@@ -124,12 +129,16 @@ impl I2cPuppetClient {
     ///
     /// Prefer [`I2cPuppetClient::from_registry`] unless you will not be spawning one
     /// around the same time as obtaining a client.
-    pub async fn from_registry_no_retry(kernel: &'static Kernel) -> Option<Self> {
+    pub async fn from_registry_no_retry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<I2cPuppetService>> {
         let handle = kernel
-            .with_registry(|reg| reg.get::<I2cPuppetService>())
+            .registry()
+            .await
+            .connect::<I2cPuppetService>()
             .await?;
 
-        Some(I2cPuppetClient {
+        Ok(I2cPuppetClient {
             handle,
             reply: Reusable::new_async().await,
         })
@@ -225,7 +234,7 @@ impl I2cPuppetClient {
 /// Server implementation for the [`I2cPuppetService`].
 pub struct I2cPuppetServer {
     settings: I2cPuppetSettings,
-    rx: KConsumer<registry::Message<I2cPuppetService>>,
+    rx: registry::listener::RequestStream<I2cPuppetService>,
     i2c: I2cClient,
     subscriptions: FixedVec<KProducer<(KeyStatus, KeyRaw)>>,
     keymux: Option<KeyboardMuxClient>,
@@ -348,7 +357,10 @@ impl I2cPuppetServer {
         } else {
             None
         };
-        let (tx, rx) = KChannel::new_async(settings.channel_capacity).await.split();
+        let (listener, registration) = registry::Listener::new(settings.channel_capacity).await;
+        let rx = listener
+            .into_request_stream(settings.channel_capacity)
+            .await;
         let mut i2c = {
             // The longest read or write operation we will perform is two bytes
             // long. Thus, we can reuse a single 2-byte buffer forever.
@@ -402,7 +414,7 @@ impl I2cPuppetServer {
         }
 
         kernel
-            .with_registry(|reg| reg.register_konly::<I2cPuppetService>(&tx))
+            .with_registry(|reg| reg.register_konly::<I2cPuppetService>(registration))
             .await
             .map_err(RegistrationError::Registry)?;
         Ok(())
@@ -411,9 +423,9 @@ impl I2cPuppetServer {
     async fn run_no_irq(mut self, kernel: &'static Kernel) {
         tracing::info!("running in poll-only mode...");
         loop {
-            if let Ok(Ok(msg)) = kernel
+            if let Ok(msg) = kernel
                 .timer()
-                .timeout(self.settings.poll_interval, self.rx.dequeue_async())
+                .timeout(self.settings.poll_interval, self.rx.next_request())
                 .await
             {
                 self.handle_message(msg).await;
@@ -431,10 +443,8 @@ impl I2cPuppetServer {
                     tracing::trace!("i2c_puppet IRQ fired!");
                 },
 
-                dequeued = self.rx.dequeue_async().fuse() => {
-                    if let Ok(msg) = dequeued {
-                        self.handle_message(msg).await;
-                    }
+                msg = self.rx.next_request().fuse() => {
+                    self.handle_message(msg).await;
                 },
 
                 _ = kernel.sleep(self.settings.poll_interval).fuse() => {

@@ -67,7 +67,7 @@
 //! The pieces that exist currently are likely to be removed or reworked heavily before they are
 //! usable, and should be considered nonfunctional at the moment.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![allow(clippy::missing_safety_doc)]
 #![feature(impl_trait_in_assoc_type)]
 #![feature(async_fn_in_trait)] // needed for `embedded-hal-async`
@@ -85,6 +85,9 @@ pub mod retry;
 pub mod serial_trace;
 pub mod services;
 
+#[cfg(test)]
+pub(crate) mod test_util;
+
 use abi::{
     bbqueue_ipc::BBBuffer,
     syscall::{KernelResponse, UserRequest},
@@ -101,8 +104,8 @@ use maitake::{
 };
 pub use mnemos_alloc;
 use mnemos_alloc::containers::Box;
-use registry::Registry;
-use serde::{Deserialize, Serialize};
+use registry::{RegisteredDriver, Registry};
+use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use services::{
     forth_spawnulator::{SpawnulatorServer, SpawnulatorSettings},
     keyboard::mux::{KeyboardMuxServer, KeyboardMuxSettings},
@@ -230,6 +233,69 @@ impl Kernel {
     {
         let mut guard = self.registry.lock().await;
         f(&mut guard)
+    }
+
+    /// Registers a new kernel-only [`RegisteredDriver`] with the kernel's
+    /// service [`Registry`].
+    ///
+    /// This is equivalent to calling
+    /// ```rust
+    /// # use serde::{Serialize, de::DeserializeOwned};
+    /// # use kernel::{Kernel, registry::{RegisteredDriver, Registration}};
+    /// # async fn example<RD>() -> Result<(), kernel::registry::RegistrationError>
+    /// # where RD: RegisteredDriver {
+    /// # let kernel: Kernel = unimplemented!("this test never actually creates a kernel");
+    /// # let registration: Registration<RD> = unimplemented!();
+    /// kernel.with_registry(|registry| { registry.register_konly::<RD>(registration) }).await
+    /// # }
+    /// ```
+    pub async fn register_konly<RD>(
+        &'static self,
+        registration: registry::Registration<RD>,
+    ) -> Result<(), registry::RegistrationError>
+    where
+        RD: RegisteredDriver,
+    {
+        self.with_registry(|registry| registry.register_konly(registration))
+            .await
+    }
+
+    /// Registers a new [`RegisteredDriver`] with the kernel's service [`Registry`].
+    ///
+    /// This is equivalent to calling
+    /// ```rust
+    /// # use serde::{Serialize, de::DeserializeOwned};
+    /// # use kernel::{Kernel, registry::{RegisteredDriver, Registration}};
+    /// # async fn example<RD>() -> Result<(), kernel::registry::RegistrationError>
+    /// # where
+    /// # RD: RegisteredDriver + 'static,
+    /// # RD::Hello: Serialize + DeserializeOwned,
+    /// # RD::ConnectError: Serialize + DeserializeOwned,
+    /// # RD::Request: Serialize + DeserializeOwned,
+    /// # RD::Response: Serialize + DeserializeOwned,
+    /// # {
+    /// # let kernel: Kernel = unimplemented!("this test never actually creates a kernel");
+    /// # let registration: Registration<RD> = unimplemented!();
+    /// kernel.with_registry(|registry| { registry.register::<RD>(registration) }).await
+    /// # }
+    /// ```
+    pub async fn register<RD>(
+        &'static self,
+        registration: registry::Registration<RD>,
+    ) -> Result<(), registry::RegistrationError>
+    where
+        RD: RegisteredDriver + 'static,
+        RD::Hello: Serialize + DeserializeOwned,
+        RD::ConnectError: Serialize + DeserializeOwned,
+        RD::Request: Serialize + DeserializeOwned,
+        RD::Response: Serialize + DeserializeOwned,
+    {
+        self.with_registry(|registry| registry.register(registration))
+            .await
+    }
+
+    pub async fn registry(&'static self) -> maitake::sync::MutexGuard<'_, Registry> {
+        self.registry.lock().await
     }
 
     #[track_caller]

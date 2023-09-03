@@ -31,7 +31,7 @@ use embedded_graphics_web_simulator::{
 use mnemos_kernel::{
     comms::kchannel::{KChannel, KConsumer},
     mnemos_alloc::containers::HeapArray,
-    registry::{Envelope, Message, OpenEnvelope, ReplyTo},
+    registry::{self, listener, Envelope, OpenEnvelope, ReplyTo},
     services::{
         emb_display::{
             DisplayMetadata, EmbDisplayService, FrameChunk, FrameError, FrameKind, MonoChunk,
@@ -91,12 +91,9 @@ impl SimDisplay {
         tracing::debug!("initializing SimDisplay server ({width}x{height})...");
 
         // TODO settings.kchannel_depth
-        let (cmd_prod, cmd_cons) = KChannel::new_async(2).await.split();
-        let commander = CommanderTask {
-            cmd: cmd_cons,
-            width,
-            height,
-        };
+        let (listener, registration) = registry::Listener::new(2).await;
+        let cmd = listener.into_request_stream(2).await;
+        let commander = CommanderTask { cmd, width, height };
 
         kernel.spawn(commander.run(kernel, width, height)).await;
 
@@ -105,7 +102,7 @@ impl SimDisplay {
         kernel.spawn(key_event_handler(key_rx, keymux)).await;
 
         kernel
-            .with_registry(|reg| reg.register_konly::<EmbDisplayService>(&cmd_prod))
+            .with_registry(|reg| reg.register_konly::<EmbDisplayService>(registration))
             .await
             .map_err(|_| FrameError::DisplayAlreadyExists)?;
 
@@ -154,7 +151,7 @@ impl SimDisplay {
 /// async function that will process requests, and periodically redraw the
 /// framebuffer.
 struct CommanderTask {
-    cmd: KConsumer<Message<EmbDisplayService>>,
+    cmd: listener::RequestStream<EmbDisplayService>,
     width: u32,
     height: u32,
 }
@@ -234,8 +231,7 @@ impl CommanderTask {
         let draw_callback = Box::leak(Box::new(draw_callback));
 
         loop {
-            let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
-            let (req, env, reply_tx) = msg.split();
+            let (req, env, reply_tx) = self.cmd.next_request().await.split();
 
             match req {
                 Request::Draw(FrameChunk::Mono(fc)) => {

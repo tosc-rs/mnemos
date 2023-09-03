@@ -10,13 +10,10 @@ use esp32c3_hal::{
 };
 
 use kernel::{
-    comms::{
-        bbq::{new_bidi_channel, BidiHandle, Consumer, GrantW, SpscProducer},
-        kchannel::{KChannel, KConsumer},
-    },
+    comms::bbq::{new_bidi_channel, BidiHandle, Consumer, GrantW, SpscProducer},
     maitake::sync::WaitCell,
     mnemos_alloc::containers::Box,
-    registry::{self, Message},
+    registry,
     services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     Kernel,
 };
@@ -63,25 +60,23 @@ impl C3Uart<UART0> {
 }
 
 impl<T: Instance> C3Uart<T> {
-    async fn serial_server(handle: BidiHandle, kcons: KConsumer<Message<SimpleSerialService>>) {
-        loop {
-            if let Ok(req) = kcons.dequeue_async().await {
-                let Request::GetPort = req.msg.body;
-                let resp = req.msg.reply_with(Ok(Response::PortHandle { handle }));
-                let _ = req.reply.reply_konly(resp).await;
-                break;
-            }
-        }
+    async fn serial_server(
+        handle: BidiHandle,
+        reqs: registry::listener::RequestStream<SimpleSerialService>,
+    ) {
+        let req = reqs.next_request().await;
+        let Request::GetPort = req.msg.body;
+        let resp = req.msg.reply_with(Ok(Response::PortHandle { handle }));
+        let _ = req.reply.reply_konly(resp).await;
 
         // And deny all further requests after the first
         loop {
-            if let Ok(req) = kcons.dequeue_async().await {
-                let Request::GetPort = req.msg.body;
-                let resp = req
-                    .msg
-                    .reply_with(Err(SimpleSerialError::AlreadyAssignedPort));
-                let _ = req.reply.reply_konly(resp).await;
-            }
+            let req = reqs.next_request().await;
+            let Request::GetPort = req.msg.body;
+            let resp = req
+                .msg
+                .reply_with(Err(SimpleSerialError::AlreadyAssignedPort));
+            let _ = req.reply.reply_konly(resp).await;
         }
     }
 
@@ -113,12 +108,11 @@ impl<T: Instance> C3Uart<T> {
         cap_in: usize,
         cap_out: usize,
     ) -> Result<(), registry::RegistrationError> {
-        let (kprod, kcons) = KChannel::<Message<SimpleSerialService>>::new_async(4)
-            .await
-            .split();
+        let (listener, registration) = registry::Listener::new(4).await;
+        let reqs = listener.into_request_stream(4).await;
         let (fifo_a, fifo_b) = new_bidi_channel(cap_in, cap_out).await;
 
-        let _server_hdl = k.spawn(Self::serial_server(fifo_b, kcons)).await;
+        let _server_hdl = k.spawn(Self::serial_server(fifo_b, reqs)).await;
 
         let (prod, cons) = fifo_a.split();
         let _send_hdl = k.spawn(async move { self.sending(cons).await }).await;
@@ -128,7 +122,7 @@ impl<T: Instance> C3Uart<T> {
         let old = UART_RX.swap(leaked_prod, Ordering::AcqRel);
         assert_eq!(old, null_mut());
 
-        k.with_registry(|reg| reg.register_konly::<SimpleSerialService>(&kprod))
+        k.with_registry(|reg| reg.register_konly::<SimpleSerialService>(registration))
             .await?;
 
         Ok(())

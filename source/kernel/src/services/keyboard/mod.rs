@@ -37,6 +37,8 @@ impl RegisteredDriver for KeyboardService {
     type Request = Subscribe;
     type Response = Subscribed;
     type Error = KeyboardError;
+    type Hello = ();
+    type ConnectError = core::convert::Infallible;
 
     const UUID: Uuid = known_uuids::kernel::KEYBOARD;
 }
@@ -128,8 +130,11 @@ impl KeyClient {
         subscribe: Subscribe,
     ) -> Option<Self> {
         let mut handle = kernel
-            .with_registry(|reg| reg.get::<KeyboardService>())
-            .await?;
+            .registry()
+            .await
+            .connect::<KeyboardService>()
+            .await
+            .ok()?;
         let reply = oneshot::Reusable::new_async().await;
         let Subscribed { rx } = handle
             .request_oneshot(subscribe, &reply)

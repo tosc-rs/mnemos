@@ -1,6 +1,11 @@
-use core::{any::TypeId, marker::PhantomData};
+use core::{
+    any::{self, TypeId},
+    fmt,
+    marker::PhantomData,
+    mem, ptr,
+};
 
-use crate::comms::oneshot::Reusable;
+use crate::comms::{kchannel, oneshot::Reusable};
 use mnemos_alloc::containers::FixedVec;
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -13,6 +18,12 @@ use crate::comms::{
     kchannel::{ErasedKProducer, KProducer},
     oneshot::{ReusableError, Sender},
 };
+
+pub mod listener;
+pub use self::listener::{Listener, Registration};
+
+#[cfg(test)]
+mod tests;
 
 /// A partial list of known UUIDs of driver services
 pub mod known_uuids {
@@ -49,9 +60,11 @@ pub mod known_uuids {
 
 /// A marker trait designating a registerable driver service.
 ///
-/// Typically used with [Registry::register] or [Registry::register_konly].
-/// Can typically be retrieved by [Registry::get] or [Registry::get_userspace]
-/// After the service has been registered.
+/// Typically used with [`Registry::register`] or [`Registry::register_konly`].
+/// A connection to the service can be established using [`Registry::connect`],
+/// [`Registry::connect_with_hello`], or
+/// [`Registry::connect_userspace_with_hello`] (depending on the service), after
+/// the service has been registered..
 pub trait RegisteredDriver {
     /// This is the type of the request sent TO the driver service
     type Request: 'static;
@@ -62,14 +75,39 @@ pub trait RegisteredDriver {
     /// This is the type of an UNSUCCESSFUL response sent FROM the driver service
     type Error: 'static;
 
+    /// An initial message sent to the service by a client when establishing a
+    /// connection.
+    ///
+    /// This may be used by the service to route connections to specific
+    /// resources owned by that service, or to determine whether or not the
+    /// connection can be established. If the service does not require initial
+    /// data from the client, this type can be set to [`()`].
+    // XXX(eliza): ideally, we could default `Hello` to () and `ConnectError` to
+    // `Infallible`...do we want to do that? it requires a nightly feature.
+    type Hello: 'static;
+
+    /// Errors returned by the service if an incoming connection handshake is
+    /// rejected.
+    ///
+    /// If the service does not reject connections, this should be set to
+    /// [`core::convert::Infallible`].
+    type ConnectError: 'static;
+
     /// This is the UUID of the driver service
     const UUID: Uuid;
 
-    /// Get the type_id used to make sure that driver instances are correctly typed.
-    /// Corresponds to the same type ID as `(Self::Request, Self::Response, Self::Error)`
+    /// Get the [`TypeId`] used to make sure that driver instances are correctly typed.
+    /// Corresponds to the same type ID as `(`[`Self::Request`]`, `[`Self::Response`]`,
+    /// `[`Self::Error`]`, `[`Self::Hello`]`, `[`Self::ConnectError`]`)`.
     fn type_id() -> RegistryType {
         RegistryType {
-            tuple_type_id: TypeId::of::<(Self::Request, Self::Response, Self::Error)>(),
+            tuple_type_id: TypeId::of::<(
+                Self::Request,
+                Self::Response,
+                Self::Error,
+                Self::Hello,
+                Self::ConnectError,
+            )>(),
         }
     }
 }
@@ -229,6 +267,29 @@ pub enum RegistrationError {
     RegistryFull,
 }
 
+/// Errors returned by [`Registry::connect`] and
+/// [`Registry::connect_with_hello`].
+pub enum ConnectError<D: RegisteredDriver> {
+    /// No [`RegisteredDriver`] of this type was found!
+    NotFound,
+    /// The remote [`RegisteredDriver`] rejected the connection.
+    Rejected(D::ConnectError),
+    /// The remote [`RegisteredDriver`] has been registered, but the service
+    /// task has terminated.
+    DriverDead,
+}
+
+/// Errors returned by [`Registry::connect_userspace_with_hello`]
+pub enum UserConnectError<D: RegisteredDriver> {
+    /// A connection error occurred: either the driver was not found in the
+    /// registry, it was no longer running, or it rejected the connection.
+    Connect(ConnectError<D>),
+    /// Deserializing the userspace `Hello` message failed.
+    DeserializationFailed(postcard::Error),
+    /// The requested driver is not exposed.
+    NotUserspace,
+}
+
 #[derive(Debug, Eq, PartialEq)]
 pub enum OneshotRequestError {
     /// An error occurred while acquiring a sender.
@@ -270,7 +331,7 @@ impl<T> From<EnqueueError<T>> for ReplyError {
 /// successful) to a given driver service.
 pub struct UserspaceHandle {
     req_producer_leaked: ErasedKProducer,
-    req_deser: ErasedDeserHandler,
+    req_deser: ErasedReqDeser,
     service_id: ServiceId,
     client_id: ClientId,
 }
@@ -284,13 +345,20 @@ pub struct KernelHandle<RD: RegisteredDriver> {
     request_ctr: u32,
 }
 
-type ErasedDeserHandler = unsafe fn(
+type ErasedReqDeser = unsafe fn(
     UserRequest<'_>,
     &ErasedKProducer,
     &bbq::MpscProducer,
     ServiceId,
     ClientId,
 ) -> Result<(), UserHandlerError>;
+
+type ErasedHandshake = unsafe fn(
+    &maitake::scheduler::LocalScheduler,
+    &[u8],
+    &ErasedKProducer,
+    ptr::NonNull<()>,
+) -> maitake::task::JoinHandle<Result<(), postcard::Error>>;
 
 /// The payload of a registry item.
 ///
@@ -299,9 +367,20 @@ type ErasedDeserHandler = unsafe fn(
 /// tuple type id is correct.
 struct RegistryValue {
     req_resp_tuple_id: TypeId,
-    req_prod: ErasedKProducer,
-    req_deser: Option<ErasedDeserHandler>,
+    conn_prod: ErasedKProducer,
+    user_vtable: Option<UserVtable>,
     service_id: ServiceId,
+}
+
+/// A [virtual function pointer table][vtable] (vtable) that specifies how
+/// userspace requests are serialized and deserialized.
+///
+/// [vtable]: https://en.wikipedia.org/wiki/Virtual_method_table
+struct UserVtable {
+    /// Deserializes userspace requests.
+    req_deser: ErasedReqDeser,
+    /// Deserializes handshakes from userspace.
+    handshake: ErasedHandshake,
 }
 
 /// Right now we don't use a real HashMap, but rather a hand-rolled index map.
@@ -339,23 +418,24 @@ impl Registry {
     #[tracing::instrument(
         name = "Registry::register_konly",
         level = "debug",
-        skip(self, kch),
+        skip(self, registration),
         fields(uuid = ?RD::UUID),
     )]
     pub fn register_konly<RD: RegisteredDriver>(
         &mut self,
-        kch: &KProducer<Message<RD>>,
+        registration: listener::Registration<RD>,
     ) -> Result<(), RegistrationError> {
         if self.items.as_slice().iter().any(|i| i.key == RD::UUID) {
             return Err(RegistrationError::UuidAlreadyRegistered);
         }
+        let conn_prod = registration.tx.type_erase();
         self.items
             .try_push(RegistryItem {
                 key: RD::UUID,
                 value: RegistryValue {
                     req_resp_tuple_id: RD::type_id().type_of(),
-                    req_prod: kch.clone().type_erase(),
-                    req_deser: None,
+                    conn_prod,
+                    user_vtable: None,
                     service_id: ServiceId(self.counter),
                 },
             })
@@ -373,25 +453,32 @@ impl Registry {
     #[tracing::instrument(
         name = "Registry::register",
         level = "debug",
-        skip(self, kch),
+        skip(self, registration),
         fields(uuid = ?RD::UUID),
     )]
-    pub fn register<RD>(&mut self, kch: &KProducer<Message<RD>>) -> Result<(), RegistrationError>
+    pub fn register<RD>(
+        &mut self,
+        registration: listener::Registration<RD>,
+    ) -> Result<(), RegistrationError>
     where
-        RD: RegisteredDriver,
+        RD: RegisteredDriver + 'static,
+        RD::Hello: Serialize + DeserializeOwned,
+        RD::ConnectError: Serialize + DeserializeOwned,
         RD::Request: Serialize + DeserializeOwned,
         RD::Response: Serialize + DeserializeOwned,
     {
         if self.items.as_slice().iter().any(|i| i.key == RD::UUID) {
             return Err(RegistrationError::UuidAlreadyRegistered);
         }
+
+        let conn_prod = registration.tx.type_erase();
         self.items
             .try_push(RegistryItem {
                 key: RD::UUID,
                 value: RegistryValue {
                     req_resp_tuple_id: RD::type_id().type_of(),
-                    req_prod: kch.clone().type_erase(),
-                    req_deser: Some(map_deser::<RD>),
+                    conn_prod,
+                    user_vtable: Some(UserVtable::new::<RD>()),
                     service_id: ServiceId(self.counter),
                 },
             })
@@ -401,7 +488,8 @@ impl Registry {
         Ok(())
     }
 
-    /// Get a kernelspace (including drivers) handle of a given driver service.
+    /// Get a kernelspace (including drivers) handle of a given driver service,
+    /// which does not require sending a [`RegisteredDriver::Hello`] message.
     ///
     /// This can be used by drivers and tasks to interface with a registered driver
     /// service.
@@ -409,60 +497,206 @@ impl Registry {
     /// The driver service MUST have already been registered using [Registry::register] or
     /// [Registry::register_konly] prior to making this call, otherwise no handle will
     /// be returned.
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[KernelHandle`]`)` if the requested service was found and
+    ///   a connection was successfully established.
+    ///
+    /// - [`Err`]`(`[`ConnectError`]`)` if the requested service was not
+    ///   found in the registry, or if the service [rejected] the incoming
+    ///   connection.
+    ///
+    /// [rejected]: listener::Handshake::reject
     #[tracing::instrument(
-        name = "Registry::get",
+        name = "Registry::connect_with_hello",
+        level = "debug",
+        skip(self, hello),
+        fields(uuid = ?RD::UUID),
+    )]
+    pub async fn connect_with_hello<RD: RegisteredDriver>(
+        &mut self,
+        hello: RD::Hello,
+    ) -> Result<KernelHandle<RD>, ConnectError<RD>> {
+        let item = Self::get(&self.items)?;
+
+        // cast the erased connection sender back to a typed sender.
+        let tx = unsafe {
+            // Safety: we just checked that the type IDs match above.
+            item.value
+                .conn_prod
+                .clone_typed::<listener::Handshake<RD>>()
+        };
+
+        // TODO(eliza): it would be nice if we could reuse the oneshot receiver
+        // every time this driver is connected to? This would require type
+        // erasing it...
+        let rx = Reusable::new_async().await;
+        let reply = rx
+            .sender()
+            .await
+            .expect("we just created the oneshot, so this should never fail");
+        // send the connection request...
+        tx.enqueue_async(listener::Handshake {
+            hello,
+            accept: listener::Accept { reply }
+        }).await.map_err(|err| match err {
+            kchannel::EnqueueError::Closed(_) => ConnectError::DriverDead,
+            kchannel::EnqueueError::Full(_) => unreachable!("the channel should not be full, as we are using `enqueue_async`, which waits for capacity")
+        })?;
+        // ...and wait for a response with an established connection.
+        let prod = rx
+            .receive()
+            .await
+            // this is a `Reusable<Result<KProducer, RD::ConnectError>>>`, so
+            // the outer `Result` is the error returned by `receive()`...
+            .map_err(|_| ConnectError::DriverDead)?
+            // ...and the inner `Result` is the error returned by the driver.
+            .map_err(ConnectError::Rejected)?;
+
+        let res = Ok(KernelHandle {
+            prod,
+            service_id: item.value.service_id,
+            client_id: ClientId(self.counter),
+            request_ctr: 0,
+        });
+        info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
+        self.counter = self.counter.wrapping_add(1);
+        res
+    }
+
+    /// Get a kernelspace (including drivers) handle of a given driver service,
+    /// which does not require sending a [`RegisteredDriver::Hello`] message.
+    ///
+    /// This method is equivalent to [`Registry::connect_with_hello`] when the
+    /// [`RegisteredDriver::Hello`] type is [`()`].
+    ///
+    /// This can be used by drivers and tasks to interface with a registered driver
+    /// service.
+    ///
+    /// The driver service MUST have already been registered using [Registry::register] or
+    /// [Registry::register_konly] prior to making this call, otherwise no handle will
+    /// be returned.
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[KernelHandle`]`)` if the requested service was found and
+    ///   a connection was successfully established.
+    ///
+    /// - [`Err`]`(`[`ConnectError`]`)` if the requested service was not
+    ///   found in the registry, or if the service [rejected] the incoming
+    ///   connection.
+    ///
+    /// [rejected]: listener::Handshake::reject
+    #[tracing::instrument(
+        name = "Registry::connect",
         level = "debug",
         skip(self),
         fields(uuid = ?RD::UUID),
     )]
-    pub fn get<RD: RegisteredDriver>(&mut self) -> Option<KernelHandle<RD>> {
-        let item = self.items.as_slice().iter().find(|i| i.key == RD::UUID)?;
-        if item.value.req_resp_tuple_id != RD::type_id().type_of() {
-            return None;
-        }
-        unsafe {
-            let res = Some(KernelHandle {
-                prod: item.value.req_prod.clone_typed(),
-                service_id: item.value.service_id,
-                client_id: ClientId(self.counter),
-                request_ctr: 0,
-            });
-            info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
-            self.counter = self.counter.wrapping_add(1);
-            res
-        }
+    pub async fn connect<RD>(&mut self) -> Result<KernelHandle<RD>, ConnectError<RD>>
+    where
+        RD: RegisteredDriver<Hello = ()>,
+    {
+        self.connect_with_hello(()).await
     }
 
     /// Get a handle capable of processing serialized userspace messages to a
-    /// registered driver service.
+    /// registered driver service, given a byte buffer for the userspace
+    /// [`RegisteredDriver::Hello`] message.
     ///
     /// The driver service MUST have already been registered using [Registry::register] or
     /// prior to making this call, otherwise no handle will be returned.
     ///
     /// Driver services registered with [Registry::register_konly] cannot be retrieved via
-    /// a call to [Registry::get_userspace].
+    /// a call to [Registry::connect_userspace_with_hello].
     #[tracing::instrument(
-        name = "Registry::get_userspace",
+        name = "Registry::connect_userspace_with_hello",
         level = "debug",
-        skip(self),
+        skip(self, scheduler),
         fields(uuid = ?RD::UUID),
     )]
-    pub fn get_userspace<RD>(&mut self) -> Option<UserspaceHandle>
+    pub async fn connect_userspace_with_hello<RD>(
+        &mut self,
+        scheduler: &maitake::scheduler::LocalScheduler,
+        user_hello: &[u8],
+    ) -> Result<UserspaceHandle, UserConnectError<RD>>
     where
         RD: RegisteredDriver,
+        RD::Hello: Serialize + DeserializeOwned,
+        RD::ConnectError: Serialize + DeserializeOwned,
         RD::Request: Serialize + DeserializeOwned,
         RD::Response: Serialize + DeserializeOwned,
     {
-        let item = self.items.as_slice().iter().find(|i| i.key == RD::UUID)?;
+        let item = Self::get::<RD>(&self.items).map_err(UserConnectError::Connect)?;
+        let vtable = item
+            .value
+            .user_vtable
+            .as_ref()
+            // if the registry item has no userspace vtable, it's not exposed to
+            // userspace.
+            // this is *weird*, since this method requires that `RD`'s message
+            // types be serializable/deserializable, but it's possible that the
+            // driver was (accidentally?) registered with `register_konly` even
+            // though it didn't *need* to be due to serializability...
+            .ok_or(UserConnectError::NotUserspace)?;
+
+        let mut handshake_result = mem::MaybeUninit::<UserHandshakeResult<RD>>::uninit();
+        let outptr = ptr::NonNull::from(&mut handshake_result).cast::<()>();
+
+        let handshake =
+            unsafe { (vtable.handshake)(scheduler, user_hello, &item.value.conn_prod, outptr) };
+        let req_producer_leaked = match handshake.await {
+            // Outer `Result` is the `JoinError` from `maitake` --- it should
+            // always succeed, because we own the task's joinhandle, and we
+            // never cancel it.
+            Err(_) => unreachable!("handshake task should not be canceled"),
+            // Couldn't deserialize the userspace handshake bytes!
+            Ok(Err(error)) => {
+                return Err(UserConnectError::DeserializationFailed(error));
+            }
+            // Safe to touch the out pointer!
+            Ok(Ok(())) => unsafe {
+                // Safety: `handshake_result` is guaranteed to be initialized by
+                // `erased_handshake` if and only if its future completes with
+                // an `Ok(())`. and it did!
+                handshake_result
+                    .assume_init()
+                    .map_err(UserConnectError::Connect)?
+                    .type_erase()
+            },
+        };
+
         let client_id = self.counter;
         info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
         self.counter = self.counter.wrapping_add(1);
-        Some(UserspaceHandle {
-            req_producer_leaked: item.value.req_prod.clone(),
-            req_deser: item.value.req_deser?,
+
+        Ok(UserspaceHandle {
+            req_producer_leaked,
+            req_deser: vtable.req_deser,
             service_id: item.value.service_id,
             client_id: ClientId(client_id),
         })
+    }
+
+    // This isn't a method on `self` because it borrows `items`, and if it
+    // borrowed `self`, it would also borrow `self.counter`, which we need to be
+    // able to mutate while borrowing `self`.
+    // TODO(eliza): could fix that by just making the counter atomic...
+    fn get<RD: RegisteredDriver>(
+        items: &FixedVec<RegistryItem>,
+    ) -> Result<&RegistryItem, ConnectError<RD>> {
+        let item = items
+            .as_slice()
+            .iter()
+            .find(|i| i.key == RD::UUID)
+            .ok_or(ConnectError::NotFound)?;
+
+        if item.value.req_resp_tuple_id != RD::type_id().type_of() {
+            return Err(ConnectError::NotFound);
+        }
+
+        Ok(item)
     }
 }
 
@@ -680,7 +914,23 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
     }
 }
 
-// -- other --
+// UserVtable
+
+impl UserVtable {
+    const fn new<RD>() -> Self
+    where
+        RD: RegisteredDriver + 'static,
+        RD::Hello: Serialize + DeserializeOwned,
+        RD::ConnectError: Serialize + DeserializeOwned,
+        RD::Request: Serialize + DeserializeOwned,
+        RD::Response: Serialize + DeserializeOwned,
+    {
+        Self {
+            req_deser: map_deser::<RD>,
+            handshake: erased_user_handshake::<RD>,
+        }
+    }
+}
 
 /// A monomorphizable function that allows us to store the serialization type within
 /// the function itself, allowing for a type-erased function pointer to be stored
@@ -734,4 +984,226 @@ where
     req_prod
         .enqueue_sync(msg)
         .map_err(|_| UserHandlerError::QueueFull)
+}
+
+type UserHandshakeResult<RD> = Result<KProducer<Message<RD>>, ConnectError<RD>>;
+
+/// Perform a type-erased userspace handshake, deserializing the
+/// [`RegisteredDriver::Hello`] message from `hello_bytes` and returning a
+/// future that writes the handshake result to the provided `outptr`, if the
+/// future completes successfully.
+///
+/// # Safety
+///
+/// - This function MUST be called with a [`RegisteredDriver`] type matching the
+///   type used to create the [`ErasedKProducer`].
+/// - `outptr` MUST be a valid pointer to a
+///   [`mem::MaybeUninit`]`<`[`UserHandshakeResult`]`<RD>>`, and  MUST live as
+///   long as the future returned from this function.
+/// - `outptr` is guaranteed to be initialized IF AND ONLY IF the future
+///   returned by this method returns [`Ok`]`(())`. If this method returns an
+///   [`Err`], `outptr` will NOT be initialized.
+unsafe fn erased_user_handshake<RD>(
+    scheduler: &maitake::scheduler::LocalScheduler,
+    hello_bytes: &[u8],
+    conn_tx: &ErasedKProducer,
+    outptr: core::ptr::NonNull<()>,
+) -> maitake::task::JoinHandle<Result<(), postcard::Error>>
+where
+    RD: RegisteredDriver + 'static,
+    RD::Hello: Serialize + DeserializeOwned,
+    RD::ConnectError: Serialize + DeserializeOwned,
+    RD::Request: Serialize + DeserializeOwned,
+    RD::Response: Serialize + DeserializeOwned,
+{
+    let conn_tx = conn_tx.clone_typed::<listener::Handshake<RD>>();
+    // Deserialize the request, if it doesn't have the right contents, deserialization will fail.
+    let hello: Result<RD::Hello, _> = postcard::from_bytes(hello_bytes);
+
+    // spawn a task to allow us to perform async work from a type-erased context
+    scheduler.spawn(async move {
+        let hello = hello?;
+
+        // TODO(eliza): it would be nice if we could reuse the oneshot receiver
+        // every time this driver is connected to? This would require type
+        // erasing it...
+        let rx = Reusable::new_async().await;
+        let reply = rx
+            .sender()
+            .await
+            .expect("we just created the oneshot, so this should never fail");
+
+        // send the connection request...
+        conn_tx.enqueue_async(listener::Handshake {
+            hello,
+            accept: listener::Accept { reply }
+        }).await.map_err(|err| match err {
+            kchannel::EnqueueError::Closed(_) => todo!(),
+            kchannel::EnqueueError::Full(_) => unreachable!("the channel should not be full, as we are using `enqueue_async`, which waits for capacity")
+        })?;
+
+        // ...and wait for a response with an established connection.
+        let result = rx
+            .receive()
+            .await
+            // this is a `Reusable<Result<KProducer, RD::ConnectError>>>`, so
+            // the outer `Result` is the error returned by `receive()`...
+            .map_err(|_| ConnectError::DriverDead)
+            // ...and the inner result is the connect error returned by the service.
+            .and_then(|res| res.map_err(ConnectError::Rejected));
+
+        outptr
+            // Safety: the caller is responsible for ensuring the out pointer is
+            // correctly typed.
+            .cast::<mem::MaybeUninit<UserHandshakeResult<RD>>>()
+            .as_mut()
+            .write(result);
+
+        Ok(())
+    })
+}
+
+// UserHandlerError
+
+impl fmt::Display for UserHandlerError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::QueueFull => f.pad("service queue full"),
+            Self::DeserializationFailed => f.pad("failed to deserialize user request"),
+        }
+    }
+}
+
+// ConnectError
+
+impl<D> PartialEq for ConnectError<D>
+where
+    D: RegisteredDriver,
+    D::ConnectError: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::DriverDead, Self::DriverDead) => true,
+            (Self::NotFound, Self::NotFound) => true,
+            (Self::Rejected(this), Self::Rejected(that)) => this == that,
+            _ => false,
+        }
+    }
+}
+
+impl<D> Eq for ConnectError<D>
+where
+    D: RegisteredDriver,
+    D::ConnectError: Eq,
+{
+}
+
+impl<D> fmt::Debug for ConnectError<D>
+where
+    D: RegisteredDriver,
+    D::ConnectError: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DriverDead => {
+                write!(f, "ConnectError::<{}>::DriverDead", any::type_name::<D>())
+            }
+            Self::NotFound => write!(f, "ConnectError::<{}>::NotFound", any::type_name::<D>()),
+            Self::Rejected(err) => write!(
+                f,
+                "ConnectError::<{}>::Rejected({err:?})",
+                any::type_name::<D>()
+            ),
+        }
+    }
+}
+
+impl<D> fmt::Display for ConnectError<D>
+where
+    D: RegisteredDriver,
+    D::ConnectError: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DriverDead => write!(f, "the {} service has terminated", any::type_name::<D>()),
+            Self::NotFound => write!(
+                f,
+                "no {} service found in the registry",
+                any::type_name::<D>()
+            ),
+            Self::Rejected(err) => write!(
+                f,
+                "the {} service rejected the connection: {err}",
+                any::type_name::<D>()
+            ),
+        }
+    }
+}
+
+// UserConnectError
+
+impl<D> PartialEq for UserConnectError<D>
+where
+    D: RegisteredDriver,
+    D::ConnectError: PartialEq,
+{
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::DeserializationFailed(this), Self::DeserializationFailed(that)) => this == that,
+            (Self::Connect(this), Self::Connect(that)) => this == that,
+            (Self::NotUserspace, Self::NotUserspace) => true,
+            _ => false,
+        }
+    }
+}
+
+impl<D> Eq for UserConnectError<D>
+where
+    D: RegisteredDriver,
+    D::ConnectError: Eq,
+{
+}
+
+impl<D> fmt::Debug for UserConnectError<D>
+where
+    D: RegisteredDriver,
+    D::ConnectError: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DeserializationFailed(err) => write!(
+                f,
+                "UserConnectError::<{}>::DeserializationFailed({err:?})",
+                any::type_name::<D>()
+            ),
+            Self::Connect(err) => write!(f, "UserConnectError::Connect({err:?})"),
+            Self::NotUserspace => write!(
+                f,
+                "UserConnectError::<{}>::NotUserspace",
+                any::type_name::<D>()
+            ),
+        }
+    }
+}
+
+impl<D> fmt::Display for UserConnectError<D>
+where
+    D: RegisteredDriver,
+    D::ConnectError: fmt::Display,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Connect(err) => write!(f, "failed to connect from userspace: {err}"),
+            Self::DeserializationFailed(err) => write!(
+                f,
+                "failed to deserialize userspace Hello for the {} service: {err}",
+                any::type_name::<D>()
+            ),
+            Self::NotUserspace => write!(
+                f,
+                "the {} service is not exposed to userspace",
+                any::type_name::<D>()
+            ),
+        }
+    }
 }

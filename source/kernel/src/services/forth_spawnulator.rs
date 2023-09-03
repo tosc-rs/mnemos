@@ -40,20 +40,16 @@
 
 use core::{convert::Infallible, time::Duration};
 
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-
 use crate::{
-    comms::{
-        kchannel::{KChannel, KConsumer},
-        oneshot::Reusable,
-    },
+    comms::oneshot::Reusable,
     forth::{self, Forth},
     registry::{
-        known_uuids::kernel::FORTH_SPAWNULATOR, Envelope, KernelHandle, Message, RegisteredDriver,
+        self, known_uuids::kernel::FORTH_SPAWNULATOR, Envelope, KernelHandle, RegisteredDriver,
     },
     Kernel,
 };
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Service Definition
@@ -64,6 +60,9 @@ impl RegisteredDriver for SpawnulatorService {
     type Request = Request;
     type Response = Response;
     type Error = Infallible;
+
+    type Hello = ();
+    type ConnectError = core::convert::Infallible;
 
     const UUID: Uuid = FORTH_SPAWNULATOR;
 }
@@ -87,21 +86,27 @@ impl SpawnulatorClient {
     pub async fn from_registry(kernel: &'static Kernel) -> Self {
         loop {
             match Self::from_registry_no_retry(kernel).await {
-                Some(port) => return port,
-                None => {
-                    // SerialMux probably isn't registered yet. Try again in a bit
+                Ok(me) => return me,
+                Err(registry::ConnectError::Rejected(_)) => {
+                    unreachable!("the SpawnulatorService does not return connect errors!")
+                }
+                Err(_) => {
                     kernel.sleep(Duration::from_millis(10)).await;
                 }
             }
         }
     }
 
-    pub async fn from_registry_no_retry(kernel: &'static Kernel) -> Option<Self> {
+    pub async fn from_registry_no_retry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<SpawnulatorService>> {
         let prod = kernel
-            .with_registry(|reg| reg.get::<SpawnulatorService>())
+            .registry()
+            .await
+            .connect::<SpawnulatorService>()
             .await?;
 
-        Some(SpawnulatorClient {
+        Ok(SpawnulatorClient {
             hdl: prod,
             reply: Reusable::new_async().await,
         })
@@ -155,14 +160,15 @@ impl SpawnulatorServer {
         kernel: &'static Kernel,
         settings: SpawnulatorSettings,
     ) -> Result<(), RegistrationError> {
-        let (cmd_prod, cmd_cons) = KChannel::new_async(settings.capacity).await.split();
+        let (listener, r) = registry::Listener::new(settings.capacity).await;
+        let vms = listener.into_request_stream(settings.capacity).await;
         tracing::debug!("who spawns the spawnulator?");
         kernel
-            .spawn(SpawnulatorServer::spawnulate(kernel, cmd_cons))
+            .spawn(SpawnulatorServer::spawnulate(kernel, vms))
             .await;
         tracing::debug!("spawnulator spawnulated!");
         kernel
-            .with_registry(|reg| reg.register_konly::<SpawnulatorService>(&cmd_prod))
+            .with_registry(|reg| reg.register_konly::<SpawnulatorService>(r))
             .await
             .map_err(|_| RegistrationError::SpawnulatorAlreadyRegistered)?;
         tracing::info!("ForthSpawnulatorService registered");
@@ -170,9 +176,13 @@ impl SpawnulatorServer {
     }
 
     #[tracing::instrument(skip(kernel, vms))]
-    async fn spawnulate(kernel: &'static Kernel, vms: KConsumer<Message<SpawnulatorService>>) {
+    async fn spawnulate(
+        kernel: &'static Kernel,
+        vms: registry::listener::RequestStream<SpawnulatorService>,
+    ) {
         tracing::debug!("spawnulator running...");
-        while let Ok(msg) = vms.dequeue_async().await {
+        loop {
+            let msg = vms.next_request().await;
             let mut vm = None;
 
             // TODO(AJM): I really need a better "extract request contents" function
@@ -187,7 +197,6 @@ impl SpawnulatorServer {
             let _ = msg.reply.reply_konly(resp).await;
             tracing::trace!(task.id = id, "spawnulated!");
         }
-        tracing::info!("spawnulator channel closed!");
     }
 }
 
