@@ -419,7 +419,7 @@ impl Registry {
         name = "Registry::register_konly",
         level = "debug",
         skip(self, registration),
-        fields(uuid = ?RD::UUID),
+        fields(svc = %any::type_name::<RD>()),
     )]
     pub fn register_konly<RD: RegisteredDriver>(
         &mut self,
@@ -454,7 +454,7 @@ impl Registry {
         name = "Registry::register",
         level = "debug",
         skip(self, registration),
-        fields(uuid = ?RD::UUID),
+        fields(svc = %any::type_name::<RD>()),
     )]
     pub fn register<RD>(
         &mut self,
@@ -483,7 +483,7 @@ impl Registry {
                 },
             })
             .map_err(|_| RegistrationError::RegistryFull)?;
-        info!(uuid = ?RD::UUID, service_id = self.counter, "Registered");
+        info!(svc = %any::type_name::<RD>(), uuid = ?RD::UUID, service_id = self.counter, "Registered");
         self.counter = self.counter.wrapping_add(1);
         Ok(())
     }
@@ -512,7 +512,7 @@ impl Registry {
         name = "Registry::connect_with_hello",
         level = "debug",
         skip(self, hello),
-        fields(uuid = ?RD::UUID),
+        fields(svc = %any::type_name::<RD>()),
     )]
     pub async fn connect_with_hello<RD: RegisteredDriver>(
         &mut self,
@@ -560,7 +560,7 @@ impl Registry {
             client_id: ClientId(self.counter),
             request_ctr: 0,
         });
-        info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
+        info!(svc = %any::type_name::<RD>(), uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
         self.counter = self.counter.wrapping_add(1);
         res
     }
@@ -588,12 +588,6 @@ impl Registry {
     ///   connection.
     ///
     /// [rejected]: listener::Handshake::reject
-    #[tracing::instrument(
-        name = "Registry::connect",
-        level = "debug",
-        skip(self),
-        fields(uuid = ?RD::UUID),
-    )]
     pub async fn connect<RD>(&mut self) -> Result<KernelHandle<RD>, ConnectError<RD>>
     where
         RD: RegisteredDriver<Hello = ()>,
@@ -614,7 +608,7 @@ impl Registry {
         name = "Registry::connect_userspace_with_hello",
         level = "debug",
         skip(self, scheduler),
-        fields(uuid = ?RD::UUID),
+        fields(svc = %any::type_name::<RD>()),
     )]
     pub async fn connect_userspace_with_hello<RD>(
         &mut self,
@@ -668,7 +662,13 @@ impl Registry {
         };
 
         let client_id = self.counter;
-        info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
+        info!(
+            svc = %any::type_name::<RD>(),
+            uuid = ?RD::UUID,
+            service_id = item.value.service_id.0,
+            client_id = self.counter,
+            "Got KernelHandle from Registry",
+        );
         self.counter = self.counter.wrapping_add(1);
 
         Ok(UserspaceHandle {
@@ -686,13 +686,25 @@ impl Registry {
     fn get<RD: RegisteredDriver>(
         items: &FixedVec<RegistryItem>,
     ) -> Result<&RegistryItem, ConnectError<RD>> {
-        let item = items
-            .as_slice()
-            .iter()
-            .find(|i| i.key == RD::UUID)
-            .ok_or(ConnectError::NotFound)?;
+        let Some(item) = items.as_slice().iter().find(|i| i.key == RD::UUID) else {
+            tracing::debug!(
+                svc = %any::type_name::<RD>(),
+                uuid = ?RD::UUID,
+                "No service for this UUID exists in the registry!"
+            );
+            return Err(ConnectError::NotFound);
+        };
 
-        if item.value.req_resp_tuple_id != RD::type_id().type_of() {
+        let expected_type_id = RD::type_id().type_of();
+        let actual_type_id = item.value.req_resp_tuple_id;
+        if expected_type_id != actual_type_id {
+            tracing::warn!(
+                svc = %any::type_name::<RD>(),
+                uuid = ?RD::UUID,
+                type_id.expected = ?expected_type_id,
+                type_id.actual = ?actual_type_id,
+                "Registry entry's type ID did not match driver's type ID. This is (probably?) a bug!"
+            );
             return Err(ConnectError::NotFound);
         }
 
