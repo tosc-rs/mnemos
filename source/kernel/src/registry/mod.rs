@@ -1328,6 +1328,7 @@ where
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::DeserializationFailed(this), Self::DeserializationFailed(that)) => this == that,
+            (Self::Rejected(this), Self::Rejected(that)) => this == that,
             (Self::NotFound, Self::NotFound) => true,
             (Self::DriverDead, Self::DriverDead) => true,
             (Self::NotUserspace, Self::NotUserspace) => true,
