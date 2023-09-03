@@ -357,10 +357,7 @@ impl I2cPuppetServer {
         } else {
             None
         };
-        let (listener, registration) = registry::Listener::new(settings.channel_capacity).await;
-        let rx = listener
-            .into_request_stream(settings.channel_capacity)
-            .await;
+
         let mut i2c = {
             // The longest read or write operation we will perform is two bytes
             // long. Thus, we can reuse a single 2-byte buffer forever.
@@ -392,6 +389,12 @@ impl I2cPuppetServer {
             .await
             .map_err(RegistrationError::NoI2cPuppet)?;
 
+        let rx = kernel
+            .bind_konly_service(settings.channel_capacity)
+            .await
+            .map_err(RegistrationError::Registry)?
+            .into_request_stream(settings.channel_capacity)
+            .await;
         let this = Self {
             settings,
             rx,
@@ -412,11 +415,6 @@ impl I2cPuppetServer {
                 kernel.spawn(this.run_no_irq(kernel).instrument(span)).await;
             }
         }
-
-        kernel
-            .register_konly(registration)
-            .await
-            .map_err(RegistrationError::Registry)?;
 
         Ok(())
     }

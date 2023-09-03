@@ -169,8 +169,17 @@ impl KeyboardMuxServer {
         kernel: &'static Kernel,
         settings: KeyboardMuxSettings,
     ) -> Result<(), RegistrationError> {
-        let (keys, key_tx) = registry::Listener::new(settings.buffer_capacity).await;
-        let (subs, sub_tx) = registry::Listener::new(8).await;
+        let key_rx = kernel
+            .bind_konly_service::<KeyboardMuxService>(settings.buffer_capacity)
+            .await?
+            .into_request_stream(settings.buffer_capacity)
+            .await;
+        let sub_rx = kernel
+            .bind_konly_service::<KeyboardService>(8)
+            .await?
+            .into_request_stream(8)
+            .await;
+
         let subscriptions = FixedVec::new(settings.max_keyboards).await;
         let sermux_port = if let Some(port) = settings.sermux_port {
             let mut client = serial_mux::SerialMuxClient::from_registry(kernel).await;
@@ -185,8 +194,7 @@ impl KeyboardMuxServer {
         } else {
             None
         };
-        let sub_rx = subs.into_request_stream(8).await;
-        let key_rx = keys.into_request_stream(settings.buffer_capacity).await;
+
         kernel
             .spawn(
                 Self {
@@ -199,10 +207,6 @@ impl KeyboardMuxServer {
                 .run(),
             )
             .await;
-
-        let mut registry = kernel.registry_mut().await;
-        registry.register_konly::<KeyboardMuxService>(key_tx)?;
-        registry.register_konly::<KeyboardService>(sub_tx)?;
 
         tracing::info!("KeyboardMuxServer registered!");
         Ok(())

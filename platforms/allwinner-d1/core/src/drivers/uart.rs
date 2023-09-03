@@ -181,10 +181,13 @@ impl D1Uart {
     ) -> Result<(), registry::RegistrationError> {
         assert_eq!(tx_channel.channel_index(), 0);
 
-        let (listener, registration) = registry::Listener::new(4).await;
-        let reqs = listener.into_request_stream(4).await;
         let (fifo_a, fifo_b) = new_bidi_channel(cap_in, cap_out).await;
 
+        let reqs = k
+            .bind_konly_service::<SimpleSerialService>(4)
+            .await?
+            .into_request_stream(4)
+            .await;
         let _server_hdl = k.spawn(D1Uart::serial_server(fifo_b, reqs)).await;
 
         let (prod, cons) = fifo_a.split();
@@ -194,8 +197,6 @@ impl D1Uart {
         let leaked_prod = Box::into_raw(boxed_prod);
         let old = UART_RX.swap(leaked_prod, Ordering::AcqRel);
         assert_eq!(old, null_mut());
-
-        k.register_konly(registration).await?;
 
         Ok(())
     }

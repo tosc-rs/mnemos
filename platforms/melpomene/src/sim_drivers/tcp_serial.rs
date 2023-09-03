@@ -25,9 +25,11 @@ impl TcpSerial {
     ) -> Result<(), registry::RegistrationError> {
         let (a_ring, b_ring) =
             new_bidi_channel(settings.incoming_size, settings.outgoing_size).await;
-        let (listener, registration) = registry::Listener::new(settings.kchannel_depth).await;
-        let reqs = listener.into_request_stream(settings.kchannel_depth).await;
-
+        let reqs = kernel
+            .bind_konly_service::<SimpleSerialService>(settings.kchannel_depth)
+            .await?
+            .into_request_stream(settings.kchannel_depth)
+            .await;
         let socket_addr = &settings.socket_addr;
         let listener = TcpListener::bind(socket_addr).await.unwrap();
         tracing::info!(
@@ -79,9 +81,7 @@ impl TcpSerial {
             .instrument(info_span!("TCP Serial", ?socket_addr)),
         );
 
-        kernel
-            .register_konly::<SimpleSerialService>(registration)
-            .await
+        Ok(())
     }
 }
 
