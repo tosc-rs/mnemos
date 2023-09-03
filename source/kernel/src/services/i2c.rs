@@ -100,7 +100,7 @@ use crate::{
     registry::{self, known_uuids, Envelope, KernelHandle, RegisteredDriver},
     Kernel,
 };
-use core::{convert::Infallible, fmt, time::Duration};
+use core::{convert::Infallible, fmt};
 use embedded_hal_async::i2c::{self, AddressMode};
 use uuid::Uuid;
 
@@ -304,18 +304,16 @@ impl I2cClient {
     ///
     /// If the [`I2cService`] hasn't been registered yet, we will retry until it
     /// has been registered.
-    pub async fn from_registry(kernel: &'static Kernel) -> Self {
-        loop {
-            match Self::from_registry_no_retry(kernel).await {
-                Ok(me) => return me,
-                Err(registry::ConnectError::Rejected(_)) => {
-                    unreachable!("the I2cService does not return connect errors!")
-                }
-                Err(_) => {
-                    kernel.sleep(Duration::from_millis(10)).await;
-                }
-            }
-        }
+    pub async fn from_registry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<I2cService>> {
+        let handle = kernel.registry().connect::<I2cService>(()).await?;
+
+        Ok(I2cClient {
+            handle,
+            reply: Reusable::new_async().await,
+            cached_buf: None,
+        })
     }
 
     /// Obtain an `I2cClient`
@@ -327,7 +325,7 @@ impl I2cClient {
     pub async fn from_registry_no_retry(
         kernel: &'static Kernel,
     ) -> Result<Self, registry::ConnectError<I2cService>> {
-        let handle = kernel.registry().await.connect::<I2cService>().await?;
+        let handle = kernel.registry().try_connect::<I2cService>(()).await?;
 
         Ok(I2cClient {
             handle,

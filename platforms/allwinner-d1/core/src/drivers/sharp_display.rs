@@ -30,7 +30,7 @@ use embedded_graphics::{pixelcolor::Gray8, prelude::*, primitives::Rectangle};
 use kernel::{
     maitake::sync::{Mutex, WaitQueue},
     mnemos_alloc::containers::{Arc, FixedVec},
-    registry::listener,
+    registry::{self, listener},
     services::emb_display::{
         DisplayMetadata, EmbDisplayService, FrameChunk, FrameError, FrameKind, MonoChunk, Request,
         Response,
@@ -38,7 +38,7 @@ use kernel::{
     Kernel,
 };
 
-use crate::spim::SpiSenderClient;
+use crate::spim::{SpiSender, SpiSenderClient};
 
 const WIDTH: usize = 400;
 const HEIGHT: usize = 240;
@@ -70,6 +70,15 @@ mod commands {
 /// Implements the [`EmbDisplayService`] service interface
 pub struct SharpDisplay;
 
+#[derive(Debug)]
+pub enum RegistrationError {
+    /// Failed to register a display: either the kernel reported that there is
+    /// already an existing EmbDisplay, or the registry is full.
+    Registration(registry::RegistrationError),
+    /// No SPI sender service exists.
+    NoSpiSender(registry::ConnectError<SpiSender>),
+}
+
 impl SharpDisplay {
     pub const WIDTH: usize = WIDTH;
     pub const HEIGHT: usize = HEIGHT;
@@ -78,7 +87,22 @@ impl SharpDisplay {
     ///
     /// Registration will also start the simulated display, meaning that the display
     /// window will appear.
-    pub async fn register(kernel: &'static Kernel) -> Result<(), FrameError> {
+    pub async fn register(kernel: &'static Kernel) -> Result<(), RegistrationError> {
+        // acquire a SPI client first, so that we don't register the display
+        // service unless we can get a SPI client.
+        let spim = SpiSenderClient::from_registry(kernel)
+            .await
+            .map_err(RegistrationError::NoSpiSender)?;
+
+        // bind a listener
+        let cmd = kernel
+            .registry()
+            .bind_konly(2)
+            .await
+            .map_err(RegistrationError::Registration)?
+            .into_request_stream(2)
+            .await;
+
         let linebuf = FixedVec::new(FRAME_BYTES).await;
 
         let ctxt = Arc::new(Mutex::new(Context {
@@ -87,12 +111,6 @@ impl SharpDisplay {
         }))
         .await;
 
-        let cmd = kernel
-            .bind_konly_service(2)
-            .await
-            .map_err(|_| FrameError::DisplayAlreadyExists)?
-            .into_request_stream(2)
-            .await;
         let commander = CommanderTask {
             cmd,
             ctxt: ctxt.clone(),
@@ -107,7 +125,7 @@ impl SharpDisplay {
         let draw = Draw {
             kernel,
             buf: linebuf,
-            spim: SpiSenderClient::from_registry(kernel).await.unwrap(),
+            spim,
             ctxt,
         };
 

@@ -6,6 +6,7 @@ use core::{
 };
 
 use crate::comms::{kchannel, oneshot::Reusable};
+use maitake::sync::{RwLock, WaitQueue};
 use mnemos_alloc::containers::FixedVec;
 use portable_atomic::{AtomicU32, Ordering};
 use postcard::experimental::max_size::MaxSize;
@@ -63,9 +64,9 @@ pub mod known_uuids {
 ///
 /// Typically used with [`Registry::register`] or [`Registry::register_konly`].
 /// A connection to the service can be established using [`Registry::connect`],
-/// [`Registry::connect_with_hello`], or
-/// [`Registry::connect_userspace_with_hello`] (depending on the service), after
-/// the service has been registered..
+/// [`Registry::try_connect`], [`Registry::connect_userspace`], or
+/// [`Registry::try_connect_userspace] (depending on the service), after
+/// the service has been registered.
 pub trait RegisteredDriver {
     /// This is the type of the request sent TO the driver service
     type Request: 'static;
@@ -119,8 +120,9 @@ pub struct RegistryType {
 
 /// The driver registry used by the kernel.
 pub struct Registry {
-    items: FixedVec<RegistryItem>,
+    items: RwLock<FixedVec<RegistryItem>>,
     counter: AtomicU32,
+    service_added: WaitQueue,
 }
 
 // TODO: This probably goes into the ABI crate, here is fine for now
@@ -268,11 +270,13 @@ pub enum RegistrationError {
     RegistryFull,
 }
 
-/// Errors returned by [`Registry::connect`] and
-/// [`Registry::connect_with_hello`].
+/// Errors returned by [`Registry::connect`] and [`Registry::try_connect`].
 pub enum ConnectError<D: RegisteredDriver> {
     /// No [`RegisteredDriver`] of this type was found!
-    NotFound,
+    ///
+    /// The [`RegisteredDriver::Hello`] message is returned, so that it can be
+    /// used again.
+    NotFound(D::Hello),
     /// The remote [`RegisteredDriver`] rejected the connection.
     Rejected(D::ConnectError),
     /// The remote [`RegisteredDriver`] has been registered, but the service
@@ -280,11 +284,16 @@ pub enum ConnectError<D: RegisteredDriver> {
     DriverDead,
 }
 
-/// Errors returned by [`Registry::connect_userspace_with_hello`]
+/// Errors returned by [`Registry::connect_userspace`] and
+/// [`Registry::try_connect_userspace`].
 pub enum UserConnectError<D: RegisteredDriver> {
-    /// A connection error occurred: either the driver was not found in the
-    /// registry, it was no longer running, or it rejected the connection.
-    Connect(ConnectError<D>),
+    /// No [`RegisteredDriver`] of this type was found!
+    NotFound,
+    /// The remote [`RegisteredDriver`] rejected the connection.
+    Rejected(D::ConnectError),
+    /// The remote [`RegisteredDriver`] has been registered, but the service
+    /// task has terminated.
+    DriverDead,
     /// Deserializing the userspace `Hello` message failed.
     DeserializationFailed(postcard::Error),
     /// The requested driver is not exposed.
@@ -377,6 +386,7 @@ struct RegistryValue {
 /// userspace requests are serialized and deserialized.
 ///
 /// [vtable]: https://en.wikipedia.org/wiki/Virtual_method_table
+#[derive(Copy, Clone)]
 struct UserVtable {
     /// Deserializes userspace requests.
     req_deser: ErasedReqDeser,
@@ -404,9 +414,11 @@ impl RegistryType {
 impl Registry {
     /// Create a new registry with room for up to `max_items` registered drivers.
     pub fn new(max_items: usize) -> Self {
+        let items = FixedVec::try_new(max_items).unwrap();
         Self {
-            items: FixedVec::try_new(max_items).unwrap(),
+            items: RwLock::new(items),
             counter: AtomicU32::new(0),
+            service_added: WaitQueue::new(),
         }
     }
 
@@ -421,15 +433,12 @@ impl Registry {
     /// or interfaced with from Userspace. If a registered service has request
     /// and response types that are serializable, it can instead be registered
     /// with [`Registry::bind`] which allows for userspace access.
-    pub async fn bind_konly<RD>(
-        &mut self,
-        capacity: usize,
-    ) -> Result<Listener<RD>, RegistrationError>
+    pub async fn bind_konly<RD>(&self, capacity: usize) -> Result<Listener<RD>, RegistrationError>
     where
         RD: RegisteredDriver,
     {
         let (listener, registration) = Listener::new(capacity).await;
-        self.register_konly(registration)?;
+        self.register_konly(registration).await?;
         Ok(listener)
     }
 
@@ -446,7 +455,7 @@ impl Registry {
     /// [`DeserializeOwned`]. Driver services whose message types are *not*
     /// serializable may still bind listeners using [`Registry::bind_konly`],
     /// but these listeners will not be accessible from userspace.
-    pub async fn bind<RD>(&mut self, capacity: usize) -> Result<Listener<RD>, RegistrationError>
+    pub async fn bind<RD>(&self, capacity: usize) -> Result<Listener<RD>, RegistrationError>
     where
         RD: RegisteredDriver + 'static,
         RD::Hello: Serialize + DeserializeOwned,
@@ -455,7 +464,7 @@ impl Registry {
         RD::Response: Serialize + DeserializeOwned,
     {
         let (listener, registration) = Listener::new(capacity).await;
-        self.register(registration)?;
+        self.register(registration).await?;
         Ok(listener)
     }
 
@@ -471,28 +480,25 @@ impl Registry {
         skip(self, registration),
         fields(svc = %any::type_name::<RD>()),
     )]
-    pub fn register_konly<RD: RegisteredDriver>(
-        &mut self,
+    pub async fn register_konly<RD: RegisteredDriver>(
+        &self,
         registration: listener::Registration<RD>,
     ) -> Result<(), RegistrationError> {
-        if self.items.as_slice().iter().any(|i| i.key == RD::UUID) {
-            return Err(RegistrationError::UuidAlreadyRegistered);
-        }
         let conn_prod = registration.tx.type_erase();
-
         let service_id = self.counter.fetch_add(1, Ordering::Relaxed);
-        self.items
-            .try_push(RegistryItem {
-                key: RD::UUID,
-                value: RegistryValue {
-                    req_resp_tuple_id: RD::type_id().type_of(),
-                    conn_prod,
-                    user_vtable: None,
-                    service_id: ServiceId(service_id),
-                },
-            })
-            .map_err(|_| RegistrationError::RegistryFull)?;
+        self.insert_item(RegistryItem {
+            key: RD::UUID,
+            value: RegistryValue {
+                req_resp_tuple_id: RD::type_id().type_of(),
+                conn_prod,
+                user_vtable: None,
+                service_id: ServiceId(service_id),
+            },
+        })
+        .await?;
+
         info!(uuid = ?RD::UUID, service_id, "Registered KOnly");
+
         Ok(())
     }
 
@@ -507,8 +513,8 @@ impl Registry {
         skip(self, registration),
         fields(svc = %any::type_name::<RD>()),
     )]
-    pub fn register<RD>(
-        &mut self,
+    pub async fn register<RD>(
+        &self,
         registration: listener::Registration<RD>,
     ) -> Result<(), RegistrationError>
     where
@@ -518,30 +524,25 @@ impl Registry {
         RD::Request: Serialize + DeserializeOwned,
         RD::Response: Serialize + DeserializeOwned,
     {
-        if self.items.as_slice().iter().any(|i| i.key == RD::UUID) {
-            return Err(RegistrationError::UuidAlreadyRegistered);
-        }
-
         let service_id = self.counter.fetch_add(1, Ordering::Relaxed);
         let conn_prod = registration.tx.type_erase();
-        self.items
-            .try_push(RegistryItem {
-                key: RD::UUID,
-                value: RegistryValue {
-                    req_resp_tuple_id: RD::type_id().type_of(),
-                    conn_prod,
-                    user_vtable: Some(UserVtable::new::<RD>()),
-                    service_id: ServiceId(service_id),
-                },
-            })
-            .map_err(|_| RegistrationError::RegistryFull)?;
+        self.insert_item(RegistryItem {
+            key: RD::UUID,
+            value: RegistryValue {
+                req_resp_tuple_id: RD::type_id().type_of(),
+                conn_prod,
+                user_vtable: Some(UserVtable::new::<RD>()),
+                service_id: ServiceId(service_id),
+            },
+        })
+        .await?;
 
         info!(svc = %any::type_name::<RD>(), uuid = ?RD::UUID, service_id, "Registered");
 
         Ok(())
     }
 
-    /// Get a kernelspace (including drivers) handle of a given driver service,
+    /// Attempt to get a kernelspace (including drivers) handle of a given driver service,
     /// which does not require sending a [`RegisteredDriver::Hello`] message.
     ///
     /// This can be used by drivers and tasks to interface with a registered driver
@@ -549,36 +550,60 @@ impl Registry {
     ///
     /// The driver service MUST have already been registered using [Registry::register] or
     /// [Registry::register_konly] prior to making this call, otherwise no handle will
-    /// be returned.
+    /// be returned. To wait until a driver is registered, use
+    /// [`Registry::connect`] instead.
     ///
     /// # Returns
     ///
     /// - [`Ok`]`(`[KernelHandle`]`)` if the requested service was found and
     ///   a connection was successfully established.
     ///
-    /// - [`Err`]`(`[`ConnectError`]`)` if the requested service was not
-    ///   found in the registry, or if the service [rejected] the incoming
-    ///   connection.
+    /// - [`Ok`]`(`[KernelHandle`]`)` if the requested service was found and
+    ///   a connection was successfully established.
+    ///
+    /// - [`Err`]`(`[`ConnectError::Rejected`]`)` if the service [rejected] the
+    ///   incoming connection.
+    ///
+    /// - [`Err`]`(`[`ConnectError::DriverDead`]`)` if the service has been
+    ///   registered but is no longer running.
+    ///
+    /// - [`Err`]`(`[`ConnectError::NotFound`]`)` if no service matching the
+    ///   requested [`RegisteredDriver`] type exists in the registry.
     ///
     /// [rejected]: listener::Handshake::reject
     #[tracing::instrument(
-        name = "Registry::connect_with_hello",
+        name = "Registry::try_connect",
         level = "debug",
         skip(self, hello),
         fields(svc = %any::type_name::<RD>()),
     )]
-    pub async fn connect_with_hello<RD: RegisteredDriver>(
+    pub async fn try_connect<RD: RegisteredDriver>(
         &self,
         hello: RD::Hello,
     ) -> Result<KernelHandle<RD>, ConnectError<RD>> {
-        let item = self.get::<RD>()?;
+        let (tx, service_id) = {
+            // /!\ WARNING: Load-bearing scope /!\
+            //
+            // We need to ensure that we only hold the lock on `self.items`
+            // while we're accessing the item; *not* while we're `await`ing a
+            // bunch of other stuff to connect to the service. This is
+            // important, because if we held the lock, no other task would be
+            // able to connect while we're waiting for the handshake,
+            // potentially causing a deadlock...
+            let items = self.items.read().await;
+            let item = match Self::get::<RD>(&items) {
+                Some(item) => item,
+                None => return Err(ConnectError::NotFound(hello)),
+            };
 
-        // cast the erased connection sender back to a typed sender.
-        let tx = unsafe {
-            // Safety: we just checked that the type IDs match above.
-            item.value
-                .conn_prod
-                .clone_typed::<listener::Handshake<RD>>()
+            // cast the erased connection sender back to a typed sender.
+            let tx = unsafe {
+                // Safety: we just checked that the type IDs match above.
+                item.value
+                    .conn_prod
+                    .clone_typed::<listener::Handshake<RD>>()
+            };
+            (tx, item.value.service_id)
         };
 
         // TODO(eliza): it would be nice if we could reuse the oneshot receiver
@@ -610,27 +635,72 @@ impl Registry {
         let client_id = self.counter.fetch_add(1, Ordering::Relaxed);
         let res = Ok(KernelHandle {
             prod,
-            service_id: item.value.service_id,
+            service_id,
             client_id: ClientId(client_id),
             request_ctr: 0,
         });
-        info!(svc = %any::type_name::<RD>(), uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id, "Got KernelHandle from Registry");
+        info!(svc = %any::type_name::<RD>(), uuid = ?RD::UUID, service_id = service_id.0, client_id, "Got KernelHandle from Registry");
 
         res
     }
 
     /// Get a kernelspace (including drivers) handle of a given driver service,
-    /// which does not require sending a [`RegisteredDriver::Hello`] message.
+    /// waiting until the service is registered if it does not already exist.
     ///
-    /// This method is equivalent to [`Registry::connect_with_hello`] when the
-    /// [`RegisteredDriver::Hello`] type is [`()`].
+    /// This can be used by drivers and tasks to interface with a registered
+    /// driver service.
+    ///
+    /// If no service matching the requested [`RegisteredDriver`] type has been
+    /// registered, this method will wait until that service is added to the
+    /// registry, unless the registry becomes full.
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[KernelHandle`]`)` if the requested service was found and
+    ///   a connection was successfully established.
+    ///
+    /// - [`Err`]`(`[`ConnectError::Rejected`]`)` if the service [rejected] the
+    ///   incoming connection.
+    ///
+    /// - [`Err`]`(`[`ConnectError::DriverDead`]`)` if the service has been
+    ///   registered but is no longer running.
+    ///
+    /// - [`Err`]`(`[`ConnectError::NotFound`]`)` if no service matching the
+    ///   requested [`RegisteredDriver`] type exists *and* the registry was
+    ///   full.
+    ///
+    /// [rejected]: listener::Handshake::reject
+    #[tracing::instrument(
+        name = "Registry::connect",
+        level = "debug",
+        skip(self, hello),
+        fields(svc = %any::type_name::<RD>()),
+    )]
+    pub async fn connect<RD>(&self, hello: RD::Hello) -> Result<KernelHandle<RD>, ConnectError<RD>>
+    where
+        RD: RegisteredDriver,
+    {
+        let mut hello = Some(hello);
+        let mut is_full = false;
+        loop {
+            match self.try_connect(hello.take().unwrap()).await {
+                Ok(handle) => return Ok(handle),
+                Err(ConnectError::NotFound(h)) if !is_full => {
+                    hello = Some(h);
+                    tracing::debug!("no service found; waiting for one to be added...");
+                    // wait for a service to be added to the registry
+                    is_full = self.service_added.wait().await.is_err();
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    /// Get a kernelspace (including drivers) handle of a given driver service,
+    /// waiting until the service is registered if it does not already exist.
     ///
     /// This can be used by drivers and tasks to interface with a registered driver
     /// service.
-    ///
-    /// The driver service MUST have already been registered using [Registry::register] or
-    /// [Registry::register_konly] prior to making this call, otherwise no handle will
-    /// be returned.
     ///
     /// # Returns
     ///
@@ -639,33 +709,17 @@ impl Registry {
     ///
     /// - [`Err`]`(`[`ConnectError`]`)` if the requested service was not
     ///   found in the registry, or if the service [rejected] the incoming
-    ///   connection.
+    ///   connection. Note that [`ConnectError::NotFound`] is not returned
+    ///   _unless_ the registry is full and no more services will be added.
     ///
     /// [rejected]: listener::Handshake::reject
-
-    pub async fn connect<RD>(&self) -> Result<KernelHandle<RD>, ConnectError<RD>>
-    where
-        RD: RegisteredDriver<Hello = ()>,
-    {
-        self.connect_with_hello(()).await
-    }
-
-    /// Get a handle capable of processing serialized userspace messages to a
-    /// registered driver service, given a byte buffer for the userspace
-    /// [`RegisteredDriver::Hello`] message.
-    ///
-    /// The driver service MUST have already been registered using [Registry::register] or
-    /// prior to making this call, otherwise no handle will be returned.
-    ///
-    /// Driver services registered with [Registry::register_konly] cannot be retrieved via
-    /// a call to [Registry::connect_userspace_with_hello].
     #[tracing::instrument(
-        name = "Registry::connect_userspace_with_hello",
+        name = "Registry::connect_userspace",
         level = "debug",
-        skip(self, scheduler),
+        skip(self),
         fields(svc = %any::type_name::<RD>()),
     )]
-    pub async fn connect_userspace_with_hello<RD>(
+    pub async fn connect_userspace<RD>(
         &self,
         scheduler: &maitake::scheduler::LocalScheduler,
         user_hello: &[u8],
@@ -677,24 +731,77 @@ impl Registry {
         RD::Request: Serialize + DeserializeOwned,
         RD::Response: Serialize + DeserializeOwned,
     {
-        let item = self.get::<RD>().map_err(UserConnectError::Connect)?;
-        let vtable = item
-            .value
-            .user_vtable
-            .as_ref()
-            // if the registry item has no userspace vtable, it's not exposed to
-            // userspace.
-            // this is *weird*, since this method requires that `RD`'s message
-            // types be serializable/deserializable, but it's possible that the
-            // driver was (accidentally?) registered with `register_konly` even
-            // though it didn't *need* to be due to serializability...
-            .ok_or(UserConnectError::NotUserspace)?;
+        let mut is_full = false;
+        loop {
+            match self.try_connect_userspace(scheduler, user_hello).await {
+                Ok(handle) => return Ok(handle),
+                Err(UserConnectError::NotFound) if !is_full => {
+                    tracing::debug!("no service found; waiting for one to be added...");
+                    // wait for a service to be added to the registry
+                    is_full = self.service_added.wait().await.is_err();
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    }
+
+    /// Try to get a handle capable of processing serialized userspace messages to a
+    /// registered driver service, given a byte buffer for the userspace
+    /// [`RegisteredDriver::Hello`] message.
+    ///
+    /// The driver service MUST have already been registered using [Registry::register] or
+    /// prior to making this call, otherwise no handle will be returned.
+    ///
+    /// Driver services registered with [`Registry::register_konly`] cannot be
+    /// retrieved via a call to [`Registry::try_connect_userspace`].
+    #[tracing::instrument(
+        name = "Registry::try_connect_userspace",
+        level = "debug",
+        skip(self, scheduler),
+        fields(svc = %any::type_name::<RD>()),
+    )]
+    pub async fn try_connect_userspace<RD>(
+        &self,
+        scheduler: &maitake::scheduler::LocalScheduler,
+        user_hello: &[u8],
+    ) -> Result<UserspaceHandle, UserConnectError<RD>>
+    where
+        RD: RegisteredDriver,
+        RD::Hello: Serialize + DeserializeOwned,
+        RD::ConnectError: Serialize + DeserializeOwned,
+        RD::Request: Serialize + DeserializeOwned,
+        RD::Response: Serialize + DeserializeOwned,
+    {
+        let (vtable, conn_prod, service_id) = {
+            // /!\ WARNING: Load-bearing scope /!\
+            //
+            // We need to ensure that we only hold the lock on `self.items`
+            // while we're accessing the item; *not* while we're `await`ing a
+            // bunch of other stuff to connect to the service. This is
+            // important, because if we held the lock, no other task would be
+            // able to connect while we're waiting for the handshake,
+            // potentially causing a deadlock...
+            let items = self.items.read().await;
+            let item = Self::get::<RD>(&items).ok_or_else(|| UserConnectError::NotFound)?;
+            let vtable = item
+                .value
+                .user_vtable
+                // if the registry item has no userspace vtable, it's not exposed to
+                // userspace.
+                // this is *weird*, since this method requires that `RD`'s message
+                // types be serializable/deserializable, but it's possible that the
+                // driver was (accidentally?) registered with `register_konly` even
+                // though it didn't *need* to be due to serializability...
+                .ok_or(UserConnectError::NotUserspace)?;
+            let conn_prod = item.value.conn_prod.clone();
+            let service_id = item.value.service_id;
+            (vtable, conn_prod, service_id)
+        };
 
         let mut handshake_result = mem::MaybeUninit::<UserHandshakeResult<RD>>::uninit();
         let outptr = ptr::NonNull::from(&mut handshake_result).cast::<()>();
 
-        let handshake =
-            unsafe { (vtable.handshake)(scheduler, user_hello, &item.value.conn_prod, outptr) };
+        let handshake = unsafe { (vtable.handshake)(scheduler, user_hello, &conn_prod, outptr) };
         let req_producer_leaked = match handshake.await {
             // Outer `Result` is the `JoinError` from `maitake` --- it should
             // always succeed, because we own the task's joinhandle, and we
@@ -709,10 +816,7 @@ impl Registry {
                 // Safety: `handshake_result` is guaranteed to be initialized by
                 // `erased_handshake` if and only if its future completes with
                 // an `Ok(())`. and it did!
-                handshake_result
-                    .assume_init()
-                    .map_err(UserConnectError::Connect)?
-                    .type_erase()
+                handshake_result.assume_init()?.type_erase()
             },
         };
 
@@ -720,7 +824,7 @@ impl Registry {
         info!(
             svc = %any::type_name::<RD>(),
             uuid = ?RD::UUID,
-            service_id = item.value.service_id.0,
+            service_id = service_id.0,
             client_id,
             "Got KernelHandle from Registry",
         );
@@ -728,19 +832,40 @@ impl Registry {
         Ok(UserspaceHandle {
             req_producer_leaked,
             req_deser: vtable.req_deser,
-            service_id: item.value.service_id,
+            service_id,
             client_id: ClientId(client_id),
         })
     }
 
-    fn get<RD: RegisteredDriver>(&self) -> Result<&RegistryItem, ConnectError<RD>> {
-        let Some(item) = self.items.as_slice().iter().find(|i| i.key == RD::UUID) else {
+    async fn insert_item(&self, item: RegistryItem) -> Result<(), RegistrationError> {
+        {
+            let mut items = self.items.write().await;
+            if items.as_slice().iter().any(|i| i.key == item.key) {
+                return Err(RegistrationError::UuidAlreadyRegistered);
+            }
+
+            items.try_push(item).map_err(|_| {
+                tracing::warn!("failed to insert new registry item; the registry is full!");
+                // close the "service added" waitcell, because no new services will
+                // ever be added.
+                self.service_added.close();
+                RegistrationError::RegistryFull
+            })?;
+        }
+
+        self.service_added.wake_all();
+
+        Ok(())
+    }
+
+    fn get<RD: RegisteredDriver>(items: &FixedVec<RegistryItem>) -> Option<&RegistryItem> {
+        let Some(item) = items.as_slice().iter().find(|i| i.key == RD::UUID) else {
             tracing::debug!(
                 svc = %any::type_name::<RD>(),
                 uuid = ?RD::UUID,
                 "No service for this UUID exists in the registry!"
             );
-            return Err(ConnectError::NotFound);
+            return None;
         };
 
         let expected_type_id = RD::type_id().type_of();
@@ -753,10 +878,10 @@ impl Registry {
                 type_id.actual = ?actual_type_id,
                 "Registry entry's type ID did not match driver's type ID. This is (probably?) a bug!"
             );
-            return Err(ConnectError::NotFound);
+            return None;
         }
 
-        Ok(item)
+        Some(item)
     }
 }
 
@@ -1046,7 +1171,7 @@ where
         .map_err(|_| UserHandlerError::QueueFull)
 }
 
-type UserHandshakeResult<RD> = Result<KProducer<Message<RD>>, ConnectError<RD>>;
+type UserHandshakeResult<RD> = Result<KProducer<Message<RD>>, UserConnectError<RD>>;
 
 /// Perform a type-erased userspace handshake, deserializing the
 /// [`RegisteredDriver::Hello`] message from `hello_bytes` and returning a
@@ -1108,9 +1233,9 @@ where
             .await
             // this is a `Reusable<Result<KProducer, RD::ConnectError>>>`, so
             // the outer `Result` is the error returned by `receive()`...
-            .map_err(|_| ConnectError::DriverDead)
+            .map_err(|_| UserConnectError::DriverDead)
             // ...and the inner result is the connect error returned by the service.
-            .and_then(|res| res.map_err(ConnectError::Rejected));
+            .and_then(|res| res.map_err(UserConnectError::Rejected));
 
         outptr
             // Safety: the caller is responsible for ensuring the out pointer is
@@ -1144,7 +1269,7 @@ where
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::DriverDead, Self::DriverDead) => true,
-            (Self::NotFound, Self::NotFound) => true,
+            (Self::NotFound(_), Self::NotFound(_)) => true,
             (Self::Rejected(this), Self::Rejected(that)) => this == that,
             _ => false,
         }
@@ -1166,7 +1291,7 @@ where
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut dbs = match self {
             Self::DriverDead => f.debug_struct("DriverDead"),
-            Self::NotFound => f.debug_struct("NotFound"),
+            Self::NotFound(_) => f.debug_struct("NotFound"),
             Self::Rejected(error) => {
                 let mut d = f.debug_struct("Rejected");
                 d.field("error", error);
@@ -1187,7 +1312,7 @@ where
         let name = any::type_name::<D>();
         match self {
             Self::DriverDead => write!(f, "the {name} service has terminated"),
-            Self::NotFound => write!(f, "no {name} service found in the registry",),
+            Self::NotFound(_) => write!(f, "no {name} service found in the registry",),
             Self::Rejected(err) => write!(f, "the {name} service rejected the connection: {err}",),
         }
     }
@@ -1203,7 +1328,8 @@ where
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::DeserializationFailed(this), Self::DeserializationFailed(that)) => this == that,
-            (Self::Connect(this), Self::Connect(that)) => this == that,
+            (Self::NotFound, Self::NotFound) => true,
+            (Self::DriverDead, Self::DriverDead) => true,
             (Self::NotUserspace, Self::NotUserspace) => true,
             _ => false,
         }
@@ -1224,17 +1350,23 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DeserializationFailed(error) => f
-                .debug_struct("DeserializationFailed")
-                .field("error", error)
-                .field("svc", &mycelium_util::fmt::display(any::type_name::<D>()))
-                .finish(),
-            Self::Connect(err) => f.debug_tuple("Connect").field(err).finish(),
-            Self::NotUserspace => f
-                .debug_tuple("NotUserspace")
-                .field(&mycelium_util::fmt::display(any::type_name::<D>()))
-                .finish(),
+            Self::DeserializationFailed(error) => {
+                let mut d = f.debug_struct("DeserializationFailed");
+
+                d.field("error", error);
+                d
+            }
+            Self::NotFound => f.debug_struct("NotFound"),
+            Self::DriverDead => f.debug_struct("NotFound"),
+            Self::Rejected(error) => {
+                let mut d = f.debug_struct("Rejected");
+                d.field("error", &error);
+                d
+            }
+            Self::NotUserspace => f.debug_struct("NotUserspace"),
         }
+        .field("svc", &mycelium_util::fmt::display(any::type_name::<D>()))
+        .finish()
     }
 }
 
@@ -1244,8 +1376,11 @@ where
     D::ConnectError: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = any::type_name::<D>();
         match self {
-            Self::Connect(err) => write!(f, "failed to connect from userspace: {err}"),
+            Self::DriverDead => write!(f, "the {name} service has terminated"),
+            Self::NotFound => write!(f, "no {name} service found in the registry"),
+            Self::Rejected(err) => write!(f, "the {name} service rejected the connection: {err}",),
             Self::DeserializationFailed(err) => write!(
                 f,
                 "failed to deserialize userspace Hello for the {} service: {err}",

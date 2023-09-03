@@ -48,13 +48,12 @@ fn konly_connect() {
         })
         .await;
 
-        k.register_konly(registration).await.unwrap();
+        k.registry().register_konly(registration).await.unwrap();
 
         let reply = comms::oneshot::Reusable::new_async().await;
         let mut client1 = k
             .registry()
-            .await
-            .connect_with_hello::<TestService>(TestMessage(1))
+            .connect::<TestService>(TestMessage(1))
             .await
             .expect("connect should succeed");
 
@@ -65,11 +64,7 @@ fn konly_connect() {
         assert_eq!(rsp.body, Ok(TestMessage(2)));
 
         // should be rejected
-        let res = k
-            .registry()
-            .await
-            .connect_with_hello::<TestService>(TestMessage(2))
-            .await;
+        let res = k.registry().connect::<TestService>(TestMessage(2)).await;
         match res {
             Ok(_) => panic!("rejected connect should fail"),
             Err(ConnectError::Rejected(TestMessage(666))) => {}
@@ -81,8 +76,7 @@ fn konly_connect() {
 
         let mut client2 = k
             .registry()
-            .await
-            .connect_with_hello::<TestService>(TestMessage(1))
+            .connect::<TestService>(TestMessage(1))
             .await
             .expect("connect with accepted Hello should succeed");
 
@@ -143,7 +137,7 @@ fn user_connect() {
         })
         .await;
 
-        k.register(registration).await.unwrap();
+        k.registry().register(registration).await.unwrap();
 
         #[tracing::instrument(skip(k), err(Debug))]
         async fn user_connect(
@@ -153,8 +147,7 @@ fn user_connect() {
             let bytes = postcard::to_stdvec(&hello).expect("must serialize!");
 
             k.registry()
-                .await
-                .connect_userspace_with_hello::<TestService>(&k.inner().scheduler, &bytes[..])
+                .connect_userspace::<TestService>(&k.inner().scheduler, &bytes[..])
                 .await
         }
 
@@ -200,10 +193,7 @@ fn user_connect() {
         let res = user_connect(k, TestMessage(2)).await;
         match res {
             Ok(_) => panic!("request with rejected hello should fail"),
-            Err(e) => assert_eq!(
-                e,
-                UserConnectError::Connect(ConnectError::Rejected(TestMessage(666)))
-            ),
+            Err(e) => assert_eq!(e, UserConnectError::Rejected(TestMessage(666))),
         };
 
         let client2 = user_connect(k, TestMessage(1))

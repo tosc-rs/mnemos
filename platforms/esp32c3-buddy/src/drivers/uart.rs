@@ -122,7 +122,8 @@ impl<T: Instance> C3Uart<T> {
         let old = UART_RX.swap(leaked_prod, Ordering::AcqRel);
         assert_eq!(old, null_mut());
 
-        k.register_konly::<SimpleSerialService>(registration)
+        k.registry()
+            .register_konly::<SimpleSerialService>(registration)
             .await?;
 
         Ok(())

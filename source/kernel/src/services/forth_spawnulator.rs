@@ -38,7 +38,7 @@
 //! different queue (the scheduler's run queue), but I couldn't easily come up
 //! with another solution...
 
-use core::{convert::Infallible, time::Duration};
+use core::convert::Infallible;
 
 use crate::{
     comms::oneshot::Reusable,
@@ -83,18 +83,15 @@ pub struct SpawnulatorClient {
 }
 
 impl SpawnulatorClient {
-    pub async fn from_registry(kernel: &'static Kernel) -> Self {
-        loop {
-            match Self::from_registry_no_retry(kernel).await {
-                Ok(me) => return me,
-                Err(registry::ConnectError::Rejected(_)) => {
-                    unreachable!("the SpawnulatorService does not return connect errors!")
-                }
-                Err(_) => {
-                    kernel.sleep(Duration::from_millis(10)).await;
-                }
-            }
-        }
+    pub async fn from_registry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<SpawnulatorService>> {
+        let prod = kernel.registry().connect::<SpawnulatorService>(()).await?;
+
+        Ok(SpawnulatorClient {
+            hdl: prod,
+            reply: Reusable::new_async().await,
+        })
     }
 
     pub async fn from_registry_no_retry(
@@ -102,8 +99,7 @@ impl SpawnulatorClient {
     ) -> Result<Self, registry::ConnectError<SpawnulatorService>> {
         let prod = kernel
             .registry()
-            .await
-            .connect::<SpawnulatorService>()
+            .try_connect::<SpawnulatorService>(())
             .await?;
 
         Ok(SpawnulatorClient {
@@ -156,7 +152,8 @@ impl SpawnulatorServer {
         settings: SpawnulatorSettings,
     ) -> Result<(), registry::RegistrationError> {
         let vms = kernel
-            .bind_konly_service::<SpawnulatorService>(settings.capacity)
+            .registry()
+            .bind_konly::<SpawnulatorService>(settings.capacity)
             .await?
             .into_request_stream(settings.capacity)
             .await;

@@ -110,7 +110,8 @@ impl SpiSenderServer {
         queued: usize,
     ) -> Result<(), registry::RegistrationError> {
         let reqs = kernel
-            .bind_konly_service::<SpiSender>(queued)
+            .registry()
+            .bind_konly::<SpiSender>(queued)
             .await?
             .into_request_stream(queued)
             .await;
@@ -225,7 +226,18 @@ impl SpiSenderClient {
     pub async fn from_registry(
         kernel: &'static Kernel,
     ) -> Result<SpiSenderClient, registry::ConnectError<SpiSender>> {
-        let hdl = kernel.registry().await.connect().await?;
+        let hdl = kernel.registry().connect(()).await?;
+
+        Ok(SpiSenderClient {
+            hdl,
+            osc: Reusable::new_async().await,
+        })
+    }
+
+    pub async fn from_registry_no_retry(
+        kernel: &'static Kernel,
+    ) -> Result<SpiSenderClient, registry::ConnectError<SpiSender>> {
+        let hdl = kernel.registry().try_connect(()).await?;
 
         Ok(SpiSenderClient {
             hdl,

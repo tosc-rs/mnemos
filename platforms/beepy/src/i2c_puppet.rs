@@ -15,10 +15,10 @@ use kernel::{
     registry::{self, Envelope, KernelHandle, RegisteredDriver},
     retry::{AlwaysRetry, ExpBackoff, Retry, WithMaxRetries},
     services::{
-        i2c::{I2cClient, I2cError},
+        i2c::{I2cClient, I2cError, I2cService},
         keyboard::{
             key_event::{self, KeyEvent, Modifiers},
-            mux::KeyboardMuxClient,
+            mux::{KeyboardMuxClient, KeyboardMuxService},
         },
     },
     tracing::{self, instrument, Instrument, Level},
@@ -108,19 +108,15 @@ impl I2cPuppetClient {
     ///
     /// If the [`I2cPuppetService`] hasn't been registered yet, we will retry until it
     /// has been registered.
-    pub async fn from_registry(kernel: &'static Kernel) -> Self {
-        loop {
-            match I2cPuppetClient::from_registry_no_retry(kernel).await {
-                Ok(port) => return port,
-                Err(registry::ConnectError::Rejected(_)) => {
-                    unreachable!("the KeyboardMuxService does not return connect errors!")
-                }
-                Err(_) => {
-                    // I2C probably isn't registered yet. Try again in a bit
-                    kernel.sleep(Duration::from_millis(10)).await;
-                }
-            }
-        }
+    pub async fn from_registry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<I2cPuppetService>> {
+        let handle = kernel.registry().connect(()).await?;
+
+        Ok(I2cPuppetClient {
+            handle,
+            reply: Reusable::new_async().await,
+        })
     }
 
     /// Obtain an `I2cPuppetClient`
@@ -132,11 +128,7 @@ impl I2cPuppetClient {
     pub async fn from_registry_no_retry(
         kernel: &'static Kernel,
     ) -> Result<Self, registry::ConnectError<I2cPuppetService>> {
-        let handle = kernel
-            .registry()
-            .await
-            .connect::<I2cPuppetService>()
-            .await?;
+        let handle = kernel.registry().try_connect(()).await?;
 
         Ok(I2cPuppetClient {
             handle,
@@ -243,6 +235,8 @@ pub struct I2cPuppetServer {
 #[derive(Debug)]
 pub enum RegistrationError {
     Registry(registry::RegistrationError),
+    NoI2c(registry::ConnectError<I2cService>),
+    NoKeymux(registry::ConnectError<KeyboardMuxService>),
     NoI2cPuppet(I2cError),
     InvalidSettings(&'static str),
 }
@@ -351,7 +345,9 @@ impl I2cPuppetServer {
         irq_waker: impl Into<Option<&'static WaitCell>>,
     ) -> Result<(), RegistrationError> {
         let keymux = if settings.keymux {
-            let keymux = KeyboardMuxClient::from_registry(kernel).await;
+            let keymux = KeyboardMuxClient::from_registry(kernel)
+                .await
+                .map_err(RegistrationError::NoKeymux)?;
             tracing::debug!("acquired keyboard mux client");
             Some(keymux)
         } else {
@@ -362,7 +358,10 @@ impl I2cPuppetServer {
             // The longest read or write operation we will perform is two bytes
             // long. Thus, we can reuse a single 2-byte buffer forever.
             let buf = FixedVec::new(2).await;
-            I2cClient::from_registry(kernel).await.with_cached_buf(buf)
+            I2cClient::from_registry(kernel)
+                .await
+                .map_err(RegistrationError::NoI2c)?
+                .with_cached_buf(buf)
         };
         let subscriptions = FixedVec::new(settings.max_subscriptions).await;
 
@@ -390,7 +389,8 @@ impl I2cPuppetServer {
             .map_err(RegistrationError::NoI2cPuppet)?;
 
         let rx = kernel
-            .bind_konly_service(settings.channel_capacity)
+            .registry()
+            .bind_konly(settings.channel_capacity)
             .await
             .map_err(RegistrationError::Registry)?
             .into_request_stream(settings.channel_capacity)

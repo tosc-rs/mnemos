@@ -155,8 +155,12 @@ pub async fn graphical_shell_mono(k: &'static Kernel, settings: GraphicalShellSe
         font,
     } = settings;
 
-    let mut keyboard = KeyClient::from_registry(k, Default::default()).await;
-    let mut disp_hdl = EmbDisplayClient::from_registry(k).await;
+    let mut keyboard = KeyClient::from_registry(k, Default::default())
+        .await
+        .expect("failed to get keyboard service");
+    let mut disp_hdl = EmbDisplayClient::from_registry(k)
+        .await
+        .expect("failed to get EmbDisplayClient");
     let char_y = font.character_size.height;
     let char_x = font.character_size.width + font.character_spacing;
 

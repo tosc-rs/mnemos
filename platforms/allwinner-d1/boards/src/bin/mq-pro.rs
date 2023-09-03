@@ -88,7 +88,9 @@ fn main() -> ! {
         .initialize(async move {
             // i2c_puppet demo: print each keypress to the console.
             i2c_puppet_up.await.unwrap();
-            let mut i2c_puppet = I2cPuppetClient::from_registry(d1.kernel).await;
+            let mut i2c_puppet = I2cPuppetClient::from_registry(d1.kernel)
+                .await
+                .expect("no i2c_puppet driver");
             tracing::info!("got i2c puppet client");
 
             let mut keys = i2c_puppet
@@ -108,7 +110,9 @@ fn main() -> ! {
             // LED to display useful information, but this is fun for now.
             let mut hue = 0;
 
-            let mut i2c_puppet = I2cPuppetClient::from_registry(d1.kernel).await;
+            let mut i2c_puppet = I2cPuppetClient::from_registry(d1.kernel)
+                .await
+                .expect("no i2c_puppet driver");
 
             i2c_puppet
                 .toggle_led(true)
