@@ -419,7 +419,7 @@ impl Registry {
         name = "Registry::register_konly",
         level = "debug",
         skip(self, registration),
-        fields(uuid = ?RD::UUID),
+        fields(svc = %any::type_name::<RD>()),
     )]
     pub fn register_konly<RD: RegisteredDriver>(
         &mut self,
@@ -454,7 +454,7 @@ impl Registry {
         name = "Registry::register",
         level = "debug",
         skip(self, registration),
-        fields(uuid = ?RD::UUID),
+        fields(svc = %any::type_name::<RD>()),
     )]
     pub fn register<RD>(
         &mut self,
@@ -483,7 +483,7 @@ impl Registry {
                 },
             })
             .map_err(|_| RegistrationError::RegistryFull)?;
-        info!(uuid = ?RD::UUID, service_id = self.counter, "Registered");
+        info!(svc = %any::type_name::<RD>(), uuid = ?RD::UUID, service_id = self.counter, "Registered");
         self.counter = self.counter.wrapping_add(1);
         Ok(())
     }
@@ -512,7 +512,7 @@ impl Registry {
         name = "Registry::connect_with_hello",
         level = "debug",
         skip(self, hello),
-        fields(uuid = ?RD::UUID),
+        fields(svc = %any::type_name::<RD>()),
     )]
     pub async fn connect_with_hello<RD: RegisteredDriver>(
         &mut self,
@@ -560,7 +560,7 @@ impl Registry {
             client_id: ClientId(self.counter),
             request_ctr: 0,
         });
-        info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
+        info!(svc = %any::type_name::<RD>(), uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
         self.counter = self.counter.wrapping_add(1);
         res
     }
@@ -588,12 +588,6 @@ impl Registry {
     ///   connection.
     ///
     /// [rejected]: listener::Handshake::reject
-    #[tracing::instrument(
-        name = "Registry::connect",
-        level = "debug",
-        skip(self),
-        fields(uuid = ?RD::UUID),
-    )]
     pub async fn connect<RD>(&mut self) -> Result<KernelHandle<RD>, ConnectError<RD>>
     where
         RD: RegisteredDriver<Hello = ()>,
@@ -614,7 +608,7 @@ impl Registry {
         name = "Registry::connect_userspace_with_hello",
         level = "debug",
         skip(self, scheduler),
-        fields(uuid = ?RD::UUID),
+        fields(svc = %any::type_name::<RD>()),
     )]
     pub async fn connect_userspace_with_hello<RD>(
         &mut self,
@@ -668,7 +662,13 @@ impl Registry {
         };
 
         let client_id = self.counter;
-        info!(uuid = ?RD::UUID, service_id = item.value.service_id.0, client_id = self.counter, "Got KernelHandle from Registry");
+        info!(
+            svc = %any::type_name::<RD>(),
+            uuid = ?RD::UUID,
+            service_id = item.value.service_id.0,
+            client_id = self.counter,
+            "Got KernelHandle from Registry",
+        );
         self.counter = self.counter.wrapping_add(1);
 
         Ok(UserspaceHandle {
@@ -686,13 +686,25 @@ impl Registry {
     fn get<RD: RegisteredDriver>(
         items: &FixedVec<RegistryItem>,
     ) -> Result<&RegistryItem, ConnectError<RD>> {
-        let item = items
-            .as_slice()
-            .iter()
-            .find(|i| i.key == RD::UUID)
-            .ok_or(ConnectError::NotFound)?;
+        let Some(item) = items.as_slice().iter().find(|i| i.key == RD::UUID) else {
+            tracing::debug!(
+                svc = %any::type_name::<RD>(),
+                uuid = ?RD::UUID,
+                "No service for this UUID exists in the registry!"
+            );
+            return Err(ConnectError::NotFound);
+        };
 
-        if item.value.req_resp_tuple_id != RD::type_id().type_of() {
+        let expected_type_id = RD::type_id().type_of();
+        let actual_type_id = item.value.req_resp_tuple_id;
+        if expected_type_id != actual_type_id {
+            tracing::warn!(
+                svc = %any::type_name::<RD>(),
+                uuid = ?RD::UUID,
+                type_id.expected = ?expected_type_id,
+                type_id.actual = ?actual_type_id,
+                "Registry entry's type ID did not match driver's type ID. This is (probably?) a bug!"
+            );
             return Err(ConnectError::NotFound);
         }
 
@@ -1104,17 +1116,17 @@ where
     D::ConnectError: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::DriverDead => {
-                write!(f, "ConnectError::<{}>::DriverDead", any::type_name::<D>())
+        let mut dbs = match self {
+            Self::DriverDead => f.debug_struct("DriverDead"),
+            Self::NotFound => f.debug_struct("NotFound"),
+            Self::Rejected(error) => {
+                let mut d = f.debug_struct("Rejected");
+                d.field("error", error);
+                d
             }
-            Self::NotFound => write!(f, "ConnectError::<{}>::NotFound", any::type_name::<D>()),
-            Self::Rejected(err) => write!(
-                f,
-                "ConnectError::<{}>::Rejected({err:?})",
-                any::type_name::<D>()
-            ),
-        }
+        };
+        dbs.field("svc", &mycelium_util::fmt::display(any::type_name::<D>()))
+            .finish()
     }
 }
 
@@ -1124,18 +1136,11 @@ where
     D::ConnectError: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = any::type_name::<D>();
         match self {
-            Self::DriverDead => write!(f, "the {} service has terminated", any::type_name::<D>()),
-            Self::NotFound => write!(
-                f,
-                "no {} service found in the registry",
-                any::type_name::<D>()
-            ),
-            Self::Rejected(err) => write!(
-                f,
-                "the {} service rejected the connection: {err}",
-                any::type_name::<D>()
-            ),
+            Self::DriverDead => write!(f, "the {name} service has terminated"),
+            Self::NotFound => write!(f, "no {name} service found in the registry",),
+            Self::Rejected(err) => write!(f, "the {name} service rejected the connection: {err}",),
         }
     }
 }
@@ -1171,17 +1176,16 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::DeserializationFailed(err) => write!(
-                f,
-                "UserConnectError::<{}>::DeserializationFailed({err:?})",
-                any::type_name::<D>()
-            ),
-            Self::Connect(err) => write!(f, "UserConnectError::Connect({err:?})"),
-            Self::NotUserspace => write!(
-                f,
-                "UserConnectError::<{}>::NotUserspace",
-                any::type_name::<D>()
-            ),
+            Self::DeserializationFailed(error) => f
+                .debug_struct("DeserializationFailed")
+                .field("error", error)
+                .field("svc", &mycelium_util::fmt::display(any::type_name::<D>()))
+                .finish(),
+            Self::Connect(err) => f.debug_tuple("Connect").field(err).finish(),
+            Self::NotUserspace => f
+                .debug_tuple("NotUserspace")
+                .field(&mycelium_util::fmt::display(any::type_name::<D>()))
+                .finish(),
         }
     }
 }
