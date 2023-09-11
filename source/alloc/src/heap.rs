@@ -370,13 +370,13 @@ mod stats {
     #[non_exhaustive]
     pub struct State {
         /// A count of the total number of concurrently executing calls to
-        /// [`alloc`].
+        /// [`alloc()`].
         ///
         /// If this is 0, no CPU cores are currently allocating.
         pub allocating: u16,
 
         /// A count of the total number of concurrently executing calls to
-        /// [`dealloc`].
+        /// [`dealloc()`].
         ///
         /// If this is 0, no CPU cores are currently allocating.
         pub deallocating: u16,
