@@ -79,7 +79,7 @@ impl<U: UnderlyingAllocator> MnemosAlloc<U> {
     ///
     /// # Returns
     ///
-    /// - [`Ok`]`(`[`()`]`)` if the heap was successfully initialized.
+    /// - [`Ok`]`(())` if the heap was successfully initialized.
     /// - [`Err`]`(`[`InitError::AlreadyInitialized`]`)` if this method has
     ///   already been called to initialize the heap.
     ///
