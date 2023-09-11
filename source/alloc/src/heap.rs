@@ -59,6 +59,9 @@ pub enum InitError {
     AlreadyInitialized,
 }
 
+#[cfg(feature = "stats")]
+pub use self::stats::State;
+
 impl<U: UnderlyingAllocator> MnemosAlloc<U> {
     const INITIALIZING: usize = usize::MAX;
 
