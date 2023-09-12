@@ -73,6 +73,14 @@ lto = 'thin' # better optimizations at a lower cost
 # symbols are nice and they don't increase the size on Flash
 debug = true
 
+[profile.espbuddy-release]
+inherits = "release"
+# esp-wifi suggests disabling lto, and using opt-level 3.
+#
+# See: https://github.com/esp-rs/esp-wifi/tree/fbb8417fc450ec0701067b36629770c11338231c#optimization-level
+# lto = "off"
+lto = 'off'
+
 ## profile settings for D1 ##
 
 [profile.release.package.mnemos-d1]
@@ -90,10 +98,11 @@ opt-level = 3
 
 [profile.release.package.mnemos-esp32c3-buddy]
 codegen-units = 1 # better optimizations
-# opt-level='z' is broken on esp32c3.
+# esp-wifi suggests disabling lto, and using opt-level 3.
 #
-# See: https://github.com/esp-rs/esp-hal/pull/198
-opt-level = "s"
+# See: https://github.com/esp-rs/esp-wifi/tree/fbb8417fc450ec0701067b36629770c11338231c#optimization-level
+# lto = "off"
+opt-level = 3
 rustflags = [
     "-C", "link-arg=-Tlinkall.x",
     # Required to obtain backtraces (e.g. when using the "esp-backtrace" crate.)
@@ -106,7 +115,12 @@ codegen-units = 1 # better optimizations
 # opt-level='z' is broken on esp32c3.
 #
 # See: https://github.com/esp-rs/esp-hal/pull/198
-opt-level = "s"
+
+# esp-wifi suggests disabling lto, and using opt-level 3.
+#
+# See: https://github.com/esp-rs/esp-wifi/tree/fbb8417fc450ec0701067b36629770c11338231c#optimization-level
+# lto = "off"
+opt-level = 3
 # symbols are nice and they don't increase the size on Flash
 rustflags = [
     "-C", "link-arg=-Tlinkall.x",
@@ -165,17 +179,3 @@ rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
 [patch.crates-io.bbq10kbd]
 git = "https://github.com/hawkw/bbq10kbd"
 branch = "eliza/async"
-
-# necessary to avoid `esp32c3-hal` depending on `log` with version `=0.4.18`,
-# which clashes with the `nextest` dependency of `log` `^0.4.19`. lol. lmao.
-[patch.crates-io.esp32c3-hal]
-git = "https://github.com/esp-rs/esp-hal"
-rev = "5a8be302b4049a6ebc17bd712d97c85a9fd83f76"
-
-[patch.crates-io.esp-hal-common]
-git = "https://github.com/esp-rs/esp-hal"
-rev = "5a8be302b4049a6ebc17bd712d97c85a9fd83f76"
-
-[patch.crates-io.esp-hal-procmacros]
-git = "https://github.com/esp-rs/esp-hal"
-rev = "5a8be302b4049a6ebc17bd712d97c85a9fd83f76"

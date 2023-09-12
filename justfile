@@ -151,7 +151,7 @@ flash-d1 board='mq-pro': (build-d1 board)
 # build a MnemOS binary for the ESP32-C3
 build-c3 board:
     {{ _cargo }} build \
-        --profile {{ profile }} \
+        --profile espbuddy-release \
         --package {{ _espbuddy_pkg }} \
         --bin {{ board }}
 

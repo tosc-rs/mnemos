@@ -37,8 +37,9 @@ bench = false
 
 [dependencies]
 critical-section = "1"
-esp32c3-hal = "0.11.0"
+esp32c3-hal = "0.12.0"
 esp-alloc = "0.3"
+embassy-net-driver-channel = "0.1.0"
 riscv = "0.10.1"
 
 [dependencies.esp-backtrace]
@@ -48,6 +49,22 @@ features = ["esp32c3", "panic-handler", "exception-handler", "print-uart"]
 [dependencies.esp-println]
 version = "0.5.0"
 features = ["esp32c3"]
+
+[dependencies.esp-wifi]
+git = "https://github.com/esp-rs/esp-wifi/"
+rev = "fbb8417fc450ec0701067b36629770c11338231c"
+default-features = false
+features = [
+    "wifi",
+    "ipv6",
+    "esp32c3",
+    # needed for usb-serial debugging. this should be disabled if/when we are no
+    # longer using usb-serial, as it can impact wifi performance.
+    #
+    # see here for details:
+    # https://github.com/esp-rs/esp-wifi/tree/fbb8417fc450ec0701067b36629770c11338231c#usb-serial-jtag
+    "phy-enable-usb",
+]
 
 [dependencies.portable-atomic]
 version = "1.4"
