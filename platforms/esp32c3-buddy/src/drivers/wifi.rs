@@ -1,16 +1,19 @@
 use embassy_net_driver_channel::{RxRunner, TxRunner};
-use futures::select_biased;
+use futures::{select_biased, FutureExt};
 use kernel::{
-    comms::bbq,
+    comms::{bbq, oneshot::Reusable},
     mnemos_alloc::containers::FixedVec,
-    registry::{listener::RequestStream, uuid, RegisteredDriver, Uuid},
+    registry::{
+        listener::RequestStream, uuid, Envelope, KernelHandle, OneshotRequestError,
+        RegisteredDriver, Uuid,
+    },
 };
 
 const MTU: usize = 1492; // this is the default MTU from esp-wifi...
 
-pub struct WifiService;
+pub struct WifiControlService;
 
-impl RegisteredDriver for WifiService {
+impl RegisteredDriver for WifiControlService {
     type Request = ControlRequest;
     type Response = ControlResponse;
     type Error = ControlError;
@@ -22,28 +25,81 @@ impl RegisteredDriver for WifiService {
 
 pub enum ControlRequest {
     ListAps,
-    ConnectToAp(Connect),
+    ConnectToAp {
+        conn: ConnectionSettings,
+        // TODO: when service channels become bidis, this could potentially be the
+        // channel of a `RawWifiService`/`WifiEthernetFrameService` thingy, and the rest
+        // of the connect could be the hello.
+        frames: bbq::BidiHandle,
+    },
 }
 
-pub struct Connect {
+#[non_exhaustive]
+pub struct ConnectionSettings {
     pub ssid: FixedVec<u8>,
     pub password: FixedVec<u8>,
-    pub dhcp: bool,
-    frames: bbq::BidiHandle,
 }
 
 pub enum ControlResponse {
     ListAps { aps: FixedVec<()> },
 }
 
-pub enum ControlError {}
+#[derive(Debug)]
+pub enum ControlError {
+    Connect(ConnectError),
+}
+
+#[derive(Debug)]
+pub enum ConnectError {
+    Request(OneshotRequestError),
+}
 
 pub struct Wifi {}
 
+pub struct WifiClient {
+    handle: KernelHandle<WifiControlService>,
+    reply: Reusable<Envelope<Result<ControlResponse, ControlError>>>,
+}
+
+pub struct Ap {
+    pub frames: bbq::BidiHandle,
+}
+
+impl WifiClient {
+    pub async fn connect(
+        &mut self,
+        settings: ConnectionSettings,
+        bbq_capacity: usize,
+    ) -> Result<Ap, ConnectError> {
+        let (frames, frames_out) = bbq::new_bidi_channel(bbq_capacity, bbq_capacity).await;
+        let rsp = self
+            .handle
+            .request_oneshot(
+                ControlRequest::ConnectToAp {
+                    conn: settings,
+                    frames: frames_out,
+                },
+                &self.reply,
+            )
+            .await
+            .map_err(ConnectError::Request)?;
+        match rsp.body {
+            Ok(_) => Ok(Ap { frames }),
+            Err(ControlError::Connect(error)) => Err(error),
+            Err(error) => unreachable!("random unexpected error: {error:?}"),
+        }
+    }
+}
+
 impl Wifi {
-    async fn run(mut self, control_reqs: RequestStream<WifiService>) {
-        // select_biased! {}
-        todo!("implement wifi control service")
+    async fn run(mut self, control_reqs: RequestStream<WifiControlService>) {
+        loop {
+            select_biased! {
+                req = control_reqs.next_request().fuse() => {
+                    todo!()
+                }
+            }
+        }
     }
 
     async fn run_tx(mut tx: TxRunner<'static, MTU>, bbq: bbq::Consumer) {
