@@ -14,13 +14,22 @@ readme = "./README.md"
 license = "MIT OR Apache-2.0"
 forced-target = "riscv64imac-unknown-none-elf"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+[[bin]]
+name = "lichee-rv"
+test = false
+bench = false
+
+[[bin]]
+name = "mq-pro"
+test = false
+bench = false
 
 [build-dependencies]
 d1-config = { path = "./d1-config" }
 serde = { version = "1.0.178", features = ["derive"] }
 mnemos-config = { path = "../../source/config", features = ["use-std"] }
 mnemos = { path = "../../source/kernel" }
+miette = "5.10.0"
 
 [dependencies]
 serde = { version = "1.0.178", features = ["derive"], default-features = false }
@@ -58,6 +67,4 @@ features =[ "critical-section-single-hart"]
 
 [features]
 # board features
-lichee-rv = []
-mq-pro = []
 beepy = []

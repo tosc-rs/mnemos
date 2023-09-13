@@ -1,18 +1,17 @@
-use std::env;
-use std::fs::File;
-use std::io::Write;
-use std::path::Path;
+use std::{
+    env,
+    path::{Path, PathBuf},
+};
 
 use d1_config::PlatformConfig;
-use mnemos_config::buildtime::render_project;
+use miette::{IntoDiagnostic, Result, WrapErr};
+use mnemos_config::buildtime;
 
-fn main() {
-    let out_dir = env::var("OUT_DIR").expect("No out dir");
+fn main() -> Result<()> {
+    let out_dir = env::var("OUT_DIR")
+        .into_diagnostic()
+        .context("No OUT_DIR")?;
     let dest_path = Path::new(&out_dir);
-    let mut f = File::create(dest_path.join("memory.x")).expect("Could not create file");
-
-    f.write_all(include_bytes!("memory.x"))
-        .expect("Could not write file");
 
     println!("cargo:rustc-link-search={}", dest_path.display());
     println!("cargo:rerun-if-changed=memory.x");
@@ -20,17 +19,11 @@ fn main() {
     println!("cargo:rustc-link-arg=-Tmemory.x");
     println!("cargo:rustc-link-arg=-Tlink.x");
 
-    let lichee_rv = cfg!(feature = "lichee-rv");
-    let mq_pro = cfg!(feature = "mq-pro");
-    let beepy = cfg!(feature = "beepy");
-
-    let name = match (lichee_rv, mq_pro, beepy) {
-        (false, false, false) => panic!("Must select a board target"),
-        (true, false, false) => "lichee-rv.toml",
-        (false, true, false) => "mq-pro.toml",
-        (false, false, true) => "beepy.toml",
-        _ => panic!("Must only select one board target"),
+    let config_dir = {
+        let root = env::var("CARGO_MANIFEST_DIR")
+            .into_diagnostic()
+            .context("No CARGO_MANIFEST_DIR")?;
+        PathBuf::from(root).join("config")
     };
-
-    render_project::<PlatformConfig>(name).unwrap();
+    buildtime::render_all::<PlatformConfig>(config_dir)
 }

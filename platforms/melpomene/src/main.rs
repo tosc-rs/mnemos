@@ -56,7 +56,7 @@ async fn run_melpomene() {
 
 #[tracing::instrument(name = "Kernel", level = "info")]
 async fn kernel_entry() {
-    let config = mnemos_config::load_configuration!(PlatformConfig).unwrap();
+    let config = mnemos_config::include_config!(PlatformConfig).unwrap();
 
     tracing::info!(
         settings = ?config,
