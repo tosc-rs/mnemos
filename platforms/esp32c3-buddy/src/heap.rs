@@ -27,7 +27,9 @@ pub unsafe fn init() {
     };
 
     unsafe {
-        AHEAP.init(heap_start, HEAP_SIZE);
+        AHEAP
+            .init(heap_start, HEAP_SIZE)
+            .expect("heap initialized more than once!")
     }
 }
 
