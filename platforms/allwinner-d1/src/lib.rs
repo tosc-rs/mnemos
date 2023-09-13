@@ -97,6 +97,7 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
     );
 
     if config.platform.blink_service.enabled {
+        let interval = config.platform.blink_service.blink_interval;
         match config.platform.blink_service.blink_pin {
             LedBlinkPin::PC1 => {
                 p.GPIO.pc_cfg0.modify(|_r, w| {
@@ -116,12 +117,12 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
                                 w.pc_dat().variant(0b0000_0010);
                                 w
                             });
-                            d1.kernel.sleep(Duration::from_millis(250)).await;
+                            d1.kernel.sleep(interval).await;
                             p.GPIO.pc_dat.modify(|_r, w| {
                                 w.pc_dat().variant(0b0000_0000);
                                 w
                             });
-                            d1.kernel.sleep(Duration::from_millis(250)).await;
+                            d1.kernel.sleep(interval).await;
                         }
                     })
                     .unwrap();
@@ -144,12 +145,12 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
                                 w.pd_dat().variant(1 << 18);
                                 w
                             });
-                            d1.kernel.sleep(Duration::from_millis(250)).await;
+                            d1.kernel.sleep(interval).await;
                             p.GPIO.pd_dat.modify(|_r, w| {
                                 w.pd_dat().variant(0);
                                 w
                             });
-                            d1.kernel.sleep(Duration::from_millis(250)).await;
+                            d1.kernel.sleep(interval).await;
                         }
                     })
                     .unwrap();

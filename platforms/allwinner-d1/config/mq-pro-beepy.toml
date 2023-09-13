@@ -19,10 +19,12 @@ enabled = true
 
 [platform.i2c]
 enabled = true
-mapping = "TWI2"
+mapping = "TWI0"
 
 [platform.i2c_puppet]
-enabled = false
+enabled = true
+irq_pin = "PB7"
 
 [platform.blink_service]
 enabled = true
+blink_pin = "PD18"

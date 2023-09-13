@@ -1,6 +1,6 @@
 #![no_std]
-
-use serde::{Serialize, Deserialize};
+use core::time::Duration;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct PlatformConfig {
@@ -21,14 +21,17 @@ pub struct I2cConfiguration {
 
 impl I2cConfiguration {
     const fn default_mapping() -> Mapping {
-        Mapping::LicheeRvTwi0
+        Mapping::Twi0
     }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
 pub enum Mapping {
-    LicheeRvTwi0,
-    MangoPiTwi2,
+    Twi0,
+    Twi1,
+    Twi2,
+    Twi3,
 }
 
 // I2C Puppet
@@ -37,19 +40,14 @@ pub enum Mapping {
 pub struct I2cPuppetConfiguration {
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default = "I2cPuppetConfiguration::default_interrupt_pin")]
-    pub interrupt_pin: InterruptPin,
-}
-
-impl I2cPuppetConfiguration {
-    const fn default_interrupt_pin() -> InterruptPin {
-        InterruptPin::PB7
-    }
+    pub interrupt_pin: Option<InterruptPin>,
+    pub poll_interval: Option<Duration>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
 pub enum InterruptPin {
-    PB7
+    PB7,
 }
 
 // LED service
@@ -60,15 +58,22 @@ pub struct LedBlinkService {
     pub enabled: bool,
     #[serde(default = "LedBlinkService::default_led_pin")]
     pub blink_pin: LedBlinkPin,
+    #[serde(default = "LedBlinkService::default_blink_interval")]
+    pub blink_interval: Duration,
 }
 
 impl LedBlinkService {
     const fn default_led_pin() -> LedBlinkPin {
         LedBlinkPin::PC1
     }
+
+    const fn default_blink_interval() -> Duration {
+        Duration::from_millis(250)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+#[serde(rename_all = "UPPERCASE")]
 pub enum LedBlinkPin {
     PC1,
     PD18,
