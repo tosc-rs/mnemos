@@ -62,25 +62,35 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
     let uart = unsafe { uart::kernel_uart(&mut ccu, &mut p.GPIO, p.UART0) };
     let spim = unsafe { spim::kernel_spim1(p.SPI_DBI, &mut ccu, &mut p.GPIO) };
 
-    let i2c0 = match (config.platform.i2c.enabled, config.platform.i2c.mapping) {
-        (false, _) => None,
-        (true, Mapping::LicheeRvTwi0) => unsafe {
-            Some(twi::I2c0::lichee_rv_dock(p.TWI2, &mut ccu, &mut p.GPIO))
-        },
-        (true, Mapping::MangoPiTwi2) => unsafe {
-            Some(twi::I2c0::mq_pro(p.TWI0, &mut ccu, &mut p.GPIO))
-        },
+    let i2c0 = match config.platform.i2c {
+        d1_config::I2cConfiguration { enabled: false, .. } => None,
+        d1_config::I2cConfiguration {
+            enabled: true,
+            mapping: Mapping::Twi2,
+        } => unsafe { Some(twi::I2c0::lichee_rv_dock(p.TWI2, &mut ccu, &mut p.GPIO)) },
+        d1_config::I2cConfiguration {
+            enabled: true,
+            mapping: Mapping::Twi0,
+        } => unsafe { Some(twi::I2c0::mq_pro(p.TWI0, &mut ccu, &mut p.GPIO)) },
+        d1_config::I2cConfiguration {
+            enabled: true,
+            mapping,
+        } => unimplemented!("unsupported I2C0 TWI mapping: {mapping:?}"),
     };
     let timers = Timers::new(p.TIMER);
     let dmac = Dmac::new(p.DMAC, &mut ccu);
-    let mut plic = Plic::new(p.PLIC);
+    let plic = Plic::new(p.PLIC);
 
     let puppet_enabled = i2c0.is_some() && config.platform.i2c_puppet.enabled;
 
     let i2c_puppet_irq = if puppet_enabled {
-        // This is the only pin we support
-        let InterruptPin::PB7 = config.platform.i2c_puppet.interrupt_pin;
-        Some(init_i2c_puppet_irq_pb7(&mut p.GPIO, &mut plic))
+        config
+            .platform
+            .i2c_puppet
+            .interrupt_pin
+            .map(|pin| match pin {
+                InterruptPin::PB7 => init_i2c_puppet_irq_pb7(&p.GPIO, &plic),
+            })
     } else {
         None
     };
@@ -160,14 +170,14 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
 
     d1.initialize_sharp_display();
 
-    if let Some(puppet_irq) = i2c_puppet_irq {
+    if puppet_enabled {
         let i2c_puppet_up = d1
             .kernel
             .initialize(async move {
-                let settings =
-                    I2cPuppetSettings::default().with_poll_interval(Duration::from_secs(2));
+                let settings = I2cPuppetSettings::default()
+                    .with_poll_interval(config.platform.i2c_puppet.poll_interval);
                 d1.kernel.sleep(Duration::from_secs(2)).await;
-                I2cPuppetServer::register(d1.kernel, settings, Some(puppet_irq))
+                I2cPuppetServer::register(d1.kernel, settings, i2c_puppet_irq)
                     .await
                     .expect("failed to register i2c_puppet driver!");
             })
@@ -222,7 +232,7 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
     d1.run()
 }
 
-fn init_i2c_puppet_irq_pb7(gpio: &mut d1_pac::GPIO, plic: &mut Plic) -> &'static WaitCell {
+fn init_i2c_puppet_irq_pb7(gpio: &d1_pac::GPIO, plic: &Plic) -> &'static WaitCell {
     static I2C_PUPPET_IRQ: WaitCell = WaitCell::new();
 
     // configure pin mappings:
@@ -301,6 +311,7 @@ impl D1 {
     ///
     /// **Note**: Initialize the global allocator prior to calling this
     /// function.
+    #[allow(clippy::too_many_arguments)]
     pub fn initialize(
         timers: Timers,
         uart: Uart,

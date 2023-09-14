@@ -41,7 +41,14 @@ pub struct I2cPuppetConfiguration {
     #[serde(default)]
     pub enabled: bool,
     pub interrupt_pin: Option<InterruptPin>,
-    pub poll_interval: Option<Duration>,
+    #[serde(default = "I2cPuppetConfiguration::default_poll_interval")]
+    pub poll_interval: Duration,
+}
+
+impl I2cPuppetConfiguration {
+    const fn default_poll_interval() -> Duration {
+        Duration::from_millis(50)
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]

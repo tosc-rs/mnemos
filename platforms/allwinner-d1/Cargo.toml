@@ -14,6 +14,10 @@ readme = "./README.md"
 license = "MIT OR Apache-2.0"
 forced-target = "riscv64imac-unknown-none-elf"
 
+[lib]
+test = false
+bench = false
+
 [[bin]]
 name = "lichee-rv"
 test = false
