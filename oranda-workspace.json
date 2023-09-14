@@ -23,8 +23,8 @@
         "path": "platforms/pomelo"
       },
       {
-        "slug": "allwinner-core",
-        "path": "platforms/allwinner-d1/core"
+        "slug": "allwinner-d1",
+        "path": "platforms/allwinner-d1"
       },
       {
         "slug": "crowtty",

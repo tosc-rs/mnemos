@@ -1,0 +1,31 @@
+[kernel]
+max_drivers = 16
+timer_granularity = { secs = 0, nanos = 333 }
+
+[services.spawnulator]
+enabled = true
+
+[services.keyboard_mux]
+enabled = true
+
+[services.serial_mux]
+enabled = true
+
+[services.sermux_loopback]
+enabled = true
+
+[services.sermux_hello]
+enabled = true
+
+[platform.i2c]
+enabled = true
+mapping = "TWI0"
+
+[platform.i2c_puppet]
+enabled = true
+irq_pin = "PB7"
+poll_interval = { secs = 2, nanos = 0 }
+
+[platform.blink_service]
+enabled = true
+blink_pin = "PD18"

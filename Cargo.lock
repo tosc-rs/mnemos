@@ -1683,6 +1683,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "d1-config"
+version = "0.1.0"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "d1-pac"
 version = "0.0.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4831,6 +4838,7 @@ dependencies = [
  "humantime",
  "maitake",
  "melpo-config",
+ "miette",
  "mnemos",
  "mnemos-abi",
  "mnemos-alloc",
@@ -5092,28 +5100,18 @@ dependencies = [
 name = "mnemos-d1"
 version = "0.1.0"
 dependencies = [
- "d1-pac",
- "embedded-hal 0.2.7",
- "futures",
- "mnemos",
- "mnemos-beepy",
- "mnemos-d1-core",
- "riscv",
- "riscv-rt",
- "tracing 0.2.0",
-]
-
-[[package]]
-name = "mnemos-d1-core"
-version = "0.1.0"
-dependencies = [
  "critical-section",
+ "d1-config",
  "d1-pac",
  "embedded-graphics 0.7.1",
  "futures",
+ "miette",
  "mnemos",
+ "mnemos-beepy",
+ "mnemos-config",
  "riscv",
  "riscv-rt",
+ "serde",
  "tracing 0.1.37",
 ]
 

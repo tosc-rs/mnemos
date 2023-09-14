@@ -1,7 +1,7 @@
 cargo-features = ["per-package-target", "profile-rustflags"]
 
 [package]
-name = "mnemos-d1-core"
+name = "mnemos-d1"
 version = "0.1.0"
 edition = "2021"
 description = """
@@ -12,17 +12,45 @@ repository = "https://github.com/tosc-rs/mnemos"
 homepage = "https://mnemos.dev"
 readme = "./README.md"
 license = "MIT OR Apache-2.0"
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+forced-target = "riscv64imac-unknown-none-elf"
+
+[lib]
+test = false
+bench = false
+
+[[bin]]
+name = "lichee-rv"
+test = false
+bench = false
+
+[[bin]]
+name = "mq-pro"
+test = false
+bench = false
+
+[build-dependencies]
+d1-config = { path = "./d1-config" }
+serde = { version = "1.0.178", features = ["derive"] }
+mnemos-config = { path = "../../source/config", features = ["use-std"] }
+mnemos = { path = "../../source/kernel" }
+miette = "5.10.0"
 
 [dependencies]
+serde = { version = "1.0.178", features = ["derive"], default-features = false }
+d1-config = { path = "./d1-config" }
+mnemos-config = { path = "../../source/config" }
+
 d1-pac = "0.0.31"
 critical-section = "1.1.1"
 riscv-rt = "0.11.0"
 
 # kernel
 [dependencies.mnemos]
-path = "../../../source/kernel"
+path = "../../source/kernel"
 default-features = false
+
+[dependencies.mnemos-beepy]
+path = "../beepy"
 
 [dependencies.tracing]
 version = "0.1.37"
@@ -40,3 +68,7 @@ default-features = false
 [dependencies.riscv]
 version = "0.10"
 features =[ "critical-section-single-hart"]
+
+[features]
+# board features
+beepy = []
