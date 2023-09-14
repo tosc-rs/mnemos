@@ -1,5 +1,5 @@
 use alloc::alloc::GlobalAlloc;
-use core::ptr::NonNull;
+use core::{mem::MaybeUninit, ptr::NonNull};
 use esp_alloc::EspHeap;
 use kernel::mnemos_alloc::heap::{MnemosAlloc, UnderlyingAllocator};
 
@@ -9,26 +9,14 @@ static AHEAP: MnemosAlloc<UnderlyingEspHeap> = MnemosAlloc::new();
 pub const HEAP_SIZE: usize = 1024 * 32;
 
 /// Initialize the heap.
-///
-/// # Safety
-///
-/// Only call this once!
-pub unsafe fn init() {
-    extern "C" {
-        // Note: this symbol is provided by `esp32c3-hal`'s linker script.
-        static mut _heap_start: u32;
-    }
-
-    let heap_start = {
-        let ptr = &_heap_start as *const _ as *mut u8;
-        NonNull::new(ptr).expect(
-            "why would the heap start address, given to us by the linker script, ever be null?",
-        )
-    };
-
+pub fn init() {
+    static mut HEAP: MaybeUninit<[u8; HEAP_SIZE]> = MaybeUninit::uninit();
     unsafe {
+        let ptr = NonNull::new(HEAP.as_mut_ptr())
+            .expect("HEAP static should never be null!")
+            .cast::<u8>();
         AHEAP
-            .init(heap_start, HEAP_SIZE)
+            .init(ptr, HEAP_SIZE)
             .expect("heap initialized more than once!")
     }
 }
