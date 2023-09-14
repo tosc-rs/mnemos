@@ -103,8 +103,10 @@ pub mod buildtime {
 
         eprintln!("{TAG} {OUT_DIR}={out_dir}");
 
-        (|| {
+        (|| -> Result<()> {
             let mut rendered_any = false;
+            let mut dirs = 0;
+            let mut not_toml = 0;
             eprintln!("{TAG} rendering configs in '{config_dir_disp}'...");
             for entry in fs::read_dir(config_dir)
                 .into_diagnostic()
@@ -137,12 +139,18 @@ pub mod buildtime {
                     .wrap_err_with(|| format!("Failed to read metadata for '{epath_disp}'"))?
                     .is_dir()
                 {
-                    eprintln!("{TAG} -> not a file; skipping");
+                    eprintln!("{TAG}   -> not a file; skipping");
+                    dirs += 1;
                     continue;
                 }
 
-                if entry_path.extension().map(|e| e != "toml").unwrap_or(false) {
-                    eprintln!("{TAG} -> not TOML; skipping");
+                let extension = entry_path
+                    .extension()
+                    .map(std::ffi::OsStr::to_string_lossy)
+                    .unwrap_or(std::borrow::Cow::Borrowed(""));
+                if extension != "toml" {
+                    eprintln!("{TAG}   -> not TOML (extension: {extension:?}); skipping");
+                    not_toml += 1;
                     continue;
                 }
 
@@ -150,10 +158,15 @@ pub mod buildtime {
                 rendered_any = true;
             }
 
-            miette::ensure!(
-                rendered_any,
-                "No config files (paths ending in '.toml') found in directory!"
-            );
+            if !rendered_any {
+                Err(
+                    miette::MietteDiagnostic::new("No config files were rendered!").with_help(
+                        format!(
+                        "config directory contained {not_toml} non-TOML files, {dirs} directories"
+                    ),
+                    ),
+                )?;
+            }
 
             Ok(())
         })()
