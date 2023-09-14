@@ -65,7 +65,9 @@ pub const CONFIG_FILE_VAR: &str = "MNEMOS_CONFIG";
 #[cfg(feature = "use-std")]
 pub mod buildtime {
     const OUT_DIR: &str = "OUT_DIR";
-    use std::{fs, io::Write, path::Path};
+    const TAG: &str = concat!(module_path!(), ":");
+
+    use std::{env, fs, io::Write, path::Path};
 
     use super::*;
     use miette::{Context, IntoDiagnostic, Result};
@@ -86,27 +88,29 @@ pub mod buildtime {
     }
 
     /// Render all configuration files in the given directory.
-    pub fn render_all<Platform>(path: impl AsRef<Path>) -> Result<()>
+    pub fn render_all<Platform>(config_dir: impl AsRef<Path>) -> Result<()>
     where
         Platform: Serialize + DeserializeOwned + 'static,
     {
-        let path = path.as_ref();
-        let path_disp = path.display();
-        let out_dir = std::env::var(OUT_DIR)
+        let config_dir = config_dir.as_ref();
+        let config_dir_disp = config_dir.display();
+        let out_dir = env::var(OUT_DIR)
             .into_diagnostic()
             .wrap_err("Failed to read '{OUT_DIR}' env variable")?;
 
-        println!("cargo:rerun-if-changed={path_disp}");
+        println!("cargo:rerun-if-changed={config_dir_disp}");
         println!("cargo:rustc-env={CONFIG_DIR_VAR}={out_dir}");
 
-        println!("[mnemos_config] {OUT_DIR}={out_dir}");
+        eprintln!("{TAG} {OUT_DIR}={out_dir}");
 
         (|| {
             let mut rendered_any = false;
-            println!("[mnemos_config] rendering configs in '{path_disp}'...");
-            for entry in fs::read_dir(path)
+            eprintln!("{TAG} rendering configs in '{config_dir_disp}'...");
+            for entry in fs::read_dir(config_dir)
                 .into_diagnostic()
-                .wrap_err_with(|| format!("Failed to read config file directory '{path_disp}'"))?
+                .wrap_err_with(|| {
+                    format!("Failed to read config file directory '{config_dir_disp}'")
+                })?
             {
                 let entry = match entry {
                     Ok(e) => e,
@@ -117,8 +121,15 @@ pub mod buildtime {
                 };
 
                 let entry_path = entry.path();
-                let epath_disp = entry_path.display();
-                println!("[mnemos_config] {epath_disp}?");
+                let epath_disp = match config_dir.parent() {
+                    Some(parent) => entry_path
+                        .strip_prefix(parent)
+                        .expect("directory path must be a prefix of directory entry path?"),
+                    None => entry_path.as_ref(),
+                }
+                .display();
+
+                eprintln!("{TAG} file: '{epath_disp}'");
 
                 if entry
                     .metadata()
@@ -126,16 +137,12 @@ pub mod buildtime {
                     .wrap_err_with(|| format!("Failed to read metadata for '{epath_disp}'"))?
                     .is_dir()
                 {
-                    println!("[mnemos_config] {epath_disp} -> not a file; skipping");
+                    eprintln!("{TAG} -> not a file; skipping");
                     continue;
                 }
 
-                if entry_path
-                    .extension()
-                    .map(|e| e == ".toml")
-                    .unwrap_or(false)
-                {
-                    println!("[mnemos_config] {epath_disp} -> not TOML; skipping");
+                if entry_path.extension().map(|e| e != "toml").unwrap_or(false) {
+                    eprintln!("{TAG} -> not TOML; skipping");
                     continue;
                 }
 
@@ -150,7 +157,7 @@ pub mod buildtime {
 
             Ok(())
         })()
-        .wrap_err_with(|| format!("Failed to render config directory '{path_disp}'"))?;
+        .wrap_err_with(|| format!("Failed to render config directory '{config_dir_disp}'"))?;
 
         Ok(())
     }
@@ -164,7 +171,7 @@ pub mod buildtime {
         let out_dir = std::env::var(OUT_DIR)
             .into_diagnostic()
             .wrap_err("Failed to read '{OUT_DIR}' env variable")?;
-        println!("[mnemos_config] {OUT_DIR}={out_dir}");
+        eprintln!("{TAG} {OUT_DIR}='{out_dir}'");
         render_file_to::<Platform>(path, out_dir)
     }
 
@@ -174,13 +181,12 @@ pub mod buildtime {
     {
         let path = path.as_ref();
         let path_disp = path.display();
-        println!("[mnemos_config] rendering config file '{path_disp}'...");
 
         (|| {
             let filename = path
                 .file_name()
                 .ok_or_else(|| miette::miette!("Path has no filename!"))?;
-
+            eprintln!("{TAG} rendering config file '{path_disp}'",);
             let cfg = std::fs::read_to_string(path).into_diagnostic()?;
             let c: MnemosConfig<Platform> = from_toml(&cfg)?;
 
