@@ -88,7 +88,7 @@ check-crate crate *ARGS:
     {{ _cargo }} check \
         --package {{ crate }} \
         {{ if crate == _mn_pkg { "" } else { "--all-features --lib" } }} \
-        --bins --examples \
+        --bins --examples --tests --benches \
         {{ ARGS }} \
         {{ _fmt_check_doc }}
 
