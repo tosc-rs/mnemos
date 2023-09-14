@@ -69,6 +69,24 @@ jobs:
     - name: run just clippy
       run: just clippy
 
+  # build bin targets
+  build-bins:
+    strategy:
+      matrix:
+        package: ["mnemos-d1", "mnemos-esp32c3-buddy", "mnemos-x86_64-bootloader"]
+    name: cargo build ${{ matrix.package }}
+    runs-on: ubuntu-latest
+    needs: check
+    steps:
+    - name: install rust toolchain
+      run: rustup show
+    - uses: olix0r/cargo-action-fmt@ee1ef42932e44794821dab57ef1bf7a73df8b21f
+    - uses: actions/checkout@v2
+    # note that this actually *needs* to be `--release`, because the D1 platform
+    # impl apparently just Does Not Build in debug mode (debug builds fail with
+    # a pile of linker errors, what the heck...)
+    - run: cargo build --package ${{ matrix.package}} --release --all-features
+
   # run `just test`
   test:
     name: just test
