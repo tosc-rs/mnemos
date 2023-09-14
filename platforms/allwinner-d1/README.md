@@ -4,20 +4,21 @@ This directory contains MnemOS platform support for the Allwinner D1 RISC-V SoC.
 
 ## Folder Layout
 
-* [`boards/`]: Platform implementations for supported D1
-    single-board computers. This crate contains the actual bin targets for
-    building MnemOS for D1 SBCs.
-* [`core/`]: Core platform implementation shared by all D1 boards.
+* [`src/`]: Rust source code for the Allwinner D1 platform implementation.
+* [`board-configs/`]: [`mnemos-config`] configurations for supported D1
+      single-board computers.
+* [`d1-config/`]: [`mnemos-config`] type definition crate for the Allwinner D1.
 
-[`boards/`]: ./boards/
-[`core/`]: ./core/
+[`src/`]: ./boards/
+[`board-configs/`]: ./board-configs/
+[`d1-config/`]: ./d1-config/
 
 ## Getting started with MnemOS on the D1
 
 ### Building
 
 This crate contains a separate Cargo bin target for each supported D1 board.
-These bin targets depend on the [`mnemos-d1-core` crate] for the majority of the
+These bin targets depend on the [`mnemos-d1` crate] for the majority of the
 platform implementation, and configure the D1's I/O pins based on how those pins
 are mapped to pins on the board. The following bin targets are currently
 provided:
@@ -121,7 +122,7 @@ building `xfel` from source for Linux, MacOS, and Windows can be found
 > [here][xfel-nix-udev] for an example.
 
 [just]: ./../../../justfile
-[`mnemos-d1-core` crate]: ./../core/
+[`mnemos-d1` crate]: ./src/
 [MangoPi MQ Pro]: https://github.com/mangopi-sbc/MQ-Pro
 [Sipeed Lichee RV]: https://wiki.sipeed.com/hardware/en/lichee/RV/RV.html
 [`xfel`]: https://xboot.org/xfel/#/

@@ -19,11 +19,12 @@ fn main() -> Result<()> {
     println!("cargo:rustc-link-arg=-Tmemory.x");
     println!("cargo:rustc-link-arg=-Tlink.x");
 
+    // render mnemos-config definitions
     let config_dir = {
         let root = env::var("CARGO_MANIFEST_DIR")
             .into_diagnostic()
             .context("No CARGO_MANIFEST_DIR")?;
-        PathBuf::from(root).join("config")
+        PathBuf::from(root).join("board-configs")
     };
     buildtime::render_all::<PlatformConfig>(config_dir)
 }
