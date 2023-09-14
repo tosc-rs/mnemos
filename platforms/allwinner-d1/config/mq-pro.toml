@@ -26,4 +26,4 @@ enabled = false
 
 [platform.blink_service]
 enabled = true
-blink_pin = "PB18"
+blink_pin = "PD18"
