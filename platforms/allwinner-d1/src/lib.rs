@@ -614,7 +614,9 @@ static AHEAP: MnemosAlloc<SingleThreadedLinkedListAllocator> = MnemosAlloc::new(
 ///
 /// Only call this once!
 pub unsafe fn initialize_heap<const HEAP_SIZE: usize>(buf: &'static Ram<HEAP_SIZE>) {
-    AHEAP.init(NonNull::new(buf.as_ptr()).unwrap(), HEAP_SIZE);
+    AHEAP
+        .init(NonNull::new(buf.as_ptr()).unwrap(), HEAP_SIZE)
+        .expect("heap should only be initialized once!");
 }
 
 #[panic_handler]

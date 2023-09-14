@@ -5070,6 +5070,7 @@ dependencies = [
  "heapless",
  "linked_list_allocator",
  "maitake",
+ "portable-atomic",
 ]
 
 [[package]]
