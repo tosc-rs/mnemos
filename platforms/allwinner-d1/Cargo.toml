@@ -28,6 +28,14 @@ name = "mq-pro"
 test = false
 bench = false
 
+
+[features]
+default = ["i2c_puppet", "sharp-display"]
+# enable i2c_puppet driver
+i2c_puppet = ["mnemos-beepy"]
+# enable the SHARP Memory Display driver
+sharp-display = []
+
 [build-dependencies]
 d1-config = { path = "./d1-config" }
 serde = { version = "1.0.178", features = ["derive"] }
@@ -51,6 +59,7 @@ default-features = false
 
 [dependencies.mnemos-beepy]
 path = "../beepy"
+optional = true
 
 [dependencies.tracing]
 version = "0.1.37"
@@ -68,7 +77,3 @@ default-features = false
 [dependencies.riscv]
 version = "0.10"
 features =[ "critical-section-single-hart"]
-
-[features]
-# board features
-beepy = []
