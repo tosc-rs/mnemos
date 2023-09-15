@@ -21,6 +21,15 @@ yes, this is a wildly deranged idea. i'm so smart.
 > installed through other means, simply "don't run `cargo mn`", and you'll be
 > fine.
 
+
+## installing it
+
+`mn` depends on  the unstable cargo `bindeps` feature so it must be enbaled on the command line.
+
+```sh
+cargo +nightly install --path . -Z bindeps
+```
+
 ## using it
 
 `mn` is a [cargo alias] that invokes the Manganese binary. run Manganese using
