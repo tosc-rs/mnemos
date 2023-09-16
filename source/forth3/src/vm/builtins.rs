@@ -182,11 +182,39 @@ impl<T: 'static> Forth<T> {
         builtin!("(jmp)", Self::jump),
         // NOTE: REQUIRED for `:` (if you want literals)
         builtin!("(literal)", Self::literal),
+        // NOTE: REQUIRED for `:` (if you want literals)
+        builtin!("(rliteral)", Self::rliteral),
         // NOTE: REQUIRED for `constant`
         builtin!("(constant)", Self::constant),
         // NOTE: REQUIRED for `variable` or `array`
         builtin!("(variable)", Self::variable),
+        builtin!("panic", Self::panic),
     ];
+
+    /// Dumps all stacks and ends the currently executing program
+    pub fn panic(&mut self) -> Result<(), Error> {
+        writeln!(&mut self.output, "cstack",)?;
+
+        while let Some(c) = self.call_stack.pop() {
+            writeln!(
+                &mut self.output,
+                "{} ({}/{})",
+                unsafe { (*c.eh.as_ptr()).name.as_str() },
+                c.idx,
+                c.len,
+            )?;
+        }
+
+        writeln!(&mut self.output, "\ndstack",)?;
+
+        while self.pop_print().is_ok() {}
+
+        writeln!(&mut self.output, "\nrstack",)?;
+
+        while self.return_to_data_stack().is_ok() && self.pop_print().is_ok() {}
+
+        Ok(())
+    }
 
     pub fn dict_free(&mut self) -> Result<(), Error> {
         let capa = self.dict.alloc.capacity();
@@ -577,10 +605,18 @@ impl<T: 'static> Forth<T> {
     }
 
     pub fn loop_leave(&mut self) -> Result<(), Error> {
+        // Pop the loop counter and limit
         let _ = self.return_stack.try_pop()?;
-        let a = self.return_stack.try_peek()?;
-        self.return_stack
-            .push(unsafe { Word::data(a.data.wrapping_sub(1)) })?;
+        let _ = self.return_stack.try_pop()?;
+        // Pop the "end of loop" value
+        let idx = self.return_stack.try_pop()?;
+        let idx = unsafe { idx.data };
+        let idx = u16::try_from(idx).map_err(|_| Error::BadCfaOffset)?;
+
+        // Move the parent's interpreter index forward to the end of loop index
+        let parent = self.call_stack.try_peek_back_n_mut(1)?;
+        parent.idx = idx;
+
         Ok(())
     }
 
@@ -593,6 +629,8 @@ impl<T: 'static> Forth<T> {
             self.return_stack.push(ctr)?;
             self.jump()
         } else {
+            self.return_stack.try_pop()?;
+            // also pop the loop len counter
             self.return_stack.try_pop()?;
             self.skip_literal()
         }
@@ -844,6 +882,16 @@ impl<T: 'static> Forth<T> {
             self.output.push_bstr(u8_sli)?;
         }
         parent.offset(len_words as i32)?;
+        Ok(())
+    }
+
+    /// `(rliteral)` is used mid-interpret to put the NEXT word of the parent's
+    /// CFA into the *return* stack as a value
+    pub fn rliteral(&mut self) -> Result<(), Error> {
+        let parent = self.call_stack.try_peek_back_n_mut(1)?;
+        let literal = parent.get_current_word()?;
+        parent.offset(1)?;
+        self.return_stack.push(literal)?;
         Ok(())
     }
 

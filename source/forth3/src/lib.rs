@@ -406,6 +406,23 @@ pub mod test {
     }
 
     #[test]
+    fn loop_leave() {
+        all_runtest(
+            r#"
+            > : test 10 0 do i . 43 emit i 5 = if leave then 10 0 do 42 emit i 5 = if leave then loop cr loop ;
+            < ok.
+            > test
+            < 0 +******
+            < 1 +******
+            < 2 +******
+            < 3 +******
+            < 4 +******
+            < 5 +ok.
+            "#,
+        )
+    }
+
+    #[test]
     fn execute() {
         all_runtest(
             r#"
