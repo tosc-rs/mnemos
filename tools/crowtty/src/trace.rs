@@ -1,7 +1,7 @@
 use mnemos_trace_proto::{HostRequest, MetaId, TraceEvent};
 use postcard::accumulator::{CobsAccumulator, FeedResult};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fmt::{self, Write},
     num::NonZeroU64,
     sync::mpsc,
@@ -355,46 +355,57 @@ fn write_span_cx(stack: &[NonZeroU64], spans: &HashMap<NonZeroU64, Span>, textbu
     }
 }
 
-fn write_fields<'a>(
-    to: &mut String,
-    fields: impl IntoIterator<Item = (&'a CowString<'a>, &'a SerializeValue<'a>)>,
-) {
-    let mut fields = fields.into_iter();
-    if let Some((key, val)) = fields.next() {
-        write_kv(key, val, to);
-        for (key, val) in fields {
-            write!(
-                to,
-                "{}",
-                ", ".if_supports_color(Stream::Stdout, |delim| delim.dimmed())
-            )
-            .unwrap();
-            write_kv(key, val, to);
+fn write_fields<'a>(to: &mut String, fields: &BTreeMap<CowString<'a>, SerializeValue<'a>>) {
+    let comma = ", ".if_supports_color(Stream::Stdout, |delim| delim.dimmed());
+    let mut wrote_anything = false;
+
+    if let Some(message) = fields.get(&CowString::Borrowed("message")) {
+        let message = DisplayVal(message);
+        let message = message.if_supports_color(Stream::Stdout, |msg| msg.bold());
+        write!(to, "{message}",).unwrap();
+        wrote_anything = true;
+    }
+
+    for (key, val) in fields {
+        if key.as_str() == "message" {
+            continue;
         }
+        if wrote_anything {
+            write!(to, "{comma}").unwrap();
+        } else {
+            wrote_anything = true;
+        }
+        write_kv(key, val, to);
     }
 }
 
 fn write_kv(key: &CowString<'_>, val: &SerializeValue<'_>, to: &mut String) {
-    use tracing_serde_structured::DebugRecord;
-
     let key = key.as_str();
     let key = key.if_supports_color(Stream::Stdout, |k| k.italic());
+    let val = DisplayVal(val);
     write!(
         to,
-        "{key}{}",
+        "{key}{}{val}",
         "=".if_supports_color(Stream::Stdout, |delim| delim.dimmed())
     )
     .unwrap();
+}
 
-    match val {
-        SerializeValue::Debug(DebugRecord::De(d)) => to.push_str(d.as_str()),
-        SerializeValue::Debug(DebugRecord::Ser(d)) => write!(to, "{d}").unwrap(),
-        SerializeValue::Str(s) => write!(to, "{s:?}").unwrap(),
-        SerializeValue::F64(x) => write!(to, "{x}").unwrap(),
-        SerializeValue::I64(x) => write!(to, "{x}").unwrap(),
-        SerializeValue::U64(x) => write!(to, "{x}").unwrap(),
-        SerializeValue::Bool(x) => write!(to, "{x}").unwrap(),
-        _ => to.push_str("???"),
+struct DisplayVal<'a>(&'a SerializeValue<'a>);
+
+impl fmt::Display for DisplayVal<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use tracing_serde_structured::DebugRecord;
+        match self.0 {
+            SerializeValue::Debug(DebugRecord::De(d)) => f.write_str(d.as_str()),
+            SerializeValue::Debug(DebugRecord::Ser(d)) => write!(f, "{d}"),
+            SerializeValue::Str(s) => write!(f, "{s:?}"),
+            SerializeValue::F64(x) => write!(f, "{x}"),
+            SerializeValue::I64(x) => write!(f, "{x}"),
+            SerializeValue::U64(x) => write!(f, "{x}"),
+            SerializeValue::Bool(x) => write!(f, "{x}"),
+            _ => f.write_str("???"),
+        }
     }
 }
 
