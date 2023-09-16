@@ -1,7 +1,7 @@
 use mnemos_trace_proto::{HostRequest, MetaId, TraceEvent};
 use postcard::accumulator::{CobsAccumulator, FeedResult};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fmt::{self, Write},
     num::NonZeroU64,
     sync::mpsc,
@@ -355,45 +355,38 @@ fn write_span_cx(stack: &[NonZeroU64], spans: &HashMap<NonZeroU64, Span>, textbu
     }
 }
 
-fn write_fields<'a>(
-    to: &mut String,
-    fields: impl IntoIterator<Item = (&'a CowString<'a>, &'a SerializeValue<'a>)>,
-) {
-    let mut fields = fields.into_iter();
-    if let Some((key, val)) = fields.next() {
-        write_kv(key, val, to);
-        for (key, val) in fields {
-            write!(
-                to,
-                "{}",
-                ", ".if_supports_color(Stream::Stdout, |delim| delim.dimmed())
-            )
-            .unwrap();
-            write_kv(key, val, to);
+fn write_fields<'a>(to: &mut String, fields: &BTreeMap<CowString<'a>, SerializeValue<'a>>) {
+    let comma = ", ".if_supports_color(Stream::Stdout, |delim| delim.dimmed());
+    let mut wrote_anything = false;
+
+    if let Some(message) = fields.get(&CowString::Borrowed("message")) {
+        let message = DisplayVal(message);
+        let message = message.if_supports_color(Stream::Stdout, |msg| msg.bold());
+        write!(to, "{message}",).unwrap();
+        wrote_anything = true;
+    }
+
+    for (key, val) in fields {
+        if key.as_str() == "message" {
+            continue;
         }
+        if wrote_anything {
+            write!(to, "{comma}").unwrap();
+        } else {
+            wrote_anything = true;
+        }
+        write_kv(key, val, to);
     }
 }
 
 fn write_kv(key: &CowString<'_>, val: &SerializeValue<'_>, to: &mut String) {
     let key = key.as_str();
-    let val_style = if key != "message" {
-        let key = key.if_supports_color(Stream::Stdout, |k| k.italic());
-        write!(
-            to,
-            "{key}{}",
-            "=".if_supports_color(Stream::Stdout, |delim| delim.dimmed())
-        )
-        .unwrap();
-        owo_colors::Style::new()
-    } else {
-        owo_colors::Style::new().bold()
-    };
-
+    let key = key.if_supports_color(Stream::Stdout, |k| k.italic());
     let val = DisplayVal(val);
     write!(
         to,
-        "{}",
-        val.if_supports_color(Stream::Stdout, |val| val.style(val_style))
+        "{key}{}{val}",
+        "=".if_supports_color(Stream::Stdout, |delim| delim.dimmed())
     )
     .unwrap();
 }
