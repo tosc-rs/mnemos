@@ -29,7 +29,7 @@ use core::{
     panic::PanicInfo,
     sync::atomic::{AtomicBool, Ordering},
 };
-use d1_pac::{Interrupt, DMAC, TIMER};
+use d1_pac::{Interrupt, TIMER};
 use kernel::{
     mnemos_alloc::containers::Box,
     tracing::{self, Instrument},
@@ -83,9 +83,9 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
 
     let d1 = D1::initialize(
         timers,
+        dmac,
         uart,
         spim,
-        dmac,
         plic,
         i2c0,
         config.kernel,
@@ -169,6 +169,7 @@ pub struct D1 {
     pub kernel: &'static Kernel,
     pub timers: Timers,
     pub plic: Plic,
+    pub dmac: Dmac,
     _uart: Uart,
     _spim: spim::Spim1,
     i2c0_int: Option<(Interrupt, fn())>,
@@ -186,9 +187,9 @@ impl D1 {
     #[allow(clippy::too_many_arguments)]
     pub fn initialize(
         timers: Timers,
+        dmac: Dmac,
         uart: Uart,
         spim: spim::Spim1,
-        dmac: Dmac,
         plic: Plic,
         i2c0: Option<twi::I2c0>,
         kernel_settings: KernelSettings,
@@ -200,25 +201,26 @@ impl D1 {
                 .unwrap()
         };
 
-        let [ch0, ..] = dmac.channels;
-        dmac.dmac.dmac_irq_en0.modify(|_r, w| {
-            // used for UART0 DMA sending
-            w.dma0_queue_irq_en().enabled();
-            // used for SPI1 DMA sending
-            w.dma1_queue_irq_en().enabled();
-            w
-        });
-
         // Initialize SPI stuff
-        k.initialize(async move {
-            // Register a new SpiSenderServer
-            SpiSenderServer::register(k, 4).await.unwrap();
+        k.initialize({
+            let chan = dmac
+                .allocate_channel()
+                .expect("failed to allocate DMA channel for SPI_DBI!");
+            async move {
+                // Register a new SpiSenderServer
+                SpiSenderServer::register(k, chan, 4).await.unwrap();
+            }
         })
         .unwrap();
 
         // Initialize SimpleSerial driver
-        k.initialize(async move {
-            D1Uart::register(k, 4096, 4096, ch0).await.unwrap();
+        k.initialize({
+            let tx_channel = dmac
+                .allocate_channel()
+                .expect("failed to allocate DMA channel for UART!");
+            async move {
+                D1Uart::register(k, 4096, 4096, tx_channel).await.unwrap();
+            }
         })
         .unwrap();
 
@@ -245,6 +247,7 @@ impl D1 {
             _spim: spim,
             timers,
             plic,
+            dmac,
             i2c0_int,
         }
     }
@@ -297,6 +300,7 @@ impl D1 {
             kernel: k,
             timers,
             plic,
+            dmac: _,
             _uart,
             _spim,
             i2c0_int,
@@ -331,7 +335,7 @@ impl D1 {
 
         unsafe {
             plic.register(Interrupt::TIMER1, Self::timer1_int);
-            plic.register(Interrupt::DMAC_NS, Self::handle_dmac);
+            plic.register(Interrupt::DMAC_NS, Dmac::handle_interrupt);
             plic.register(Interrupt::UART0, D1Uart::handle_uart0_int);
 
             plic.activate(Interrupt::DMAC_NS, Priority::P1).unwrap();
@@ -389,29 +393,6 @@ impl D1 {
         }
     }
 
-    /// DMAC ISR handler
-    ///
-    /// At the moment, we service the interrupts on the following channels:
-    /// * Channel 0: UART0 TX
-    /// * Channel 1: SPI1 TX
-    /// * Channel 2: TWI0 driver TX
-    fn handle_dmac() {
-        let dmac = unsafe { &*DMAC::PTR };
-        dmac.dmac_irq_pend0.modify(|r, w| {
-            tracing::trace!(dmac_irq_pend0 = ?format_args!("{:#b}", r.bits()), "DMAC interrupt");
-            if r.dma0_queue_irq_pend().bit_is_set() {
-                D1Uart::tx_done_waker().wake();
-            }
-
-            if r.dma1_queue_irq_pend().bit_is_set() {
-                spim::SPI1_TX_DONE.wake();
-            }
-
-            // Will write-back and high bits
-            w
-        });
-    }
-
     /// Timer1 ISR handler
     ///
     /// We don't actually do anything in the TIMER1 interrupt. It is only here to
@@ -442,11 +423,8 @@ impl D1 {
         // cancel the UART TX DMA channel, because we're about to dump the panic
         // message to the UART, but we may as well tear down any other in-flight
         // DMAs.
-        for idx in 0..Dmac::CHANNEL_COUNT {
-            unsafe {
-                let mut ch = dmac::Channel::summon_channel(idx);
-                ch.stop_dma();
-            }
+        unsafe {
+            Dmac::cancel_all();
         }
 
         // Ugly but works

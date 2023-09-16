@@ -107,6 +107,7 @@ pub struct SpiSenderServer;
 impl SpiSenderServer {
     pub async fn register(
         kernel: &'static Kernel,
+        mut chan: Channel,
         queued: usize,
     ) -> Result<(), registry::RegistrationError> {
         let reqs = kernel
@@ -167,26 +168,12 @@ impl SpiSenderServer {
                     };
                     let descriptor = d_cfg.try_into().map_err(drop)?;
 
-                    // pre-register wait future to ensure the waker is in place before
-                    // starting the DMA transfer.
-                    let wait = SPI1_TX_DONE.subscribe().await;
-
                     // start the DMA transfer.
-                    let mut chan;
                     unsafe {
-                        chan = Channel::summon_channel(1);
                         chan.set_channel_modes(ChannelMode::Wait, ChannelMode::Wait);
-                        chan.start_descriptor(NonNull::from(&descriptor));
+                        chan.run_descriptor(NonNull::from(&descriptor)).await;
                     }
 
-                    // wait for the DMA transfer to complete.
-                    wait.await
-                        .expect("SPI1_TX_DONE WaitCell should never be closed");
-
-                    // stop the DMA transfer.
-                    unsafe {
-                        chan.stop_dma();
-                    }
                     reply
                         .reply_konly(msg.reply_with_body(|req| {
                             let SpiSenderRequest::Send(payload) = req;

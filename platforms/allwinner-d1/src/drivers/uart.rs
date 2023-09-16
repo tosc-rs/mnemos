@@ -51,6 +51,12 @@ pub struct D1Uart {
     _x: (),
 }
 
+#[derive(Debug)]
+pub enum RegistrationError {
+    Registry(registry::RegistrationError),
+    NoDmaChannels,
+}
+
 impl D1Uart {
     pub fn tx_done_waker() -> &'static WaitCell {
         &TX_DONE
@@ -132,23 +138,12 @@ impl D1Uart {
             };
             let descriptor = d_cfg.try_into().unwrap();
 
-            // pre-register wait future to ensure the waker is in place before
-            // starting the DMA transfer.
-            let wait = TX_DONE.subscribe().await;
-
             // start the DMA transfer.
             unsafe {
                 tx_channel.set_channel_modes(ChannelMode::Wait, ChannelMode::Handshake);
-                tx_channel.start_descriptor(NonNull::from(&descriptor));
+                tx_channel.run_descriptor(NonNull::from(&descriptor)).await;
             }
 
-            // wait for the DMA transfer to complete.
-            wait.await.expect("UART TX_DONE WaitCell is never closed!");
-
-            // stop the DMA transfer.
-            unsafe {
-                tx_channel.stop_dma();
-            }
             rx.release(len);
         }
     }
@@ -178,17 +173,17 @@ impl D1Uart {
         cap_in: usize,
         cap_out: usize,
         tx_channel: Channel,
-    ) -> Result<(), registry::RegistrationError> {
-        assert_eq!(tx_channel.channel_index(), 0);
-
+    ) -> Result<(), RegistrationError> {
         let (fifo_a, fifo_b) = new_bidi_channel(cap_in, cap_out).await;
 
         let reqs = k
             .registry()
             .bind_konly::<SimpleSerialService>(4)
-            .await?
+            .await
+            .map_err(RegistrationError::Registry)?
             .into_request_stream(4)
             .await;
+
         let _server_hdl = k.spawn(D1Uart::serial_server(fifo_b, reqs)).await;
 
         let (prod, cons) = fifo_a.split();
