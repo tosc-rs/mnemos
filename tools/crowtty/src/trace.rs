@@ -381,12 +381,24 @@ fn write_fields<'a>(to: &mut String, fields: &BTreeMap<CowString<'a>, SerializeV
 
 fn write_kv(key: &CowString<'_>, val: &SerializeValue<'_>, to: &mut String) {
     let key = key.as_str();
-    let key = key.if_supports_color(Stream::Stdout, |k| k.italic());
+    let val_style = if key != "message" {
+        let key = key.if_supports_color(Stream::Stdout, |k| k.italic());
+        write!(
+            to,
+            "{key}{}",
+            "=".if_supports_color(Stream::Stdout, |delim| delim.dimmed())
+        )
+        .unwrap();
+        owo_colors::Style::new()
+    } else {
+        owo_colors::Style::new().bold()
+    };
+
     let val = DisplayVal(val);
     write!(
         to,
-        "{key}{}{val}",
-        "=".if_supports_color(Stream::Stdout, |delim| delim.dimmed())
+        "{}",
+        val.if_supports_color(Stream::Stdout, |val| val.style(val_style))
     )
     .unwrap();
 }
