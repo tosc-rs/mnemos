@@ -147,7 +147,7 @@ impl<T: 'static> CallContext<T> {
 
     fn get_current_val(&self) -> Result<i32, Error> {
         let w = self.get_current_word()?;
-        Ok(unsafe { w.data })
+        Ok(w.as_data())
     }
 
     fn get_current_word(&self) -> Result<Word, Error> {
@@ -341,7 +341,7 @@ pub mod test {
         // Takes one value off the stack, and stores it in the vec
         fn squirrel(forth: &mut Forth<TestContext>) -> Result<(), crate::Error> {
             let val = forth.data_stack.try_pop()?;
-            forth.host_ctxt.contents.push(unsafe { val.data });
+            forth.host_ctxt.contents.push(val.as_data());
             Ok(())
         }
         forth.add_builtin("squirrel", squirrel).unwrap();
