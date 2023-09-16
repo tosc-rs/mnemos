@@ -40,7 +40,7 @@ impl TryInto<usize> for Word {
     type Error = crate::Error;
 
     fn try_into(self) -> Result<usize, Self::Error> {
-        let val = self.as_data();
+        let val = self.into_data();
         usize::try_from(val).replace_err(crate::Error::WordToUsizeInvalid(val))
     }
 }
@@ -56,10 +56,8 @@ impl Word {
     }
 
     #[inline]
-    pub fn as_data(self) -> i32 {
-        unsafe {
-            self.data
-        }
+    pub fn into_data(self) -> i32 {
+        unsafe { self.data }
     }
 
     #[cfg(feature = "floats")]
