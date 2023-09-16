@@ -32,6 +32,7 @@ pub struct Channel {
 struct DmacState {
     used_channels: AtomicU8,
     channels: [ChannelState; Dmac::CHANNEL_COUNT as usize],
+    allocated: AtomicU16,
 }
 
 struct ChannelState {
@@ -50,6 +51,7 @@ static DMAC_STATE: DmacState = {
     DmacState {
         used_channels: AtomicU8::new(u8::MAX),
         channels: [NEW_CHANNEL; Dmac::CHANNEL_COUNT as usize],
+        allocated: AtomicU16::new(0),
     }
 };
 
@@ -114,6 +116,43 @@ impl Dmac {
 
                 Some(Channel { idx, channel })
             })
+    }
+
+    fn take_first_index(&self) -> Option<u8> {
+        let mut bitmap = self.state.allocated.load(Ordering::Acquire);
+        loop {
+            let trailing_zeros = bitmap.trailing_zeros();
+            let idx = if trailing_zeros > 0 {
+                trailing_zeros - 1
+            } else {
+                let leading_zeros = bitmap.leading_zeros();
+                if leading_zeros > 0 {
+                    u16::MAX - leading_zeros
+                } else {
+                    let mut i = bitmap.trailing_ones();
+                    'scan: loop {
+                        if i == 16 {
+                            return None;
+                        }
+
+                        if bitmap & (1 << i) == 0 {
+                            break 'scan i;
+                        }
+
+                        i += 1;
+                    }
+                }
+            };
+            match self.state.allocated.compare_exchange(
+                bitmap,
+                bitmap | (1 << idx),
+                Ordering::AcqRel,
+                Ordering::Acquire,
+            ) {
+                Ok(_) => return Some(idx as u8),
+                Err(b) => bitmap = b,
+            }
+        }
     }
 
     pub(crate) fn handle_interrupt() {

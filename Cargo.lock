@@ -5086,6 +5086,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mnemos-bitslab"
+version = "0.1.0"
+dependencies = [
+ "portable-atomic",
+ "proptest",
+]
+
+[[package]]
 name = "mnemos-config"
 version = "0.1.0"
 dependencies = [
