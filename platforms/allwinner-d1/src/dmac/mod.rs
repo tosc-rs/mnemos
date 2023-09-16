@@ -126,7 +126,7 @@ impl Dmac {
                 }
             }
 
-            // Will write-back and high bits
+            // Will write-back any high bits
             w
         });
 
