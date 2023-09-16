@@ -78,11 +78,12 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
     let i2c_puppet_enabled = i2c0.is_some() && config.platform.i2c_puppet.enabled;
 
     let timers = Timers::new(p.TIMER);
-    Dmac::initialize(p.DMAC, &mut ccu);
+    let dmac = Dmac::new(p.DMAC, &mut ccu);
     let plic = Plic::new(p.PLIC);
 
     let d1 = D1::initialize(
         timers,
+        dmac,
         uart,
         spim,
         plic,
@@ -168,6 +169,7 @@ pub struct D1 {
     pub kernel: &'static Kernel,
     pub timers: Timers,
     pub plic: Plic,
+    pub dmac: Dmac,
     _uart: Uart,
     _spim: spim::Spim1,
     i2c0_int: Option<(Interrupt, fn())>,
@@ -185,6 +187,7 @@ impl D1 {
     #[allow(clippy::too_many_arguments)]
     pub fn initialize(
         timers: Timers,
+        dmac: Dmac,
         uart: Uart,
         spim: spim::Spim1,
         plic: Plic,
@@ -199,15 +202,25 @@ impl D1 {
         };
 
         // Initialize SPI stuff
-        k.initialize(async move {
-            // Register a new SpiSenderServer
-            SpiSenderServer::register(k, 4).await.unwrap();
+        k.initialize({
+            let chan = dmac
+                .allocate_channel()
+                .expect("failed to allocate DMA channel for SPI_DBI!");
+            async move {
+                // Register a new SpiSenderServer
+                SpiSenderServer::register(k, chan, 4).await.unwrap();
+            }
         })
         .unwrap();
 
         // Initialize SimpleSerial driver
-        k.initialize(async move {
-            D1Uart::register(k, 4096, 4096).await.unwrap();
+        k.initialize({
+            let tx_channel = dmac
+                .allocate_channel()
+                .expect("failed to allocate DMA channel for UART!");
+            async move {
+                D1Uart::register(k, 4096, 4096, tx_channel).await.unwrap();
+            }
         })
         .unwrap();
 
@@ -234,6 +247,7 @@ impl D1 {
             _spim: spim,
             timers,
             plic,
+            dmac,
             i2c0_int,
         }
     }
@@ -286,6 +300,7 @@ impl D1 {
             kernel: k,
             timers,
             plic,
+            dmac: _,
             _uart,
             _spim,
             i2c0_int,

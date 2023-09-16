@@ -13,7 +13,7 @@ use crate::dmac::{
     descriptor::{
         AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType,
     },
-    Channel, ChannelMode, Dmac,
+    Channel, ChannelMode,
 };
 use kernel::{
     comms::bbq::{new_bidi_channel, BidiHandle, Consumer, GrantW, SpscProducer},
@@ -172,8 +172,8 @@ impl D1Uart {
         k: &'static Kernel,
         cap_in: usize,
         cap_out: usize,
+        tx_channel: Channel,
     ) -> Result<(), RegistrationError> {
-        let tx_channel = Dmac::allocate_channel().ok_or(RegistrationError::NoDmaChannels)?;
         let (fifo_a, fifo_b) = new_bidi_channel(cap_in, cap_out).await;
 
         let reqs = k

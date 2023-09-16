@@ -19,14 +19,19 @@ use self::descriptor::Descriptor;
 
 pub mod descriptor;
 
+pub struct Dmac {
+    state: &'static DmacState,
+    dmac: DMAC,
+}
+
 pub struct Channel {
     idx: u8,
     channel: &'static ChannelState,
 }
 
-pub struct Dmac {
+struct DmacState {
     used_channels: AtomicU8,
-    channels: [ChannelState; Self::CHANNEL_COUNT as usize],
+    channels: [ChannelState; Dmac::CHANNEL_COUNT as usize],
 }
 
 struct ChannelState {
@@ -34,7 +39,7 @@ struct ChannelState {
     state: AtomicU8,
 }
 
-static DMAC_STATE: Dmac = {
+static DMAC_STATE: DmacState = {
     // This `const` is used as a static initializer, so clippy is wrong here...
     #[allow(clippy::declare_interior_mutable_const)]
     const NEW_CHANNEL: ChannelState = ChannelState {
@@ -42,7 +47,7 @@ static DMAC_STATE: Dmac = {
         state: AtomicU8::new(0),
     };
 
-    Dmac {
+    DmacState {
         used_channels: AtomicU8::new(u8::MAX),
         channels: [NEW_CHANNEL; Dmac::CHANNEL_COUNT as usize],
     }
@@ -52,16 +57,26 @@ impl Dmac {
     pub const CHANNEL_COUNT: u8 = 16;
     const UNINITIALIZED: u8 = u8::MAX;
 
-    pub fn initialize(mut dmac: DMAC, ccu: &mut Ccu) {
+    pub fn new(mut dmac: DMAC, ccu: &mut Ccu) -> Self {
         DMAC_STATE
             .used_channels
             .compare_exchange(Self::UNINITIALIZED, 0, Ordering::AcqRel, Ordering::Acquire)
             .expect("DMAC cannot be initialized twice!");
         ccu.enable_module(&mut dmac);
+        Self {
+            state: &DMAC_STATE,
+            dmac,
+        }
     }
 
-    pub fn allocate_channel() -> Option<Channel> {
-        DMAC_STATE
+    /// Allocates a new DMA [`Channel`].
+    pub fn allocate_channel(&self) -> Option<Channel> {
+        /// Set the `DMA_QUEUE_IRQ_EN` bit for the given channel index.
+        fn set_queue_irq_en(idx: u8, bits: u32) -> u32 {
+            bits | (1 << queue_irq_en_offset(idx))
+        }
+
+        self.state
             .channels
             .iter()
             .enumerate()
@@ -76,11 +91,28 @@ impl Dmac {
                         Ordering::Acquire,
                     )
                     .ok()?;
+
                 DMAC_STATE.used_channels.fetch_add(1, Ordering::AcqRel);
-                Some(Channel {
-                    idx: idx as u8,
-                    channel,
-                })
+
+                let idx = idx as u8;
+
+                // enable the queue IRQ for this channel.
+                critical_section::with(|_cs| unsafe {
+                    if idx < 8 {
+                        // if the channel number is 0-7, it's in the `DMAC_IRQ_EN0` register.
+                        self.dmac
+                            .dmac_irq_en0
+                            .modify(|r, w| w.bits(set_queue_irq_en(idx, r.bits())));
+                    } else {
+                        // otherwise, if the channel number is 8-15, it's in the
+                        // `DMAC_IRQ_EN1` register, instead.
+                        self.dmac
+                            .dmac_irq_en1
+                            .modify(|r, w| w.bits(set_queue_irq_en(idx - 8, r.bits())));
+                    }
+                });
+
+                Some(Channel { idx, channel })
             })
     }
 
@@ -88,9 +120,9 @@ impl Dmac {
         let dmac = unsafe { &*DMAC::PTR };
         dmac.dmac_irq_pend0.modify(|r, w| {
             tracing::trace!(dmac_irq_pend0 = ?format_args!("{:#b}", r.bits()), "DMAC interrupt");
-            for (i, chan) in DMAC_STATE.channels[..8].iter().enumerate() {
-                if unsafe { r.dma_queue_irq_pend(i as u8) }.bit_is_set() {
-                    chan.waker.wake();
+            for i in 0u8..8u8 {
+                if unsafe { r.dma_queue_irq_pend(i) }.bit_is_set() {
+                    DMAC_STATE.channels[i as usize].waker.wake();
                 }
             }
 
@@ -100,9 +132,9 @@ impl Dmac {
 
         dmac.dmac_irq_pend1.modify(|r, w| {
             tracing::trace!(dmac_irq_pend1 = ?format_args!("{:#b}", r.bits()), "DMAC interrupt");
-            for (i, chan) in DMAC_STATE.channels[8..].iter().enumerate() {
-                if unsafe { r.dma_queue_irq_pend(i as u8) }.bit_is_set() {
-                    chan.waker.wake();
+            for i in 8u8..16u8 {
+                if unsafe { r.dma_queue_irq_pend(i) }.bit_is_set() {
+                    DMAC_STATE.channels[i as usize].waker.wake();
                 }
             }
 
@@ -123,6 +155,13 @@ impl Dmac {
     }
 }
 
+/// Returns the offset of the DMA_QUEUE_IRQ_EN bit for a given channel index.
+fn queue_irq_en_offset(idx: u8) -> u8 {
+    // Each channel uses 4 bits in the DMAC_IRQ_EN0/DMAC_IRQ_EN1 registers, and
+    // the DMA_QUEUE_IRQ_EN bit is the third bit of that four-bit group.
+    (idx * 4) + 2
+}
+
 impl ChannelState {
     const UNCLAIMED: u8 = 0;
     const CLAIMED: u8 = 1;
@@ -130,11 +169,6 @@ impl ChannelState {
 }
 
 impl Channel {
-    // pub unsafe fn summon_channel(idx: u8) -> Channel {
-    //     assert!(idx < Dmac::CHANNEL_COUNT);
-    //     Self { idx }
-    // }
-
     pub fn channel_index(&self) -> u8 {
         self.idx
     }
@@ -284,3 +318,20 @@ pub enum ChannelMode {
     Wait,
     Handshake,
 }
+
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//
+//     #[test]
+//     fn dma_queue_irq_en_offset() {
+//         assert_eq!(dbg!(queue_irq_en_offset(0)), 2);
+//         assert_eq!(dbg!(queue_irq_en_offset(1)), 6);
+//         assert_eq!(dbg!(queue_irq_en_offset(2)), 10);
+//         assert_eq!(dbg!(queue_irq_en_offset(3)), 14);
+//         assert_eq!(dbg!(queue_irq_en_offset(4)), 18);
+//         assert_eq!(dbg!(queue_irq_en_offset(5)), 22);
+//         assert_eq!(dbg!(queue_irq_en_offset(6)), 26);
+//         assert_eq!(dbg!(queue_irq_en_offset(7)), 30);
+//     }
+// }

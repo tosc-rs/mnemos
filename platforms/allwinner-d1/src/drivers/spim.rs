@@ -10,7 +10,7 @@ use crate::dmac::{
     descriptor::{
         AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType,
     },
-    ChannelMode, Dmac,
+    Channel, ChannelMode,
 };
 use d1_pac::{GPIO, SPI_DBI};
 use kernel::{
@@ -104,22 +104,18 @@ impl RegisteredDriver for SpiSender {
 pub struct SpiSender;
 pub struct SpiSenderServer;
 
-#[derive(Debug)]
-pub enum RegistrationError {
-    Registry(registry::RegistrationError),
-    NoDmaChannels,
-}
-
 impl SpiSenderServer {
-    pub async fn register(kernel: &'static Kernel, queued: usize) -> Result<(), RegistrationError> {
+    pub async fn register(
+        kernel: &'static Kernel,
+        mut chan: Channel,
+        queued: usize,
+    ) -> Result<(), registry::RegistrationError> {
         let reqs = kernel
             .registry()
             .bind_konly::<SpiSender>(queued)
-            .await
-            .map_err(RegistrationError::Registry)?
+            .await?
             .into_request_stream(queued)
             .await;
-        let mut chan = Dmac::allocate_channel().ok_or(RegistrationError::NoDmaChannels)?;
         kernel
             .spawn(async move {
                 let spi = unsafe { &*SPI_DBI::PTR };
