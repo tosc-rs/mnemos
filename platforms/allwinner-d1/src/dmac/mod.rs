@@ -138,7 +138,7 @@ impl Dmac {
                 }
             }
 
-            // Will write-back and high bits
+            // Will write-back any high bits
             w
         });
     }
@@ -242,6 +242,20 @@ impl Channel {
         }
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure that the descriptor pointed to by `desc` is valid
+    /// for as long as the DMA transfer is active. When this function returns,
+    /// the transfer has completed, and it is safe to drop the descriptor.
+    /// However, if this future is cancelled before it completes, the DMA
+    /// transfer may still be active, and must be terminated using [`stop_dma`]
+    /// before the descriptor may be dropped.
+    ///
+    /// # Cancel Safety
+    ///
+    /// Dropping this future does *not* cancel the DMA transfer, and the
+    /// descriptor may not be dropped until the DMA transfer has been canceled.
+    // TODO(eliza): cancel the DMA on drop...
     pub async unsafe fn run_descriptor(&mut self, desc: NonNull<Descriptor>) {
         // mark the channel as in-flight.
         let prev_state = self
@@ -289,6 +303,10 @@ impl Channel {
         })
     }
 
+    /// # Safety
+    ///
+    /// The caller must ensure that the descriptor pointed to by `desc` is valid
+    /// for as long as the DMA transfer is active.
     pub unsafe fn start_descriptor(&mut self, desc: NonNull<Descriptor>) {
         fence(Ordering::SeqCst); //////
 
@@ -319,19 +337,29 @@ pub enum ChannelMode {
     Handshake,
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//
-//     #[test]
-//     fn dma_queue_irq_en_offset() {
-//         assert_eq!(dbg!(queue_irq_en_offset(0)), 2);
-//         assert_eq!(dbg!(queue_irq_en_offset(1)), 6);
-//         assert_eq!(dbg!(queue_irq_en_offset(2)), 10);
-//         assert_eq!(dbg!(queue_irq_en_offset(3)), 14);
-//         assert_eq!(dbg!(queue_irq_en_offset(4)), 18);
-//         assert_eq!(dbg!(queue_irq_en_offset(5)), 22);
-//         assert_eq!(dbg!(queue_irq_en_offset(6)), 26);
-//         assert_eq!(dbg!(queue_irq_en_offset(7)), 30);
-//     }
-// }
+// Unfortunately, we can't define tests in this crate and have them run on the
+// development host machine, because the `mnemos-d1` crate has a `forced-target`
+// in its `Cargo.toml`, and will therefore not compile at all for host
+// architectures, even just to run tests. In the future, we should look into
+// whether it's possible to change our build configurations to allow host tests
+// in this crate.
+// TODO(eliza): if we can run tests for this crate on the build host, we should
+// uncomment these tests.
+/*
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dma_queue_irq_en_offset() {
+        assert_eq!(dbg!(queue_irq_en_offset(0)), 2);
+        assert_eq!(dbg!(queue_irq_en_offset(1)), 6);
+        assert_eq!(dbg!(queue_irq_en_offset(2)), 10);
+        assert_eq!(dbg!(queue_irq_en_offset(3)), 14);
+        assert_eq!(dbg!(queue_irq_en_offset(4)), 18);
+        assert_eq!(dbg!(queue_irq_en_offset(5)), 22);
+        assert_eq!(dbg!(queue_irq_en_offset(6)), 26);
+        assert_eq!(dbg!(queue_irq_en_offset(7)), 30);
+    }
+}
+*/
