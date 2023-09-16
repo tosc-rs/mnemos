@@ -17,6 +17,9 @@ enabled = true
 [services.sermux_hello]
 enabled = true
 
+[services.sermux_trace]
+enabled = true
+
 [platform.i2c]
 enabled = true
 mapping = "TWI2"

@@ -28,13 +28,14 @@ name = "mq-pro"
 test = false
 bench = false
 
-
 [features]
-default = ["i2c_puppet", "sharp-display"]
+default = ["i2c_puppet", "sharp-display", "serial-trace"]
 # enable i2c_puppet driver
 i2c_puppet = ["mnemos-beepy"]
 # enable the SHARP Memory Display driver
 sharp-display = []
+# enable `mnemos-trace-proto` serial tracing.
+serial-trace = ["mnemos/serial-trace"]
 
 [build-dependencies]
 d1-config = { path = "./d1-config" }
