@@ -465,14 +465,32 @@ impl<T> Forth<T> {
     }
 
     fn munch_do(&mut self, len: &mut u16) -> Result<u16, Error> {
-        let start = *len;
+        let pre_start = *len;
+        // At the beginning of the loop, we want to place "the index of
+        // the end of the loop" on the rstack, UNDER the loop variables.
+        //
+        // If someone calls `leave`, the interpreter will be fast-forwarded
+        // to this index. We place the r-push, and leave a placeholder which
+        // we'll fill when we know where the loop ends
+        let rlit = self.find_word("(rliteral)").ok_or(Error::WordNotInDict)?;
+        self.dict.alloc.bump_write(Word::ptr(rlit.as_ptr()))?;
+        let rlit_offset: &mut i32 = {
+            let cj_offset_word = self.dict.alloc.bump::<Word>()?;
+            unsafe {
+                cj_offset_word.as_ptr().write(Word::data(0));
+                &mut (*cj_offset_word.as_ptr()).data
+            }
+        };
+        *len += 2;
 
-        // Write a conditional jump, followed by space for a literal
-        let literal_cj = self.find_word("2d>2r").ok_or(Error::WordNotInDict)?;
-        self.dict.alloc.bump_write(Word::ptr(literal_cj.as_ptr()))?;
+        // Take the loop start and end from the data stack to the return stack
+        let d2r2 = self.find_word("2d>2r").ok_or(Error::WordNotInDict)?;
+        self.dict.alloc.bump_write(Word::ptr(d2r2.as_ptr()))?;
         *len += 1;
 
+        // Start is where the LOOP starts, e.g. where we need to jump back to
         let do_start = *len;
+
         // Now work until we hit an else or then statement.
         loop {
             match self.munch_one(len) {
@@ -496,7 +514,9 @@ impl<T> Forth<T> {
         self.dict.alloc.bump_write(Word::data(offset))?;
         *len += 2;
 
-        Ok(*len - start)
+        *rlit_offset = (*len).into();
+
+        Ok(*len - pre_start)
     }
 
     fn munch_if(&mut self, len: &mut u16) -> Result<u16, Error> {
