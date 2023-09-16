@@ -22,7 +22,9 @@ enabled = true
 mapping = "TWI0"
 
 [platform.i2c_puppet]
-enabled = false
+enabled = true
+irq_pin = "PB7"
+poll_interval = { secs = 2, nanos = 0 }
 
 [platform.blink_service]
 enabled = true
