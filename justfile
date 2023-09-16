@@ -130,30 +130,33 @@ fmt:
     {{ _cargo }} fmt --package {{ _mn_pkg }}
 
 # build a Mnemos binary for the Allwinner D1
-build-d1 board='mq-pro': (_get-cargo-command "objcopy" "cargo-binutils")
+build-d1 board='mq-pro' *CARGO_ARGS='': (_get-cargo-command "objcopy" "cargo-binutils")
     {{ _cargo }} build \
         --profile {{ profile }} \
         --package {{ _d1_pkg }} \
-        --bin {{ board }}
+        --bin {{ board }} \
+        {{ CARGO_ARGS }}
     {{ _cargo }} objcopy \
         --profile {{ profile }} \
         --package {{ _d1_pkg }} \
         --bin {{ board }} \
+        {{ CARGO_ARGS }} \
         -- \
         -O binary {{ _d1_bin_path }}/mnemos-{{ board }}.bin
 
 # flash an Allwinner D1 using xfel
-flash-d1 board='mq-pro': (build-d1 board)
+flash-d1 board='mq-pro' *CARGO_ARGS='': (build-d1 board CARGO_ARGS)
     xfel ddr d1
     xfel write {{ _d1_start_addr }} {{ _d1_bin_path }}/mnemos-{{ board }}.bin
     xfel exec {{ _d1_start_addr }}
 
 # build a MnemOS binary for the ESP32-C3
-build-c3 board:
+build-c3 board *CARGO_ARGS='':
     {{ _cargo }} build \
         --profile {{ profile }} \
         --package {{ _espbuddy_pkg }} \
-        --bin {{ board }}
+        --bin {{ board }} \
+        {{ CARGO_ARGS }}
 
 # flash an ESP32-C3 with the MnemOS WiFi Buddy firmware
 flash-c3 board *espflash-args: (_get-cargo-command "espflash" "cargo-espflash") (build-c3 board)
