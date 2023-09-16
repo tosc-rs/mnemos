@@ -375,26 +375,44 @@ fn write_fields<'a>(
 }
 
 fn write_kv(key: &CowString<'_>, val: &SerializeValue<'_>, to: &mut String) {
-    use tracing_serde_structured::DebugRecord;
-
     let key = key.as_str();
-    let key = key.if_supports_color(Stream::Stdout, |k| k.italic());
+    let val_style = if key != "message" {
+        let key = key.if_supports_color(Stream::Stdout, |k| k.italic());
+        write!(
+            to,
+            "{key}{}",
+            "=".if_supports_color(Stream::Stdout, |delim| delim.dimmed())
+        )
+        .unwrap();
+        owo_colors::Style::new()
+    } else {
+        owo_colors::Style::new().bold()
+    };
+
+    let val = DisplayVal(val);
     write!(
         to,
-        "{key}{}",
-        "=".if_supports_color(Stream::Stdout, |delim| delim.dimmed())
+        "{}",
+        val.if_supports_color(Stream::Stdout, |val| val.style(val_style))
     )
     .unwrap();
+}
 
-    match val {
-        SerializeValue::Debug(DebugRecord::De(d)) => to.push_str(d.as_str()),
-        SerializeValue::Debug(DebugRecord::Ser(d)) => write!(to, "{d}").unwrap(),
-        SerializeValue::Str(s) => write!(to, "{s:?}").unwrap(),
-        SerializeValue::F64(x) => write!(to, "{x}").unwrap(),
-        SerializeValue::I64(x) => write!(to, "{x}").unwrap(),
-        SerializeValue::U64(x) => write!(to, "{x}").unwrap(),
-        SerializeValue::Bool(x) => write!(to, "{x}").unwrap(),
-        _ => to.push_str("???"),
+struct DisplayVal<'a>(&'a SerializeValue<'a>);
+
+impl fmt::Display for DisplayVal<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use tracing_serde_structured::DebugRecord;
+        match self.0 {
+            SerializeValue::Debug(DebugRecord::De(d)) => f.write_str(d.as_str()),
+            SerializeValue::Debug(DebugRecord::Ser(d)) => write!(f, "{d}"),
+            SerializeValue::Str(s) => write!(f, "{s:?}"),
+            SerializeValue::F64(x) => write!(f, "{x}"),
+            SerializeValue::I64(x) => write!(f, "{x}"),
+            SerializeValue::U64(x) => write!(f, "{x}"),
+            SerializeValue::Bool(x) => write!(f, "{x}"),
+            _ => f.write_str("???"),
+        }
     }
 }
 
