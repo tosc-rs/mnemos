@@ -1,6 +1,7 @@
 //! Higher-level APIs for the Allwinner D1's DMA Controller (DMAC).
 #![warn(missing_docs)]
 use core::{
+    fmt,
     ptr::NonNull,
     sync::atomic::{fence, Ordering},
 };
@@ -63,6 +64,7 @@ pub struct Channel {
 /// These configure the behavior of a DMA channel when a transfer completes. The
 /// source and destination modes of a [`Channel`] may be configured using
 /// [`Channel::set_channel_modes`].
+#[derive(Copy, Clone, Debug)]
 pub enum ChannelMode {
     /// DMA transfer wait mode.
     ///
@@ -143,11 +145,14 @@ static DMAC_STATE: DmacState = {
     }
 };
 
+// === impl Dmac ==
+
 impl Dmac {
     /// The total number of DMA channels available on the DMAC.
     pub const CHANNEL_COUNT: u8 = 16;
 
     /// Initializes the DMAC, enabling the queue IRQ for all channels.
+    #[must_use]
     pub fn new(mut dmac: DMAC, ccu: &mut Ccu) -> Self {
         /// Sets the `DMA_QUEUE_IRQ_EN` bit for the given channel index.
         fn set_queue_irq_en(idx: u8, bits: u32) -> u32 {
@@ -343,6 +348,13 @@ impl Dmac {
             }
             .stop_dma();
         }
+    }
+}
+
+impl fmt::Debug for Dmac {
+    #[inline]
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Dmac").finish()
     }
 }
 
@@ -633,6 +645,12 @@ impl Drop for Channel {
         // if anyone else is waiting for a channel to become available, let them
         // know we're done with ours.
         DMAC_STATE.claim_wait.wake();
+    }
+}
+
+impl fmt::Debug for Channel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Channel").field(self.idx).finish()
     }
 }
 
