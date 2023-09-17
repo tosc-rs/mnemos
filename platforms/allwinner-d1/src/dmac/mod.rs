@@ -60,12 +60,16 @@ impl Dmac {
 
     /// Initializes the DMAC, enabling the queue IRQ for all channels.
     pub fn new(mut dmac: DMAC, ccu: &mut Ccu) -> Self {
-        /// Set the `DMA_QUEUE_IRQ_EN` bit for the given channel index.
+        /// Sets the `DMA_QUEUE_IRQ_EN` bit for the given channel index.
         fn set_queue_irq_en(idx: u8, bits: u32) -> u32 {
             bits | (1 << queue_irq_en_offset(idx))
         }
+
         ccu.enable_module(&mut dmac);
-        // enable the queue IRQ for this channel.
+
+        // enable the queue IRQ for all the channels, because use the other
+        // channel IRQs (and i don't really understand what they do, because i
+        // didn't read the manual).
         critical_section::with(|_cs| unsafe {
             for idx in 0..16 {
                 if idx < 8 {
@@ -114,6 +118,21 @@ impl Dmac {
     /// Dropping this future cancels the DMA transfer. If this future is
     /// dropped, the descriptor and its associated memory region may also be
     /// dropped safely.
+    ///
+    /// Of course, the transfer may still have completed partially, and if we
+    /// were writing to a device, the device may be unhappy to have only gotten
+    /// some of the data it wanted. Cancelling an incomplete transfer may result
+    /// in, for example, writing out half of a string to the UART, or only part
+    /// of a structured message over SPI, and so on. But, at least we don't have
+    /// abandoned DMA transfers running around in random parts of the heap you
+    /// probably wanted to use for normal stuff like having strings, or whatever
+    /// it is that people do on the computer.
+    ///
+    /// If the DMA transfer was a read rather than a write, cancelling a partial
+    /// transfer will have no ill effects whatsoever.[^1]
+    ///
+    /// [^1]: Unless you actually wanted to have the data you were reading, but
+    ///     then you probably wouldn't have cancelled it.
     pub async unsafe fn transfer(
         &self,
         src: ChannelMode,
@@ -176,29 +195,35 @@ impl Dmac {
         })
     }
 
+    /// Handle a DMAC interrupt.
     pub(crate) fn handle_interrupt() {
         let dmac = unsafe { &*DMAC::PTR };
+        // there are two registers that contain DMA channel IRQ status bits,
+        // `DMAC_IRQ_PEND0` and `DMAC_IRQ_PEND1`. the first 8 channels (0-7) set
+        // bits in `DMA_IRQ_PEND0` when their IRQs fire...
         dmac.dmac_irq_pend0.modify(|r, w| {
             tracing::trace!(dmac_irq_pend0 = ?format_args!("{:#b}", r.bits()), "DMAC interrupt");
-            for i in 0u8..8u8 {
+            for i in 0..8 {
                 if unsafe { r.dma_queue_irq_pend(i) }.bit_is_set() {
                     DMAC_STATE.channels[i as usize].waker.wake();
                 }
             }
 
-            // Will write-back any high bits
+            // Will write-back any high bits, clearing the interrupt.
             w
         });
 
+        // ...and the second 8 channels (8-15) set their status bits in
+        // `DMAC_IRQ_PEND1` instead
         dmac.dmac_irq_pend1.modify(|r, w| {
             tracing::trace!(dmac_irq_pend1 = ?format_args!("{:#b}", r.bits()), "DMAC interrupt");
-            for i in 8u8..16u8 {
+            for i in 8..16 {
                 if unsafe { r.dma_queue_irq_pend(i) }.bit_is_set() {
                     DMAC_STATE.channels[i as usize].waker.wake();
                 }
             }
 
-            // Will write-back any high bits
+            // Will write-back any high bits, clearing the interrupt.
             w
         });
     }
@@ -316,6 +341,21 @@ impl Channel {
     /// Dropping this future cancels the DMA transfer. If this future is
     /// dropped, the descriptor and its associated memory region may also be
     /// dropped safely.
+    ///
+    /// Of course, the transfer may still have completed partially, and if we
+    /// were writing to a device, the device may be unhappy to have only gotten
+    /// some of the data it wanted. Cancelling an incomplete transfer may result
+    /// in, for example, writing out half of a string to the UART, or only part
+    /// of a structured message over SPI, and so on. But, at least we don't have
+    /// abandoned DMA transfers running around in random parts of the heap you
+    /// probably wanted to use for normal stuff like having strings, or whatever
+    /// it is that people do on the computer.
+    ///
+    /// If the DMA transfer was a read rather than a write, cancelling a partial
+    /// transfer will have no ill effects whatsoever.[^1]
+    ///
+    /// [^1]: Unless you actually wanted to have the data you were reading, but
+    ///     then you probably wouldn't have cancelled it.
     pub async unsafe fn transfer(&mut self, desc: NonNull<Descriptor>) {
         /// Drop guard ensuring that if a `transfer` future is cancelled
         /// before it completes, the in-flight DMA transfer on that channel is dropped.
