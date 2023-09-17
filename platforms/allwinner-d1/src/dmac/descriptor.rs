@@ -1,3 +1,6 @@
+//! DMAC [`Descriptor`]s configure DMA transfers initiated using the DMAC.
+// Most of the code in this module still needs documentation...
+#![allow(missing_docs)]
 // Unusual groupings are used in binary literals in this file in order to
 // separate the bits by which field they represent, rather than by their byte.
 #![allow(clippy::unusual_byte_groupings)]

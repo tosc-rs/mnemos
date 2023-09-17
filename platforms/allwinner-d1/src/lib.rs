@@ -202,25 +202,15 @@ impl D1 {
         };
 
         // Initialize SPI stuff
-        k.initialize({
-            let chan = dmac
-                .allocate_channel()
-                .expect("failed to allocate DMA channel for SPI_DBI!");
-            async move {
-                // Register a new SpiSenderServer
-                SpiSenderServer::register(k, chan, 4).await.unwrap();
-            }
+        k.initialize(async move {
+            // Register a new SpiSenderServer
+            SpiSenderServer::register(k, dmac, 4).await.unwrap();
         })
         .unwrap();
 
         // Initialize SimpleSerial driver
-        k.initialize({
-            let tx_channel = dmac
-                .allocate_channel()
-                .expect("failed to allocate DMA channel for UART!");
-            async move {
-                D1Uart::register(k, 4096, 4096, tx_channel).await.unwrap();
-            }
+        k.initialize(async move {
+            D1Uart::register(k, dmac, 4096, 4096).await.unwrap();
         })
         .unwrap();
 
