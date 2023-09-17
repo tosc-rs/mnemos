@@ -5134,7 +5134,6 @@ dependencies = [
  "embedded-graphics 0.7.1",
  "futures",
  "mnemos",
- "mnemos-beepy",
  "mnemos-bitslab",
  "riscv",
  "riscv-rt",

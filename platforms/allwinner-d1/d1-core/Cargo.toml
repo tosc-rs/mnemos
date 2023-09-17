@@ -13,8 +13,6 @@ license.workspace = true
 [features]
 # enable the SHARP Memory Display driver
 sharp-display = []
-# enable `mnemos-trace-proto` serial tracing.
-serial-trace = ["mnemos/serial-trace"]
 
 [dependencies]
 serde = { version = "1.0.178", features = ["derive"], default-features = false }
@@ -31,10 +29,6 @@ riscv-rt = "0.11"
 [dependencies.mnemos]
 path = "../../../source/kernel"
 default-features = false
-
-[dependencies.mnemos-beepy]
-path = "../../beepy"
-optional = true
 
 [dependencies.tracing]
 version = "0.1.37"
