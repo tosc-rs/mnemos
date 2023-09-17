@@ -10,7 +10,7 @@ use crate::dmac::{
     descriptor::{
         AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType,
     },
-    Channel, ChannelMode,
+    ChannelMode, Dmac,
 };
 use d1_pac::{GPIO, SPI_DBI};
 use kernel::{
@@ -107,7 +107,7 @@ pub struct SpiSenderServer;
 impl SpiSenderServer {
     pub async fn register(
         kernel: &'static Kernel,
-        mut chan: Channel,
+        dmac: Dmac,
         queued: usize,
     ) -> Result<(), registry::RegistrationError> {
         let reqs = kernel
@@ -170,8 +170,12 @@ impl SpiSenderServer {
 
                     // start the DMA transfer.
                     unsafe {
-                        chan.set_channel_modes(ChannelMode::Wait, ChannelMode::Wait);
-                        chan.run_descriptor(NonNull::from(&descriptor)).await;
+                        dmac.transfer(
+                            ChannelMode::Wait,
+                            ChannelMode::Handshake,
+                            NonNull::from(&descriptor),
+                        )
+                        .await;
                     }
 
                     reply
