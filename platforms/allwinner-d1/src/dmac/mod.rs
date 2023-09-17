@@ -330,6 +330,10 @@ impl Dmac {
         });
     }
 
+    /// Cancel *all* currently active DMA transfers.
+    ///
+    /// This is generally used when shutting down the system, such as in panic
+    /// and exception handlers.
     pub(crate) unsafe fn cancel_all() {
         for (i, channel) in DMAC_STATE.channels.iter().enumerate() {
             channel.waker.close();
@@ -463,7 +467,7 @@ impl Channel {
     /// [`Channel::start_descriptor`], it is possible to manipulate the channel
     /// register block while a transfer is in progress. I don't know what
     /// happens if you do this, but it's probably bad.
-    pub unsafe fn desc_addr_reg(&self) -> &Reg<DMAC_DESC_ADDR_SPEC> {
+    unsafe fn desc_addr_reg(&self) -> &Reg<DMAC_DESC_ADDR_SPEC> {
         let dmac = &*DMAC::PTR;
         match self.idx {
             0 => &dmac.dmac_desc_addr0,
@@ -505,7 +509,7 @@ impl Channel {
     /// [`Channel::start_descriptor`], it is possible to manipulate the channel
     /// register block while a transfer is in progress. I don't know what
     /// happens if you do this, but it's probably bad.
-    pub unsafe fn en_reg(&self) -> &Reg<DMAC_EN_SPEC> {
+    unsafe fn en_reg(&self) -> &Reg<DMAC_EN_SPEC> {
         let dmac = &*DMAC::PTR;
         match self.idx {
             0 => &dmac.dmac_en0,
@@ -547,7 +551,7 @@ impl Channel {
     /// [`Channel::start_descriptor`], it is possible to manipulate the channel
     /// register block while a transfer is in progress. I don't know what
     /// happens if you do this, but it's probably bad.
-    pub unsafe fn mode_reg(&self) -> &Reg<DMAC_MODE_SPEC> {
+    unsafe fn mode_reg(&self) -> &Reg<DMAC_MODE_SPEC> {
         let dmac = &*DMAC::PTR;
         match self.idx {
             0 => &dmac.dmac_mode0,
@@ -586,7 +590,7 @@ impl Channel {
     /// The caller must not initiate another transfer on this channel until the
     /// transfer started using `start_descriptor` completes. I don't know what
     /// happens if you do this, but I'm sure it's bad.
-    pub unsafe fn start_descriptor(&mut self, desc: NonNull<Descriptor>) {
+    unsafe fn start_descriptor(&mut self, desc: NonNull<Descriptor>) {
         fence(Ordering::SeqCst); //////
 
         let desc_addr = desc.as_ptr() as usize;
@@ -612,7 +616,7 @@ impl Channel {
     /// This is actually pretty safe. AFAICT, calling `stop_dma` on a channel
     /// with no transfer currently in flight seems fine, actually. But, this
     /// does a raw MMIO register write, so.
-    pub unsafe fn stop_dma(&mut self) {
+    unsafe fn stop_dma(&mut self) {
         self.en_reg().write(|w| w.dma_en().disabled());
         fence(Ordering::SeqCst); //////
     }
