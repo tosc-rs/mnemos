@@ -1,6 +1,5 @@
-// TODO: add docs to these methods...
-#![allow(clippy::missing_safety_doc)]
-
+//! Higher-level APIs for the Allwinner D1's DMA Controller (DMAC).
+#![warn(missing_docs)]
 use core::{
     ptr::NonNull,
     sync::atomic::{fence, Ordering},
@@ -20,12 +19,40 @@ use self::descriptor::Descriptor;
 
 pub mod descriptor;
 
+/// A handle to the DMA controller (DMAC) peripheral.
+///
+/// A `Dmac` can be used used to claim DMA [`Channel`]s from the DMAC's shared
+/// pool of 16 channels, using the [`claim_channel`](Self::claim_channel) and
+/// [`try_claim_channel`](Self::try_claim_channel) methods. Once a [`Channel`] has
+/// been claimed, it may be used to perform DMA transfers using the
+/// [`Channel::transfer`] method. Dropping a [`Channel`] releases it back to the
+/// DMAC's channel pool, allowing it to be claimed by other drivers.
+///
+/// The `Dmac` also provides a [`Dmac::transfer`] convenience method, which
+/// claims a channel to perform a single transfer and immediately releases it
+/// back to the pool once the transfer has completed.
+///
+/// This struct is constructed using [`Dmac::new`], which initializes the DMA
+/// controller and returns a `Dmac`. Since this struct is essentially a token
+/// representing that the DMAC has been initialized, it may be freely copied
+/// into any driver that wishes to perform DMA oeprations.
 #[derive(Copy, Clone)]
 pub struct Dmac {
     // this struct is essentially used as a "yes, the DMAC is initialized now" token...
     _p: (),
 }
 
+/// A DMA channel.
+///
+/// Channels are used to perform DMA transfers using the [`Channel::transfer`]
+/// method. Before performing a transfer, a channel must be configured with the
+/// desired [`ChannelMode`]s using [`Channel::set_channel_modes`].
+///
+/// The DMA controller owns a shared pool of 16 DMA channels, which may be used
+/// by drivers to initiate DMA transfers. Channels can be acquired from the
+/// shared pool using the [`Dmac::claim`] and [`Dmac::try_claim`] methods.
+/// Dropping a `Channel` releases it back to the shared pool, allowing it to be
+/// claimed by other drivers.
 pub struct Channel {
     idx: u8,
     channel: &'static ChannelState,
@@ -56,6 +83,7 @@ static DMAC_STATE: DmacState = {
 };
 
 impl Dmac {
+    /// The total number of DMA channels available on the DMAC.
     pub const CHANNEL_COUNT: u8 = 16;
 
     /// Initializes the DMAC, enabling the queue IRQ for all channels.
@@ -67,9 +95,14 @@ impl Dmac {
 
         ccu.enable_module(&mut dmac);
 
-        // enable the queue IRQ for all the channels, because use the other
-        // channel IRQs (and i don't really understand what they do, because i
-        // didn't read the manual).
+        // enable the queue IRQ (`DMA_QUEUE_IRQ_EN`) for all the channels. we
+        // can get away with doing that for all channels in initialization
+        // (rather than doing it channel-by-channel as channels are actually
+        // allocated), because the DMAC will only fire an IRQ for a channel if
+        // we've actually started a DMA xfer on that channel. and, we currently
+        // don't ever use the other two channel IRQs (`DMA_PKG_IRQ_EN` and
+        // `DMA_HLAF_IRQ_EN`) --- i don't really understand what those actually
+        // do, because i didn't read the manual.
         critical_section::with(|_cs| unsafe {
             for idx in 0..16 {
                 if idx < 8 {
@@ -144,10 +177,18 @@ impl Dmac {
         channel.transfer(desc).await
     }
 
-    /// Claims an idle DMA channel, waiting for one to become available if none
-    /// are currently idle.
+    /// Claims an idle DMA [`Channel`] from the DMAC's channel pool, waiting for
+    /// one to become available if none are currently idle.
     ///
-    /// For a version of this method which does not wait, see [`Dmac::try_claim_channel`].
+    /// For a version of this method which does not wait, see
+    /// [`Dmac::try_claim_channel`].
+    ///
+    /// # Cancel Safety
+    ///
+    /// This future can be cancelled freely with no potential negative
+    /// consequences. Dropping this future cancels the attempt to claim a
+    /// [`Channel`] from the DMAC pool. If a channel has been acquired, it will
+    /// be released back to the pool, and may be acquired by other tasks.
     pub async fn claim_channel(&self) -> Channel {
         // first, try to claim a channel without registering with the WaitQueue,
         // so that we don't need to lock to remove our wait future from the
@@ -248,77 +289,11 @@ fn queue_irq_en_offset(idx: u8) -> u8 {
 }
 
 impl Channel {
+    /// Returns the channel index of this channel, from 0 to 15.
+    #[inline]
+    #[must_use]
     pub fn channel_index(&self) -> u8 {
         self.idx
-    }
-
-    pub unsafe fn desc_addr_reg(&self) -> &Reg<DMAC_DESC_ADDR_SPEC> {
-        let dmac = &*DMAC::PTR;
-        match self.idx {
-            0 => &dmac.dmac_desc_addr0,
-            1 => &dmac.dmac_desc_addr1,
-            2 => &dmac.dmac_desc_addr2,
-            3 => &dmac.dmac_desc_addr3,
-            4 => &dmac.dmac_desc_addr4,
-            5 => &dmac.dmac_desc_addr5,
-            6 => &dmac.dmac_desc_addr6,
-            7 => &dmac.dmac_desc_addr7,
-            8 => &dmac.dmac_desc_addr8,
-            9 => &dmac.dmac_desc_addr9,
-            10 => &dmac.dmac_desc_addr10,
-            11 => &dmac.dmac_desc_addr11,
-            12 => &dmac.dmac_desc_addr12,
-            13 => &dmac.dmac_desc_addr13,
-            14 => &dmac.dmac_desc_addr14,
-            15 => &dmac.dmac_desc_addr15,
-            _ => panic!(),
-        }
-    }
-
-    pub unsafe fn en_reg(&self) -> &Reg<DMAC_EN_SPEC> {
-        let dmac = &*DMAC::PTR;
-        match self.idx {
-            0 => &dmac.dmac_en0,
-            1 => &dmac.dmac_en1,
-            2 => &dmac.dmac_en2,
-            3 => &dmac.dmac_en3,
-            4 => &dmac.dmac_en4,
-            5 => &dmac.dmac_en5,
-            6 => &dmac.dmac_en6,
-            7 => &dmac.dmac_en7,
-            8 => &dmac.dmac_en8,
-            9 => &dmac.dmac_en9,
-            10 => &dmac.dmac_en10,
-            11 => &dmac.dmac_en11,
-            12 => &dmac.dmac_en12,
-            13 => &dmac.dmac_en13,
-            14 => &dmac.dmac_en14,
-            15 => &dmac.dmac_en15,
-            _ => panic!(),
-        }
-    }
-
-    pub unsafe fn mode_reg(&self) -> &Reg<DMAC_MODE_SPEC> {
-        let dmac = &*DMAC::PTR;
-        match self.idx {
-            0 => &dmac.dmac_mode0,
-            1 => &dmac.dmac_mode1,
-            2 => &dmac.dmac_mode2,
-            3 => &dmac.dmac_mode3,
-            4 => &dmac.dmac_mode4,
-            5 => &dmac.dmac_mode5,
-            6 => &dmac.dmac_mode6,
-            7 => &dmac.dmac_mode7,
-            8 => &dmac.dmac_mode8,
-            9 => &dmac.dmac_mode9,
-            10 => &dmac.dmac_mode10,
-            11 => &dmac.dmac_mode11,
-            12 => &dmac.dmac_mode12,
-            13 => &dmac.dmac_mode13,
-            14 => &dmac.dmac_mode14,
-            15 => &dmac.dmac_mode15,
-            _ => panic!(),
-        }
     }
 
     /// Performs a DMA transfer described by the provided [`Descriptor`] on this
@@ -388,6 +363,20 @@ impl Channel {
         );
     }
 
+    /// Sets the source and destination [`ChannelMode`] for this channel.
+    ///
+    /// This configures the behavior of the two sides of the channel.
+    ///
+    /// # Safety
+    ///
+    /// This method should only be used when a DMA transfer is not currently in
+    /// flight on this channel. This is ensured when using the
+    /// [`Channel::transfer`] method, which mutably borrows the channel while
+    /// the transfer is in progress, preventing the channel modes from being
+    /// changed. However, if a transfer is started with
+    /// [`Channel::start_descriptor`], it is possible to manipulate the channel
+    /// modes while a transfer is in progress. I don't know what happens if you
+    /// do this, but it's probably bad.
     pub unsafe fn set_channel_modes(&mut self, src: ChannelMode, dst: ChannelMode) {
         self.mode_reg().write(|w| {
             match src {
@@ -402,6 +391,132 @@ impl Channel {
         })
     }
 
+    /// Returns the raw `DMAC_DESC_ADDR` register corresponding to this channel.
+    ///
+    /// # Safety
+    ///
+    /// Manipulation of raw MMIO registers is generally unsafe. This method
+    /// aliases the DMAC MMIO register block, and therefore should only be
+    /// called within a critical section or while DMAC interrupts are disabled.
+    ///
+    /// Manipulating a channel's MMIO register block while a transfer is in
+    /// progress on that channel is probably a bad idea. Using the
+    /// [`Channel::transfer`] method, which mutably borrows the channel while
+    /// the transfer is in progress, will prevent this method from being called
+    /// until the transfer completes. However, if a transfer is started with
+    /// [`Channel::start_descriptor`], it is possible to manipulate the channel
+    /// register block while a transfer is in progress. I don't know what
+    /// happens if you do this, but it's probably bad.
+    pub unsafe fn desc_addr_reg(&self) -> &Reg<DMAC_DESC_ADDR_SPEC> {
+        let dmac = &*DMAC::PTR;
+        match self.idx {
+            0 => &dmac.dmac_desc_addr0,
+            1 => &dmac.dmac_desc_addr1,
+            2 => &dmac.dmac_desc_addr2,
+            3 => &dmac.dmac_desc_addr3,
+            4 => &dmac.dmac_desc_addr4,
+            5 => &dmac.dmac_desc_addr5,
+            6 => &dmac.dmac_desc_addr6,
+            7 => &dmac.dmac_desc_addr7,
+            8 => &dmac.dmac_desc_addr8,
+            9 => &dmac.dmac_desc_addr9,
+            10 => &dmac.dmac_desc_addr10,
+            11 => &dmac.dmac_desc_addr11,
+            12 => &dmac.dmac_desc_addr12,
+            13 => &dmac.dmac_desc_addr13,
+            14 => &dmac.dmac_desc_addr14,
+            15 => &dmac.dmac_desc_addr15,
+            idx => unreachable!(
+                "the DMAC only has 16 channels, but we somehow attempted to access
+                nonexistent channel {idx}",
+            ),
+        }
+    }
+
+    /// Returns the raw `DMAC_EN` register corresponding to this channel.
+    ///
+    /// # Safety
+    ///
+    /// Manipulation of raw MMIO registers is generally unsafe. This method
+    /// aliases the DMAC MMIO register block, and therefore should only be
+    /// called within a critical section or while DMAC interrupts are disabled.
+    ///
+    /// Manipulating a channel's MMIO register block while a transfer is in
+    /// progress on that channel is probably a bad idea. Using the
+    /// [`Channel::transfer`] method, which mutably borrows the channel while
+    /// the transfer is in progress, will prevent this method from being called
+    /// until the transfer completes. However, if a transfer is started with
+    /// [`Channel::start_descriptor`], it is possible to manipulate the channel
+    /// register block while a transfer is in progress. I don't know what
+    /// happens if you do this, but it's probably bad.
+    pub unsafe fn en_reg(&self) -> &Reg<DMAC_EN_SPEC> {
+        let dmac = &*DMAC::PTR;
+        match self.idx {
+            0 => &dmac.dmac_en0,
+            1 => &dmac.dmac_en1,
+            2 => &dmac.dmac_en2,
+            3 => &dmac.dmac_en3,
+            4 => &dmac.dmac_en4,
+            5 => &dmac.dmac_en5,
+            6 => &dmac.dmac_en6,
+            7 => &dmac.dmac_en7,
+            8 => &dmac.dmac_en8,
+            9 => &dmac.dmac_en9,
+            10 => &dmac.dmac_en10,
+            11 => &dmac.dmac_en11,
+            12 => &dmac.dmac_en12,
+            13 => &dmac.dmac_en13,
+            14 => &dmac.dmac_en14,
+            15 => &dmac.dmac_en15,
+            idx => unreachable!(
+                "the DMAC only has 16 channels, but we somehow attempted to access
+                nonexistent channel {idx}",
+            ),
+        }
+    }
+
+    /// Returns the raw `DMAC_MODE` register corresponding to this channel.
+    ///
+    /// # Safety
+    ///
+    /// Manipulation of raw MMIO registers is generally unsafe. This method
+    /// aliases the DMAC MMIO register block, and therefore should only be
+    /// called within a critical section or while DMAC interrupts are disabled.
+    ///
+    /// Manipulating a channel's MMIO register block while a transfer is in
+    /// progress on that channel is probably a bad idea. Using the
+    /// [`Channel::transfer`] method, which mutably borrows the channel while
+    /// the transfer is in progress, will prevent this method from being called
+    /// until the transfer completes. However, if a transfer is started with
+    /// [`Channel::start_descriptor`], it is possible to manipulate the channel
+    /// register block while a transfer is in progress. I don't know what
+    /// happens if you do this, but it's probably bad.
+    pub unsafe fn mode_reg(&self) -> &Reg<DMAC_MODE_SPEC> {
+        let dmac = &*DMAC::PTR;
+        match self.idx {
+            0 => &dmac.dmac_mode0,
+            1 => &dmac.dmac_mode1,
+            2 => &dmac.dmac_mode2,
+            3 => &dmac.dmac_mode3,
+            4 => &dmac.dmac_mode4,
+            5 => &dmac.dmac_mode5,
+            6 => &dmac.dmac_mode6,
+            7 => &dmac.dmac_mode7,
+            8 => &dmac.dmac_mode8,
+            9 => &dmac.dmac_mode9,
+            10 => &dmac.dmac_mode10,
+            11 => &dmac.dmac_mode11,
+            12 => &dmac.dmac_mode12,
+            13 => &dmac.dmac_mode13,
+            14 => &dmac.dmac_mode14,
+            15 => &dmac.dmac_mode15,
+            idx => unreachable!(
+                "the DMAC only has 16 channels, but we somehow attempted to access
+                nonexistent channel {idx}",
+            ),
+        }
+    }
+
     /// Begins a DMA transfer *without* waiting for it to complete.
     ///
     /// This is a lower-level API, and you should probably use
@@ -411,6 +526,10 @@ impl Channel {
     ///
     /// The caller must ensure that the descriptor pointed to by `desc` is valid
     /// for as long as the DMA transfer is active.
+    ///
+    /// The caller must not initiate another transfer on this channel until the
+    /// transfer started using `start_descriptor` completes. I don't know what
+    /// happens if you do this, but I'm sure it's bad.
     pub unsafe fn start_descriptor(&mut self, desc: NonNull<Descriptor>) {
         fence(Ordering::SeqCst); //////
 
@@ -426,6 +545,17 @@ impl Channel {
         fence(Ordering::SeqCst); //////
     }
 
+    /// Cancel any DMA transfer currently in progress on this channel.
+    ///
+    /// This is a lower-level API, and you should probably use
+    /// [`Channel::transfer`] instead, as it stops the transfer automatically
+    /// once it has completed or when the future is dropped.
+    ///
+    /// # Safety
+    ///
+    /// This is actually pretty safe. AFAICT, calling `stop_dma` on a channel
+    /// with no transfer currently in flight seems fine, actually. But, this
+    /// does a raw MMIO register write, so.
     pub unsafe fn stop_dma(&mut self) {
         self.en_reg().write(|w| w.dma_en().disabled());
         fence(Ordering::SeqCst); //////
@@ -446,8 +576,64 @@ impl Drop for Channel {
     }
 }
 
+/// DMA channel modes.
+///
+/// These configure the behavior of a DMA channel when a transfer completes. The
+/// source and destination modes of a [`Channel`] may be configured using
+/// [`Channel::set_channel_modes`].
 pub enum ChannelMode {
+    /// DMA transfer wait mode.
+    ///
+    /// In this mode, the DMAC will wait for a configurable number of clock
+    /// cycles before automatically starting the next transfer.
+    ///
+    /// The Allwinner documentationh for the D1 describes this mode as follows:
+    ///
+    /// > * When the DMAC detects a valid external request signal, the DMAC
+    /// >   starts to operate the peripheral device. The internal DRQ always
+    /// >   holds high before the transferred data amount reaches the
+    /// >   transferred block length.
+    /// > * When the transferred data amount reaches the transferred block
+    /// >   length, the internal DRQ pulls low automatically.
+    /// > * The internal DRQ holds low for certain clock cycles (W`AIT_CYC`),
+    /// >   and then the DMAC restarts to detect the external requests. If the
+    /// >   external request signal is valid, then the next transfer starts.
     Wait,
+    /// DMA transfer handshake mode.
+    ///
+    /// In this mode, the DMAC sends the peripheral a DMA Ack signal when the
+    /// transfer completes, and waits for the peripheral to pull the DMA
+    /// Active signal low before starting the next transfer.
+    ///
+    /// The Allwinner documentationh for the D1 describes this mode as follows:
+    ///
+    /// > * When the DMAC detects a valid external request signal, the DMAC
+    /// >   starts to operate the peripheral device. The internal DRQ always
+    /// >   holds high before the transferred data amount reaches the
+    /// >   transferred block length.
+    /// > * When the transferred data amount reaches the transferred block
+    /// >   length, the internal DRQ will be pulled down automatically. For the
+    /// >   last data transfer of the block, the DMAC sends a DMA Last signal
+    /// >   with the DMA commands to the peripheral device. The DMA Last signal
+    /// >   will be packed as part of the DMA commands and transmitted on the
+    /// >   bus. It is used to inform the peripheral device that it is the end
+    /// >   of the data transfer for the current DRQ.
+    /// > * When the peripheral device receives the DMA Last signal, it can
+    /// >   judge that the data transfer for the current DRQ is finished. To
+    /// >   continue the data transfer, it sends a DMA Active signal to the
+    /// >   DMAC.
+    /// >   **Note**: One DMA Active signal will be converted to one DRQ signal
+    /// >   in the DMA module. To generate multiple DRQs, the peripheral device
+    /// >   needs to send out multiple DMA Active signals via the bus protocol.
+    /// > * When the DMAC received the DMA Active signal, it sends back a DMA
+    /// >   ACK signal to the peripheral device.
+    /// > * When the peripheral device receives the DMA ACK signal, it waits for
+    /// >   all the operations on the local device completed, and both the FIFO
+    /// >   and DRQ status refreshed. Then it invalidates the DMA Active signal.
+    /// > * When the DMAC detects the falling edge of the DMA Active signal, it
+    /// >   invalidates the corresponding DMA ACK signal, and restarts to detect
+    /// >   the external request signals. If a valid request signal is detected,
+    /// >   the next data transfer starts.
     Handshake,
 }
 
