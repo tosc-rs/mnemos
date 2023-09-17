@@ -52,37 +52,6 @@ pub struct BBBuffer {
 unsafe impl Sync for BBBuffer {}
 
 impl<'a> BBBuffer {
-    /// Attempt to split the `BBBuffer` into `Consumer` and `Producer` halves to gain access to the
-    /// buffer. If buffer has already been split, an error will be returned.
-    ///
-    /// NOTE: When splitting, the underlying buffer will be explicitly initialized
-    /// to zero. This may take a measurable amount of time, depending on the size
-    /// of the buffer. This is necessary to prevent undefined behavior. If the buffer
-    /// is placed at `static` scope within the `.bss` region, the explicit initialization
-    /// will be elided (as it is already performed as part of memory initialization)
-    ///
-    /// NOTE:  If the `thumbv6` feature is selected, this function takes a short critical section
-    /// while splitting.
-    ///
-    /// ```rust
-    /// # // bbqueue test shim!
-    /// # fn bbqtest() {
-    /// use bbqueue::BBBuffer;
-    ///
-    /// // Create and split a new buffer
-    /// let buffer: BBBuffer<6> = BBBuffer::new();
-    /// let (prod, cons) = buffer.try_split().unwrap();
-    ///
-    /// // Not possible to split twice
-    /// assert!(buffer.try_split().is_err());
-    /// # // bbqueue test shim!
-    /// # }
-    /// #
-    /// # fn main() {
-    /// # #[cfg(not(feature = "thumbv6"))]
-    /// # bbqtest();
-    /// # }
-    /// ```
     pub unsafe fn initialize(&'a self, buf_start: *mut u8, buf_len: usize) {
         // Explicitly zero the data to avoid undefined behavior.
         // This is required, because we hand out references to the buffers,
@@ -142,15 +111,6 @@ impl BBBuffer {
     /// work around current limitations in `const fn`, and will be replaced in
     /// the future.
     ///
-    /// ```rust,no_run
-    /// use bbqueue::BBBuffer;
-    ///
-    /// static BUF: BBBuffer<6> = BBBuffer::new();
-    ///
-    /// fn main() {
-    ///    let (prod, cons) = BUF.try_split().unwrap();
-    /// }
-    /// ```
     pub const fn new() -> Self {
         Self {
             // This will not be initialized until we split the buffer
@@ -229,31 +189,6 @@ impl<'a> Producer<'a> {
     /// This method may cause the buffer to wrap around early if the
     /// requested space is not available at the end of the buffer, but
     /// is available at the beginning
-    ///
-    /// ```rust
-    /// # // bbqueue test shim!
-    /// # fn bbqtest() {
-    /// use bbqueue::BBBuffer;
-    ///
-    /// // Create and split a new buffer of 6 elements
-    /// let buffer: BBBuffer<6> = BBBuffer::new();
-    /// let (mut prod, cons) = buffer.try_split().unwrap();
-    ///
-    /// // Successfully obtain and commit a grant of four bytes
-    /// let mut grant = prod.grant_exact(4).unwrap();
-    /// assert_eq!(grant.buf().len(), 4);
-    /// grant.commit(4);
-    ///
-    /// // Try to obtain a grant of three bytes
-    /// assert!(prod.grant_exact(3).is_err());
-    /// # // bbqueue test shim!
-    /// # }
-    /// #
-    /// # fn main() {
-    /// # #[cfg(not(feature = "thumbv6"))]
-    /// # bbqtest();
-    /// # }
-    /// ```
     pub fn grant_exact(&self, sz: usize) -> Result<GrantW<'a>> {
         let inner = unsafe { &self.bbq.as_ref() };
 
@@ -316,38 +251,6 @@ impl<'a> Producer<'a> {
     /// wrapping, then a grant will be given for the remaining size at the
     /// end of the buffer. If no space is available for writing, an error
     /// will be returned.
-    ///
-    /// ```
-    /// # // bbqueue test shim!
-    /// # fn bbqtest() {
-    /// use bbqueue::BBBuffer;
-    ///
-    /// // Create and split a new buffer of 6 elements
-    /// let buffer: BBBuffer<6> = BBBuffer::new();
-    /// let (mut prod, mut cons) = buffer.try_split().unwrap();
-    ///
-    /// // Successfully obtain and commit a grant of four bytes
-    /// let mut grant = prod.grant_max_remaining(4).unwrap();
-    /// assert_eq!(grant.buf().len(), 4);
-    /// grant.commit(4);
-    ///
-    /// // Release the four initial commited bytes
-    /// let mut grant = cons.read().unwrap();
-    /// assert_eq!(grant.buf().len(), 4);
-    /// grant.release(4);
-    ///
-    /// // Try to obtain a grant of three bytes, get two bytes
-    /// let mut grant = prod.grant_max_remaining(3).unwrap();
-    /// assert_eq!(grant.buf().len(), 2);
-    /// grant.commit(2);
-    /// # // bbqueue test shim!
-    /// # }
-    /// #
-    /// # fn main() {
-    /// # #[cfg(not(feature = "thumbv6"))]
-    /// # bbqtest();
-    /// # }
-    /// ```
     // TODO(AJM): Not used in mnemos
     #[allow(dead_code)]
     pub fn grant_max_remaining(&self, mut sz: usize) -> Result<GrantW<'a>> {
@@ -427,32 +330,6 @@ impl<'a> Consumer<'a> {
     /// contain ALL available bytes, if the writer has wrapped around. The
     /// remaining bytes will be available after all readable bytes are
     /// released
-    ///
-    /// ```rust
-    /// # // bbqueue test shim!
-    /// # fn bbqtest() {
-    /// use bbqueue::BBBuffer;
-    ///
-    /// // Create and split a new buffer of 6 elements
-    /// let buffer: BBBuffer<6> = BBBuffer::new();
-    /// let (mut prod, mut cons) = buffer.try_split().unwrap();
-    ///
-    /// // Successfully obtain and commit a grant of four bytes
-    /// let mut grant = prod.grant_max_remaining(4).unwrap();
-    /// assert_eq!(grant.buf().len(), 4);
-    /// grant.commit(4);
-    ///
-    /// // Obtain a read grant
-    /// let mut grant = cons.read().unwrap();
-    /// assert_eq!(grant.buf().len(), 4);
-    /// # // bbqueue test shim!
-    /// # }
-    /// #
-    /// # fn main() {
-    /// # #[cfg(not(feature = "thumbv6"))]
-    /// # bbqtest();
-    /// # }
-    /// ```
     pub fn read(&self) -> Result<GrantR<'a>> {
         let inner = unsafe { &self.bbq.as_ref() };
 
@@ -626,28 +503,6 @@ impl<'a> GrantW<'a> {
     }
 
     /// Obtain access to the inner buffer for writing
-    ///
-    /// ```rust
-    /// # // bbqueue test shim!
-    /// # fn bbqtest() {
-    /// use bbqueue::BBBuffer;
-    ///
-    /// // Create and split a new buffer of 6 elements
-    /// let buffer: BBBuffer<6> = BBBuffer::new();
-    /// let (mut prod, mut cons) = buffer.try_split().unwrap();
-    ///
-    /// // Successfully obtain and commit a grant of four bytes
-    /// let mut grant = prod.grant_max_remaining(4).unwrap();
-    /// grant.buf().copy_from_slice(&[1, 2, 3, 4]);
-    /// grant.commit(4);
-    /// # // bbqueue test shim!
-    /// # }
-    /// #
-    /// # fn main() {
-    /// # #[cfg(not(feature = "thumbv6"))]
-    /// # bbqtest();
-    /// # }
-    /// ```
     pub fn buf(&mut self) -> &mut [u8] {
         self.buf
     }
@@ -751,34 +606,6 @@ impl<'a> GrantR<'a> {
     }
 
     /// Obtain access to the inner buffer for reading
-    ///
-    /// ```
-    /// # // bbqueue test shim!
-    /// # fn bbqtest() {
-    /// use bbqueue::BBBuffer;
-    ///
-    /// // Create and split a new buffer of 6 elements
-    /// let buffer: BBBuffer<6> = BBBuffer::new();
-    /// let (mut prod, mut cons) = buffer.try_split().unwrap();
-    ///
-    /// // Successfully obtain and commit a grant of four bytes
-    /// let mut grant = prod.grant_max_remaining(4).unwrap();
-    /// grant.buf().copy_from_slice(&[1, 2, 3, 4]);
-    /// grant.commit(4);
-    ///
-    /// // Obtain a read grant, and copy to a buffer
-    /// let mut grant = cons.read().unwrap();
-    /// let mut buf = [0u8; 4];
-    /// buf.copy_from_slice(grant.buf());
-    /// assert_eq!(&buf, &[1, 2, 3, 4]);
-    /// # // bbqueue test shim!
-    /// # }
-    /// #
-    /// # fn main() {
-    /// # #[cfg(not(feature = "thumbv6"))]
-    /// # bbqtest();
-    /// # }
-    /// ```
     pub fn buf(&self) -> &[u8] {
         self.buf
     }
@@ -850,34 +677,6 @@ impl<'a> SplitGrantR<'a> {
     }
 
     /// Obtain access to both inner buffers for reading
-    ///
-    /// ```
-    /// # // bbqueue test shim!
-    /// # fn bbqtest() {
-    /// use bbqueue::BBBuffer;
-    ///
-    /// // Create and split a new buffer of 6 elements
-    /// let buffer: BBBuffer<6> = BBBuffer::new();
-    /// let (mut prod, mut cons) = buffer.try_split().unwrap();
-    ///
-    /// // Successfully obtain and commit a grant of four bytes
-    /// let mut grant = prod.grant_max_remaining(4).unwrap();
-    /// grant.buf().copy_from_slice(&[1, 2, 3, 4]);
-    /// grant.commit(4);
-    ///
-    /// // Obtain a read grant, and copy to a buffer
-    /// let mut grant = cons.read().unwrap();
-    /// let mut buf = [0u8; 4];
-    /// buf.copy_from_slice(grant.buf());
-    /// assert_eq!(&buf, &[1, 2, 3, 4]);
-    /// # // bbqueue test shim!
-    /// # }
-    /// #
-    /// # fn main() {
-    /// # #[cfg(not(feature = "thumbv6"))]
-    /// # bbqtest();
-    /// # }
-    /// ```
     pub fn bufs(&self) -> (&[u8], &[u8]) {
         (self.buf1, self.buf2)
     }
