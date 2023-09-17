@@ -115,6 +115,7 @@ clippy-crate crate *ARGS:
 
 # test all packages, across workspaces
 test *ARGS="--all-features": (nextest "run " + ARGS)
+    {{ _cargo }} test --doc {{ ARGS }}
 
 # run a Nextest command
 nextest *ARGS: (_get-cargo-command "nextest" "cargo-nextest" no-nextest)

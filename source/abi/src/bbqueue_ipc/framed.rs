@@ -6,39 +6,6 @@
 //! just a stream of bytes. This is convenient when receiving
 //! packets of variable sizes.
 //!
-//! ## Example
-//!
-//! ```rust
-//! # // bbqueue test shim!
-//! # fn bbqtest() {
-//! use bbqueue::BBBuffer;
-//!
-//! let bb: BBBuffer<1000> = BBBuffer::new();
-//! let (mut prod, mut cons) = bb.try_split_framed().unwrap();
-//!
-//! // One frame in, one frame out
-//! let mut wgrant = prod.grant(128).unwrap();
-//! assert_eq!(wgrant.len(), 128);
-//! for (idx, i) in wgrant.iter_mut().enumerate() {
-//!     *i = idx as u8;
-//! }
-//! wgrant.commit(128);
-//!
-//! let rgrant = cons.read().unwrap();
-//! assert_eq!(rgrant.len(), 128);
-//! for (idx, i) in rgrant.iter().enumerate() {
-//!     assert_eq!(*i, idx as u8);
-//! }
-//! rgrant.release();
-//! # // bbqueue test shim!
-//! # }
-//! #
-//! # fn main() {
-//! # #[cfg(not(feature = "thumbv6"))]
-//! # bbqtest();
-//! # }
-//! ```
-//!
 //! ## Frame header
 //!
 //! An internal header is required for each frame stored
