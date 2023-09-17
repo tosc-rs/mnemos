@@ -4,14 +4,21 @@ This directory contains MnemOS platform support for the Allwinner D1 RISC-V SoC.
 
 ## Folder Layout
 
-* [`src/`]: Rust source code for the Allwinner D1 platform implementation.
+* [`src/`]: The top-level crate that produces MnemOS binaries for the Allwinner
+      D1.
 * [`board-configs/`]: [`mnemos-config`] configurations for supported D1
       single-board computers.
+* [`d1-core/`]: Core MnemOS implementation for the Allwinner D1. This is
+      factored out into a separate crate so that it can be built without
+      `forced-target="riscv64imac-unknown-none-elf"` (unlike the top-level
+      `mnemos-d1` crate), so that unit tests for the platform implementation can
+      be run on development host targets.
 * [`d1-config/`]: [`mnemos-config`] type definition crate for the Allwinner D1.
 
 [`src/`]: ./boards/
 [`board-configs/`]: ./board-configs/
 [`d1-config/`]: ./d1-config/
+[`d1-core/`]: ./d1-core/
 
 ## Getting started with MnemOS on the D1
 

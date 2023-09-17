@@ -5137,6 +5137,7 @@ dependencies = [
  "mnemos-beepy",
  "mnemos-bitslab",
  "riscv",
+ "riscv-rt",
  "serde",
  "tracing 0.1.37",
 ]

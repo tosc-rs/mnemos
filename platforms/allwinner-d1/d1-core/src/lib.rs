@@ -6,6 +6,8 @@ pub mod ccu;
 pub mod clint;
 pub mod dmac;
 pub mod drivers;
+pub mod plic;
 mod ram;
 pub mod timer;
+pub mod trap;
 pub use self::ram::Ram;

@@ -3,8 +3,6 @@
 extern crate alloc;
 
 mod i2c_puppet;
-mod plic;
-mod trap;
 
 use self::{
     ccu::Ccu,
@@ -481,8 +479,17 @@ fn exception_handler(trap_frame: &riscv_rt::TrapFrame) -> ! {
             let mepc = riscv::register::mepc::read();
             panic!(
                 "CPU exception: {exn} ({exn:#X}) at {mepc:#X}\n\n{:#X}",
-                trap::PrettyTrapFrame(trap_frame)
+                trap::PrettyTrapFrame::from(trap_frame),
             );
         }
     }
+}
+
+#[export_name = "MachineExternal"]
+fn im_an_interrupt() {
+    // tell the kernel that we are inside an ISR. currently, this just results
+    // in switching tracing buffers to use a special ISR tracebuf, in case the
+    // interrupt fired while someone was holding a tracebuf WGR.
+    let _in_isr = kernel::isr::Isr::enter();
+    unsafe { Plic::summon().dispatch_interrupt() };
 }

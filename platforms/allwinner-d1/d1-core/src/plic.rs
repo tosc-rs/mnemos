@@ -7,6 +7,7 @@ use core::{
 };
 
 use d1_pac::{plic, Interrupt, PLIC};
+use kernel::isr::Isr;
 
 /// Interrupt Priority from 0..31
 pub type Priority = plic::prio::PRIORITY_A;
@@ -83,6 +84,33 @@ impl Plic {
                 panic!("error claiming interrupt: {e:?}");
             }
         }
+    }
+
+    /// Dispatch an interrupt to a vectored handler.
+    ///
+    /// # Safety
+    ///
+    /// Should only be called in an ISR such as `MachineInternal`!
+    pub unsafe fn dispatch_interrupt(&self) {
+        debug_assert!(
+            Isr::is_in_isr(),
+            "Plic::dispatch should only be called in an ISR!"
+        );
+        let claim = self.claim();
+        let claim_u16 = claim as u16;
+
+        // Is this a known interrupt?
+        let handler = INTERRUPT_ARRAY.iter().find(|i| i.id == claim_u16);
+        if let Some(Vectored { id: _id, handler }) = handler {
+            let ptr = handler.load(Ordering::SeqCst); // todo: ordering
+            if !ptr.is_null() {
+                let hdlr: fn() = unsafe { core::mem::transmute(ptr) };
+                (hdlr)();
+            } // TODO: panic on else?
+        } // TODO: panic on else?
+
+        // Release claim
+        self.complete(claim);
     }
 
     pub fn complete(&self, interrupt: Interrupt) {
@@ -283,29 +311,3 @@ const fn lister() -> [Vectored; INTERRUPT_LIST.len()] {
 }
 
 static INTERRUPT_ARRAY: [Vectored; INTERRUPT_LIST.len()] = lister();
-
-// TODO: This is re-inventing vector tables, which I think we might be able to
-// do at a hardware level. For now, it's probably fine
-#[export_name = "MachineExternal"]
-fn im_an_interrupt() {
-    // tell the kernel that we are inside an ISR. currently, this just results
-    // in switching tracing buffers to use a special ISR tracebuf, in case the
-    // interrupt fired while someone was holding a tracebuf WGR.
-    let _in_isr = kernel::isr::Isr::enter();
-    let plic = unsafe { Plic::summon() };
-    let claim = plic.claim();
-    let claim_u16 = claim as u16;
-
-    // Is this a known interrupt?
-    let handler = INTERRUPT_ARRAY.iter().find(|i| i.id == claim_u16);
-    if let Some(Vectored { id: _id, handler }) = handler {
-        let ptr = handler.load(Ordering::SeqCst); // todo: ordering
-        if !ptr.is_null() {
-            let hdlr: fn() = unsafe { core::mem::transmute(ptr) };
-            (hdlr)();
-        } // TODO: panic on else?
-    } // TODO: panic on else?
-
-    // Release claim
-    plic.complete(claim);
-}

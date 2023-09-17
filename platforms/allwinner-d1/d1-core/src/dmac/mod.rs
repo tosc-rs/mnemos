@@ -667,15 +667,6 @@ fn queue_irq_en_offset(idx: u8) -> u8 {
     (idx * 4) + 2
 }
 
-// Unfortunately, we can't define tests in this crate and have them run on the
-// development host machine, because the `mnemos-d1` crate has a `forced-target`
-// in its `Cargo.toml`, and will therefore not compile at all for host
-// architectures, even just to run tests. In the future, we should look into
-// whether it's possible to change our build configurations to allow host tests
-// in this crate.
-// TODO(eliza): if we can run tests for this crate on the build host, we should
-// uncomment these tests.
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -692,4 +683,3 @@ mod tests {
         assert_eq!(dbg!(queue_irq_en_offset(7)), 30);
     }
 }
-*/
