@@ -51,9 +51,9 @@ pub struct Dmac {
 ///
 /// The DMA controller owns a shared pool of 16 DMA channels, which may be used
 /// by drivers to initiate DMA transfers. Channels can be acquired from the
-/// shared pool using the [`Dmac::claim`] and [`Dmac::try_claim`] methods.
-/// Dropping a `Channel` releases it back to the shared pool, allowing it to be
-/// claimed by other drivers.
+/// shared pool using the [`Dmac::claim_channel`] and
+/// [`Dmac::try_claim_channel`] methods. Dropping a `Channel` releases it back
+/// to the shared pool, allowing it to be claimed by other drivers.
 pub struct Channel {
     idx: u8,
     xfer_done: &'static WaitCell,
@@ -449,10 +449,7 @@ impl Channel {
     /// flight on this channel. This is ensured when using the
     /// [`Channel::transfer`] method, which mutably borrows the channel while
     /// the transfer is in progress, preventing the channel modes from being
-    /// changed. However, if a transfer is started with
-    /// [`Channel::start_descriptor`], it is possible to manipulate the channel
-    /// modes while a transfer is in progress. I don't know what happens if you
-    /// do this, but it's probably bad.
+    /// changed.
     pub unsafe fn set_channel_modes(&mut self, src: ChannelMode, dst: ChannelMode) {
         self.mode_reg().write(|w| {
             match src {

@@ -22,7 +22,7 @@ pub struct InvalidMcause {
     err: &'static str,
 }
 
-/// Pretty-prints a [`riscv_rt::TrapFrame`].
+/// Pretty-prints a `riscv_rt::TrapFrame`.
 #[derive(Copy, Clone, Debug)]
 pub struct PrettyTrapFrame<'a> {
     #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
