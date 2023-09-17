@@ -51,9 +51,9 @@ pub struct Dmac {
 ///
 /// The DMA controller owns a shared pool of 16 DMA channels, which may be used
 /// by drivers to initiate DMA transfers. Channels can be acquired from the
-/// shared pool using the [`Dmac::claim`] and [`Dmac::try_claim`] methods.
-/// Dropping a `Channel` releases it back to the shared pool, allowing it to be
-/// claimed by other drivers.
+/// shared pool using the [`Dmac::claim_channel`] and
+/// [`Dmac::try_claim_channel`] methods. Dropping a `Channel` releases it back
+/// to the shared pool, allowing it to be claimed by other drivers.
 pub struct Channel {
     idx: u8,
     xfer_done: &'static WaitCell,
@@ -298,7 +298,7 @@ impl Dmac {
     }
 
     /// Handle a DMAC interrupt.
-    pub(crate) fn handle_interrupt() {
+    pub fn handle_interrupt() {
         let dmac = unsafe { &*DMAC::PTR };
         // there are two registers that contain DMA channel IRQ status bits,
         // `DMAC_IRQ_PEND0` and `DMAC_IRQ_PEND1`. the first 8 channels (0-7) set
@@ -334,7 +334,12 @@ impl Dmac {
     ///
     /// This is generally used when shutting down the system, such as in panic
     /// and exception handlers.
-    pub(crate) unsafe fn cancel_all() {
+    ///
+    /// # Safety
+    ///
+    /// Cancelling DMA transfers abruptly might put peripherals in a weird state
+    /// i guess?
+    pub unsafe fn cancel_all() {
         for (i, channel) in STATE.channel_wait.iter().enumerate() {
             channel.close();
             Channel {
@@ -444,10 +449,7 @@ impl Channel {
     /// flight on this channel. This is ensured when using the
     /// [`Channel::transfer`] method, which mutably borrows the channel while
     /// the transfer is in progress, preventing the channel modes from being
-    /// changed. However, if a transfer is started with
-    /// [`Channel::start_descriptor`], it is possible to manipulate the channel
-    /// modes while a transfer is in progress. I don't know what happens if you
-    /// do this, but it's probably bad.
+    /// changed.
     pub unsafe fn set_channel_modes(&mut self, src: ChannelMode, dst: ChannelMode) {
         self.mode_reg().write(|w| {
             match src {
@@ -662,15 +664,6 @@ fn queue_irq_en_offset(idx: u8) -> u8 {
     (idx * 4) + 2
 }
 
-// Unfortunately, we can't define tests in this crate and have them run on the
-// development host machine, because the `mnemos-d1` crate has a `forced-target`
-// in its `Cargo.toml`, and will therefore not compile at all for host
-// architectures, even just to run tests. In the future, we should look into
-// whether it's possible to change our build configurations to allow host tests
-// in this crate.
-// TODO(eliza): if we can run tests for this crate on the build host, we should
-// uncomment these tests.
-/*
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -687,4 +680,3 @@ mod tests {
         assert_eq!(dbg!(queue_irq_en_offset(7)), 30);
     }
 }
-*/

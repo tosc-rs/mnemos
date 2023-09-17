@@ -18,5 +18,5 @@
         "--all-targets"
     ],
     "rust-analyzer.workspace.symbol.search.scope": "workspace_and_dependencies",
-    "rust-analyzer.typing.continueCommentsOnNewline": false
+    "rust-analyzer.typing.continueCommentsOnNewline": false,
 }

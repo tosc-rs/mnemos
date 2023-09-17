@@ -2,16 +2,8 @@
 
 extern crate alloc;
 
-pub mod ccu;
-pub mod clint;
-pub mod dmac;
-pub mod drivers;
-pub mod plic;
-mod ram;
-pub mod timer;
-pub mod trap;
+mod i2c_puppet;
 
-pub use self::ram::Ram;
 use self::{
     ccu::Ccu,
     dmac::Dmac,
@@ -35,6 +27,7 @@ use kernel::{
     tracing::{self, Instrument},
     Kernel, KernelServiceSettings, KernelSettings,
 };
+pub use mnemos_d1_core::*;
 
 pub use d1_config::PlatformConfig;
 use d1_config::{LedBlinkPin, Mapping};
@@ -94,7 +87,7 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
 
     #[cfg(feature = "i2c_puppet")]
     if i2c_puppet_enabled {
-        drivers::i2c_puppet::initialize(config.platform.i2c_puppet, d1.kernel, &p.GPIO, &d1.plic);
+        i2c_puppet::initialize(config.platform.i2c_puppet, d1.kernel, &p.GPIO, &d1.plic);
     }
 
     if config.platform.blink_service.enabled {
@@ -486,8 +479,17 @@ fn exception_handler(trap_frame: &riscv_rt::TrapFrame) -> ! {
             let mepc = riscv::register::mepc::read();
             panic!(
                 "CPU exception: {exn} ({exn:#X}) at {mepc:#X}\n\n{:#X}",
-                trap::PrettyTrapFrame(trap_frame)
+                trap::PrettyTrapFrame::from(trap_frame),
             );
         }
     }
+}
+
+#[export_name = "MachineExternal"]
+fn im_an_interrupt() {
+    // tell the kernel that we are inside an ISR. currently, this just results
+    // in switching tracing buffers to use a special ISR tracebuf, in case the
+    // interrupt fired while someone was holding a tracebuf WGR.
+    let _in_isr = kernel::isr::Isr::enter();
+    unsafe { Plic::summon().dispatch_interrupt() };
 }

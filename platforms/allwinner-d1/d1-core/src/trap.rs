@@ -22,9 +22,15 @@ pub struct InvalidMcause {
     err: &'static str,
 }
 
-/// Pretty-prints a [`riscv_rt::TrapFrame`].
+/// Pretty-prints a `riscv_rt::TrapFrame`.
 #[derive(Copy, Clone, Debug)]
-pub struct PrettyTrapFrame<'a>(pub &'a riscv_rt::TrapFrame);
+pub struct PrettyTrapFrame<'a> {
+    #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+    frame: &'a riscv_rt::TrapFrame,
+
+    #[cfg(not(any(target_arch = "riscv64", target_arch = "riscv32")))]
+    _frame: core::marker::PhantomData<&'a ()>,
+}
 
 macro_rules! cause_enum {
     (
@@ -221,8 +227,12 @@ impl fmt::Display for InvalidMcause {
     }
 }
 
+// === impl PrettyTrapFrame ===
+
+#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
 const CHARS: usize = (usize::BITS / 4) as usize;
 
+#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
 macro_rules! pretty_trap_frame {
     (fmt: $f:ident, frame: $frame:expr, $spec:literal => $($reg:ident),+ $(,)?) => {
 
@@ -234,16 +244,34 @@ macro_rules! pretty_trap_frame {
     }
 }
 
+#[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+impl<'frame> From<&'frame riscv_rt::TrapFrame> for PrettyTrapFrame<'frame> {
+    #[inline]
+    fn from(frame: &'frame riscv_rt::TrapFrame) -> Self {
+        Self { frame }
+    }
+}
+
 impl fmt::LowerHex for PrettyTrapFrame<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        pretty_trap_frame!(fmt: f, frame: self.0, "x" => ra, t0, t1, t2, t3, t4, t5, t6, a0, a1, a2, a3, a4, a5, a6, a7);
+        #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+        pretty_trap_frame!(fmt: f, frame: self.frame, "x" => ra, t0, t1, t2, t3, t4, t5, t6, a0, a1, a2, a3, a4, a5, a6, a7);
+
+        #[cfg(not(any(target_arch = "riscv64", target_arch = "riscv32")))]
+        f.pad("<not on RISC-V lol>")?;
+
         Ok(())
     }
 }
 
 impl fmt::UpperHex for PrettyTrapFrame<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        pretty_trap_frame!(fmt: f, frame: self.0, "X" => ra, t0, t1, t2, t3, t4, t5, t6, a0, a1, a2, a3, a4, a5, a6, a7);
+        #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
+        pretty_trap_frame!(fmt: f, frame: self.frame, "X" => ra, t0, t1, t2, t3, t4, t5, t6, a0, a1, a2, a3, a4, a5, a6, a7);
+
+        #[cfg(not(any(target_arch = "riscv64", target_arch = "riscv32")))]
+        f.pad("<not on RISC-V lol>")?;
+
         Ok(())
     }
 }
