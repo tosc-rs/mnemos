@@ -58,6 +58,67 @@ pub struct Channel {
     channel: &'static ChannelState,
 }
 
+/// DMA channel modes.
+///
+/// These configure the behavior of a DMA channel when a transfer completes. The
+/// source and destination modes of a [`Channel`] may be configured using
+/// [`Channel::set_channel_modes`].
+pub enum ChannelMode {
+    /// DMA transfer wait mode.
+    ///
+    /// In this mode, the DMAC will wait for a configurable number of clock
+    /// cycles before automatically starting the next transfer.
+    ///
+    /// The Allwinner documentationh for the D1 describes this mode as follows:
+    ///
+    /// > * When the DMAC detects a valid external request signal, the DMAC
+    /// >   starts to operate the peripheral device. The internal DRQ always
+    /// >   holds high before the transferred data amount reaches the
+    /// >   transferred block length.
+    /// > * When the transferred data amount reaches the transferred block
+    /// >   length, the internal DRQ pulls low automatically.
+    /// > * The internal DRQ holds low for certain clock cycles (W`AIT_CYC`),
+    /// >   and then the DMAC restarts to detect the external requests. If the
+    /// >   external request signal is valid, then the next transfer starts.
+    Wait,
+    /// DMA transfer handshake mode.
+    ///
+    /// In this mode, the DMAC sends the peripheral a DMA Ack signal when the
+    /// transfer completes, and waits for the peripheral to pull the DMA
+    /// Active signal low before starting the next transfer.
+    ///
+    /// The Allwinner documentationh for the D1 describes this mode as follows:
+    ///
+    /// > * When the DMAC detects a valid external request signal, the DMAC
+    /// >   starts to operate the peripheral device. The internal DRQ always
+    /// >   holds high before the transferred data amount reaches the
+    /// >   transferred block length.
+    /// > * When the transferred data amount reaches the transferred block
+    /// >   length, the internal DRQ will be pulled down automatically. For the
+    /// >   last data transfer of the block, the DMAC sends a DMA Last signal
+    /// >   with the DMA commands to the peripheral device. The DMA Last signal
+    /// >   will be packed as part of the DMA commands and transmitted on the
+    /// >   bus. It is used to inform the peripheral device that it is the end
+    /// >   of the data transfer for the current DRQ.
+    /// > * When the peripheral device receives the DMA Last signal, it can
+    /// >   judge that the data transfer for the current DRQ is finished. To
+    /// >   continue the data transfer, it sends a DMA Active signal to the
+    /// >   DMAC.
+    /// >   **Note**: One DMA Active signal will be converted to one DRQ signal
+    /// >   in the DMA module. To generate multiple DRQs, the peripheral device
+    /// >   needs to send out multiple DMA Active signals via the bus protocol.
+    /// > * When the DMAC received the DMA Active signal, it sends back a DMA
+    /// >   ACK signal to the peripheral device.
+    /// > * When the peripheral device receives the DMA ACK signal, it waits for
+    /// >   all the operations on the local device completed, and both the FIFO
+    /// >   and DRQ status refreshed. Then it invalidates the DMA Active signal.
+    /// > * When the DMAC detects the falling edge of the DMA Active signal, it
+    /// >   invalidates the corresponding DMA ACK signal, and restarts to detect
+    /// >   the external request signals. If a valid request signal is detected,
+    /// >   the next data transfer starts.
+    Handshake,
+}
+
 struct DmacState {
     channels: [ChannelState; Dmac::CHANNEL_COUNT as usize],
     claims: IndexAlloc16,
@@ -281,12 +342,7 @@ impl Dmac {
     }
 }
 
-/// Returns the offset of the DMA_QUEUE_IRQ_EN bit for a given channel index.
-fn queue_irq_en_offset(idx: u8) -> u8 {
-    // Each channel uses 4 bits in the DMAC_IRQ_EN0/DMAC_IRQ_EN1 registers, and
-    // the DMA_QUEUE_IRQ_EN bit is the third bit of that four-bit group.
-    (idx * 4) + 2
-}
+// === impl Channel ===
 
 impl Channel {
     /// Returns the channel index of this channel, from 0 to 15.
@@ -576,65 +632,13 @@ impl Drop for Channel {
     }
 }
 
-/// DMA channel modes.
-///
-/// These configure the behavior of a DMA channel when a transfer completes. The
-/// source and destination modes of a [`Channel`] may be configured using
-/// [`Channel::set_channel_modes`].
-pub enum ChannelMode {
-    /// DMA transfer wait mode.
-    ///
-    /// In this mode, the DMAC will wait for a configurable number of clock
-    /// cycles before automatically starting the next transfer.
-    ///
-    /// The Allwinner documentationh for the D1 describes this mode as follows:
-    ///
-    /// > * When the DMAC detects a valid external request signal, the DMAC
-    /// >   starts to operate the peripheral device. The internal DRQ always
-    /// >   holds high before the transferred data amount reaches the
-    /// >   transferred block length.
-    /// > * When the transferred data amount reaches the transferred block
-    /// >   length, the internal DRQ pulls low automatically.
-    /// > * The internal DRQ holds low for certain clock cycles (W`AIT_CYC`),
-    /// >   and then the DMAC restarts to detect the external requests. If the
-    /// >   external request signal is valid, then the next transfer starts.
-    Wait,
-    /// DMA transfer handshake mode.
-    ///
-    /// In this mode, the DMAC sends the peripheral a DMA Ack signal when the
-    /// transfer completes, and waits for the peripheral to pull the DMA
-    /// Active signal low before starting the next transfer.
-    ///
-    /// The Allwinner documentationh for the D1 describes this mode as follows:
-    ///
-    /// > * When the DMAC detects a valid external request signal, the DMAC
-    /// >   starts to operate the peripheral device. The internal DRQ always
-    /// >   holds high before the transferred data amount reaches the
-    /// >   transferred block length.
-    /// > * When the transferred data amount reaches the transferred block
-    /// >   length, the internal DRQ will be pulled down automatically. For the
-    /// >   last data transfer of the block, the DMAC sends a DMA Last signal
-    /// >   with the DMA commands to the peripheral device. The DMA Last signal
-    /// >   will be packed as part of the DMA commands and transmitted on the
-    /// >   bus. It is used to inform the peripheral device that it is the end
-    /// >   of the data transfer for the current DRQ.
-    /// > * When the peripheral device receives the DMA Last signal, it can
-    /// >   judge that the data transfer for the current DRQ is finished. To
-    /// >   continue the data transfer, it sends a DMA Active signal to the
-    /// >   DMAC.
-    /// >   **Note**: One DMA Active signal will be converted to one DRQ signal
-    /// >   in the DMA module. To generate multiple DRQs, the peripheral device
-    /// >   needs to send out multiple DMA Active signals via the bus protocol.
-    /// > * When the DMAC received the DMA Active signal, it sends back a DMA
-    /// >   ACK signal to the peripheral device.
-    /// > * When the peripheral device receives the DMA ACK signal, it waits for
-    /// >   all the operations on the local device completed, and both the FIFO
-    /// >   and DRQ status refreshed. Then it invalidates the DMA Active signal.
-    /// > * When the DMAC detects the falling edge of the DMA Active signal, it
-    /// >   invalidates the corresponding DMA ACK signal, and restarts to detect
-    /// >   the external request signals. If a valid request signal is detected,
-    /// >   the next data transfer starts.
-    Handshake,
+// === helpers ===
+
+/// Returns the offset of the DMA_QUEUE_IRQ_EN bit for a given channel index.
+fn queue_irq_en_offset(idx: u8) -> u8 {
+    // Each channel uses 4 bits in the DMAC_IRQ_EN0/DMAC_IRQ_EN1 registers, and
+    // the DMA_QUEUE_IRQ_EN bit is the third bit of that four-bit group.
+    (idx * 4) + 2
 }
 
 // Unfortunately, we can't define tests in this crate and have them run on the
