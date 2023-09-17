@@ -217,20 +217,16 @@ impl Dmac {
     /// dropped, the descriptor and its associated memory region may also be
     /// dropped safely.
     ///
-    /// Of course, the transfer may still have completed partially, and if we
+    /// Of course, the transfer may still have completed partially. If we
     /// were writing to a device, the device may be unhappy to have only gotten
-    /// some of the data it wanted. Cancelling an incomplete transfer may result
-    /// in, for example, writing out half of a string to the UART, or only part
-    /// of a structured message over SPI, and so on. But, at least we don't have
-    /// abandoned DMA transfers running around in random parts of the heap you
-    /// probably wanted to use for normal stuff like having strings, or whatever
-    /// it is that people do on the computer.
-    ///
-    /// If the DMA transfer was a read rather than a write, cancelling a partial
-    /// transfer will have no ill effects whatsoever.[^1]
-    ///
-    /// [^1]: Unless you actually wanted to have the data you were reading, but
-    ///     then you probably wouldn't have cancelled it.
+    /// some of the data it wanted. If we were reading from a device, reads may
+    /// have side effects and incomplete reads may leave the device in a weird
+    /// state. Cancelling an incomplete transfer may result in, for example,
+    /// writing out half of a string to the UART, or only part  of a structured
+    /// message over SPI, and so on. But, at least we don't have abandoned DMA
+    /// transfers running around in random parts of the heap you probably wanted
+    /// to use for normal stuff like having strings, or whatever it is that
+    /// people do on the computer.
     pub async unsafe fn transfer(
         &self,
         src: ChannelMode,
@@ -397,20 +393,15 @@ impl Channel {
     /// dropped, the descriptor and its associated memory region may also be
     /// dropped safely.
     ///
-    /// Of course, the transfer may still have completed partially, and if we
     /// were writing to a device, the device may be unhappy to have only gotten
-    /// some of the data it wanted. Cancelling an incomplete transfer may result
-    /// in, for example, writing out half of a string to the UART, or only part
-    /// of a structured message over SPI, and so on. But, at least we don't have
-    /// abandoned DMA transfers running around in random parts of the heap you
-    /// probably wanted to use for normal stuff like having strings, or whatever
-    /// it is that people do on the computer.
-    ///
-    /// If the DMA transfer was a read rather than a write, cancelling a partial
-    /// transfer will have no ill effects whatsoever.[^1]
-    ///
-    /// [^1]: Unless you actually wanted to have the data you were reading, but
-    ///     then you probably wouldn't have cancelled it.
+    /// some of the data it wanted. If we were reading from a device, reads may
+    /// have side effects and incomplete reads may leave the device in a weird
+    /// state. Cancelling an incomplete transfer may result in, for example,
+    /// writing out half of a string to the UART, or only part  of a structured
+    /// message over SPI, and so on. But, at least we don't have abandoned DMA
+    /// transfers running around in random parts of the heap you probably wanted
+    /// to use for normal stuff like having strings, or whatever it is that
+    /// people do on the computer.
     pub async unsafe fn transfer(&mut self, desc: NonNull<Descriptor>) {
         /// Drop guard ensuring that if a `transfer` future is cancelled
         /// before it completes, the in-flight DMA transfer on that channel is dropped.
