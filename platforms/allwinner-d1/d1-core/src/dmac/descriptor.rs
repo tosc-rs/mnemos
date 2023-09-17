@@ -8,7 +8,7 @@
 #[derive(Clone, Debug)]
 #[repr(C, align(4))]
 pub struct Descriptor {
-    configuration: u32,
+    configuration: Configuration,
     source_address: u32,
     destination_address: u32,
     byte_counter: u32,
@@ -16,75 +16,51 @@ pub struct Descriptor {
     link: u32,
 }
 
-mycelium_bitfield::bitfield! {
-    struct Parameter<u32> {
-        const WAIT_CYCLES = 8;
-        const _RESERVED0 = 8;
-        const SRC_HIGH = 2;
-
-    }
-}
-
-// TODO: THIS COULD PROBABLY BE A BITFIELD LIBRARY
-pub struct DescriptorConfig {
-    pub source: *const (),
-    pub destination: *mut (),
-
-    // NOTE: Max is < 2^25, or < 32MiB
-    pub byte_counter: usize,
-    pub link: Option<*const ()>,
-    pub wait_clock_cycles: u8,
-
-    pub bmode: BModeSel,
-
-    pub dest_width: DataWidth,
-    pub dest_addr_mode: AddressMode,
-    pub dest_block_size: BlockSize,
-    pub dest_drq_type: DestDrqType,
-
-    pub src_data_width: DataWidth,
-    pub src_addr_mode: AddressMode,
-    pub src_block_size: BlockSize,
-    pub src_drq_type: SrcDrqType,
+#[derive(Copy, Clone, Debug)]
+pub struct DescriptorBuilder {
+    cfg: Configuration,
+    wait_clock_cycles: u8,
+    link: Option<*const ()>,
 }
 
 mycelium_bitfield::bitfield! {
-    pub struct Configuration<u32> {
+    struct Configuration<u32> {
         /// DMA source DRQ type.
-        pub const SRC_DRQ_TYPE: SrcDrqType;
+        const SRC_DRQ_TYPE: SrcDrqType;
 
         /// DMA source block size.
-        pub const SRC_BLOCK_SIZE: BlockSize;
+        const SRC_BLOCK_SIZE: BlockSize;
 
         /// DMA source address mode.
-        pub const SRC_ADDR_MODE: AddressMode;
+        const SRC_ADDR_MODE: AddressMode;
 
         /// DMA source data width.
-        pub const SRC_DATA_WIDTH: DataWidth;
+        const SRC_DATA_WIDTH: DataWidth;
 
-        const _RESERVED_0 = 4;
+        const _RESERVED_0 = 5;
 
         /// DMA destination DRQ type
-        pub const DEST_DRQ_TYPE: DestDrqType;
+        const DEST_DRQ_TYPE: DestDrqType;
 
         /// DMA destination block size.
-        pub const DEST_BLOCK_SIZE: BlockSize;
+        const DEST_BLOCK_SIZE: BlockSize;
 
         /// DMA destination address mode.
-        pub const DEST_ADDR_MODE: AddressMode;
+        const DEST_ADDR_MODE: AddressMode;
 
         /// DMA destination data width.
-        pub const DEST_DATA_WIDTH: DataWidth;
+        const DEST_DATA_WIDTH: DataWidth;
 
         const _RESERVED_1 = 3;
 
         /// BMODE select
-        pub const BMODE_SEL: BModeSel;
+        const BMODE_SEL: BModeSel;
     }
 }
 
 mycelium_bitfield::enum_from_bits! {
     #[derive(Debug, Eq, PartialEq)]
+    #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
     pub enum SrcDrqType<u8> {
         Sram = 0,
         Dram = 1,
@@ -118,6 +94,7 @@ mycelium_bitfield::enum_from_bits! {
 
 mycelium_bitfield::enum_from_bits! {
     #[derive(Debug, Eq, PartialEq)]
+    #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
     pub enum DestDrqType<u8> {
         Sram = 0,
         Dram = 1,
@@ -151,6 +128,7 @@ mycelium_bitfield::enum_from_bits! {
 // TODO: Verify bits or bytes?
 mycelium_bitfield::enum_from_bits! {
     #[derive(Debug, Eq, PartialEq)]
+    #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
     pub enum BlockSize<u8> {
         Byte1 = 0b00,
         Byte4 = 0b01,
@@ -161,6 +139,7 @@ mycelium_bitfield::enum_from_bits! {
 
 mycelium_bitfield::enum_from_bits! {
     #[derive(Debug, Eq, PartialEq)]
+    #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
     pub enum AddressMode<u8> {
         LinearMode = 0,
         IoMode = 1,
@@ -169,6 +148,7 @@ mycelium_bitfield::enum_from_bits! {
 
 mycelium_bitfield::enum_from_bits! {
     #[derive(Debug, Eq, PartialEq)]
+    #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
     pub enum DataWidth<u8> {
         Bit8 = 0b00,
         Bit16 = 0b01,
@@ -179,178 +159,238 @@ mycelium_bitfield::enum_from_bits! {
 
 mycelium_bitfield::enum_from_bits! {
     #[derive(Debug, Eq, PartialEq)]
+    #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
     pub enum BModeSel<u8> {
         Normal = 0,
         BMode = 1,
     }
 }
 
-// Descriptor
-
-impl Descriptor {
-    pub fn set_source(&mut self, source: u64) {
-        assert!(source < (1 << 34));
-        self.source_address = source as u32;
-        //                  332222222222 11 11 11111100 00000000
-        //                  109876543210 98 76 54321098 76543210
-        self.parameter &= 0b111111111111_11_00_11111111_11111111;
-        self.parameter |= (((source >> 32) & 0b11) << 16) as u32;
+impl DescriptorBuilder {
+    pub const fn new() -> Self {
+        Self {
+            cfg: Configuration::new(),
+            wait_clock_cycles: 0,
+            link: None,
+        }
     }
 
-    pub fn set_dest(&mut self, dest: u64) {
-        assert!(dest < (1 << 34));
-        self.destination_address = dest as u32;
-        //                  332222222222 11 11 11111100 00000000
-        //                  109876543210 98 76 54321098 76543210
-        self.parameter &= 0b111111111111_00_11_11111111_11111111;
-        self.parameter |= (((dest >> 32) & 0b11) << 18) as u32;
+    pub fn src_drq_type(self, val: SrcDrqType) -> Self {
+        Self {
+            cfg: self.cfg.with(Configuration::SRC_DRQ_TYPE, val),
+            ..self
+        }
     }
 
-    pub fn end_link(&mut self) {
-        self.link = 0xFFFF_F800;
+    pub fn src_block_size(self, val: BlockSize) -> Self {
+        Self {
+            cfg: self.cfg.with(Configuration::SRC_BLOCK_SIZE, val),
+            ..self
+        }
     }
-}
 
-impl TryFrom<DescriptorConfig> for Descriptor {
-    type Error = ();
+    pub fn src_addr_mode(self, val: AddressMode) -> Self {
+        Self {
+            cfg: self.cfg.with(Configuration::SRC_ADDR_MODE, val),
+            ..self
+        }
+    }
 
-    fn try_from(value: DescriptorConfig) -> Result<Self, Self::Error> {
-        let source = value.source as usize;
-        let destination = value.destination as usize;
+    pub fn src_data_width(self, val: DataWidth) -> Self {
+        Self {
+            cfg: self.cfg.with(Configuration::SRC_DATA_WIDTH, val),
+            ..self
+        }
+    }
+
+    pub fn dest_drq_type(self, val: DestDrqType) -> Self {
+        Self {
+            cfg: self.cfg.with(Configuration::DEST_DRQ_TYPE, val),
+            ..self
+        }
+    }
+
+    pub fn dest_block_size(self, val: BlockSize) -> Self {
+        Self {
+            cfg: self.cfg.with(Configuration::DEST_BLOCK_SIZE, val),
+            ..self
+        }
+    }
+
+    pub fn dest_addr_mode(self, val: AddressMode) -> Self {
+        Self {
+            cfg: self.cfg.with(Configuration::DEST_ADDR_MODE, val),
+            ..self
+        }
+    }
+
+    pub fn dest_data_width(self, val: DataWidth) -> Self {
+        Self {
+            cfg: self.cfg.with(Configuration::DEST_DATA_WIDTH, val),
+            ..self
+        }
+    }
+
+    pub fn bmode_sel(self, val: BModeSel) -> Self {
+        Self {
+            cfg: self.cfg.with(Configuration::BMODE_SEL, val),
+            ..self
+        }
+    }
+
+    pub const fn link(self, link: Option<*const ()>) -> Self {
+        Self { link, ..self }
+    }
+
+    pub const fn wait_clock_cycles(self, wait_clock_cycles: u8) -> Self {
+        Self {
+            wait_clock_cycles,
+            ..self
+        }
+    }
+
+    pub fn build(
+        self,
+        source: *const (),
+        destination: *mut (),
+        byte_counter: u32,
+    ) -> Result<Descriptor, &'static str> {
+        let source = source as usize;
+        let destination = destination as usize;
 
         if source >= (1 << 34) {
-            return Err(());
+            return Err("source address may not exceed 34 bits");
         }
         if destination >= (1 << 34) {
-            return Err(());
+            return Err("destination address may not exceed 34 bits");
         }
-        if value.byte_counter >= (1 << 25) {
-            return Err(());
+        if byte_counter >= (1 << 25) {
+            return Err("byte counter may not exceed 25 bits");
         }
-        if let Some(link) = value.link {
-            let link = link as usize;
-            if (link & 0b11) != 0 {
-                return Err(());
+        if let Some(link) = self.link {
+            if (link as usize & 0b11) != 0 {
+                return Err("link address's lowest two bits must be unset");
             }
         }
 
-        let mut descriptor = Descriptor {
-            configuration: 0,
-            source_address: 0,
-            destination_address: 0,
-            byte_counter: 0,
-            parameter: 0,
-            link: 0,
-        };
+        let mut parameter = self.wait_clock_cycles as u32;
 
         // Set source
-        descriptor.source_address = source as u32;
-        //                        332222222222 11 11 11111100 00000000
-        //                        109876543210 98 76 54321098 76543210
-        descriptor.parameter &= 0b111111111111_11_00_11111111_11111111;
-        descriptor.parameter |= (((source >> 32) & 0b11) << 16) as u32;
+        let source_address = source as u32;
+        //             332222222222 11 11 11111100 00000000
+        //             109876543210 98 76 54321098 76543210
+        parameter &= 0b111111111111_11_00_11111111_11111111;
+        parameter |= (((source >> 32) & 0b11) << 16) as u32;
 
         // Set dest
-        descriptor.destination_address = destination as u32;
-        //                        332222222222 11 11 11111100 00000000
-        //                        109876543210 98 76 54321098 76543210
-        descriptor.parameter &= 0b111111111111_00_11_11111111_11111111;
-        descriptor.parameter |= (((destination >> 32) & 0b11) << 18) as u32;
+        let destination_address = destination as u32;
+        //             332222222222 11 11 11111100 00000000
+        //             109876543210 98 76 54321098 76543210
+        parameter &= 0b111111111111_00_11_11111111_11111111;
+        parameter |= (((destination >> 32) & 0b11) << 18) as u32;
 
-        descriptor.byte_counter = value.byte_counter as u32;
+        let link = self
+            .link
+            .map(|link| {
+                // We already verified above the low bits of `value.link` are clear,
+                // no need to re-mask the current state of `descriptor.link`.
+                link as u32 | ((link as usize >> 32) as u32) & 0b11
+            })
+            .unwrap_or(Descriptor::END_LINK);
 
-        // Set configuration
-        descriptor.configuration |= value.bmode.to_desc_bits();
-        descriptor.configuration |= value.dest_width.to_desc_bits_dest();
-        descriptor.configuration |= value.dest_addr_mode.to_desc_bits_dest();
-        descriptor.configuration |= value.dest_block_size.to_desc_bits_dest();
-        descriptor.configuration |= value.dest_drq_type.to_desc_bits();
-        descriptor.configuration |= value.src_data_width.to_desc_bits_src();
-        descriptor.configuration |= value.src_addr_mode.to_desc_bits_src();
-        descriptor.configuration |= value.src_block_size.to_desc_bits_src();
-        descriptor.configuration |= value.src_drq_type.to_desc_bits();
+        Ok(Descriptor {
+            configuration: self.cfg,
+            source_address,
+            destination_address,
+            byte_counter,
+            parameter,
+            link,
+        })
+    }
+}
 
-        if let Some(link) = value.link {
-            descriptor.link = link as u32;
-            // We already verified above the low bits of `value.link` are clear,
-            // no need to re-mask the current state of `descriptor.link`.
-            descriptor.link |= ((link as usize >> 32) as u32) & 0b11
-        } else {
-            descriptor.end_link();
+// Descriptor
+
+impl Descriptor {
+    const END_LINK: u32 = 0xFFFF_F800;
+
+    pub const fn builder() -> DescriptorBuilder {
+        DescriptorBuilder::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use proptest::{prop_assert_eq, proptest};
+
+    use super::*;
+
+    #[test]
+    fn configuration_is_valid() {
+        Configuration::assert_valid();
+    }
+
+    #[derive(proptest_derive::Arbitrary, Debug)]
+    struct ArbitraryConfig {
+        src_drq_type: SrcDrqType,
+        src_block_size: BlockSize,
+        src_addr_mode: AddressMode,
+        src_data_width: DataWidth,
+        dest_drq_type: DestDrqType,
+        dest_block_size: BlockSize,
+        dest_addr_mode: AddressMode,
+        dest_data_width: DataWidth,
+        bmode_sel: BModeSel,
+    }
+
+    impl ArbitraryConfig {
+        fn manual_pack(&self) -> u32 {
+            // 6 bits, no shift
+            let src_drq_type = ((self.src_drq_type as u8) & 0b11_1111) as u32;
+            let src_block_size = (((self.src_block_size as u8) & 0b11) as u32) << 6;
+            let src_addr_mode = (((self.src_addr_mode as u8) & 0b1) as u32) << 8;
+            let src_data_width = (((self.src_data_width as u8) & 0b11) as u32) << 9;
+
+            let dest_drq_type = (((self.dest_drq_type as u8) & 0b11_1111) as u32) << 16;
+            let dest_block_size = (((self.dest_block_size as u8) & 0b11) as u32) << 22;
+            let dest_addr_mode = (((self.dest_addr_mode as u8) & 0b1) as u32) << 24;
+            let dest_data_width = (((self.dest_data_width as u8) & 0b11) as u32) << 25;
+
+            let bmode_sel = (((self.bmode_sel as u8) & 0b1) as u32) << 30;
+
+            src_drq_type
+                | src_block_size
+                | src_addr_mode
+                | src_data_width
+                | dest_drq_type
+                | dest_block_size
+                | dest_addr_mode
+                | dest_data_width
+                | bmode_sel
         }
-
-        Ok(descriptor)
-    }
-}
-
-// DescriptorConfig
-
-// SrcDrqType
-
-impl SrcDrqType {
-    #[inline(always)]
-    fn to_desc_bits(self) -> u32 {
-        // 6 bits, no shift
-        ((self as u8) & 0b11_1111) as u32
-    }
-}
-
-// DestDrqType
-
-impl DestDrqType {
-    #[inline(always)]
-    fn to_desc_bits(self) -> u32 {
-        (((self as u8) & 0b11_1111) as u32) << 16
-    }
-}
-
-// BlockSize
-
-impl BlockSize {
-    #[inline(always)]
-    fn to_desc_bits_dest(self) -> u32 {
-        (((self as u8) & 0b11) as u32) << 22
     }
 
-    #[inline(always)]
-    fn to_desc_bits_src(self) -> u32 {
-        (((self as u8) & 0b11) as u32) << 6
-    }
-}
+    proptest! {
+        #[test]
+        fn pack_configuration(cfg: ArbitraryConfig) {
+            let config = DescriptorBuilder::new()
+                .src_drq_type(cfg.src_drq_type)
+                .src_block_size(cfg.src_block_size)
+                .src_addr_mode(cfg.src_addr_mode)
+                .src_data_width(cfg.src_data_width)
+                .dest_drq_type(cfg.dest_drq_type)
+                .dest_block_size(cfg.dest_block_size)
+                .dest_addr_mode(cfg.dest_addr_mode)
+                .dest_data_width(cfg.dest_data_width)
+                .bmode_sel(cfg.bmode_sel).cfg;
 
-// AddressMode
-
-impl AddressMode {
-    #[inline(always)]
-    fn to_desc_bits_src(self) -> u32 {
-        (((self as u8) & 0b1) as u32) << 8
-    }
-
-    #[inline(always)]
-    fn to_desc_bits_dest(self) -> u32 {
-        (((self as u8) & 0b1) as u32) << 24
-    }
-}
-
-// DataWidth
-
-impl DataWidth {
-    #[inline(always)]
-    fn to_desc_bits_dest(self) -> u32 {
-        (((self as u8) & 0b11) as u32) << 25
-    }
-
-    #[inline(always)]
-    fn to_desc_bits_src(self) -> u32 {
-        (((self as u8) & 0b11) as u32) << 9
-    }
-}
-
-// BModeSel
-
-impl BModeSel {
-    #[inline(always)]
-    fn to_desc_bits(self) -> u32 {
-        (((self as u8) & 0b1) as u32) << 30
+            prop_assert_eq!(
+                cfg.manual_pack(),
+                config.bits(),
+                "\n{:032b} (expected), vs:\n{}",
+                cfg.manual_pack(),
+                config
+            );
+        }
     }
 }

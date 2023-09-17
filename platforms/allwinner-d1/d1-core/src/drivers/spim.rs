@@ -7,9 +7,7 @@ use core::ptr::NonNull;
 
 use crate::ccu::Ccu;
 use crate::dmac::{
-    descriptor::{
-        AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType,
-    },
+    descriptor::{AddressMode, BlockSize, DataWidth, Descriptor, DestDrqType, SrcDrqType},
     ChannelMode, Dmac,
 };
 use d1_pac::{GPIO, SPI_DBI};
@@ -124,6 +122,17 @@ impl SpiSenderServer {
                 let txd_ptr: *mut u8 = txd_ptr.cast();
                 let txd_ptr: *mut () = txd_ptr.cast();
 
+                let descr_cfg = Descriptor::builder()
+                    .dest_data_width(DataWidth::Bit8)
+                    .dest_addr_mode(AddressMode::IoMode)
+                    .dest_block_size(BlockSize::Byte1)
+                    .dest_drq_type(DestDrqType::Uart0Tx)
+                    .src_data_width(DataWidth::Bit8)
+                    .src_addr_mode(AddressMode::LinearMode)
+                    .src_block_size(BlockSize::Byte1)
+                    .src_drq_type(SrcDrqType::Dram)
+                    .wait_clock_cycles(0);
+
                 loop {
                     let Message { msg, reply } = reqs.next_request().await;
                     let SpiSenderRequest::Send(ref payload) = msg.body;
@@ -150,23 +159,9 @@ impl SpiSenderServer {
                         w
                     });
 
-                    let d_cfg = DescriptorConfig {
-                        source: payload.as_slice().as_ptr().cast(),
-                        destination: txd_ptr,
-                        byte_counter: len,
-                        link: None,
-                        wait_clock_cycles: 0,
-                        bmode: BModeSel::Normal,
-                        dest_width: DataWidth::Bit8,
-                        dest_addr_mode: AddressMode::IoMode,
-                        dest_block_size: BlockSize::Byte1,
-                        dest_drq_type: DestDrqType::Spi1Tx,
-                        src_data_width: DataWidth::Bit8,
-                        src_addr_mode: AddressMode::LinearMode,
-                        src_block_size: BlockSize::Byte1,
-                        src_drq_type: SrcDrqType::Dram,
-                    };
-                    let descriptor = d_cfg.try_into().map_err(drop)?;
+                    let descriptor = descr_cfg
+                        .build(payload.as_slice().as_ptr().cast(), txd_ptr, len as u32)
+                        .expect("failed to build SPI1_TX DMA descriptor");
 
                     // start the DMA transfer.
                     unsafe {

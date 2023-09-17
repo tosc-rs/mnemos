@@ -10,9 +10,7 @@ use core::{
 
 use crate::ccu::Ccu;
 use crate::dmac::{
-    descriptor::{
-        AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType,
-    },
+    descriptor::{AddressMode, BlockSize, DataWidth, Descriptor, DestDrqType, SrcDrqType},
     ChannelMode, Dmac,
 };
 use kernel::{
@@ -113,6 +111,16 @@ impl D1Uart {
 
     // Send loop that listens to the bbqueue consumer, and sends it as DMA transactions on the UART
     async fn sending(cons: Consumer, dmac: Dmac) {
+        let descr_cfg = Descriptor::builder()
+            .dest_data_width(DataWidth::Bit8)
+            .dest_addr_mode(AddressMode::IoMode)
+            .dest_block_size(BlockSize::Byte1)
+            .dest_drq_type(DestDrqType::Uart0Tx)
+            .src_data_width(DataWidth::Bit8)
+            .src_addr_mode(AddressMode::LinearMode)
+            .src_block_size(BlockSize::Byte1)
+            .src_drq_type(SrcDrqType::Dram)
+            .wait_clock_cycles(0);
         loop {
             let rx = cons.read_grant().await;
             let len = rx.len();
@@ -120,23 +128,9 @@ impl D1Uart {
 
             let rx_sli: &[u8] = &rx;
 
-            let d_cfg = DescriptorConfig {
-                source: rx_sli.as_ptr().cast(),
-                destination: thr_addr,
-                byte_counter: rx_sli.len(),
-                link: None,
-                wait_clock_cycles: 0,
-                bmode: BModeSel::Normal,
-                dest_width: DataWidth::Bit8,
-                dest_addr_mode: AddressMode::IoMode,
-                dest_block_size: BlockSize::Byte1,
-                dest_drq_type: DestDrqType::Uart0Tx,
-                src_data_width: DataWidth::Bit8,
-                src_addr_mode: AddressMode::LinearMode,
-                src_block_size: BlockSize::Byte1,
-                src_drq_type: SrcDrqType::Dram,
-            };
-            let descriptor = d_cfg.try_into().unwrap();
+            let descriptor = descr_cfg
+                .build(rx_sli.as_ptr().cast(), thr_addr, rx_sli.len() as u32)
+                .expect("failed to build UART0 DMA transfer descriptor");
 
             // start the DMA transfer.
             unsafe {

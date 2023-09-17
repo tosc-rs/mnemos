@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 4f86fc0f074d90d51a18ecfed5bace9a7d75c234378f2ff334584ffb761abe86 # shrinks to cfg = ArbitraryConfig { src_drq_type: Sram, src_block_size: Byte1, src_addr_mode: LinearMode, src_data_width: Bit8, dest_drq_type: Sram, dest_block_size: Byte1, dest_addr_mode: LinearMode, dest_data_width: Bit16, bmode_sel: Normal }
