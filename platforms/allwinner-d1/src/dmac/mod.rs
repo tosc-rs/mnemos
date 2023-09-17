@@ -71,7 +71,7 @@ pub enum ChannelMode {
     /// In this mode, the DMAC will wait for a configurable number of clock
     /// cycles before automatically starting the next transfer.
     ///
-    /// The Allwinner documentationh for the D1 describes this mode as follows:
+    /// The Allwinner documentation for the D1 describes this mode as follows:
     ///
     /// > * When the DMAC detects a valid external request signal, the DMAC
     /// >   starts to operate the peripheral device. The internal DRQ always
