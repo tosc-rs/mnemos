@@ -11,13 +11,31 @@
 //! config = { path = "../../source/config", features = ["use-std"] }
 //! ```
 //!
-//! And ensure your build.rs contains:
+//! And ensure your build.rs contains a call to [`buildtime::render_file`], to
+//! render a single config file:
 //!
-//! ```rust,skip
-//! # #![allow(clippy::needless_doctest_main)]
-//! use mnemos_config::buildtime::render_project;
+//! ```rust,no_run
+//! # #![allow(clippy::needless_doctest_main, non_camel_case_types)]
+//! # #[derive(serde::Serialize, serde::Deserialize)]
+//! # struct YOUR_CONFIG_TYPE(u8);
+//! use mnemos_config::buildtime::render_file;
 //! fn main() {
-//!     render_project::<YOUR_CONFIG_TYPE>("YOUR_PLATFORM.toml").unwrap();
+//!     // to render one config file:
+//!     render_file::<YOUR_CONFIG_TYPE>("YOUR_PLATFORM.toml").unwrap();
+//! }
+//! ```
+//!
+//! To render all config files in a directory, [`buildtime::render_all`] may be
+//! used instead:
+//!
+//! ```rust,no_run
+//! # #![allow(clippy::needless_doctest_main, non_camel_case_types)]
+//! # #[derive(serde::Serialize, serde::Deserialize)]
+//! # struct YOUR_CONFIG_TYPE(u8);
+//! use mnemos_config::buildtime::render_all;
+//! fn main() {
+//!     // to render all config files in the `board-configs` directory:
+//!     render_all::<YOUR_CONFIG_TYPE>("board-configs").unwrap();
 //! }
 //! ```
 //!
@@ -32,8 +50,11 @@
 //!
 //! And then you can use this in your main function:
 //!
-//! ```rust,skip
-//! let config = mnemos_config::load_configuration!(YOUR_CONFIG_TYPE).unwrap();
+//! ```rust,ignore
+//! # #![allow(non_camel_case_types)]
+//! # #[derive(serde::Serialize, serde::Deserialize)]
+//! # struct YOUR_CONFIG_TYPE(u8);
+//! let config = mnemos_config::include_config!(YOUR_CONFIG_TYPE).unwrap();
 //! ```
 //!
 //! ## Make an external config crate
@@ -88,6 +109,10 @@ pub mod buildtime {
     }
 
     /// Render all configuration files in the given directory.
+    ///
+    /// The resulting configs are stored in the cargo `OUT_DIR`, and may be
+    /// referenced by name in the main platform binary when using
+    /// [`include_config!()`].
     pub fn render_all<Platform>(config_dir: impl AsRef<Path>) -> Result<()>
     where
         Platform: Serialize + DeserializeOwned + 'static,
@@ -176,7 +201,7 @@ pub mod buildtime {
     }
 
     /// Load a configuration file from the given path, will be made available
-    /// to the main platform binary when they call [include_config!()].
+    /// to the main platform binary when they call [`include_config!()`].
     pub fn render_file<Platform>(path: impl AsRef<Path>) -> Result<()>
     where
         Platform: Serialize + DeserializeOwned + 'static,
