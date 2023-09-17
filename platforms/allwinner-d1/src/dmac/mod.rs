@@ -3,7 +3,7 @@
 
 use core::{
     ptr::NonNull,
-    sync::atomic::{fence, AtomicU8, Ordering},
+    sync::atomic::{fence, Ordering},
 };
 
 use d1_pac::{
@@ -13,15 +13,17 @@ use d1_pac::{
 };
 
 use crate::ccu::Ccu;
-use kernel::maitake::sync::WaitCell;
+use kernel::maitake::sync::{WaitCell, WaitQueue};
+use mnemos_bitslab::index::IndexAlloc16;
 
 use self::descriptor::Descriptor;
 
 pub mod descriptor;
 
+#[derive(Copy, Clone)]
 pub struct Dmac {
-    state: &'static DmacState,
-    dmac: DMAC,
+    // this struct is essentially used as a "yes, the DMAC is initialized now" token...
+    _p: (),
 }
 
 pub struct Channel {
@@ -30,14 +32,13 @@ pub struct Channel {
 }
 
 struct DmacState {
-    used_channels: AtomicU8,
     channels: [ChannelState; Dmac::CHANNEL_COUNT as usize],
-    allocated: AtomicU16,
+    claims: IndexAlloc16,
+    claim_wait: WaitQueue,
 }
 
 struct ChannelState {
     waker: WaitCell,
-    state: AtomicU8,
 }
 
 static DMAC_STATE: DmacState = {
@@ -45,114 +46,134 @@ static DMAC_STATE: DmacState = {
     #[allow(clippy::declare_interior_mutable_const)]
     const NEW_CHANNEL: ChannelState = ChannelState {
         waker: WaitCell::new(),
-        state: AtomicU8::new(0),
     };
 
     DmacState {
-        used_channels: AtomicU8::new(u8::MAX),
         channels: [NEW_CHANNEL; Dmac::CHANNEL_COUNT as usize],
-        allocated: AtomicU16::new(0),
+        claims: IndexAlloc16::new(),
+        claim_wait: WaitQueue::new(),
     }
 };
 
 impl Dmac {
     pub const CHANNEL_COUNT: u8 = 16;
-    const UNINITIALIZED: u8 = u8::MAX;
 
+    /// Initializes the DMAC, enabling the queue IRQ for all channels.
     pub fn new(mut dmac: DMAC, ccu: &mut Ccu) -> Self {
-        DMAC_STATE
-            .used_channels
-            .compare_exchange(Self::UNINITIALIZED, 0, Ordering::AcqRel, Ordering::Acquire)
-            .expect("DMAC cannot be initialized twice!");
-        ccu.enable_module(&mut dmac);
-        Self {
-            state: &DMAC_STATE,
-            dmac,
-        }
-    }
-
-    /// Allocates a new DMA [`Channel`].
-    pub fn allocate_channel(&self) -> Option<Channel> {
         /// Set the `DMA_QUEUE_IRQ_EN` bit for the given channel index.
         fn set_queue_irq_en(idx: u8, bits: u32) -> u32 {
             bits | (1 << queue_irq_en_offset(idx))
         }
-
-        self.state
-            .channels
-            .iter()
-            .enumerate()
-            .find_map(|(idx, channel)| {
-                // can we claim this channel?
-                channel
-                    .state
-                    .compare_exchange(
-                        ChannelState::UNCLAIMED,
-                        ChannelState::CLAIMED,
-                        Ordering::AcqRel,
-                        Ordering::Acquire,
-                    )
-                    .ok()?;
-
-                DMAC_STATE.used_channels.fetch_add(1, Ordering::AcqRel);
-
-                let idx = idx as u8;
-
-                // enable the queue IRQ for this channel.
-                critical_section::with(|_cs| unsafe {
-                    if idx < 8 {
-                        // if the channel number is 0-7, it's in the `DMAC_IRQ_EN0` register.
-                        self.dmac
-                            .dmac_irq_en0
-                            .modify(|r, w| w.bits(set_queue_irq_en(idx, r.bits())));
-                    } else {
-                        // otherwise, if the channel number is 8-15, it's in the
-                        // `DMAC_IRQ_EN1` register, instead.
-                        self.dmac
-                            .dmac_irq_en1
-                            .modify(|r, w| w.bits(set_queue_irq_en(idx - 8, r.bits())));
-                    }
-                });
-
-                Some(Channel { idx, channel })
-            })
+        ccu.enable_module(&mut dmac);
+        // enable the queue IRQ for this channel.
+        critical_section::with(|_cs| unsafe {
+            for idx in 0..16 {
+                if idx < 8 {
+                    // if the channel number is 0-7, it's in the `DMAC_IRQ_EN0` register.
+                    dmac.dmac_irq_en0
+                        .modify(|r, w| w.bits(set_queue_irq_en(idx, r.bits())));
+                } else {
+                    // otherwise, if the channel number is 8-15, it's in the
+                    // `DMAC_IRQ_EN1` register, instead.
+                    dmac.dmac_irq_en1
+                        .modify(|r, w| w.bits(set_queue_irq_en(idx - 8, r.bits())));
+                }
+            }
+        });
+        Self { _p: () }
     }
 
-    fn take_first_index(&self) -> Option<u8> {
-        let mut bitmap = self.state.allocated.load(Ordering::Acquire);
-        loop {
-            let trailing_zeros = bitmap.trailing_zeros();
-            let idx = if trailing_zeros > 0 {
-                trailing_zeros - 1
-            } else {
-                let leading_zeros = bitmap.leading_zeros();
-                if leading_zeros > 0 {
-                    u16::MAX - leading_zeros
-                } else {
-                    let mut i = bitmap.trailing_ones();
-                    'scan: loop {
-                        if i == 16 {
-                            return None;
-                        }
+    /// Performs a DMA transfer described by the provided [`Descriptor`] on any
+    /// available free DMA [`Channel`].
+    ///
+    /// This function will first use [`Dmac::claim_channel`] to claim an
+    /// available DMA channel, waiting for one to become available if all
+    /// channels are currently in use. Once a channel has been acquired, it sets
+    /// the `src` and `dst` [`ChannelMode`]s using
+    /// [`Channel::set_channel_modes`]. Then, it performs the transfer using
+    /// [`Channel::transfer`].
+    ///
+    /// If multiple transfers will be made in sequence, it may be more efficient to
+    /// call [`Dmac::claim_channel`] once and perform multiple transfers on the same
+    /// channel, to avoid releasing and re-claiming a channel in between transfers.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure that the descriptor pointed to by `desc`, and the
+    /// associated memory region used by the transfer, is valid for as long as
+    /// the DMA transfer is active. When this function returns, the transfer has
+    /// completed, and it is safe to drop the descriptor. If this future is
+    /// cancelled, the transfer is cancelled and the descriptor
+    /// and its associated buffer may be dropped safely. However, **it is super
+    /// ultra not okay to [`core::mem::forget`] this future**. If you
+    /// `mem::forget` a DMA transfer future inside your driver, you deserve
+    /// whatever happens next.
+    ///
+    /// # Cancel Safety
+    ///
+    /// Dropping this future cancels the DMA transfer. If this future is
+    /// dropped, the descriptor and its associated memory region may also be
+    /// dropped safely.
+    pub async unsafe fn transfer(
+        &self,
+        src: ChannelMode,
+        dst: ChannelMode,
+        desc: NonNull<Descriptor>,
+    ) {
+        let mut channel = self.claim_channel().await;
+        channel.set_channel_modes(src, dst);
+        channel.transfer(desc).await
+    }
 
-                        if bitmap & (1 << i) == 0 {
-                            break 'scan i;
-                        }
-
-                        i += 1;
-                    }
-                }
-            };
-            match self.state.allocated.compare_exchange(
-                bitmap,
-                bitmap | (1 << idx),
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            ) {
-                Ok(_) => return Some(idx as u8),
-                Err(b) => bitmap = b,
-            }
+    /// Claims an idle DMA channel, waiting for one to become available if none
+    /// are currently idle.
+    ///
+    /// For a version of this method which does not wait, see [`Dmac::try_claim_channel`].
+    pub async fn claim_channel(&self) -> Channel {
+        // first, try to claim a channel without registering with the WaitQueue,
+        // so that we don't need to lock to remove our wait future from the
+        // WaitQueue's linked list. this is a silly eliza optimization and
+        // everything will still work fine without it.
+        if let Some(channel) = self.try_claim_channel() {
+            return channel;
         }
+
+        loop {
+            // if no channel was available, register our waker and try again.
+            let wait = DMAC_STATE.claim_wait.wait();
+            futures::pin_mut!(wait);
+            // ensure the `WaitQueue` entry is registered before we actually
+            // check the claim state.
+            let _ = wait.as_mut().subscribe();
+
+            // try to claim a channel again, returning it if we got one.
+            if let Some(channel) = self.try_claim_channel() {
+                return channel;
+            }
+
+            // welp, someone else got it. oh well. wait for the next one.
+            wait.await
+                .expect("DMAC channel allocation WaitQueue is never closed.");
+        }
+    }
+
+    /// Claims an idle DMA channel, if one is available.
+    ///
+    /// If no DMA channels are currently free, this function returns [`None`].
+    /// To instead wait for an active DMA channel to become free, use
+    /// [`Dmac::claim_channel`] instead.
+    ///
+    /// # Returns
+    ///
+    /// - [`Some`]`(`[`Channel`]`)` containing a free DMA channel ready to use
+    ///   for transfers, if one was available.
+    /// - [`None`] if all DMA channels are currently in use.
+    pub fn try_claim_channel(&self) -> Option<Channel> {
+        let idx = DMAC_STATE.claims.allocate()?;
+        Some(Channel {
+            idx,
+            channel: &DMAC_STATE.channels[idx as usize],
+        })
     }
 
     pub(crate) fn handle_interrupt() {
@@ -199,12 +220,6 @@ fn queue_irq_en_offset(idx: u8) -> u8 {
     // Each channel uses 4 bits in the DMAC_IRQ_EN0/DMAC_IRQ_EN1 registers, and
     // the DMA_QUEUE_IRQ_EN bit is the third bit of that four-bit group.
     (idx * 4) + 2
-}
-
-impl ChannelState {
-    const UNCLAIMED: u8 = 0;
-    const CLAIMED: u8 = 1;
-    const IN_FLIGHT: u8 = 2;
 }
 
 impl Channel {
@@ -281,38 +296,49 @@ impl Channel {
         }
     }
 
+    /// Performs a DMA transfer described by the provided [`Descriptor`] on this
+    /// channel.
+    ///
     /// # Safety
     ///
-    /// The caller must ensure that the descriptor pointed to by `desc` is valid
-    /// for as long as the DMA transfer is active. When this function returns,
-    /// the transfer has completed, and it is safe to drop the descriptor.
-    /// However, if this future is cancelled before it completes, the DMA
-    /// transfer may still be active, and must be terminated using [`stop_dma`]
-    /// before the descriptor may be dropped.
+    /// The caller must ensure that the descriptor pointed to by `desc`, and the
+    /// associated memory region used by the transfer, is valid for as long as
+    /// the DMA transfer is active. When this function returns, the transfer has
+    /// completed, and it is safe to drop the descriptor. If this future is
+    /// cancelled, the transfer is cancelled and the descriptor
+    /// and its associated buffer may be dropped safely. However, **it is super
+    /// ultra not okay to [`core::mem::forget`] this future**. If you
+    /// `mem::forget` a DMA transfer future inside your driver, you deserve
+    /// whatever happens next.
     ///
     /// # Cancel Safety
     ///
-    /// Dropping this future does *not* cancel the DMA transfer, and the
-    /// descriptor may not be dropped until the DMA transfer has been canceled.
-    // TODO(eliza): cancel the DMA on drop...
-    pub async unsafe fn run_descriptor(&mut self, desc: NonNull<Descriptor>) {
-        // mark the channel as in-flight.
-        let prev_state = self
-            .channel
-            .state
-            .fetch_or(ChannelState::IN_FLIGHT, Ordering::AcqRel);
-        assert_eq!(
-            prev_state & ChannelState::IN_FLIGHT,
-            0,
-            "cannot start DMA transfer on a channel that already has an in-flight transfer",
-        );
+    /// Dropping this future cancels the DMA transfer. If this future is
+    /// dropped, the descriptor and its associated memory region may also be
+    /// dropped safely.
+    pub async unsafe fn transfer(&mut self, desc: NonNull<Descriptor>) {
+        /// Drop guard ensuring that if a `transfer` future is cancelled
+        /// before it completes, the in-flight DMA transfer on that channel is dropped.
+        struct DefinitelyStop<'chan>(&'chan mut Channel);
+        impl Drop for DefinitelyStop<'_> {
+            fn drop(&mut self) {
+                unsafe { self.0.stop_dma() }
+            }
+        }
 
         // pre-subscribe to the waitcell to ensure our waker is registered
         // before starting the DMA transfer.
+        // if we're cancelled at this await point, that's fine, because we
+        // haven't actually begun a transfer.
         let wait = self.channel.waker.subscribe().await;
 
         // actually start the DMA transfer.
         self.start_descriptor(desc);
+
+        // ensure the transfer is stopped if this future is cancelled. if we're
+        // cancelled at the next await point, it is necessary to ensure the
+        // transfer is terminated, which this drop guard ensures.
+        let _cancel = DefinitelyStop(self);
 
         // wait for the DMA transfer to complete.
         let _wait = wait.await;
@@ -320,12 +346,6 @@ impl Channel {
             _wait.is_ok(),
             "DMA channel WaitCells should never be closed"
         );
-
-        // stop the DMA transfer.
-        self.stop_dma();
-        self.channel
-            .state
-            .fetch_and(!ChannelState::IN_FLIGHT, Ordering::Release);
     }
 
     pub unsafe fn set_channel_modes(&mut self, src: ChannelMode, dst: ChannelMode) {
@@ -342,6 +362,11 @@ impl Channel {
         })
     }
 
+    /// Begins a DMA transfer *without* waiting for it to complete.
+    ///
+    /// This is a lower-level API, and you should probably use
+    /// [`Channel::transfer`] instead.
+    ///
     /// # Safety
     ///
     /// The caller must ensure that the descriptor pointed to by `desc` is valid
@@ -363,11 +388,21 @@ impl Channel {
 
     pub unsafe fn stop_dma(&mut self) {
         self.en_reg().write(|w| w.dma_en().disabled());
-        self.channel
-            .state
-            .fetch_and(!ChannelState::IN_FLIGHT, Ordering::Release);
-
         fence(Ordering::SeqCst); //////
+    }
+}
+
+impl Drop for Channel {
+    fn drop(&mut self) {
+        unsafe {
+            // tear down any currently active xfer so that the channel can be reused.
+            self.stop_dma();
+        }
+        // free the channel index.
+        DMAC_STATE.claims.free(self.idx);
+        // if anyone else is waiting for a channel to become available, let them
+        // know we're done with ours.
+        DMAC_STATE.claim_wait.wake();
     }
 }
 

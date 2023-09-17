@@ -13,7 +13,7 @@ use crate::dmac::{
     descriptor::{
         AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType,
     },
-    Channel, ChannelMode,
+    ChannelMode, Dmac,
 };
 use kernel::{
     comms::bbq::{new_bidi_channel, BidiHandle, Consumer, GrantW, SpscProducer},
@@ -112,7 +112,7 @@ impl D1Uart {
     }
 
     // Send loop that listens to the bbqueue consumer, and sends it as DMA transactions on the UART
-    async fn sending(cons: Consumer, mut tx_channel: Channel) {
+    async fn sending(cons: Consumer, dmac: Dmac) {
         loop {
             let rx = cons.read_grant().await;
             let len = rx.len();
@@ -140,8 +140,12 @@ impl D1Uart {
 
             // start the DMA transfer.
             unsafe {
-                tx_channel.set_channel_modes(ChannelMode::Wait, ChannelMode::Handshake);
-                tx_channel.run_descriptor(NonNull::from(&descriptor)).await;
+                dmac.transfer(
+                    ChannelMode::Wait,
+                    ChannelMode::Handshake,
+                    NonNull::from(&descriptor),
+                )
+                .await
             }
 
             rx.release(len);
@@ -170,9 +174,9 @@ impl D1Uart {
 
     pub async fn register(
         k: &'static Kernel,
+        dmac: Dmac,
         cap_in: usize,
         cap_out: usize,
-        tx_channel: Channel,
     ) -> Result<(), RegistrationError> {
         let (fifo_a, fifo_b) = new_bidi_channel(cap_in, cap_out).await;
 
@@ -187,7 +191,7 @@ impl D1Uart {
         let _server_hdl = k.spawn(D1Uart::serial_server(fifo_b, reqs)).await;
 
         let (prod, cons) = fifo_a.split();
-        let _send_hdl = k.spawn(D1Uart::sending(cons, tx_channel)).await;
+        let _send_hdl = k.spawn(D1Uart::sending(cons, dmac)).await;
 
         let boxed_prod = Box::new(prod).await;
         let leaked_prod = Box::into_raw(boxed_prod);

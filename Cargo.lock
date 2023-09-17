@@ -5116,6 +5116,7 @@ dependencies = [
  "miette",
  "mnemos",
  "mnemos-beepy",
+ "mnemos-bitslab",
  "mnemos-config",
  "riscv",
  "riscv-rt",
