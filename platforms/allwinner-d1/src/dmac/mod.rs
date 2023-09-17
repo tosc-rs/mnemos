@@ -56,7 +56,7 @@ pub struct Dmac {
 /// claimed by other drivers.
 pub struct Channel {
     idx: u8,
-    channel: &'static ChannelState,
+    xfer_done: &'static WaitCell,
 }
 
 /// DMA channel modes.
@@ -121,25 +121,24 @@ pub enum ChannelMode {
     Handshake,
 }
 
+/// Internal shared state for the DMAC driver.
 struct DmacState {
-    channels: [ChannelState; Dmac::CHANNEL_COUNT as usize],
+    /// WaitCells for DMA channel IRQs, one per channel.
+    channel_wait: [WaitCell; Dmac::CHANNEL_COUNT as usize],
+    /// Index allocator tracking channel claimedness.
     claims: IndexAlloc16,
+    /// WaitQueue for notifing tasks waiting for a free channel when one is
+    /// freed.
     claim_wait: WaitQueue,
 }
 
-struct ChannelState {
-    waker: WaitCell,
-}
-
-static DMAC_STATE: DmacState = {
+static STATE: DmacState = {
     // This `const` is used as a static initializer, so clippy is wrong here...
     #[allow(clippy::declare_interior_mutable_const)]
-    const NEW_CHANNEL: ChannelState = ChannelState {
-        waker: WaitCell::new(),
-    };
+    const NEW_WAITCELL: WaitCell = WaitCell::new();
 
     DmacState {
-        channels: [NEW_CHANNEL; Dmac::CHANNEL_COUNT as usize],
+        channel_wait: [NEW_WAITCELL; Dmac::CHANNEL_COUNT as usize],
         claims: IndexAlloc16::new(),
         claim_wait: WaitQueue::new(),
     }
@@ -266,7 +265,7 @@ impl Dmac {
 
         loop {
             // if no channel was available, register our waker and try again.
-            let wait = DMAC_STATE.claim_wait.wait();
+            let wait = STATE.claim_wait.wait();
             futures::pin_mut!(wait);
             // ensure the `WaitQueue` entry is registered before we actually
             // check the claim state.
@@ -295,10 +294,10 @@ impl Dmac {
     ///   for transfers, if one was available.
     /// - [`None`] if all DMA channels are currently in use.
     pub fn try_claim_channel(&self) -> Option<Channel> {
-        let idx = DMAC_STATE.claims.allocate()?;
+        let idx = STATE.claims.allocate()?;
         Some(Channel {
             idx,
-            channel: &DMAC_STATE.channels[idx as usize],
+            xfer_done: &STATE.channel_wait[idx as usize],
         })
     }
 
@@ -312,7 +311,7 @@ impl Dmac {
             tracing::trace!(dmac_irq_pend0 = ?format_args!("{:#b}", r.bits()), "DMAC interrupt");
             for i in 0..8 {
                 if unsafe { r.dma_queue_irq_pend(i) }.bit_is_set() {
-                    DMAC_STATE.channels[i as usize].waker.wake();
+                    STATE.wake_channel(i);
                 }
             }
 
@@ -326,7 +325,7 @@ impl Dmac {
             tracing::trace!(dmac_irq_pend1 = ?format_args!("{:#b}", r.bits()), "DMAC interrupt");
             for i in 8..16 {
                 if unsafe { r.dma_queue_irq_pend(i) }.bit_is_set() {
-                    DMAC_STATE.channels[i as usize].waker.wake();
+                    STATE.wake_channel(i);
                 }
             }
 
@@ -340,11 +339,11 @@ impl Dmac {
     /// This is generally used when shutting down the system, such as in panic
     /// and exception handlers.
     pub(crate) unsafe fn cancel_all() {
-        for (i, channel) in DMAC_STATE.channels.iter().enumerate() {
-            channel.waker.close();
+        for (i, channel) in STATE.channel_wait.iter().enumerate() {
+            channel.close();
             Channel {
                 idx: i as u8,
-                channel,
+                xfer_done: channel,
             }
             .stop_dma();
         }
@@ -355,6 +354,15 @@ impl fmt::Debug for Dmac {
     #[inline]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("Dmac").finish()
+    }
+}
+
+// === impl DmacState ===
+
+impl DmacState {
+    #[inline]
+    fn wake_channel(&self, idx: u8) {
+        self.channel_wait[idx as usize].wake();
     }
 }
 
@@ -417,7 +425,7 @@ impl Channel {
         // before starting the DMA transfer.
         // if we're cancelled at this await point, that's fine, because we
         // haven't actually begun a transfer.
-        let wait = self.channel.waker.subscribe().await;
+        let xfer_done = self.xfer_done.subscribe().await;
 
         // actually start the DMA transfer.
         self.start_descriptor(desc);
@@ -428,7 +436,7 @@ impl Channel {
         let _cancel = DefinitelyStop(self);
 
         // wait for the DMA transfer to complete.
-        let _wait = wait.await;
+        let _wait = xfer_done.await;
         debug_assert!(
             _wait.is_ok(),
             "DMA channel WaitCells should never be closed"
@@ -641,16 +649,16 @@ impl Drop for Channel {
             self.stop_dma();
         }
         // free the channel index.
-        DMAC_STATE.claims.free(self.idx);
+        STATE.claims.free(self.idx);
         // if anyone else is waiting for a channel to become available, let them
         // know we're done with ours.
-        DMAC_STATE.claim_wait.wake();
+        STATE.claim_wait.wake();
     }
 }
 
 impl fmt::Debug for Channel {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_tuple("Channel").field(self.idx).finish()
+        f.debug_tuple("Channel").field(&self.idx).finish()
     }
 }
 
