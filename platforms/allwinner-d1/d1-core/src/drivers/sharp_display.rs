@@ -38,7 +38,7 @@ use kernel::{
     Kernel,
 };
 
-use crate::spim::{SpiSender, SpiSenderClient};
+use crate::drivers::spim::{SpiSender, SpiSenderClient};
 
 const WIDTH: usize = 400;
 const HEIGHT: usize = 240;

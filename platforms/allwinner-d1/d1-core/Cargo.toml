@@ -1,0 +1,51 @@
+
+cargo-features = ["per-package-target", "profile-rustflags"]
+
+[package]
+name = "mnemos-d1-core"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+
+
+[features]
+# enable the SHARP Memory Display driver
+sharp-display = []
+# enable `mnemos-trace-proto` serial tracing.
+serial-trace = ["mnemos/serial-trace"]
+
+[dependencies]
+serde = { version = "1.0.178", features = ["derive"], default-features = false }
+mnemos-bitslab = { path = "../../../source/bitslab" }
+
+d1-pac = "0.0.31"
+critical-section = "1.1.1"
+
+[target.'cfg(target_arch = "riscv64")'.dependencies]
+riscv = "0.10.0"
+[target.'cfg(target_arch = "riscv32")'.dependencies]
+riscv = "0.10.0"
+
+# kernel
+[dependencies.mnemos]
+path = "../../../source/kernel"
+default-features = false
+
+[dependencies.mnemos-beepy]
+path = "../../beepy"
+optional = true
+
+[dependencies.tracing]
+version = "0.1.37"
+features = ["attributes"]
+default-features = false
+
+[dependencies.embedded-graphics]
+version = "0.7.1"
+
+[dependencies.futures]
+version = "0.3.21"
+features = ["async-await"]
+default-features = false

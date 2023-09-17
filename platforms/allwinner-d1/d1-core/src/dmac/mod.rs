@@ -298,7 +298,7 @@ impl Dmac {
     }
 
     /// Handle a DMAC interrupt.
-    pub(crate) fn handle_interrupt() {
+    pub fn handle_interrupt() {
         let dmac = unsafe { &*DMAC::PTR };
         // there are two registers that contain DMA channel IRQ status bits,
         // `DMAC_IRQ_PEND0` and `DMAC_IRQ_PEND1`. the first 8 channels (0-7) set
@@ -334,7 +334,12 @@ impl Dmac {
     ///
     /// This is generally used when shutting down the system, such as in panic
     /// and exception handlers.
-    pub(crate) unsafe fn cancel_all() {
+    ///
+    /// # Safety
+    ///
+    /// Cancelling DMA transfers abruptly might put peripherals in a weird state
+    /// i guess?
+    pub unsafe fn cancel_all() {
         for (i, channel) in STATE.channel_wait.iter().enumerate() {
             channel.close();
             Channel {

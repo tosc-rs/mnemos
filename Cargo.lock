@@ -5118,8 +5118,25 @@ dependencies = [
  "mnemos-beepy",
  "mnemos-bitslab",
  "mnemos-config",
+ "mnemos-d1-core",
  "riscv",
  "riscv-rt",
+ "serde",
+ "tracing 0.1.37",
+]
+
+[[package]]
+name = "mnemos-d1-core"
+version = "0.1.0"
+dependencies = [
+ "critical-section",
+ "d1-pac",
+ "embedded-graphics 0.7.1",
+ "futures",
+ "mnemos",
+ "mnemos-beepy",
+ "mnemos-bitslab",
+ "riscv",
  "serde",
  "tracing 0.1.37",
 ]

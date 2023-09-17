@@ -28,6 +28,7 @@ members = [
     # platforms
     "platforms/allwinner-d1",
     "platforms/allwinner-d1/d1-config",
+    "platforms/allwinner-d1/d1-core",
     "platforms/beepy",
     "platforms/esp32c3-buddy",
     "platforms/melpomene",
@@ -55,6 +56,8 @@ default-members = [
     # platforms
     "platforms/melpomene",
     "platforms/melpomene/melpo-config",
+    "platforms/allwinner-d1/d1-config",
+    "platforms/allwinner-d1/d1-core",
 ]
 # this isn't actually a crate
 exclude = ["source/notes"]

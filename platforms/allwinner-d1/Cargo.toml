@@ -33,9 +33,9 @@ default = ["i2c_puppet", "sharp-display", "serial-trace"]
 # enable i2c_puppet driver
 i2c_puppet = ["mnemos-beepy"]
 # enable the SHARP Memory Display driver
-sharp-display = []
+sharp-display = ["mnemos-d1-core/sharp-display"]
 # enable `mnemos-trace-proto` serial tracing.
-serial-trace = ["mnemos/serial-trace"]
+serial-trace = ["mnemos-d1-core/serial-trace"]
 
 [build-dependencies]
 d1-config = { path = "./d1-config" }
@@ -49,6 +49,7 @@ serde = { version = "1.0.178", features = ["derive"], default-features = false }
 d1-config = { path = "./d1-config" }
 mnemos-config = { path = "../../source/config" }
 mnemos-bitslab = { path = "../../source/bitslab" }
+mnemos-d1-core = { path = "./d1-core" }
 
 d1-pac = "0.0.31"
 critical-section = "1.1.1"
