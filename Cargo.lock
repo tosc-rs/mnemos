@@ -5132,6 +5132,7 @@ dependencies = [
  "futures",
  "mnemos",
  "mnemos-bitslab",
+ "mycelium-bitfield 0.1.3 (git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064)",
  "riscv",
  "riscv-rt",
  "serde",

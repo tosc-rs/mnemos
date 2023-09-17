@@ -16,6 +16,15 @@ pub struct Descriptor {
     link: u32,
 }
 
+mycelium_bitfield::bitfield! {
+    struct Parameter<u32> {
+        const WAIT_CYCLES = 8;
+        const _RESERVED0 = 8;
+        const SRC_HIGH = 2;
+
+    }
+}
+
 // TODO: THIS COULD PROBABLY BE A BITFIELD LIBRARY
 pub struct DescriptorConfig {
     pub source: *const (),
@@ -39,100 +48,141 @@ pub struct DescriptorConfig {
     pub src_drq_type: SrcDrqType,
 }
 
-#[derive(Eq, PartialEq, Clone, Copy)]
-#[repr(u8)]
-pub enum SrcDrqType {
-    Sram = 0,
-    Dram = 1,
-    OwaRx = 2,
-    I2sPcm0Rx = 3,
-    I2sPcm1Rx = 4,
-    I2sPcm2Rx = 5,
-    AudioCodec = 7,
-    Dmic = 8,
-    GpADC = 12,
-    TpADC = 13,
-    Uart0Rx = 14,
-    Uart1Rx = 15,
-    Uart2Rx = 16,
-    Uart3Rx = 17,
-    Uart4Rx = 18,
-    Uart5Rx = 19,
-    Spi0Rx = 22,
-    Spi1Rx = 23,
-    Usb0Ep1 = 30,
-    Usb0Ep2 = 31,
-    Usb0Ep3 = 32,
-    Usb0Ep4 = 33,
-    Usb0Ep5 = 34,
-    Twi0 = 43,
-    Twi1 = 44,
-    Twi2 = 45,
-    Twi3 = 46,
+mycelium_bitfield::bitfield! {
+    pub struct Configuration<u32> {
+        /// DMA source DRQ type.
+        pub const SRC_DRQ_TYPE: SrcDrqType;
+
+        /// DMA source block size.
+        pub const SRC_BLOCK_SIZE: BlockSize;
+
+        /// DMA source address mode.
+        pub const SRC_ADDR_MODE: AddressMode;
+
+        /// DMA source data width.
+        pub const SRC_DATA_WIDTH: DataWidth;
+
+        const _RESERVED_0 = 4;
+
+        /// DMA destination DRQ type
+        pub const DEST_DRQ_TYPE: DestDrqType;
+
+        /// DMA destination block size.
+        pub const DEST_BLOCK_SIZE: BlockSize;
+
+        /// DMA destination address mode.
+        pub const DEST_ADDR_MODE: AddressMode;
+
+        /// DMA destination data width.
+        pub const DEST_DATA_WIDTH: DataWidth;
+
+        const _RESERVED_1 = 3;
+
+        /// BMODE select
+        pub const BMODE_SEL: BModeSel;
+    }
 }
 
-#[derive(Eq, PartialEq, Clone, Copy)]
-#[repr(u8)]
-pub enum DestDrqType {
-    Sram = 0,
-    Dram = 1,
-    OwaTx = 2,
-    I2sPcm0Tx = 3,
-    I2sPcm1Tx = 4,
-    I2sPcm2Tx = 5,
-    AudioCodec = 7,
-    IrTx = 13,
-    Uart0Tx = 14,
-    Uart1Tx = 15,
-    Uart2Tx = 16,
-    Uart3Tx = 17,
-    Uart4Tx = 18,
-    Uart5Tx = 19,
-    Spi0Tx = 22,
-    Spi1Tx = 23,
-    Usb0Ep1 = 30,
-    Usb0Ep2 = 31,
-    Usb0Ep3 = 32,
-    Usb0Ep4 = 33,
-    Usb0Ep5 = 34,
-    Ledc = 42,
-    Twi0 = 43,
-    Twi1 = 44,
-    Twi2 = 45,
-    Twi3 = 46,
+mycelium_bitfield::enum_from_bits! {
+    #[derive(Debug, Eq, PartialEq)]
+    pub enum SrcDrqType<u8> {
+        Sram = 0,
+        Dram = 1,
+        OwaRx = 2,
+        I2sPcm0Rx = 3,
+        I2sPcm1Rx = 4,
+        I2sPcm2Rx = 5,
+        AudioCodec = 7,
+        Dmic = 8,
+        GpADC = 12,
+        TpADC = 13,
+        Uart0Rx = 14,
+        Uart1Rx = 15,
+        Uart2Rx = 16,
+        Uart3Rx = 17,
+        Uart4Rx = 18,
+        Uart5Rx = 19,
+        Spi0Rx = 22,
+        Spi1Rx = 23,
+        Usb0Ep1 = 30,
+        Usb0Ep2 = 31,
+        Usb0Ep3 = 32,
+        Usb0Ep4 = 33,
+        Usb0Ep5 = 34,
+        Twi0 = 43,
+        Twi1 = 44,
+        Twi2 = 45,
+        Twi3 = 46,
+    }
+}
+
+mycelium_bitfield::enum_from_bits! {
+    #[derive(Debug, Eq, PartialEq)]
+    pub enum DestDrqType<u8> {
+        Sram = 0,
+        Dram = 1,
+        OwaTx = 2,
+        I2sPcm0Tx = 3,
+        I2sPcm1Tx = 4,
+        I2sPcm2Tx = 5,
+        AudioCodec = 7,
+        IrTx = 13,
+        Uart0Tx = 14,
+        Uart1Tx = 15,
+        Uart2Tx = 16,
+        Uart3Tx = 17,
+        Uart4Tx = 18,
+        Uart5Tx = 19,
+        Spi0Tx = 22,
+        Spi1Tx = 23,
+        Usb0Ep1 = 30,
+        Usb0Ep2 = 31,
+        Usb0Ep3 = 32,
+        Usb0Ep4 = 33,
+        Usb0Ep5 = 34,
+        Ledc = 42,
+        Twi0 = 43,
+        Twi1 = 44,
+        Twi2 = 45,
+        Twi3 = 46,
+}
 }
 
 // TODO: Verify bits or bytes?
-#[derive(Eq, PartialEq, Clone, Copy)]
-#[repr(u8)]
-pub enum BlockSize {
-    Byte1 = 0b00,
-    Byte4 = 0b01,
-    Byte8 = 0b10,
-    Byte16 = 0b11,
+mycelium_bitfield::enum_from_bits! {
+    #[derive(Debug, Eq, PartialEq)]
+    pub enum BlockSize<u8> {
+        Byte1 = 0b00,
+        Byte4 = 0b01,
+        Byte8 = 0b10,
+        Byte16 = 0b11,
+    }
 }
 
-#[derive(Eq, PartialEq, Clone, Copy)]
-#[repr(u8)]
-pub enum AddressMode {
-    LinearMode = 0,
-    IoMode = 1,
+mycelium_bitfield::enum_from_bits! {
+    #[derive(Debug, Eq, PartialEq)]
+    pub enum AddressMode<u8> {
+        LinearMode = 0,
+        IoMode = 1,
+    }
 }
 
-#[derive(Eq, PartialEq, Clone, Copy)]
-#[repr(u8)]
-pub enum DataWidth {
-    Bit8 = 0b00,
-    Bit16 = 0b01,
-    Bit32 = 0b10,
-    Bit64 = 0b11,
+mycelium_bitfield::enum_from_bits! {
+    #[derive(Debug, Eq, PartialEq)]
+    pub enum DataWidth<u8> {
+        Bit8 = 0b00,
+        Bit16 = 0b01,
+        Bit32 = 0b10,
+        Bit64 = 0b11,
+    }
 }
 
-#[derive(Eq, PartialEq, Clone, Copy)]
-#[repr(u8)]
-pub enum BModeSel {
-    Normal,
-    BMode,
+mycelium_bitfield::enum_from_bits! {
+    #[derive(Debug, Eq, PartialEq)]
+    pub enum BModeSel<u8> {
+        Normal = 0,
+        BMode = 1,
+    }
 }
 
 // Descriptor

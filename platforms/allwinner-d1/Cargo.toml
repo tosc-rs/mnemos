@@ -12,7 +12,7 @@ repository = "https://github.com/tosc-rs/mnemos"
 homepage = "https://mnemos.dev"
 readme = "./README.md"
 license = "MIT OR Apache-2.0"
-forced-target = "riscv64imac-unknown-none-elf"
+default-target = "riscv64imac-unknown-none-elf"
 
 [lib]
 test = false
