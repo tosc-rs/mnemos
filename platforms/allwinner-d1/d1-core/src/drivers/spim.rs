@@ -118,9 +118,7 @@ impl SpiSenderServer {
             .spawn(async move {
                 let spi = unsafe { &*SPI_DBI::PTR };
 
-                let txd_ptr: *mut u32 = spi.spi_txd.as_ptr();
-                let txd_ptr: *mut u8 = txd_ptr.cast();
-                let txd_ptr: *mut () = txd_ptr.cast();
+                let txd = unsafe { &mut *(spi.spi_txd.as_ptr() as *mut _) };
 
                 let descr_cfg = Descriptor::builder()
                     .dest_data_width(DataWidth::Bit8)
@@ -137,20 +135,23 @@ impl SpiSenderServer {
                     let Message { msg, reply } = reqs.next_request().await;
                     let SpiSenderRequest::Send(ref payload) = msg.body;
 
-                    let len = payload.as_slice().len();
+                    let payload = payload.as_slice();
+                    // TODO(eliza): we should probably respond with an error if
+                    // someone tries to send a payload whose length is > u32::MAX...;
+                    let len = payload.len() as u32;
 
                     spi.spi_bcc.modify(|_r, w| {
                         // "Single Mode Transmit Counter" - the number of bytes to send
-                        w.stc().variant(len as u32);
+                        w.stc().variant(len);
                         w
                     });
                     spi.spi_mbc.modify(|_r, w| {
                         // Master Burst Counter
-                        w.mbc().variant(len as u32);
+                        w.mbc().variant(len);
                         w
                     });
                     spi.spi_mtc.modify(|_r, w| {
-                        w.mwtc().variant(len as u32);
+                        w.mwtc().variant(len);
                         w
                     });
                     // Start transfer
@@ -160,7 +161,7 @@ impl SpiSenderServer {
                     });
 
                     let descriptor = descr_cfg
-                        .build(payload.as_slice().as_ptr().cast(), txd_ptr, len as u32)
+                        .build(&payload[0], txd, len)
                         .expect("failed to build SPI1_TX DMA descriptor");
 
                     // start the DMA transfer.

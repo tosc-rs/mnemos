@@ -272,7 +272,18 @@ impl DescriptorBuilder {
         }
     }
 
-    pub fn build(
+    pub fn build<S, D>(
+        self,
+        source: &S,
+        destination: &mut D,
+        byte_counter: u32,
+    ) -> Result<Descriptor, InvalidDescriptor> {
+        let source = source as *const _ as *const ();
+        let destination = destination as *mut _ as *mut ();
+        self.build_raw(source, destination, byte_counter)
+    }
+
+    pub fn build_raw(
         self,
         source: *const (),
         destination: *mut (),

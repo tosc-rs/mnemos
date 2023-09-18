@@ -124,12 +124,12 @@ impl D1Uart {
         loop {
             let rx = cons.read_grant().await;
             let len = rx.len();
-            let thr_addr = unsafe { &*UART0::PTR }.thr() as *const _ as *mut ();
+            let thr = unsafe { &mut *((*UART0::PTR).thr() as *const _ as *mut u32) };
 
             let rx_sli: &[u8] = &rx;
 
             let descriptor = descr_cfg
-                .build(rx_sli.as_ptr().cast(), thr_addr, rx_sli.len() as u32)
+                .build(&rx_sli[0], thr, rx_sli.len() as u32)
                 .expect("failed to build UART0 DMA transfer descriptor");
 
             // start the DMA transfer.
