@@ -5,6 +5,8 @@
 // separate the bits by which field they represent, rather than by their byte.
 #![allow(clippy::unusual_byte_groupings)]
 
+use core::fmt;
+
 #[derive(Clone, Debug)]
 #[repr(C, align(4))]
 pub struct Descriptor {
@@ -21,6 +23,15 @@ pub struct DescriptorBuilder {
     cfg: Configuration,
     wait_clock_cycles: u8,
     link: Option<*const ()>,
+}
+
+/// Errors returned by [`DescriptorBuilder::build`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InvalidDescriptor {
+    SrcAddrTooLong(usize),
+    DestAddrTooLong(usize),
+    ByteCounterTooLong(u32),
+    LinkAddrMisaligned(usize),
 }
 
 mycelium_bitfield::bitfield! {
@@ -254,22 +265,22 @@ impl DescriptorBuilder {
         source: *const (),
         destination: *mut (),
         byte_counter: u32,
-    ) -> Result<Descriptor, &'static str> {
+    ) -> Result<Descriptor, InvalidDescriptor> {
         let source = source as usize;
         let destination = destination as usize;
 
-        if source >= (1 << 34) {
-            return Err("source address may not exceed 34 bits");
+        if source > Descriptor::ADDR_MAX as usize {
+            return Err(InvalidDescriptor::SrcAddrTooLong(source));
         }
-        if destination >= (1 << 34) {
-            return Err("destination address may not exceed 34 bits");
+        if destination > Descriptor::ADDR_MAX as usize {
+            return Err(InvalidDescriptor::DestAddrTooLong(destination));
         }
-        if byte_counter >= (1 << 25) {
-            return Err("byte counter may not exceed 25 bits");
+        if byte_counter > Descriptor::BYTE_COUNTER_MAX {
+            return Err(InvalidDescriptor::ByteCounterTooLong(byte_counter));
         }
         if let Some(link) = self.link {
             if (link as usize & 0b11) != 0 {
-                return Err("linked descriptors must be at least 4-byte aligned");
+                return Err(InvalidDescriptor::LinkAddrMisaligned(link as usize));
             }
         }
 
@@ -314,8 +325,45 @@ impl DescriptorBuilder {
 impl Descriptor {
     const END_LINK: u32 = 0xFFFF_F800;
 
+    /// Maximum value for the `byte_counter` argument to
+    /// [`DescriptorBuilder::build`] --- byte counters must be 25 bits wide or
+    /// less.
+    pub const BYTE_COUNTER_MAX: u32 = (1 << 25) - 1;
+
+    /// Maximum value for the `source` and `destination` arguments to
+    /// [`DescriptorBuilder::build`] --- addresses must be 34 bits wide or less.
+    pub const ADDR_MAX: u64 = (1 << 34) - 1;
+
     pub const fn builder() -> DescriptorBuilder {
         DescriptorBuilder::new()
+    }
+}
+
+// InvalidDescriptor
+
+impl fmt::Display for InvalidDescriptor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InvalidDescriptor::SrcAddrTooLong(addr) => write!(
+                f,
+                "source address {addr:#x} is greater than `Descriptor::ADDR_MAX` ({:#x})",
+                Descriptor::ADDR_MAX
+            ),
+            InvalidDescriptor::DestAddrTooLong(addr) => write!(
+                f,
+                "destination address {addr:#x} is greater than `Descriptor::ADDR_MAX` ({:#x})",
+                Descriptor::ADDR_MAX
+            ),
+            InvalidDescriptor::ByteCounterTooLong(counter) => write!(
+                f,
+                "byte counter {counter} is greater than `Descriptor::BYTE_COUNTER_MAX` ({})",
+                Descriptor::BYTE_COUNTER_MAX
+            ),
+            InvalidDescriptor::LinkAddrMisaligned(addr) => write!(
+                f,
+                "linked descriptor address {addr:#x} was not at least 4-byte aligned"
+            ),
+        }
     }
 }
 
