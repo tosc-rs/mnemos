@@ -366,8 +366,7 @@ impl Descriptor {
 
         // We already verified above the low bits of `link` are clear,
         // no need to re-mask them.
-        let link = addr as u32 | ((addr >> 32) as u32) & 0b11;
-        Ok(link as u32)
+        Ok(addr as u32 | ((addr >> 32) as u32) & 0b11)
     }
 }
 
