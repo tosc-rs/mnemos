@@ -269,7 +269,7 @@ impl DescriptorBuilder {
         }
         if let Some(link) = self.link {
             if (link as usize & 0b11) != 0 {
-                return Err("link address's lowest two bits must be unset");
+                return Err("linked descriptors must be at least 4-byte aligned");
             }
         }
 
