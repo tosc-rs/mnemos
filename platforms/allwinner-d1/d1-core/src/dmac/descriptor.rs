@@ -5,7 +5,7 @@
 // separate the bits by which field they represent, rather than by their byte.
 #![allow(clippy::unusual_byte_groupings)]
 
-use core::fmt;
+use core::{fmt, mem, ptr::NonNull};
 
 #[derive(Clone, Debug)]
 #[repr(C, align(4))]
@@ -22,7 +22,7 @@ pub struct Descriptor {
 pub struct DescriptorBuilder {
     cfg: Configuration,
     wait_clock_cycles: u8,
-    link: Option<*const ()>,
+    link: u32,
 }
 
 /// Errors returned by [`DescriptorBuilder::build`].
@@ -31,7 +31,14 @@ pub enum InvalidDescriptor {
     SrcAddrTooLong(usize),
     DestAddrTooLong(usize),
     ByteCounterTooLong(u32),
-    LinkAddrMisaligned(usize),
+    LinkAddr(InvalidLink),
+}
+
+/// Errors returned by [`Descriptor::set_link`] and [`DescriptorBuilder::build`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InvalidLink {
+    TooLong(usize),
+    Misaligned(usize),
 }
 
 mycelium_bitfield::bitfield! {
@@ -182,7 +189,7 @@ impl DescriptorBuilder {
         Self {
             cfg: Configuration::new(),
             wait_clock_cycles: 0,
-            link: None,
+            link: Descriptor::END_LINK,
         }
     }
 
@@ -249,8 +256,13 @@ impl DescriptorBuilder {
         }
     }
 
-    pub const fn link(self, link: Option<*const ()>) -> Self {
-        Self { link, ..self }
+    pub fn link(self, link: impl Into<Option<NonNull<Descriptor>>>) -> Result<Self, InvalidLink> {
+        let link = link
+            .into()
+            .map(Descriptor::addr_to_link)
+            .transpose()?
+            .unwrap_or(Descriptor::END_LINK);
+        Ok(Self { link, ..self })
     }
 
     pub const fn wait_clock_cycles(self, wait_clock_cycles: u8) -> Self {
@@ -272,16 +284,13 @@ impl DescriptorBuilder {
         if source > Descriptor::ADDR_MAX as usize {
             return Err(InvalidDescriptor::SrcAddrTooLong(source));
         }
+
         if destination > Descriptor::ADDR_MAX as usize {
             return Err(InvalidDescriptor::DestAddrTooLong(destination));
         }
+
         if byte_counter > Descriptor::BYTE_COUNTER_MAX {
             return Err(InvalidDescriptor::ByteCounterTooLong(byte_counter));
-        }
-        if let Some(link) = self.link {
-            if (link as usize & 0b11) != 0 {
-                return Err(InvalidDescriptor::LinkAddrMisaligned(link as usize));
-            }
         }
 
         let mut parameter = self.wait_clock_cycles as u32;
@@ -300,22 +309,15 @@ impl DescriptorBuilder {
         parameter &= 0b111111111111_00_11_11111111_11111111;
         parameter |= (((destination >> 32) & 0b11) << 18) as u32;
 
-        let link = self
-            .link
-            .map(|link| {
-                // We already verified above the low bits of `value.link` are clear,
-                // no need to re-mask the current state of `descriptor.link`.
-                link as u32 | ((link as usize >> 32) as u32) & 0b11
-            })
-            .unwrap_or(Descriptor::END_LINK);
-
         Ok(Descriptor {
             configuration: self.cfg,
             source_address,
             destination_address,
             byte_counter,
             parameter,
-            link,
+            // link address field was already validated by
+            // `DescriptorBuilder::link`.
+            link: self.link,
         })
     }
 }
@@ -334,8 +336,38 @@ impl Descriptor {
     /// [`DescriptorBuilder::build`] --- addresses must be 34 bits wide or less.
     pub const ADDR_MAX: u64 = (1 << 34) - 1;
 
+    /// Maximum value for the `link` address passed to
+    /// [`DescriptorBuilder::link`] -- link addresses must be 32 bits wide or
+    /// less.
+    pub const LINK_ADDR_MAX: usize = u32::MAX as usize;
+
     pub const fn builder() -> DescriptorBuilder {
         DescriptorBuilder::new()
+    }
+
+    pub fn set_link(&mut self, link: impl Into<Option<NonNull<Self>>>) -> Result<(), InvalidLink> {
+        self.link = link
+            .into()
+            .map(Self::addr_to_link)
+            .transpose()?
+            .unwrap_or(Self::END_LINK);
+        Ok(())
+    }
+
+    fn addr_to_link(link: NonNull<Self>) -> Result<u32, InvalidLink> {
+        let addr = link.as_ptr() as usize;
+        if addr > Self::LINK_ADDR_MAX {
+            return Err(InvalidLink::TooLong(addr));
+        }
+
+        if addr & (mem::align_of::<Self>() - 1) > 0 {
+            return Err(InvalidLink::Misaligned(addr));
+        }
+
+        // We already verified above the low bits of `link` are clear,
+        // no need to re-mask them.
+        let link = addr as u32 | ((addr >> 32) as u32) & 0b11;
+        Ok(link as u32)
     }
 }
 
@@ -359,14 +391,27 @@ impl fmt::Display for InvalidDescriptor {
                 "byte counter {counter} is greater than `Descriptor::BYTE_COUNTER_MAX` ({})",
                 Descriptor::BYTE_COUNTER_MAX
             ),
-            InvalidDescriptor::LinkAddrMisaligned(addr) => write!(
-                f,
-                "linked descriptor address {addr:#x} was not at least 4-byte aligned"
-            ),
+            InvalidDescriptor::LinkAddr(error) => fmt::Display::fmt(error, f),
         }
     }
 }
 
+// InvalidLink
+
+impl fmt::Display for InvalidLink {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InvalidLink::TooLong(addr) => write!(
+                f,
+                "link address {addr:#x} is greater than `Descriptor::LINK_ADDR_MAX` ({:#x})",
+                Descriptor::LINK_ADDR_MAX
+            ),
+            InvalidLink::Misaligned(addr) => {
+                write!(f, "link address {addr:#x} is not at least 4-byte aligned!",)
+            }
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     use proptest::{prop_assert_eq, proptest};
