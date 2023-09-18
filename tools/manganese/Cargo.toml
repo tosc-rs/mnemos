@@ -24,13 +24,14 @@ install-deps = [
     "trunk",
 ]
 
-just = ["dep:just", "_any_deps"]
-cargo-nextest = ["dep:cargo-nextest", "_any_deps"]
-cargo-binutils = ["dep:cargo-binutils", "_any_deps"]
-cargo-espflash = ["dep:cargo-espflash", "_any_deps"]
+just = ["dep:just", "_any-deps"]
+trunk = ["dep:trunk", "_any-deps"]
+cargo-nextest = ["dep:cargo-nextest", "_any-deps"]
+cargo-binutils = ["dep:cargo-binutils", "_any-deps"]
+cargo-espflash = ["dep:cargo-espflash", "_any-deps"]
 
 # dummy feature that indicates any dependency is being installed.
-_any_deps = []
+_any-deps = []
 
 [dependencies]
 anyhow = "1"

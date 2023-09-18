@@ -1,11 +1,11 @@
 fn main() -> anyhow::Result<()> {
-    #[cfg(feature = "_any_deps")]
+    #[cfg(feature = "_any-deps")]
     install_deps()?;
 
     Ok(())
 }
 
-#[cfg(feature = "_any_deps")]
+#[cfg(feature = "_any-deps")]
 fn install_deps() -> anyhow::Result<()> {
     use anyhow::{Context, Result};
     use std::{
@@ -40,7 +40,7 @@ fn install_deps() -> anyhow::Result<()> {
 
         if link.exists() {
             fs::remove_file(link).with_context(|| {
-                format!("failed to remove existing simlink at {}", link.display())
+                format!("failed to remove existing symlink at {}", link.display())
             })?;
         }
 
@@ -48,7 +48,7 @@ fn install_deps() -> anyhow::Result<()> {
             format!(
                 "failed to create symlink:\nsrc: {}\ndst: {}",
                 original.display(),
-                link.display()
+                link.display(),
             )
         })?;
 
