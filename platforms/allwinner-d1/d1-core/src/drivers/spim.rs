@@ -137,40 +137,60 @@ impl SpiSenderServer {
                     let Message { msg, reply } = reqs.next_request().await;
                     let SpiSenderRequest::Send(ref payload) = msg.body;
 
-                    let len = payload.as_slice().len();
-
-                    spi.spi_bcc.modify(|_r, w| {
-                        // "Single Mode Transmit Counter" - the number of bytes to send
-                        w.stc().variant(len as u32);
-                        w
-                    });
-                    spi.spi_mbc.modify(|_r, w| {
-                        // Master Burst Counter
-                        w.mbc().variant(len as u32);
-                        w
-                    });
-                    spi.spi_mtc.modify(|_r, w| {
-                        w.mwtc().variant(len as u32);
-                        w
-                    });
-                    // Start transfer
-                    spi.spi_tcr.modify(|_r, w| {
-                        w.xch().initiate_exchange();
-                        w
-                    });
-
-                    let descriptor = descr_cfg
-                        .build_raw(payload.as_slice().as_ptr().cast(), txd_ptr, len as u32)
-                        .expect("failed to build SPI1_TX DMA descriptor");
-
-                    // start the DMA transfer.
+                    let mut chan = dmac.claim_channel().await;
                     unsafe {
-                        dmac.transfer(
-                            ChannelMode::Wait,
-                            ChannelMode::Handshake,
-                            NonNull::from(&descriptor),
-                        )
-                        .await;
+                        chan.set_channel_modes(ChannelMode::Wait, ChannelMode::Handshake);
+                    }
+
+                    // if the payload is longer than the maximum DMA buffer
+                    // length, split it down to the maximum size and send each
+                    // chunk as a separate DMA transfer.
+                    let chunks = payload
+                        .as_slice()
+                        // TODO(eliza): since the `byte_counter_max` is a constant,
+                        // we could consider using `slice::array_chunks` instead to
+                        // get these as fixed-size arrays, once that function is stable?
+                        .chunks(Descriptor::BYTE_COUNTER_MAX as usize);
+
+                    for chunk in chunks {
+                        // this cast will never truncate because
+                        // `BYTE_COUNTER_MAX` is less than 32 bits.
+                        debug_assert!(chunk.len() <= Descriptor::BYTE_COUNTER_MAX as usize);
+                        let len = chunk.len() as u32;
+
+                        spi.spi_bcc.modify(|_r, w| {
+                            // "Single Mode Transmit Counter" - the number of bytes to send
+                            w.stc().variant(len);
+                            w
+                        });
+                        spi.spi_mbc.modify(|_r, w| {
+                            // Master Burst Counter
+                            w.mbc().variant(len);
+                            w
+                        });
+                        spi.spi_mtc.modify(|_r, w| {
+                            w.mwtc().variant(len);
+                            w
+                        });
+                        // Start transfer
+                        spi.spi_tcr.modify(|_r, w| {
+                            w.xch().initiate_exchange();
+                            w
+                        });
+
+                        // TODO(eliza): we could use the `Descriptor::link`
+                        // field to chain all the chunks together, instead of
+                        // doing a bunch of transfers. But, we would need some
+                        // place to put all the descriptors...let's figure that
+                        // out later.
+                        let descriptor = descr_cfg
+                            .build_raw(chunk.as_ptr().cast(), txd_ptr, len)
+                            .expect("failed to build SPI1_TX DMA descriptor");
+
+                        // start the DMA transfer.
+                        unsafe {
+                            chan.transfer(NonNull::from(&descriptor)).await;
+                        }
                     }
 
                     reply

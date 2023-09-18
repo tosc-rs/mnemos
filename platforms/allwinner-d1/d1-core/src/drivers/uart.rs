@@ -123,26 +123,36 @@ impl D1Uart {
             .wait_clock_cycles(0);
         loop {
             let rx = cons.read_grant().await;
-            let len = rx.len();
+            let rx_len = rx.len();
             let thr_addr = unsafe { &*UART0::PTR }.thr() as *const _ as *mut ();
 
-            let rx_sli: &[u8] = &rx;
-
-            let descriptor = descr_cfg
-                .build_raw(rx_sli.as_ptr().cast(), thr_addr, rx_sli.len() as u32)
-                .expect("failed to build UART0 DMA transfer descriptor");
-
-            // start the DMA transfer.
+            let mut chan = dmac.claim_channel().await;
             unsafe {
-                dmac.transfer(
-                    ChannelMode::Wait,
-                    ChannelMode::Handshake,
-                    NonNull::from(&descriptor),
-                )
-                .await
+                chan.set_channel_modes(ChannelMode::Wait, ChannelMode::Handshake);
             }
 
-            rx.release(len);
+            // if the payload is longer than the maximum DMA buffer
+            // length, split it down to the maximum size and send each
+            // chunk as a separate DMA transfer.
+            let chunks = rx[..]
+                // TODO(eliza): since the `byte_counter_max` is a constant,
+                // we could consider using `slice::array_chunks` instead to
+                // get these as fixed-size arrays, once that function is stable?
+                .chunks(Descriptor::BYTE_COUNTER_MAX as usize);
+
+            for chunk in chunks {
+                // this cast will never truncate because
+                // `BYTE_COUNTER_MAX` is less than 32 bits.
+                debug_assert!(chunk.len() <= Descriptor::BYTE_COUNTER_MAX as usize);
+                let descriptor = descr_cfg
+                    .build_raw(chunk.as_ptr().cast(), thr_addr, chunk.len() as u32)
+                    .expect("failed to build UART0 DMA transfer descriptor");
+
+                // start the DMA transfer.
+                unsafe { chan.transfer(NonNull::from(&descriptor)).await }
+            }
+
+            rx.release(rx_len);
         }
     }
 
