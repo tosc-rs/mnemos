@@ -111,6 +111,7 @@ impl D1Uart {
 
     // Send loop that listens to the bbqueue consumer, and sends it as DMA transactions on the UART
     async fn sending(cons: Consumer, dmac: Dmac) {
+        let thr_addr = unsafe { &*UART0::PTR }.thr() as *const _ as *mut ();
         let descr_cfg = Descriptor::builder()
             .dest_data_width(DataWidth::Bit8)
             .dest_addr_mode(AddressMode::IoMode)
@@ -120,11 +121,11 @@ impl D1Uart {
             .src_addr_mode(AddressMode::LinearMode)
             .src_block_size(BlockSize::Byte1)
             .src_drq_type(SrcDrqType::Dram)
-            .wait_clock_cycles(0);
+            .wait_clock_cycles(0)
+            .dest_reg(thr_addr);
         loop {
             let rx = cons.read_grant().await;
             let rx_len = rx.len();
-            let thr_addr = unsafe { &*UART0::PTR }.thr() as *const _ as *mut ();
 
             let mut chan = dmac.claim_channel().await;
             unsafe {
@@ -138,14 +139,15 @@ impl D1Uart {
                 // TODO(eliza): since the `byte_counter_max` is a constant,
                 // we could consider using `slice::array_chunks` instead to
                 // get these as fixed-size arrays, once that function is stable?
-                .chunks(Descriptor::BYTE_COUNTER_MAX as usize);
+                .chunks(Descriptor::MAX_LEN as usize);
 
             for chunk in chunks {
                 // this cast will never truncate because
                 // `BYTE_COUNTER_MAX` is less than 32 bits.
-                debug_assert!(chunk.len() <= Descriptor::BYTE_COUNTER_MAX as usize);
+                debug_assert!(chunk.len() <= Descriptor::MAX_LEN as usize);
                 let descriptor = descr_cfg
-                    .build_raw(chunk.as_ptr().cast(), thr_addr, chunk.len() as u32)
+                    .source_slice(chunk)
+                    .build()
                     .expect("failed to build UART0 DMA transfer descriptor");
 
                 // start the DMA transfer.

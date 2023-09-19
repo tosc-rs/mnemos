@@ -7,7 +7,7 @@ use core::ptr::NonNull;
 
 use crate::ccu::Ccu;
 use crate::dmac::{
-    descriptor::{AddressMode, BlockSize, DataWidth, Descriptor, DestDrqType, SrcDrqType},
+    descriptor::{BlockSize, DataWidth, Descriptor, DestDrqType, SrcDrqType},
     ChannelMode, Dmac,
 };
 use d1_pac::{GPIO, SPI_DBI};
@@ -124,14 +124,13 @@ impl SpiSenderServer {
 
                 let descr_cfg = Descriptor::builder()
                     .dest_data_width(DataWidth::Bit8)
-                    .dest_addr_mode(AddressMode::IoMode)
                     .dest_block_size(BlockSize::Byte1)
                     .dest_drq_type(DestDrqType::Uart0Tx)
                     .src_data_width(DataWidth::Bit8)
-                    .src_addr_mode(AddressMode::LinearMode)
                     .src_block_size(BlockSize::Byte1)
                     .src_drq_type(SrcDrqType::Dram)
-                    .wait_clock_cycles(0);
+                    .wait_clock_cycles(0)
+                    .dest_reg(txd_ptr);
 
                 loop {
                     let Message { msg, reply } = reqs.next_request().await;
@@ -147,15 +146,15 @@ impl SpiSenderServer {
                     // chunk as a separate DMA transfer.
                     let chunks = payload
                         .as_slice()
-                        // TODO(eliza): since the `byte_counter_max` is a constant,
+                        // TODO(eliza): since the `MAX_LEN` is a constant,
                         // we could consider using `slice::array_chunks` instead to
                         // get these as fixed-size arrays, once that function is stable?
-                        .chunks(Descriptor::BYTE_COUNTER_MAX as usize);
+                        .chunks(Descriptor::MAX_LEN as usize);
 
                     for chunk in chunks {
                         // this cast will never truncate because
                         // `BYTE_COUNTER_MAX` is less than 32 bits.
-                        debug_assert!(chunk.len() <= Descriptor::BYTE_COUNTER_MAX as usize);
+                        debug_assert!(chunk.len() <= Descriptor::MAX_LEN as usize);
                         let len = chunk.len() as u32;
 
                         spi.spi_bcc.modify(|_r, w| {
@@ -184,7 +183,8 @@ impl SpiSenderServer {
                         // place to put all the descriptors...let's figure that
                         // out later.
                         let descriptor = descr_cfg
-                            .build_raw(chunk.as_ptr().cast(), txd_ptr, len)
+                            .source_slice(chunk)
+                            .build()
                             .expect("failed to build SPI1_TX DMA descriptor");
 
                         // start the DMA transfer.

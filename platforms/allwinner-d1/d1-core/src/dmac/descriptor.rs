@@ -5,7 +5,7 @@
 // separate the bits by which field they represent, rather than by their byte.
 #![allow(clippy::unusual_byte_groupings)]
 
-use core::{fmt, mem, ptr::NonNull};
+use core::{cmp, fmt, mem, ptr::NonNull};
 
 #[derive(Clone, Debug)]
 #[repr(C, align(4))]
@@ -19,10 +19,12 @@ pub struct Descriptor {
 }
 
 #[derive(Copy, Clone, Debug)]
-pub struct DescriptorBuilder {
+pub struct DescriptorBuilder<S = (), D = ()> {
     cfg: Configuration,
     wait_clock_cycles: u8,
     link: u32,
+    source: S,
+    dest: D,
 }
 
 /// Errors returned by [`DescriptorBuilder::build`].
@@ -30,7 +32,7 @@ pub struct DescriptorBuilder {
 pub enum InvalidDescriptor {
     SrcAddrTooLong(usize),
     DestAddrTooLong(usize),
-    ByteCounterTooLong(u32),
+    ByteCounterTooLong(usize),
     LinkAddr(InvalidLink),
 }
 
@@ -190,9 +192,15 @@ impl DescriptorBuilder {
             cfg: Configuration::new(),
             wait_clock_cycles: 0,
             link: Descriptor::END_LINK,
+            source: (),
+            dest: (),
         }
     }
+}
 
+type DestBuf<'dest> = &'dest mut [mem::MaybeUninit<u8>];
+
+impl<S, D> DescriptorBuilder<S, D> {
     pub fn src_drq_type(self, val: SrcDrqType) -> Self {
         Self {
             cfg: self.cfg.with(Configuration::SRC_DRQ_TYPE, val),
@@ -265,32 +273,124 @@ impl DescriptorBuilder {
         Ok(Self { link, ..self })
     }
 
-    pub const fn wait_clock_cycles(self, wait_clock_cycles: u8) -> Self {
+    pub fn wait_clock_cycles(self, wait_clock_cycles: u8) -> Self {
         Self {
             wait_clock_cycles,
             ..self
         }
     }
 
-    pub fn build<S, D>(
-        self,
-        source: &S,
-        destination: &mut D,
-        byte_counter: u32,
-    ) -> Result<Descriptor, InvalidDescriptor> {
-        let source = source as *const _ as *const ();
-        let destination = destination as *mut _ as *mut ();
-        self.build_raw(source, destination, byte_counter)
+    pub fn source_slice(self, source: &'_ [u8]) -> DescriptorBuilder<&'_ [u8], D> {
+        DescriptorBuilder {
+            cfg: self
+                .cfg
+                .with(Configuration::SRC_ADDR_MODE, AddressMode::LinearMode),
+            wait_clock_cycles: self.wait_clock_cycles,
+            link: self.link,
+            source,
+            dest: self.dest,
+        }
     }
 
-    pub fn build_raw(
-        self,
-        source: *const (),
-        destination: *mut (),
-        byte_counter: u32,
-    ) -> Result<Descriptor, InvalidDescriptor> {
-        let source = source as usize;
-        let destination = destination as usize;
+    pub fn dest_slice(self, dest: DestBuf<'_>) -> DescriptorBuilder<S, DestBuf<'_>> {
+        DescriptorBuilder {
+            cfg: self
+                .cfg
+                .with(Configuration::DEST_ADDR_MODE, AddressMode::LinearMode),
+            wait_clock_cycles: self.wait_clock_cycles,
+            link: self.link,
+            source: self.source,
+            dest,
+        }
+    }
+
+    pub fn source_reg(self, source: *const ()) -> DescriptorBuilder<*const (), D> {
+        DescriptorBuilder {
+            cfg: self
+                .cfg
+                .with(Configuration::SRC_ADDR_MODE, AddressMode::IoMode),
+            wait_clock_cycles: self.wait_clock_cycles,
+            link: self.link,
+            source,
+            dest: self.dest,
+        }
+    }
+
+    pub fn dest_reg(self, dest: *mut ()) -> DescriptorBuilder<S, *mut ()> {
+        DescriptorBuilder {
+            cfg: self
+                .cfg
+                .with(Configuration::SRC_ADDR_MODE, AddressMode::IoMode),
+            wait_clock_cycles: self.wait_clock_cycles,
+            link: self.link,
+            dest,
+            source: self.source,
+        }
+    }
+}
+
+impl DescriptorBuilder<&'_ [u8], DestBuf<'_>> {
+    pub fn build(self) -> Result<Descriptor, InvalidDescriptor> {
+        let len: u32 = {
+            // if the source buffer is shorter than the dest, we will be copying
+            // only `source.len()` bytes into `dest`. if the dest buffer is
+            // shorter than `source`, we will be copying only enough bytes to
+            // fill the dest.
+            let min = cmp::min(self.source.len(), self.dest.len());
+            min.try_into()
+                .map_err(|_| InvalidDescriptor::ByteCounterTooLong(min))?
+        };
+        DescriptorBuilder {
+            source: self.source.as_ptr().cast(),
+            dest: self.dest.as_mut_ptr().cast(),
+            wait_clock_cycles: self.wait_clock_cycles,
+            link: self.link,
+            cfg: self.cfg,
+        }
+        .build(len)
+    }
+}
+
+impl DescriptorBuilder<*const (), DestBuf<'_>> {
+    pub fn build(self) -> Result<Descriptor, InvalidDescriptor> {
+        let len: u32 = self
+            .dest
+            .len()
+            .try_into()
+            .map_err(|_| InvalidDescriptor::ByteCounterTooLong(self.dest.len()))?;
+        DescriptorBuilder {
+            source: self.source,
+            dest: self.dest.as_mut_ptr().cast(),
+            wait_clock_cycles: self.wait_clock_cycles,
+            link: self.link,
+            cfg: self.cfg,
+        }
+        .build(len)
+    }
+}
+
+impl DescriptorBuilder<&'_ [u8], *mut ()> {
+    pub fn build(self) -> Result<Descriptor, InvalidDescriptor> {
+        let len: u32 = self
+            .source
+            .len()
+            .try_into()
+            .map_err(|_| InvalidDescriptor::ByteCounterTooLong(self.source.len()))?;
+        DescriptorBuilder {
+            source: self.source.as_ptr().cast(),
+            dest: self.dest,
+            wait_clock_cycles: self.wait_clock_cycles,
+            link: self.link,
+            cfg: self.cfg,
+        }
+        .build(len)
+    }
+}
+
+impl DescriptorBuilder<*const (), *mut ()> {
+    pub fn build(self, len: u32) -> Result<Descriptor, InvalidDescriptor> {
+        let source = self.source as usize;
+        let destination = self.dest as usize;
 
         if source > Descriptor::ADDR_MAX as usize {
             return Err(InvalidDescriptor::SrcAddrTooLong(source));
@@ -300,8 +400,8 @@ impl DescriptorBuilder {
             return Err(InvalidDescriptor::DestAddrTooLong(destination));
         }
 
-        if byte_counter > Descriptor::BYTE_COUNTER_MAX {
-            return Err(InvalidDescriptor::ByteCounterTooLong(byte_counter));
+        if len > Descriptor::MAX_LEN {
+            return Err(InvalidDescriptor::ByteCounterTooLong(len as usize));
         }
 
         let mut parameter = self.wait_clock_cycles as u32;
@@ -324,7 +424,7 @@ impl DescriptorBuilder {
             configuration: self.cfg,
             source_address,
             destination_address,
-            byte_counter,
+            byte_counter: len,
             parameter,
             // link address field was already validated by
             // `DescriptorBuilder::link`.
@@ -341,7 +441,7 @@ impl Descriptor {
     /// Maximum value for the `byte_counter` argument to
     /// [`DescriptorBuilder::build`] --- byte counters must be 25 bits wide or
     /// less.
-    pub const BYTE_COUNTER_MAX: u32 = (1 << 25) - 1;
+    pub const MAX_LEN: u32 = (1 << 25) - 1;
 
     /// Maximum value for the `source` and `destination` arguments to
     /// [`DescriptorBuilder::build`] --- addresses must be 34 bits wide or less.
@@ -399,7 +499,7 @@ impl fmt::Display for InvalidDescriptor {
             InvalidDescriptor::ByteCounterTooLong(counter) => write!(
                 f,
                 "byte counter {counter} is greater than `Descriptor::BYTE_COUNTER_MAX` ({})",
-                Descriptor::BYTE_COUNTER_MAX
+                Descriptor::MAX_LEN
             ),
             InvalidDescriptor::LinkAddr(error) => fmt::Display::fmt(error, f),
         }
