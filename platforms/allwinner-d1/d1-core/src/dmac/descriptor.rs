@@ -52,9 +52,12 @@ pub enum InvalidOperandReason {
     /// memory. Operand addresses for DMA transfers may not exceed
     /// [`Descriptor::ADDR_MAX`] (34 bits).
     AddrTooHigh(usize),
+    /// A slice was longer than the maximum supported DMA transfer size of
+    /// [`Descriptor::MAX_LEN`] (25 bits).
+    TooLong(usize),
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Operand {
     Source,
     Destination,
@@ -285,15 +288,22 @@ impl<S, D> DescriptorBuilder<S, D> {
     ///
     /// # Returns
     ///
-    /// - [`Ok`]`(`[`DescriptorBuilder`]`)` with `source` as the source operand,
-    ///   if the provided slice's address is a valid DMA source.
-    /// - [`Err`]`(`[`InvalidOperand`]`)` if `source` is not a valid DMA
-    ///   source address.
+    /// - [`Ok`]`(`[`DescriptorBuilder`]`)` with `dest` as the destination
+    ///   operand, if the provided slice's address is a valid DMA destination.
+    /// - [`Err`]`(`[`InvalidOperand`]`)` with [`InvalidOperandReason::TooLong`]
+    ///   if the provided slice is longer than [`Descriptor::MAX_LEN`].
+    /// - [`Err`]`(`[`InvalidOperand`]`)` with
+    ///   [`InvalidOperandReason::AddrTooHigh`] if the provided slice's address
+    ///   is higher than [`Descriptor::ADDR_MAX`].
     pub fn source_slice(
         self,
         source: &'_ [u8],
     ) -> Result<DescriptorBuilder<&'_ [u8], D>, InvalidOperand> {
         Self::check_addr(source as *const _ as *const (), Operand::Source)?;
+
+        if source.len() > Descriptor::MAX_LEN as usize {
+            return Err(InvalidOperand::too_long(Operand::Source, source.len()));
+        }
 
         Ok(DescriptorBuilder {
             cfg: self
@@ -311,19 +321,27 @@ impl<S, D> DescriptorBuilder<S, D> {
     /// be copied from the source operand of the transfer into this slice.
     ///
     /// Since the slice is in memory, this automatically sets the destination address
-    /// mode to [`AddressMode::LinearMode`].
+    /// mode to [`AddressMode::LinearMode`], and the destination DRQ type to
+    /// [`DestDrqType::Dram].
     ///
     /// # Returns
     ///
     /// - [`Ok`]`(`[`DescriptorBuilder`]`)` with `dest` as the destination
     ///   operand, if the provided slice's address is a valid DMA destination.
-    /// - [`Err`]`(`[`InvalidOperand`]`)` if `dest` is not a valid DMA
-    ///   destination address.
+    /// - [`Err`]`(`[`InvalidOperand`]`)` with [`InvalidOperandReason::TooLong`]
+    ///   if the provided slice is longer than [`Descriptor::MAX_LEN`].
+    /// - [`Err`]`(`[`InvalidOperand`]`)` with
+    ///   [`InvalidOperandReason::AddrTooHigh`] if the provided slice's address
+    ///   is higher than [`Descriptor::ADDR_MAX`].
     pub fn dest_slice(
         self,
         dest: DestBuf<'_>,
     ) -> Result<DescriptorBuilder<S, DestBuf<'_>>, InvalidOperand> {
         Self::check_addr(dest as *const _ as *const (), Operand::Destination)?;
+
+        if dest.len() > Descriptor::MAX_LEN as usize {
+            return Err(InvalidOperand::too_long(Operand::Destination, dest.len()));
+        }
 
         Ok(DescriptorBuilder {
             cfg: self
@@ -356,8 +374,10 @@ impl<S, D> DescriptorBuilder<S, D> {
     ///
     /// - [`Ok`]`(`[`DescriptorBuilder`]`)` with `source` as the source operand,
     ///   if the provided register's address is a valid DMA source.
-    /// - [`Err`]`(`[`InvalidOperand`]`)` if `source` is not a valid DMA source.
-    pub unsafe fn source_reg<R: RegisterSpec>(
+    /// - [`Err`]`(`[`InvalidOperand`]`)` with
+    ///   [`InvalidOperandReason::AddrTooHigh`] if the provided register's address
+    ///   is higher than [`Descriptor::ADDR_MAX`].
+    pub fn source_reg<R: RegisterSpec>(
         self,
         source: &Reg<R>,
         drq_type: SrcDrqType,
@@ -391,7 +411,9 @@ impl<S, D> DescriptorBuilder<S, D> {
     ///
     /// - [`Ok`]`(`[`DescriptorBuilder`]`)` with `dest` as the destination operand,
     ///   if the provided register's address is a valid DMA destination.
-    /// - [`Err`]`(`[`InvalidOperand`]`)` if `dest` is not a valid DMA source.
+    /// - [`Err`]`(`[`InvalidOperand`]`)` with
+    ///   [`InvalidOperandReason::AddrTooHigh`] if the provided register's address
+    ///   is higher than [`Descriptor::ADDR_MAX`].
     pub fn dest_reg<R: RegisterSpec>(
         self,
         dest: &Reg<R>,
@@ -424,101 +446,48 @@ impl<S, D> DescriptorBuilder<S, D> {
 
         Ok(())
     }
-}
 
-impl DescriptorBuilder<&'_ [u8], DestBuf<'_>> {
-    pub fn build(self) -> Result<Descriptor, InvalidDescriptor> {
-        let len: u32 = {
-            // if the source buffer is shorter than the dest, we will be copying
-            // only `source.len()` bytes into `dest`. if the dest buffer is
-            // shorter than `source`, we will be copying only enough bytes to
-            // fill the dest.
-            let min = cmp::min(self.source.len(), self.dest.len());
-            min.try_into()
-                .map_err(|_| InvalidDescriptor::ByteCounterTooLong(min))?
-        };
-        DescriptorBuilder {
-            source: self.source.as_ptr().cast(),
-            dest: self.dest.as_mut_ptr().cast(),
-            wait_clock_cycles: self.wait_clock_cycles,
-            link: self.link,
-            cfg: self.cfg,
-        }
-        .build(len)
-    }
-}
-
-impl DescriptorBuilder<*const (), DestBuf<'_>> {
-    pub fn build(self) -> Result<Descriptor, InvalidDescriptor> {
-        let len: u32 = self
-            .dest
-            .len()
-            .try_into()
-            .map_err(|_| InvalidDescriptor::ByteCounterTooLong(self.dest.len()))?;
-        DescriptorBuilder {
-            source: self.source,
-            dest: self.dest.as_mut_ptr().cast(),
-            wait_clock_cycles: self.wait_clock_cycles,
-            link: self.link,
-            cfg: self.cfg,
-        }
-        .build(len)
-    }
-}
-
-impl DescriptorBuilder<&'_ [u8], *mut ()> {
-    pub fn build(self) -> Result<Descriptor, InvalidDescriptor> {
-        let len: u32 = self
-            .source
-            .len()
-            .try_into()
-            .map_err(|_| InvalidDescriptor::ByteCounterTooLong(self.source.len()))?;
-        DescriptorBuilder {
-            source: self.source.as_ptr().cast(),
-            dest: self.dest,
-            wait_clock_cycles: self.wait_clock_cycles,
-            link: self.link,
-            cfg: self.cfg,
-        }
-        .build(len)
-    }
-}
-
-impl DescriptorBuilder<*const (), *mut ()> {
-    pub fn build(self, len: u32) -> Result<Descriptor, InvalidDescriptor> {
-        let source = self.source as usize;
-        let destination = self.dest as usize;
+    /// This method assumes that the value of `len`, as well as the source and
+    /// destination addresses, have already been validated.
+    #[inline]
+    fn build_inner(self, source_addr: usize, dest_addr: usize, len: u32) -> Descriptor {
         debug_assert!(
-            source <= Descriptor::ADDR_MAX as usize,
+            source_addr <= Descriptor::ADDR_MAX as usize,
             "source address should already have been validated"
         );
 
         debug_assert!(
-            destination <= Descriptor::ADDR_MAX as usize,
+            dest_addr <= Descriptor::ADDR_MAX as usize,
             "destination address should already have been validated"
         );
 
-        if len > Descriptor::MAX_LEN {
-            return Err(InvalidDescriptor::ByteCounterTooLong(len as usize));
-        }
+        debug_assert!(
+            len <= Descriptor::MAX_LEN,
+            "length should already have been validated"
+        );
+
+        debug_assert!(
+            self.link <= Descriptor::LINK_ADDR_MAX as u32,
+            "link address should already have been validated"
+        );
 
         let mut parameter = self.wait_clock_cycles as u32;
 
         // Set source
-        let source_address = source as u32;
+        let source_address = source_addr as u32;
         //             332222222222 11 11 11111100 00000000
         //             109876543210 98 76 54321098 76543210
         parameter &= 0b111111111111_11_00_11111111_11111111;
-        parameter |= (((source >> 32) & 0b11) << 16) as u32;
+        parameter |= (((source_addr >> 32) & 0b11) << 16) as u32;
 
         // Set dest
-        let destination_address = destination as u32;
+        let destination_address = dest_addr as u32;
         //             332222222222 11 11 11111100 00000000
         //             109876543210 98 76 54321098 76543210
         parameter &= 0b111111111111_00_11_11111111_11111111;
-        parameter |= (((destination >> 32) & 0b11) << 18) as u32;
+        parameter |= (((dest_addr >> 32) & 0b11) << 18) as u32;
 
-        Ok(Descriptor {
+        Descriptor {
             configuration: self.cfg,
             source_address,
             destination_address,
@@ -527,7 +496,49 @@ impl DescriptorBuilder<*const (), *mut ()> {
             // link address field was already validated by
             // `DescriptorBuilder::link`.
             link: self.link,
-        })
+        }
+    }
+}
+
+impl DescriptorBuilder<&'_ [u8], DestBuf<'_>> {
+    pub fn build(self) -> Descriptor {
+        // if the source buffer is shorter than the dest, we will be copying
+        // only `source.len()` bytes into `dest`. if the dest buffer is
+        // shorter than `source`, we will be copying only enough bytes to
+        // fill the dest.
+        let len = cmp::min(self.source.len(), self.dest.len()) as u32;
+        let dest = self.dest.as_mut_ptr() as *mut _ as usize;
+        let source = self.source.as_ptr() as *const _ as usize;
+        self.build_inner(source, dest, len)
+    }
+}
+
+impl DescriptorBuilder<*const (), DestBuf<'_>> {
+    pub fn build(self) -> Descriptor {
+        let len = self.dest.len() as u32;
+        let source = self.source as usize;
+        let dest = self.dest.as_mut_ptr() as *mut _ as usize;
+        self.build_inner(source, dest, len)
+    }
+}
+
+impl DescriptorBuilder<&'_ [u8], *mut ()> {
+    pub fn build(self) -> Descriptor {
+        let len = self.source.len() as u32;
+        self.build_inner(
+            self.source.as_ptr() as *const _ as usize,
+            self.dest as usize,
+            len,
+        )
+    }
+}
+
+impl DescriptorBuilder<*const (), *mut ()> {
+    pub fn try_build(self, len: u32) -> Result<Descriptor, InvalidDescriptor> {
+        if len > Descriptor::MAX_LEN {
+            return Err(InvalidDescriptor::ByteCounterTooLong(len as usize));
+        }
+        Ok(self.build_inner(self.source as usize, self.dest as usize, len))
     }
 }
 
@@ -613,6 +624,29 @@ impl fmt::Display for InvalidLink {
 
 // InvalidOperand
 
+impl InvalidOperand {
+    /// Returns whether this error describes the source or destination operand of
+    /// a DMA transfer.
+    #[must_use]
+    pub fn operand(&self) -> Operand {
+        self.kind
+    }
+
+    /// Returns an [`InvalidOperandReason`] describing why the operand was
+    /// invalid.
+    #[must_use]
+    pub fn reason(&self) -> &InvalidOperandReason {
+        &self.reason
+    }
+
+    fn too_long(kind: Operand, len: usize) -> Self {
+        Self {
+            reason: InvalidOperandReason::TooLong(len),
+            kind,
+        }
+    }
+}
+
 impl fmt::Display for InvalidOperand {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Self { reason, kind } = self;
@@ -631,6 +665,11 @@ impl fmt::Display for InvalidOperandReason {
                 f,
                 "address {addr:#x} must be less than `Descriptor::ADDR_MAX` ({:#x})",
                 Descriptor::ADDR_MAX
+            ),
+            Self::TooLong(len) => write!(
+                f,
+                "length {len} is greater than `Descriptor::MAX_LEN` ({})",
+                Descriptor::MAX_LEN
             ),
         }
     }

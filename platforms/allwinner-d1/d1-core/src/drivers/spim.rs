@@ -182,8 +182,7 @@ impl SpiSenderServer {
                         let descriptor = descr_cfg
                             .source_slice(chunk)
                             .expect("slice should be a valid DMA source")
-                            .build()
-                            .expect("failed to build SPI1_TX DMA descriptor");
+                            .build();
 
                         // start the DMA transfer.
                         unsafe {

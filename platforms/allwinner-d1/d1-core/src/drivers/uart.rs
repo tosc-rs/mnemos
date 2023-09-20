@@ -147,8 +147,7 @@ impl D1Uart {
                 let descriptor = descr_cfg
                     .source_slice(chunk)
                     .expect("slice should be a valid DMA source operand")
-                    .build()
-                    .expect("failed to build UART0 DMA transfer descriptor");
+                    .build();
 
                 // start the DMA transfer.
                 unsafe { chan.transfer(NonNull::from(&descriptor)).await }
