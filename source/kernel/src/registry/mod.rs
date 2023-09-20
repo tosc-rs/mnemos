@@ -12,7 +12,7 @@ use portable_atomic::{AtomicU32, Ordering};
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use spitebuf::EnqueueError;
-use tracing::{self, debug, info};
+use tracing::{self, debug, info, warn, Level};
 pub use uuid::{uuid, Uuid};
 
 use crate::comms::{
@@ -266,7 +266,7 @@ pub enum UserHandlerError {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum RegistrationError {
-    UuidAlreadyRegistered,
+    UuidAlreadyRegistered(Uuid),
     RegistryFull,
 }
 
@@ -476,9 +476,10 @@ impl Registry {
     /// with [Registry::register] which allows for userspace access.
     #[tracing::instrument(
         name = "Registry::register_konly",
-        level = "debug",
+        level = Level::INFO,
         skip(self, registration),
         fields(svc = %any::type_name::<RD>()),
+        err(Display),
     )]
     pub async fn register_konly<RD: RegisteredDriver>(
         &self,
@@ -509,9 +510,10 @@ impl Registry {
     /// serializable.
     #[tracing::instrument(
         name = "Registry::register",
-        level = "debug",
+        level = Level::INFO,
         skip(self, registration),
         fields(svc = %any::type_name::<RD>()),
+        err(Display),
     )]
     pub async fn register<RD>(
         &self,
@@ -537,7 +539,7 @@ impl Registry {
         })
         .await?;
 
-        info!(svc = %any::type_name::<RD>(), uuid = ?RD::UUID, service_id, "Registered");
+        info!(uuid = ?RD::UUID, service_id, "Registered");
 
         Ok(())
     }
@@ -573,7 +575,7 @@ impl Registry {
     /// [rejected]: listener::Handshake::reject
     #[tracing::instrument(
         name = "Registry::try_connect",
-        level = "debug",
+        level = Level::DEBUG,
         skip(self, hello),
         fields(svc = %any::type_name::<RD>()),
     )]
@@ -639,7 +641,14 @@ impl Registry {
             client_id: ClientId(client_id),
             request_ctr: 0,
         });
-        info!(svc = %any::type_name::<RD>(), uuid = ?RD::UUID, service_id = service_id.0, client_id, "Got KernelHandle from Registry");
+
+        info!(
+            svc = %any::type_name::<RD>(),
+            uuid = ?RD::UUID,
+            service_id = service_id.0,
+            client_id,
+            "Got KernelHandle from Registry",
+        );
 
         res
     }
@@ -672,7 +681,7 @@ impl Registry {
     /// [rejected]: listener::Handshake::reject
     #[tracing::instrument(
         name = "Registry::connect",
-        level = "debug",
+        level = Level::DEBUG,
         skip(self, hello),
         fields(svc = %any::type_name::<RD>()),
     )]
@@ -687,7 +696,7 @@ impl Registry {
                 Ok(handle) => return Ok(handle),
                 Err(ConnectError::NotFound(h)) if !is_full => {
                     hello = Some(h);
-                    tracing::debug!("no service found; waiting for one to be added...");
+                    debug!("no service found; waiting for one to be added...");
                     // wait for a service to be added to the registry
                     is_full = self.service_added.wait().await.is_err();
                 }
@@ -715,7 +724,7 @@ impl Registry {
     /// [rejected]: listener::Handshake::reject
     #[tracing::instrument(
         name = "Registry::connect_userspace",
-        level = "debug",
+        level = Level::DEBUG,
         skip(self),
         fields(svc = %any::type_name::<RD>()),
     )]
@@ -736,7 +745,7 @@ impl Registry {
             match self.try_connect_userspace(scheduler, user_hello).await {
                 Ok(handle) => return Ok(handle),
                 Err(UserConnectError::NotFound) if !is_full => {
-                    tracing::debug!("no service found; waiting for one to be added...");
+                    debug!("no service found; waiting for one to be added...");
                     // wait for a service to be added to the registry
                     is_full = self.service_added.wait().await.is_err();
                 }
@@ -756,7 +765,7 @@ impl Registry {
     /// retrieved via a call to [`Registry::try_connect_userspace`].
     #[tracing::instrument(
         name = "Registry::try_connect_userspace",
-        level = "debug",
+        level = Level::DEBUG,
         skip(self, scheduler),
         fields(svc = %any::type_name::<RD>()),
     )]
@@ -841,11 +850,11 @@ impl Registry {
         {
             let mut items = self.items.write().await;
             if items.as_slice().iter().any(|i| i.key == item.key) {
-                return Err(RegistrationError::UuidAlreadyRegistered);
+                return Err(RegistrationError::UuidAlreadyRegistered(item.key));
             }
 
             items.try_push(item).map_err(|_| {
-                tracing::warn!("failed to insert new registry item; the registry is full!");
+                warn!("failed to insert new registry item; the registry is full!");
                 // close the "service added" waitcell, because no new services will
                 // ever be added.
                 self.service_added.close();
@@ -860,7 +869,7 @@ impl Registry {
 
     fn get<RD: RegisteredDriver>(items: &FixedVec<RegistryItem>) -> Option<&RegistryItem> {
         let Some(item) = items.as_slice().iter().find(|i| i.key == RD::UUID) else {
-            tracing::debug!(
+            debug!(
                 svc = %any::type_name::<RD>(),
                 uuid = ?RD::UUID,
                 "No service for this UUID exists in the registry!"
@@ -871,7 +880,7 @@ impl Registry {
         let expected_type_id = RD::type_id().type_of();
         let actual_type_id = item.value.req_resp_tuple_id;
         if expected_type_id != actual_type_id {
-            tracing::warn!(
+            warn!(
                 svc = %any::type_name::<RD>(),
                 uuid = ?RD::UUID,
                 type_id.expected = ?expected_type_id,
@@ -974,6 +983,7 @@ impl<RD: RegisteredDriver> ReplyTo<RD> {
             service_id = envelope.service_id.0,
             client_id = envelope.client_id.0,
             response_id = envelope.request_id.id(),
+            svc = %any::type_name::<RD>(),
             "Replying KOnly",
         );
         match self {
@@ -1003,6 +1013,7 @@ where
             service_id = envelope.service_id.0,
             client_id = envelope.client_id.0,
             response_id = envelope.request_id.id(),
+            svc = %any::type_name::<RD>(),
             "Replying",
         );
         match self {
@@ -1079,6 +1090,7 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
             service_id = self.service_id.0,
             client_id = self.client_id.0,
             request_id = request_id.id(),
+            svc = %any::type_name::<RD>(),
             "Sent Request"
         );
         Ok(())
@@ -1392,6 +1404,19 @@ where
                 "the {} service is not exposed to userspace",
                 any::type_name::<D>()
             ),
+        }
+    }
+}
+
+// RegistrationError
+
+impl fmt::Display for RegistrationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::RegistryFull => "the registry is full".fmt(f),
+            Self::UuidAlreadyRegistered(uuid) => {
+                write!(f, "a service with UUID {uuid} has already been registered")
+            }
         }
     }
 }
