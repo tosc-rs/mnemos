@@ -12,7 +12,7 @@ use portable_atomic::{AtomicU32, Ordering};
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use spitebuf::EnqueueError;
-use tracing::{self, debug, info, warn, Level};
+use tracing::{self, debug, info, trace, warn, Level};
 pub use uuid::{uuid, Uuid};
 
 use crate::comms::{
@@ -979,7 +979,7 @@ impl<RD: RegisteredDriver> ReplyTo<RD> {
         self,
         envelope: Envelope<Result<RD::Response, RD::Error>>,
     ) -> Result<(), ReplyError> {
-        debug!(
+        trace!(
             service_id = envelope.service_id.0,
             client_id = envelope.client_id.0,
             response_id = envelope.request_id.id(),
@@ -1009,7 +1009,7 @@ where
         uuid_source: Uuid,
         envelope: Envelope<Result<RD::Response, RD::Error>>,
     ) -> Result<(), ReplyError> {
-        debug!(
+        trace!(
             service_id = envelope.service_id.0,
             client_id = envelope.client_id.0,
             response_id = envelope.request_id.id(),
@@ -1086,7 +1086,7 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
             })
             .await
             .map_err(|_| SendError::Closed)?;
-        debug!(
+        trace!(
             service_id = self.service_id.0,
             client_id = self.client_id.0,
             request_id = request_id.id(),
