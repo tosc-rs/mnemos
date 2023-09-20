@@ -12,7 +12,7 @@ use crate::{
         oneshot::{self, Reusable},
     },
     mnemos_alloc::containers::FixedVec,
-    registry::{known_uuids, Envelope, KernelHandle, RegisteredDriver},
+    registry::{self, known_uuids, Envelope, KernelHandle, RegisteredDriver},
     Kernel,
 };
 use core::{convert::Infallible, fmt, time::Duration};
@@ -29,6 +29,8 @@ impl RegisteredDriver for SdmmcService {
     type Request = Command;
     type Response = Response;
     type Error = Error;
+    type Hello = ();
+    type ConnectError = core::convert::Infallible;
 
     const UUID: Uuid = known_uuids::kernel::SDMMC;
 }
@@ -141,16 +143,15 @@ impl SdCardClient {
     ///
     /// If the [`SdmmcService`] hasn't been registered yet, we will retry until it
     /// has been registered.
-    pub async fn from_registry(kernel: &'static Kernel) -> Self {
-        loop {
-            match SdCardClient::from_registry_no_retry(kernel).await {
-                Some(client) => return client,
-                None => {
-                    // SMHC0 probably isn't registered yet. Try again in a bit
-                    kernel.sleep(Duration::from_millis(10)).await;
-                }
-            }
-        }
+    pub async fn from_registry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<SdmmcService>> {
+        let handle = kernel.registry().connect::<SdmmcService>(()).await?;
+
+        Ok(Self {
+            handle,
+            reply: Reusable::new_async().await,
+        })
     }
 
     /// Obtain an `SdCardClient`
@@ -159,12 +160,12 @@ impl SdCardClient {
     ///
     /// Prefer [`SdCardClient::from_registry`] unless you will not be spawning one
     /// around the same time as obtaining a client.
-    pub async fn from_registry_no_retry(kernel: &'static Kernel) -> Option<Self> {
-        let handle = kernel
-            .with_registry(|reg| reg.get::<SdmmcService>())
-            .await?;
+    pub async fn from_registry_no_retry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<SdmmcService>> {
+        let handle = kernel.registry().try_connect::<SdmmcService>(()).await?;
 
-        Some(Self {
+        Ok(Self {
             handle,
             reply: Reusable::new_async().await,
         })

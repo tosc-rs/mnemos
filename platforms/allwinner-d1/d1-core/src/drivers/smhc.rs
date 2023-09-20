@@ -244,22 +244,29 @@ impl Smhc {
         data.advance_isr(smhc, 0);
     }
 
-    pub async fn register(self, kernel: &'static Kernel, queued: usize) -> Result<(), ()> {
-        let (tx, rx) = KChannel::new_async(queued).await.split();
+    pub async fn register(
+        self,
+        kernel: &'static Kernel,
+        queued: usize,
+    ) -> Result<(), registry::RegistrationError> {
+        let rx = kernel
+            .registry()
+            .bind_konly::<SdmmcService>(queued)
+            .await?
+            .into_request_stream(queued)
+            .await;
 
         kernel.spawn(self.run(rx)).await;
         tracing::info!("SMHC driver task spawned");
-        kernel
-            .with_registry(move |reg| reg.register_konly::<SdmmcService>(&tx).map_err(drop))
-            .await?;
 
         Ok(())
     }
 
     #[tracing::instrument(name = "SMHC", level = tracing::Level::INFO, skip(self, rx))]
-    async fn run(self, rx: KConsumer<registry::Message<SdmmcService>>) {
+    async fn run(self, rx: registry::listener::RequestStream<SdmmcService>) {
         tracing::info!("starting SMHC driver task");
-        while let Ok(registry::Message { mut msg, reply }) = rx.dequeue_async().await {
+        loop {
+            let registry::Message { mut msg, reply } = rx.next_request().await;
             let response = self.command(msg.body).await;
             // TODO: we don't need `msg.body` anymore, but since it has been moved
             // we need to supply another value if we want to use `msg` later to reply.
