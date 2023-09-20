@@ -11,7 +11,7 @@ use d1_pac::generic::{Reg, RegisterSpec};
 #[derive(Clone, Debug)]
 #[repr(C, align(4))]
 pub struct Descriptor {
-    configuration: Configuration,
+    configuration: Cfg,
     source_address: u32,
     destination_address: u32,
     byte_counter: u32,
@@ -23,7 +23,7 @@ pub struct Descriptor {
 #[derive(Copy, Clone, Debug)]
 #[must_use = "a `DescriptorBuilder` does nothing unless `DescriptorBuilder::build()` is called"]
 pub struct DescriptorBuilder<S = (), D = ()> {
-    cfg: Configuration,
+    cfg: Cfg,
     wait_clock_cycles: u8,
     link: u32,
     source: S,
@@ -68,7 +68,7 @@ pub enum InvalidLink {
 }
 
 mycelium_bitfield::bitfield! {
-    struct Configuration<u32> {
+    struct Cfg<u32> {
         /// DMA source DRQ type.
         const SRC_DRQ_TYPE: SrcDrqType;
 
@@ -213,7 +213,7 @@ mycelium_bitfield::enum_from_bits! {
 impl DescriptorBuilder {
     pub const fn new() -> Self {
         Self {
-            cfg: Configuration::new(),
+            cfg: Cfg::new(),
             wait_clock_cycles: 0,
             link: Descriptor::END_LINK,
             source: (),
@@ -227,35 +227,35 @@ type DestBuf<'dest> = &'dest mut [mem::MaybeUninit<u8>];
 impl<S, D> DescriptorBuilder<S, D> {
     pub fn src_block_size(self, val: BlockSize) -> Self {
         Self {
-            cfg: self.cfg.with(Configuration::SRC_BLOCK_SIZE, val),
+            cfg: self.cfg.with(Cfg::SRC_BLOCK_SIZE, val),
             ..self
         }
     }
 
     pub fn src_data_width(self, val: DataWidth) -> Self {
         Self {
-            cfg: self.cfg.with(Configuration::SRC_DATA_WIDTH, val),
+            cfg: self.cfg.with(Cfg::SRC_DATA_WIDTH, val),
             ..self
         }
     }
 
     pub fn dest_block_size(self, val: BlockSize) -> Self {
         Self {
-            cfg: self.cfg.with(Configuration::DEST_BLOCK_SIZE, val),
+            cfg: self.cfg.with(Cfg::DEST_BLOCK_SIZE, val),
             ..self
         }
     }
 
     pub fn dest_data_width(self, val: DataWidth) -> Self {
         Self {
-            cfg: self.cfg.with(Configuration::DEST_DATA_WIDTH, val),
+            cfg: self.cfg.with(Cfg::DEST_DATA_WIDTH, val),
             ..self
         }
     }
 
     pub fn bmode_sel(self, val: BModeSel) -> Self {
         Self {
-            cfg: self.cfg.with(Configuration::BMODE_SEL, val),
+            cfg: self.cfg.with(Cfg::BMODE_SEL, val),
             ..self
         }
     }
@@ -298,8 +298,8 @@ impl<S, D> DescriptorBuilder<S, D> {
         Ok(DescriptorBuilder {
             cfg: self
                 .cfg
-                .with(Configuration::SRC_ADDR_MODE, AddressMode::LinearMode)
-                .with(Configuration::SRC_DRQ_TYPE, SrcDrqType::Dram),
+                .with(Cfg::SRC_ADDR_MODE, AddressMode::LinearMode)
+                .with(Cfg::SRC_DRQ_TYPE, SrcDrqType::Dram),
             wait_clock_cycles: self.wait_clock_cycles,
             link: self.link,
             source,
@@ -328,8 +328,8 @@ impl<S, D> DescriptorBuilder<S, D> {
         Ok(DescriptorBuilder {
             cfg: self
                 .cfg
-                .with(Configuration::DEST_ADDR_MODE, AddressMode::LinearMode)
-                .with(Configuration::DEST_DRQ_TYPE, DestDrqType::Dram),
+                .with(Cfg::DEST_ADDR_MODE, AddressMode::LinearMode)
+                .with(Cfg::DEST_DRQ_TYPE, DestDrqType::Dram),
             wait_clock_cycles: self.wait_clock_cycles,
             link: self.link,
             source: self.source,
@@ -368,8 +368,8 @@ impl<S, D> DescriptorBuilder<S, D> {
         Ok(DescriptorBuilder {
             cfg: self
                 .cfg
-                .with(Configuration::SRC_ADDR_MODE, AddressMode::IoMode)
-                .with(Configuration::SRC_DRQ_TYPE, drq_type),
+                .with(Cfg::SRC_ADDR_MODE, AddressMode::IoMode)
+                .with(Cfg::SRC_DRQ_TYPE, drq_type),
             wait_clock_cycles: self.wait_clock_cycles,
             link: self.link,
             source,
@@ -403,8 +403,8 @@ impl<S, D> DescriptorBuilder<S, D> {
         Ok(DescriptorBuilder {
             cfg: self
                 .cfg
-                .with(Configuration::DEST_ADDR_MODE, AddressMode::IoMode)
-                .with(Configuration::DEST_DRQ_TYPE, drq_type),
+                .with(Cfg::DEST_ADDR_MODE, AddressMode::IoMode)
+                .with(Cfg::DEST_DRQ_TYPE, drq_type),
             wait_clock_cycles: self.wait_clock_cycles,
             link: self.link,
             dest,
@@ -644,7 +644,7 @@ mod tests {
 
     #[test]
     fn configuration_is_valid() {
-        Configuration::assert_valid();
+        Cfg::assert_valid();
     }
 
     #[derive(proptest_derive::Arbitrary, Debug)]
@@ -696,7 +696,11 @@ mod tests {
                 .dest_block_size(cfg.dest_block_size)
                 .dest_data_width(cfg.dest_data_width)
                 .bmode_sel(cfg.bmode_sel).cfg;
-            config.set(Configuration::SRC_ADDR_MODE, cfg.src_addr_mode).set(Configuration::DEST_ADDR_MODE, cfg.dest_addr_mode).set(Configuration::SRC_DRQ_TYPE, cfg.src_drq_type).set(Configuration::DEST_DRQ_TYPE, cfg.dest_drq_type);
+            config
+                .set(Cfg::SRC_ADDR_MODE, cfg.src_addr_mode)
+                .set(Cfg::DEST_ADDR_MODE, cfg.dest_addr_mode)
+                .set(Cfg::SRC_DRQ_TYPE, cfg.src_drq_type)
+                .set(Cfg::DEST_DRQ_TYPE, cfg.dest_drq_type);
 
             prop_assert_eq!(
                 cfg.manual_pack(),
