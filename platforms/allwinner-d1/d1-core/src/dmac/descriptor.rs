@@ -8,6 +8,7 @@
 use self::errors::*;
 use core::{cmp, mem, ptr::NonNull};
 use d1_pac::generic::{Reg, RegisterSpec};
+use mycelium_bitfield::{bitfield, enum_from_bits};
 
 #[derive(Clone, Debug)]
 #[repr(C, align(4))]
@@ -16,7 +17,7 @@ pub struct Descriptor {
     source_address: u32,
     destination_address: u32,
     byte_counter: u32,
-    parameter: u32,
+    parameter: Param,
     link: u32,
 }
 
@@ -25,13 +26,13 @@ pub struct Descriptor {
 #[must_use = "a `DescriptorBuilder` does nothing unless `DescriptorBuilder::build()` is called"]
 pub struct DescriptorBuilder<S = (), D = ()> {
     cfg: Cfg,
-    wait_clock_cycles: u8,
+    param: Param,
     link: u32,
     source: S,
     dest: D,
 }
 
-mycelium_bitfield::enum_from_bits! {
+enum_from_bits! {
     #[derive(Debug, Eq, PartialEq)]
     #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
     pub enum SrcDrqType<u8> {
@@ -65,7 +66,7 @@ mycelium_bitfield::enum_from_bits! {
     }
 }
 
-mycelium_bitfield::enum_from_bits! {
+enum_from_bits! {
     #[derive(Debug, Eq, PartialEq)]
     #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
     pub enum DestDrqType<u8> {
@@ -95,11 +96,11 @@ mycelium_bitfield::enum_from_bits! {
         Twi1 = 44,
         Twi2 = 45,
         Twi3 = 46,
-}
+    }
 }
 
 // TODO: Verify bits or bytes?
-mycelium_bitfield::enum_from_bits! {
+enum_from_bits! {
     #[derive(Debug, Eq, PartialEq)]
     #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
     pub enum BlockSize<u8> {
@@ -110,7 +111,7 @@ mycelium_bitfield::enum_from_bits! {
     }
 }
 
-mycelium_bitfield::enum_from_bits! {
+enum_from_bits! {
     #[derive(Debug, Eq, PartialEq)]
     #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
     pub enum AddressMode<u8> {
@@ -119,7 +120,7 @@ mycelium_bitfield::enum_from_bits! {
     }
 }
 
-mycelium_bitfield::enum_from_bits! {
+enum_from_bits! {
     #[derive(Debug, Eq, PartialEq)]
     #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
     pub enum DataWidth<u8> {
@@ -130,7 +131,7 @@ mycelium_bitfield::enum_from_bits! {
     }
 }
 
-mycelium_bitfield::enum_from_bits! {
+enum_from_bits! {
     #[derive(Debug, Eq, PartialEq)]
     #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
     pub enum BModeSel<u8> {
@@ -139,7 +140,8 @@ mycelium_bitfield::enum_from_bits! {
     }
 }
 
-mycelium_bitfield::bitfield! {
+bitfield! {
+    /// A DMAC descriptor `Configuration` field.
     struct Cfg<u32> {
         /// DMA source DRQ type.
         const SRC_DRQ_TYPE: SrcDrqType;
@@ -174,11 +176,30 @@ mycelium_bitfield::bitfield! {
     }
 }
 
+bitfield! {
+    /// A DMAC descriptor `Parameter` field.
+    struct Param<u32> {
+        /// Wait clock cycles.
+        ///
+        /// Sets the wait time in DRQ mode.
+        const WAIT_CLOCK_CYCLES: u8;
+
+        const _RESERVED_0 = 8;
+
+        /// The highest two bits of the 34-bit source address.
+        const SRC_HIGH = 2;
+
+        /// The highest two bits of the 34-bit destination address.
+        const DEST_HIGH = 2;
+
+    }
+}
+
 impl DescriptorBuilder {
     pub const fn new() -> Self {
         Self {
             cfg: Cfg::new(),
-            wait_clock_cycles: 0,
+            param: Param::new(),
             link: Descriptor::END_LINK,
             source: (),
             dest: (),
@@ -235,7 +256,7 @@ impl<S, D> DescriptorBuilder<S, D> {
 
     pub fn wait_clock_cycles(self, wait_clock_cycles: u8) -> Self {
         Self {
-            wait_clock_cycles,
+            param: self.param.with(Param::WAIT_CLOCK_CYCLES, wait_clock_cycles),
             ..self
         }
     }
@@ -260,7 +281,7 @@ impl<S, D> DescriptorBuilder<S, D> {
         self,
         source: &'_ [u8],
     ) -> Result<DescriptorBuilder<&'_ [u8], D>, InvalidOperand> {
-        Self::check_addr(source as *const _ as *const (), Operand::Source)?;
+        let high_bits = Self::high_bits(source as *const _ as *const (), Operand::Source)?;
 
         if source.len() > Descriptor::MAX_LEN as usize {
             return Err(InvalidOperand::too_long(Operand::Source, source.len()));
@@ -271,7 +292,7 @@ impl<S, D> DescriptorBuilder<S, D> {
                 .cfg
                 .with(Cfg::SRC_ADDR_MODE, AddressMode::LinearMode)
                 .with(Cfg::SRC_DRQ_TYPE, SrcDrqType::Dram),
-            wait_clock_cycles: self.wait_clock_cycles,
+            param: self.param.with(Param::SRC_HIGH, high_bits),
             link: self.link,
             source,
             dest: self.dest,
@@ -298,7 +319,7 @@ impl<S, D> DescriptorBuilder<S, D> {
         self,
         dest: DestBuf<'_>,
     ) -> Result<DescriptorBuilder<S, DestBuf<'_>>, InvalidOperand> {
-        Self::check_addr(dest as *const _ as *const (), Operand::Destination)?;
+        let high_bits = Self::high_bits(dest as *const _ as *const (), Operand::Destination)?;
 
         if dest.len() > Descriptor::MAX_LEN as usize {
             return Err(InvalidOperand::too_long(Operand::Destination, dest.len()));
@@ -309,7 +330,7 @@ impl<S, D> DescriptorBuilder<S, D> {
                 .cfg
                 .with(Cfg::DEST_ADDR_MODE, AddressMode::LinearMode)
                 .with(Cfg::DEST_DRQ_TYPE, DestDrqType::Dram),
-            wait_clock_cycles: self.wait_clock_cycles,
+            param: self.param.with(Param::DEST_HIGH, high_bits),
             link: self.link,
             source: self.source,
             dest,
@@ -344,14 +365,14 @@ impl<S, D> DescriptorBuilder<S, D> {
         drq_type: SrcDrqType,
     ) -> Result<DescriptorBuilder<*const (), D>, InvalidOperand> {
         let source = source.as_ptr().cast() as *const _;
-        Self::check_addr(source, Operand::Source)?;
+        let high_bits = Self::high_bits(source, Operand::Source)?;
 
         Ok(DescriptorBuilder {
             cfg: self
                 .cfg
                 .with(Cfg::SRC_ADDR_MODE, AddressMode::IoMode)
                 .with(Cfg::SRC_DRQ_TYPE, drq_type),
-            wait_clock_cycles: self.wait_clock_cycles,
+            param: self.param.with(Param::SRC_HIGH, high_bits),
             link: self.link,
             source,
             dest: self.dest,
@@ -381,14 +402,14 @@ impl<S, D> DescriptorBuilder<S, D> {
         drq_type: DestDrqType,
     ) -> Result<DescriptorBuilder<S, *mut ()>, InvalidOperand> {
         let dest = dest.as_ptr().cast();
-        Self::check_addr(dest as *const _, Operand::Destination)?;
+        let high_bits = Self::high_bits(dest as *const _, Operand::Destination)?;
 
         Ok(DescriptorBuilder {
             cfg: self
                 .cfg
                 .with(Cfg::DEST_ADDR_MODE, AddressMode::IoMode)
                 .with(Cfg::DEST_DRQ_TYPE, drq_type),
-            wait_clock_cycles: self.wait_clock_cycles,
+            param: self.param.with(Param::DEST_HIGH, high_bits),
             link: self.link,
             dest,
             source: self.source,
@@ -396,19 +417,19 @@ impl<S, D> DescriptorBuilder<S, D> {
     }
 
     #[inline]
-    fn check_addr(addr: *const (), kind: Operand) -> Result<(), InvalidOperand> {
+    fn high_bits(addr: *const (), kind: Operand) -> Result<u32, InvalidOperand> {
         let addr = addr as usize;
         if addr > Descriptor::ADDR_MAX as usize {
             return Err(InvalidOperand::addr_too_high(kind, addr));
         }
 
-        Ok(())
+        Ok((addr >> 32 & 0b11) as u32)
     }
 
-    /// This method assumes that the value of `len`, as well as the source and
-    /// destination addresses, have already been validated.
+    /// This method assumes that the value of `byte_counter`, as well as the
+    /// source, destination, and link addresses, have already been validated.
     #[inline]
-    fn build_inner(self, source_addr: usize, dest_addr: usize, len: u32) -> Descriptor {
+    fn build_inner(self, source_addr: usize, dest_addr: usize, byte_counter: u32) -> Descriptor {
         debug_assert!(
             source_addr <= Descriptor::ADDR_MAX as usize,
             "source address should already have been validated"
@@ -420,8 +441,8 @@ impl<S, D> DescriptorBuilder<S, D> {
         );
 
         debug_assert!(
-            len <= Descriptor::MAX_LEN,
-            "length should already have been validated"
+            byte_counter <= Descriptor::MAX_LEN,
+            "byte counter length should already have been validated"
         );
 
         debug_assert!(
@@ -429,28 +450,12 @@ impl<S, D> DescriptorBuilder<S, D> {
             "link address should already have been validated"
         );
 
-        let mut parameter = self.wait_clock_cycles as u32;
-
-        // Set source
-        let source_address = source_addr as u32;
-        //             332222222222 11 11 11111100 00000000
-        //             109876543210 98 76 54321098 76543210
-        parameter &= 0b111111111111_11_00_11111111_11111111;
-        parameter |= (((source_addr >> 32) & 0b11) << 16) as u32;
-
-        // Set dest
-        let destination_address = dest_addr as u32;
-        //             332222222222 11 11 11111100 00000000
-        //             109876543210 98 76 54321098 76543210
-        parameter &= 0b111111111111_00_11_11111111_11111111;
-        parameter |= (((dest_addr >> 32) & 0b11) << 18) as u32;
-
         Descriptor {
             configuration: self.cfg,
-            source_address,
-            destination_address,
-            byte_counter: len,
-            parameter,
+            source_address: source_addr as u32,
+            destination_address: dest_addr as u32,
+            byte_counter,
+            parameter: self.param,
             // link address field was already validated by
             // `DescriptorBuilder::link`.
             link: self.link,
@@ -763,6 +768,35 @@ mod tests {
                 cfg.manual_pack(),
                 config
             );
+        }
+
+        #[test]
+        fn pack_param(src_high in 0b00u32..0b11u32, dest_high in 0b00u32..0b11u32, wait_clock_cycles: u8) {
+            let mut manual = wait_clock_cycles as u32;
+
+            // Set source
+            //          332222222222 11 11 11111100 00000000
+            //          109876543210 98 76 54321098 76543210
+            manual &= 0b111111111111_11_00_11111111_11111111;
+            manual |= src_high << 16;
+
+            // Set dest
+            //          332222222222 11 11 11111100 00000000
+            //          109876543210 98 76 54321098 76543210
+            manual &= 0b111111111111_00_11_11111111_11111111;
+            manual |= dest_high << 18;
+
+            let param = Param::new()
+                .with(Param::WAIT_CLOCK_CYCLES, wait_clock_cycles)
+                .with(Param::SRC_HIGH, src_high)
+                .with(Param::DEST_HIGH, dest_high);
+            prop_assert_eq!(
+                manual,
+                param.bits(),
+                "\n{:032b} (expected), vs:\n{}",
+                manual,
+                param,
+            )
         }
     }
 }
