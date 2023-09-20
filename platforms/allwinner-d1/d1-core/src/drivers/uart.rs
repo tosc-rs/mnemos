@@ -10,9 +10,7 @@ use core::{
 
 use crate::ccu::Ccu;
 use crate::dmac::{
-    descriptor::{
-        AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType,
-    },
+    descriptor::{BlockSize, DataWidth, Descriptor, DestDrqType},
     ChannelMode, Dmac,
 };
 use kernel::{
@@ -113,42 +111,49 @@ impl D1Uart {
 
     // Send loop that listens to the bbqueue consumer, and sends it as DMA transactions on the UART
     async fn sending(cons: Consumer, dmac: Dmac) {
+        let thr = unsafe { (*UART0::PTR).thr() };
+
+        let descr_cfg = Descriptor::builder()
+            .dest_data_width(DataWidth::Bit8)
+            .dest_block_size(BlockSize::Byte1)
+            .src_data_width(DataWidth::Bit8)
+            .src_block_size(BlockSize::Byte1)
+            .wait_clock_cycles(0)
+            .dest_reg(thr, DestDrqType::Uart0Tx)
+            .expect("UART0 THR register should be a valid destination register for DMA transfers");
+
         loop {
             let rx = cons.read_grant().await;
-            let len = rx.len();
-            let thr_addr = unsafe { &*UART0::PTR }.thr() as *const _ as *mut ();
+            let rx_len = rx.len();
 
-            let rx_sli: &[u8] = &rx;
-
-            let d_cfg = DescriptorConfig {
-                source: rx_sli.as_ptr().cast(),
-                destination: thr_addr,
-                byte_counter: rx_sli.len(),
-                link: None,
-                wait_clock_cycles: 0,
-                bmode: BModeSel::Normal,
-                dest_width: DataWidth::Bit8,
-                dest_addr_mode: AddressMode::IoMode,
-                dest_block_size: BlockSize::Byte1,
-                dest_drq_type: DestDrqType::Uart0Tx,
-                src_data_width: DataWidth::Bit8,
-                src_addr_mode: AddressMode::LinearMode,
-                src_block_size: BlockSize::Byte1,
-                src_drq_type: SrcDrqType::Dram,
-            };
-            let descriptor = d_cfg.try_into().unwrap();
-
-            // start the DMA transfer.
+            let mut chan = dmac.claim_channel().await;
             unsafe {
-                dmac.transfer(
-                    ChannelMode::Wait,
-                    ChannelMode::Handshake,
-                    NonNull::from(&descriptor),
-                )
-                .await
+                chan.set_channel_modes(ChannelMode::Wait, ChannelMode::Handshake);
             }
 
-            rx.release(len);
+            // if the payload is longer than the maximum DMA buffer
+            // length, split it down to the maximum size and send each
+            // chunk as a separate DMA transfer.
+            let chunks = rx[..]
+                // TODO(eliza): since the `byte_counter_max` is a constant,
+                // we could consider using `slice::array_chunks` instead to
+                // get these as fixed-size arrays, once that function is stable?
+                .chunks(Descriptor::MAX_LEN as usize);
+
+            for chunk in chunks {
+                // this cast will never truncate because
+                // `BYTE_COUNTER_MAX` is less than 32 bits.
+                debug_assert!(chunk.len() <= Descriptor::MAX_LEN as usize);
+                let descriptor = descr_cfg
+                    .source_slice(chunk)
+                    .expect("slice should be a valid DMA source operand")
+                    .build();
+
+                // start the DMA transfer.
+                unsafe { chan.transfer(NonNull::from(&descriptor)).await }
+            }
+
+            rx.release(rx_len);
         }
     }
 
