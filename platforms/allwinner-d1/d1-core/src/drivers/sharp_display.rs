@@ -300,7 +300,11 @@ impl Draw {
             // Drop the mutex once we're done using the framebuffer data
             drop(c);
 
-            tracing::debug!(drawn, "Drew all dirty lines");
+            if drawn > 0 {
+                tracing::debug!(drawn, "Drew all dirty lines");
+            } else {
+                tracing::trace!("No dirty lines, didn't draw anything...");
+            }
 
             self.buf = self.spim.send_wait(self.buf).await.map_err(drop).unwrap();
 
