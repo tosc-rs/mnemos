@@ -58,6 +58,7 @@ static SMHC0_ISR: IsrData = IsrData {
 };
 
 enum SmhcOp {
+    None,
     Control,
     Read {
         buf: FixedVec<u8>,
@@ -344,7 +345,13 @@ impl Smhc {
                     self.smhc.smhc_resp3.read().bits(),
                 ]))
             } else {
-                Ok(sdmmc::Response::Short(self.smhc.smhc_resp0.read().bits()))
+                Ok(sdmmc::Response::Short {
+                    value: self.smhc.smhc_resp0.read().bits(),
+                    data: match core::mem::replace(&mut guard.data.op, SmhcOp::None) {
+                        SmhcOp::Read { buf, .. } => Some(buf),
+                        _ => None,
+                    },
+                })
             }
         };
         res
@@ -405,12 +412,15 @@ impl SmhcData {
         let mut needs_wake = false;
         tracing::trace!(state = ?self.state, smhc = num, "SMHC{num} interrupt");
 
-        match self.state {
-            State::Idle => (),
-            State::WaitForCommand => (),
-            State::WaitForDataTransfer => (),
-            State::WaitForAutoStop => (),
-        }
+        let new_state = match self.state {
+            State::Idle => State::Idle,
+            State::WaitForCommand => match self.op {
+                SmhcOp::None | SmhcOp::Control => State::Idle,
+                SmhcOp::Read { .. } | SmhcOp::Write { .. } => State::WaitForCommand,
+            },
+            State::WaitForDataTransfer => State::WaitForAutoStop,
+            State::WaitForAutoStop => State::Idle,
+        };
 
         if needs_wake {
             if let Some(waker) = self.waker.take() {

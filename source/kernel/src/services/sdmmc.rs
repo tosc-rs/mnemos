@@ -94,7 +94,11 @@ pub enum ResponseType {
 #[must_use]
 pub enum Response {
     /// The 32-bit value from the 48-bit response.
-    Short(u32),
+    /// Potentially also includes the data vector if this was a read command.
+    Short {
+        value: u32,
+        data: Option<FixedVec<u8>>,
+    },
     /// The 128-bit value from the 136-bit response.
     // TODO: make this `u128`?
     Long([u32; 4]),
