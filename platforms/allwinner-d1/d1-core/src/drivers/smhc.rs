@@ -296,6 +296,11 @@ impl Smhc {
         let long_resp = params.rsp_type == sdmmc::ResponseType::Long;
         let resp_rcv = params.rsp_type != sdmmc::ResponseType::None;
 
+        // Set the argument to be sent
+        self.smhc
+            .smhc_cmdarg
+            .write(|w| unsafe { w.bits(params.argument) });
+
         // Configure and start command
         self.smhc.smhc_cmd.write(|w| {
             w.cmd_load().set_bit();
@@ -408,28 +413,100 @@ impl DerefMut for SmhcDataGuard<'_> {
 }
 
 impl SmhcData {
+    fn error_status(smhc: &smhc::RegisterBlock) -> Option<ErrorKind> {
+        let mint = smhc.smhc_mintsts.read();
+        if mint.m_rto_back_int().bit_is_set() {
+            return Some(ErrorKind::ResponseTimeout);
+        }
+        if mint.m_rce_int().bit_is_set() {
+            return Some(ErrorKind::ResponseCrc);
+        }
+        if mint.m_re_int().bit_is_set() {
+            return Some(ErrorKind::Response);
+        }
+        if mint.m_dsto_vsd_int().bit_is_set() {
+            return Some(ErrorKind::DataStarvationTimeout);
+        }
+        if mint.m_dto_bds_int().bit_is_set() {
+            return Some(ErrorKind::DataTimeout);
+        }
+        if mint.m_dce_int().bit_is_set() {
+            return Some(ErrorKind::DataCrc);
+        }
+        if mint.m_fu_fo_int().bit_is_set() {
+            return Some(ErrorKind::FifoUnderrunOverflow);
+        }
+        if mint.m_cb_iw_int().bit_is_set() {
+            return Some(ErrorKind::CommandBusyIllegalWrite);
+        }
+        if mint.m_dse_bc_int().bit_is_set() {
+            return Some(ErrorKind::DataStart);
+        }
+        if mint.m_dee_int().bit_is_set() {
+            return Some(ErrorKind::DataEnd);
+        }
+
+        None
+    }
+
     fn advance_isr(&mut self, smhc: &smhc::RegisterBlock, num: u8) {
-        let mut needs_wake = false;
         tracing::trace!(state = ?self.state, smhc = num, "SMHC{num} interrupt");
 
-        let new_state = match self.state {
+        self.err = Self::error_status(smhc);
+        let mut needs_wake = self.err.is_some();
+
+        self.state = match self.state {
             State::Idle => State::Idle,
-            State::WaitForCommand => match self.op {
-                SmhcOp::None | SmhcOp::Control => State::Idle,
-                SmhcOp::Read { .. } | SmhcOp::Write { .. } => State::WaitForCommand,
-            },
-            State::WaitForDataTransfer => State::WaitForAutoStop,
-            State::WaitForAutoStop => State::Idle,
+            State::WaitForCommand => {
+                if smhc.smhc_mintsts.read().m_cc_int().bit_is_set() {
+                    match self.op {
+                        SmhcOp::None => State::Idle,
+                        SmhcOp::Control => {
+                            needs_wake = true;
+                            State::Idle
+                        }
+                        SmhcOp::Read { .. } | SmhcOp::Write { .. } => State::WaitForDataTransfer,
+                    }
+                } else {
+                    self.state
+                }
+            }
+            State::WaitForDataTransfer => {
+                if smhc.smhc_mintsts.read().m_dtc_int().bit_is_set() {
+                    match self.op {
+                        SmhcOp::None | SmhcOp::Control => State::Idle,
+                        SmhcOp::Read { auto_stop, .. } | SmhcOp::Write { auto_stop, .. } => {
+                            if auto_stop {
+                                State::WaitForAutoStop
+                            } else {
+                                needs_wake = true;
+                                State::Idle
+                            }
+                        }
+                    }
+                } else {
+                    self.state
+                }
+            }
+            State::WaitForAutoStop => {
+                if smhc.smhc_mintsts.read().m_acd_int().bit_is_set() {
+                    needs_wake = true;
+                    State::Idle
+                } else {
+                    self.state
+                }
+            }
         };
 
         if needs_wake {
             if let Some(waker) = self.waker.take() {
                 waker.wake();
                 // If we are waking the driver task, we need to disable interrupts
-                // until the driver can prepare the next phase of the transaction.
                 smhc.smhc_ctrl.modify(|_, w| w.ine_enb().disable());
             }
         }
-        // TODO
+
+        // Clear all pending interrupts
+        smhc.smhc_rintsts.write(|w| unsafe { w.bits(0xFFFF_FFFF) });
     }
 }
