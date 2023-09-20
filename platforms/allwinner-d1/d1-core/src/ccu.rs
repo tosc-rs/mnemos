@@ -20,10 +20,10 @@ pub struct Ccu {
 
 /// Trait to be implemented for module clocks that can be gated and reset
 pub trait BusGatingResetRegister {
-    /// Enable or disable the clock reset bit
-    fn gating(ccu: &mut CCU, pass: bool);
     /// Enable or disable the clock gating bit
-    fn reset(ccu: &mut CCU, deassert: bool);
+    fn gating(ccu: &mut CCU, pass: bool);
+    /// Enable or disable the clock reset bit
+    fn reset(ccu: &mut CCU, assert: bool);
 }
 
 // TODO: should this move into the `Clint`?
@@ -49,7 +49,7 @@ impl Ccu {
 
     /// De-assert the reset bit and enable the clock gating bit for the given module
     pub fn enable_module<MODULE: BusGatingResetRegister>(&mut self, _mod: &mut MODULE) {
-        MODULE::reset(&mut self.ccu, true);
+        MODULE::reset(&mut self.ccu, false);
         sdelay(20);
         MODULE::gating(&mut self.ccu, true);
     }
@@ -58,7 +58,7 @@ impl Ccu {
     pub fn disable_module<MODULE: BusGatingResetRegister>(&mut self, _mod: &mut MODULE) {
         MODULE::gating(&mut self.ccu, false);
         // TODO: delay?
-        MODULE::reset(&mut self.ccu, false);
+        MODULE::reset(&mut self.ccu, true);
     }
 
     /// Allow modules to configure their own clock on a PAC level
@@ -252,8 +252,8 @@ macro_rules! impl_bgr {
                     ccu.$reg.modify(|_, w| w.$gating().bit(pass));
                 }
 
-                fn reset(ccu: &mut CCU, deassert: bool) {
-                    ccu.$reg.modify(|_, w| w.$reset().bit(deassert));
+                fn reset(ccu: &mut CCU, assert: bool) {
+                    ccu.$reg.modify(|_, w| w.$reset().bit(!assert));
                 }
             }
         )+
