@@ -7,7 +7,7 @@ use core::ptr::NonNull;
 
 use crate::ccu::Ccu;
 use crate::dmac::{
-    descriptor::{BlockSize, DataWidth, Descriptor, DestDrqType, SrcDrqType},
+    descriptor::{BlockSize, DataWidth, Descriptor, DestDrqType},
     ChannelMode, Dmac,
 };
 use d1_pac::{GPIO, SPI_DBI};
@@ -118,19 +118,16 @@ impl SpiSenderServer {
             .spawn(async move {
                 let spi = unsafe { &*SPI_DBI::PTR };
 
-                let txd_ptr: *mut u32 = spi.spi_txd.as_ptr();
-                let txd_ptr: *mut u8 = txd_ptr.cast();
-                let txd_ptr: *mut () = txd_ptr.cast();
-
                 let descr_cfg = Descriptor::builder()
                     .dest_data_width(DataWidth::Bit8)
                     .dest_block_size(BlockSize::Byte1)
-                    .dest_drq_type(DestDrqType::Uart0Tx)
                     .src_data_width(DataWidth::Bit8)
                     .src_block_size(BlockSize::Byte1)
-                    .src_drq_type(SrcDrqType::Dram)
                     .wait_clock_cycles(0)
-                    .dest_reg(txd_ptr);
+                    .dest_reg(&spi.spi_txd, DestDrqType::Spi1Tx)
+                    .expect(
+                        "SPI_TXD register should be a valid destination register for DMA transfers",
+                    );
 
                 loop {
                     let Message { msg, reply } = reqs.next_request().await;
@@ -184,6 +181,7 @@ impl SpiSenderServer {
                         // out later.
                         let descriptor = descr_cfg
                             .source_slice(chunk)
+                            .expect("slice should be a valid DMA source")
                             .build()
                             .expect("failed to build SPI1_TX DMA descriptor");
 

@@ -6,6 +6,7 @@
 #![allow(clippy::unusual_byte_groupings)]
 
 use core::{cmp, fmt, mem, ptr::NonNull};
+use d1_pac::generic::{Reg, RegisterSpec};
 
 #[derive(Clone, Debug)]
 #[repr(C, align(4))]
@@ -18,7 +19,9 @@ pub struct Descriptor {
     link: u32,
 }
 
+/// A builder for constructing DMA [`Descriptor`]s.
 #[derive(Copy, Clone, Debug)]
+#[must_use = "a `DescriptorBuilder` does nothing unless `DescriptorBuilder::build()` is called"]
 pub struct DescriptorBuilder<S = (), D = ()> {
     cfg: Configuration,
     wait_clock_cycles: u8,
@@ -30,10 +33,31 @@ pub struct DescriptorBuilder<S = (), D = ()> {
 /// Errors returned by [`DescriptorBuilder::build`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum InvalidDescriptor {
-    SrcAddrTooLong(usize),
-    DestAddrTooLong(usize),
     ByteCounterTooLong(usize),
     LinkAddr(InvalidLink),
+}
+
+/// Errors returned by [`DescriptorBuilder::source_slice`],
+/// [`DescriptorBuilder::dest_slice`], [`DescriptorBuilder::source_reg`], and [`DescriptorBuilder::dest_reg`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct InvalidOperand {
+    reason: InvalidOperandReason,
+    kind: Operand,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum InvalidOperandReason {
+    /// Indicates that the address of the provided operand was too high in
+    /// memory. Operand addresses for DMA transfers may not exceed
+    /// [`Descriptor::ADDR_MAX`] (34 bits).
+    AddrTooHigh(usize),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum Operand {
+    Source,
+    Destination,
 }
 
 /// Errors returned by [`Descriptor::set_link`] and [`DescriptorBuilder::build`].
@@ -201,23 +225,9 @@ impl DescriptorBuilder {
 type DestBuf<'dest> = &'dest mut [mem::MaybeUninit<u8>];
 
 impl<S, D> DescriptorBuilder<S, D> {
-    pub fn src_drq_type(self, val: SrcDrqType) -> Self {
-        Self {
-            cfg: self.cfg.with(Configuration::SRC_DRQ_TYPE, val),
-            ..self
-        }
-    }
-
     pub fn src_block_size(self, val: BlockSize) -> Self {
         Self {
             cfg: self.cfg.with(Configuration::SRC_BLOCK_SIZE, val),
-            ..self
-        }
-    }
-
-    pub fn src_addr_mode(self, val: AddressMode) -> Self {
-        Self {
-            cfg: self.cfg.with(Configuration::SRC_ADDR_MODE, val),
             ..self
         }
     }
@@ -229,23 +239,9 @@ impl<S, D> DescriptorBuilder<S, D> {
         }
     }
 
-    pub fn dest_drq_type(self, val: DestDrqType) -> Self {
-        Self {
-            cfg: self.cfg.with(Configuration::DEST_DRQ_TYPE, val),
-            ..self
-        }
-    }
-
     pub fn dest_block_size(self, val: BlockSize) -> Self {
         Self {
             cfg: self.cfg.with(Configuration::DEST_BLOCK_SIZE, val),
-            ..self
-        }
-    }
-
-    pub fn dest_addr_mode(self, val: AddressMode) -> Self {
-        Self {
-            cfg: self.cfg.with(Configuration::DEST_ADDR_MODE, val),
             ..self
         }
     }
@@ -280,52 +276,153 @@ impl<S, D> DescriptorBuilder<S, D> {
         }
     }
 
-    pub fn source_slice(self, source: &'_ [u8]) -> DescriptorBuilder<&'_ [u8], D> {
-        DescriptorBuilder {
+    /// Sets the provided slice as the source for the DMA transfer. Bytes will
+    /// be copied out of this slice to the destination operand of the transfer.
+    ///
+    /// Since the slice is in memory, this automatically sets the source address
+    /// mode to [`AddressMode::LinearMode`] and the source DRQ type to
+    /// [`SrcDrqType::Dram`].
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[`DescriptorBuilder`]`)` with `source` as the source operand,
+    ///   if the provided slice's address is a valid DMA source.
+    /// - [`Err`]`(`[`InvalidOperand`]`)` if `source` is not a valid DMA
+    ///   source address.
+    pub fn source_slice(
+        self,
+        source: &'_ [u8],
+    ) -> Result<DescriptorBuilder<&'_ [u8], D>, InvalidOperand> {
+        Self::check_addr(source as *const _ as *const (), Operand::Source)?;
+
+        Ok(DescriptorBuilder {
             cfg: self
                 .cfg
-                .with(Configuration::SRC_ADDR_MODE, AddressMode::LinearMode),
+                .with(Configuration::SRC_ADDR_MODE, AddressMode::LinearMode)
+                .with(Configuration::SRC_DRQ_TYPE, SrcDrqType::Dram),
             wait_clock_cycles: self.wait_clock_cycles,
             link: self.link,
             source,
             dest: self.dest,
-        }
+        })
     }
 
-    pub fn dest_slice(self, dest: DestBuf<'_>) -> DescriptorBuilder<S, DestBuf<'_>> {
-        DescriptorBuilder {
+    /// Sets the provided slice as the destination of the DMA transfer. Bytes will
+    /// be copied from the source operand of the transfer into this slice.
+    ///
+    /// Since the slice is in memory, this automatically sets the destination address
+    /// mode to [`AddressMode::LinearMode`].
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[`DescriptorBuilder`]`)` with `dest` as the destination
+    ///   operand, if the provided slice's address is a valid DMA destination.
+    /// - [`Err`]`(`[`InvalidOperand`]`)` if `dest` is not a valid DMA
+    ///   destination address.
+    pub fn dest_slice(
+        self,
+        dest: DestBuf<'_>,
+    ) -> Result<DescriptorBuilder<S, DestBuf<'_>>, InvalidOperand> {
+        Self::check_addr(dest as *const _ as *const (), Operand::Destination)?;
+
+        Ok(DescriptorBuilder {
             cfg: self
                 .cfg
-                .with(Configuration::DEST_ADDR_MODE, AddressMode::LinearMode),
+                .with(Configuration::DEST_ADDR_MODE, AddressMode::LinearMode)
+                .with(Configuration::DEST_DRQ_TYPE, DestDrqType::Dram),
             wait_clock_cycles: self.wait_clock_cycles,
             link: self.link,
             source: self.source,
             dest,
-        }
+        })
     }
 
-    pub fn source_reg(self, source: *const ()) -> DescriptorBuilder<*const (), D> {
-        DescriptorBuilder {
+    /// Sets the provided pointer to a memory-mapped IO register as the source
+    /// for the DMA transfer. Bytes will be copied from this register to the
+    /// destination operand of the transfer.
+    ///
+    /// Since the source is a memory-mapped IO register, this automatically sets
+    /// the source address  mode to [`AddressMode::IoMode`]. The provided
+    /// [`SrcDrqType`] describes the type of DRQ signal that should be used
+    /// when transferring from this register. Note that if this is not the correct
+    /// DRQ for this register, the DMA transfer may never complete.
+    ///
+    /// # Safety
+    ///
+    /// `source` MUST point to a memory-mapped IO register which is a valid
+    /// source for a DMA transfer. Otherwise, you will have a bad time.
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[`DescriptorBuilder`]`)` with `source` as the source operand,
+    ///   if the provided register's address is a valid DMA source.
+    /// - [`Err`]`(`[`InvalidOperand`]`)` if `source` is not a valid DMA source.
+    pub unsafe fn source_reg<R: RegisterSpec>(
+        self,
+        source: &Reg<R>,
+        drq_type: SrcDrqType,
+    ) -> Result<DescriptorBuilder<*const (), D>, InvalidOperand> {
+        let source = source.as_ptr().cast() as *const _;
+        Self::check_addr(source, Operand::Source)?;
+
+        Ok(DescriptorBuilder {
             cfg: self
                 .cfg
-                .with(Configuration::SRC_ADDR_MODE, AddressMode::IoMode),
+                .with(Configuration::SRC_ADDR_MODE, AddressMode::IoMode)
+                .with(Configuration::SRC_DRQ_TYPE, drq_type),
             wait_clock_cycles: self.wait_clock_cycles,
             link: self.link,
             source,
             dest: self.dest,
-        }
+        })
     }
 
-    pub fn dest_reg(self, dest: *mut ()) -> DescriptorBuilder<S, *mut ()> {
-        DescriptorBuilder {
+    /// Sets the provided memory-mapped IO register as the destination for the
+    /// DMA transfer. Bytes will be copied from the source operand to the
+    /// pointed MMIO register.
+    ///
+    /// Since the destination is a memory-mapped IO register, this automatically sets
+    /// the destination address mode to [`AddressMode::IoMode`]. The provided
+    /// [`DestDrqType`] describes the type of DRQ signal that should be used
+    /// when transferring to this register. Note that if this is not the correct
+    /// DRQ for this register, the DMA transfer may never complete.
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(`[`DescriptorBuilder`]`)` with `dest` as the destination operand,
+    ///   if the provided register's address is a valid DMA destination.
+    /// - [`Err`]`(`[`InvalidOperand`]`)` if `dest` is not a valid DMA source.
+    pub fn dest_reg<R: RegisterSpec>(
+        self,
+        dest: &Reg<R>,
+        drq_type: DestDrqType,
+    ) -> Result<DescriptorBuilder<S, *mut ()>, InvalidOperand> {
+        let dest = dest.as_ptr().cast();
+        Self::check_addr(dest as *const _, Operand::Destination)?;
+
+        Ok(DescriptorBuilder {
             cfg: self
                 .cfg
-                .with(Configuration::SRC_ADDR_MODE, AddressMode::IoMode),
+                .with(Configuration::DEST_ADDR_MODE, AddressMode::IoMode)
+                .with(Configuration::DEST_DRQ_TYPE, drq_type),
             wait_clock_cycles: self.wait_clock_cycles,
             link: self.link,
             dest,
             source: self.source,
+        })
+    }
+
+    #[inline]
+    fn check_addr(addr: *const (), kind: Operand) -> Result<(), InvalidOperand> {
+        let addr = addr as usize;
+        if addr > Descriptor::ADDR_MAX as usize {
+            return Err(InvalidOperand {
+                reason: InvalidOperandReason::AddrTooHigh(addr),
+                kind,
+            });
         }
+
+        Ok(())
     }
 }
 
@@ -391,14 +488,15 @@ impl DescriptorBuilder<*const (), *mut ()> {
     pub fn build(self, len: u32) -> Result<Descriptor, InvalidDescriptor> {
         let source = self.source as usize;
         let destination = self.dest as usize;
+        debug_assert!(
+            source <= Descriptor::ADDR_MAX as usize,
+            "source address should already have been validated"
+        );
 
-        if source > Descriptor::ADDR_MAX as usize {
-            return Err(InvalidDescriptor::SrcAddrTooLong(source));
-        }
-
-        if destination > Descriptor::ADDR_MAX as usize {
-            return Err(InvalidDescriptor::DestAddrTooLong(destination));
-        }
+        debug_assert!(
+            destination <= Descriptor::ADDR_MAX as usize,
+            "destination address should already have been validated"
+        );
 
         if len > Descriptor::MAX_LEN {
             return Err(InvalidDescriptor::ByteCounterTooLong(len as usize));
@@ -486,16 +584,6 @@ impl Descriptor {
 impl fmt::Display for InvalidDescriptor {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            InvalidDescriptor::SrcAddrTooLong(addr) => write!(
-                f,
-                "source address {addr:#x} is greater than `Descriptor::ADDR_MAX` ({:#x})",
-                Descriptor::ADDR_MAX
-            ),
-            InvalidDescriptor::DestAddrTooLong(addr) => write!(
-                f,
-                "destination address {addr:#x} is greater than `Descriptor::ADDR_MAX` ({:#x})",
-                Descriptor::ADDR_MAX
-            ),
             InvalidDescriptor::ByteCounterTooLong(counter) => write!(
                 f,
                 "byte counter {counter} is greater than `Descriptor::BYTE_COUNTER_MAX` ({})",
@@ -522,6 +610,32 @@ impl fmt::Display for InvalidLink {
         }
     }
 }
+
+// InvalidOperand
+
+impl fmt::Display for InvalidOperand {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { reason, kind } = self;
+        match kind {
+            Operand::Source => f.write_str("invalid source ")?,
+            Operand::Destination => f.write_str("invalid destination ")?,
+        }
+        fmt::Display::fmt(reason, f)
+    }
+}
+
+impl fmt::Display for InvalidOperandReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::AddrTooHigh(addr) => write!(
+                f,
+                "address {addr:#x} must be less than `Descriptor::ADDR_MAX` ({:#x})",
+                Descriptor::ADDR_MAX
+            ),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use proptest::{prop_assert_eq, proptest};
@@ -576,16 +690,13 @@ mod tests {
     proptest! {
         #[test]
         fn pack_configuration(cfg: ArbitraryConfig) {
-            let config = DescriptorBuilder::new()
-                .src_drq_type(cfg.src_drq_type)
+            let mut config = DescriptorBuilder::new()
                 .src_block_size(cfg.src_block_size)
-                .src_addr_mode(cfg.src_addr_mode)
                 .src_data_width(cfg.src_data_width)
-                .dest_drq_type(cfg.dest_drq_type)
                 .dest_block_size(cfg.dest_block_size)
-                .dest_addr_mode(cfg.dest_addr_mode)
                 .dest_data_width(cfg.dest_data_width)
                 .bmode_sel(cfg.bmode_sel).cfg;
+            config.set(Configuration::SRC_ADDR_MODE, cfg.src_addr_mode).set(Configuration::DEST_ADDR_MODE, cfg.dest_addr_mode).set(Configuration::SRC_DRQ_TYPE, cfg.src_drq_type).set(Configuration::DEST_DRQ_TYPE, cfg.dest_drq_type);
 
             prop_assert_eq!(
                 cfg.manual_pack(),

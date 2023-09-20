@@ -10,7 +10,7 @@ use core::{
 
 use crate::ccu::Ccu;
 use crate::dmac::{
-    descriptor::{AddressMode, BlockSize, DataWidth, Descriptor, DestDrqType, SrcDrqType},
+    descriptor::{BlockSize, DataWidth, Descriptor, DestDrqType},
     ChannelMode, Dmac,
 };
 use kernel::{
@@ -111,18 +111,17 @@ impl D1Uart {
 
     // Send loop that listens to the bbqueue consumer, and sends it as DMA transactions on the UART
     async fn sending(cons: Consumer, dmac: Dmac) {
-        let thr_addr = unsafe { &*UART0::PTR }.thr() as *const _ as *mut ();
+        let thr = unsafe { (*UART0::PTR).thr() };
+
         let descr_cfg = Descriptor::builder()
             .dest_data_width(DataWidth::Bit8)
-            .dest_addr_mode(AddressMode::IoMode)
             .dest_block_size(BlockSize::Byte1)
-            .dest_drq_type(DestDrqType::Uart0Tx)
             .src_data_width(DataWidth::Bit8)
-            .src_addr_mode(AddressMode::LinearMode)
             .src_block_size(BlockSize::Byte1)
-            .src_drq_type(SrcDrqType::Dram)
             .wait_clock_cycles(0)
-            .dest_reg(thr_addr);
+            .dest_reg(thr, DestDrqType::Uart0Tx)
+            .expect("UART0 THR register should be a valid destination register for DMA transfers");
+
         loop {
             let rx = cons.read_grant().await;
             let rx_len = rx.len();
@@ -147,6 +146,7 @@ impl D1Uart {
                 debug_assert!(chunk.len() <= Descriptor::MAX_LEN as usize);
                 let descriptor = descr_cfg
                     .source_slice(chunk)
+                    .expect("slice should be a valid DMA source operand")
                     .build()
                     .expect("failed to build UART0 DMA transfer descriptor");
 
