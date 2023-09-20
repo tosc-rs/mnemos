@@ -547,13 +547,16 @@ impl DescriptorBuilder<*const (), *mut ()> {
 impl Descriptor {
     const END_LINK: u32 = 0xFFFF_F800;
 
-    /// Maximum value for the `byte_counter` argument to
-    /// [`DescriptorBuilder::build`] --- byte counters must be 25 bits wide or
-    /// less.
+    /// Maximum length for arguments to [`DescriptorBuilder::source_slice`] and
+    /// [`DescriptorBuilder::dest_slice`], and to the `len` argument to
+    /// [`DescriptorBuilder::try_build`] --- byte counters must be 25 bits wide
+    /// or less.
     pub const MAX_LEN: u32 = (1 << 25) - 1;
 
-    /// Maximum value for the `source` and `destination` arguments to
-    /// [`DescriptorBuilder::build`] --- addresses must be 34 bits wide or less.
+    /// Highest allowable address for arguments to
+    /// [`DescriptorBuilder::source_slice`], [`DescriptorBuilder::dest_slice`],
+    /// [`DescriptorBuilder::source_reg`], and [`DescriptorBuilder::dest_reg`]
+    /// --- addresses must be 34 bits wide or less.
     pub const ADDR_MAX: u64 = (1 << 34) - 1;
 
     /// Maximum value for the `link` address passed to
