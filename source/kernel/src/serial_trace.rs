@@ -472,7 +472,7 @@ impl SerialTraceSettings {
     pub const DEFAULT_PORT: u16 = serial_mux::WellKnown::BinaryTracing as u16;
     pub const DEFAULT_SENDBUF_CAPACITY: usize = BIGMSG_GRANT_SZ * 4;
     pub const DEFAULT_TRACEBUF_CAPACITY: usize = Self::DEFAULT_SENDBUF_CAPACITY * 4;
-    pub const DEFAULT_INITIAL_LEVEL: LevelFilter = LevelFilter::OFF;
+    pub const DEFAULT_INITIAL_LEVEL: LevelFilter = LevelFilter::INFO;
 
     const fn default_port() -> u16 {
         Self::DEFAULT_PORT
