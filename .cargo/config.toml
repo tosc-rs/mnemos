@@ -3,7 +3,7 @@ crowtty = "run --bin crowtty --release --"
 melpomene = "run --bin melpomene --release --"
 melpo = "melpomene"
 forth3 = "run --bin f3repl --release --"
-mn = "run --package manganese --bin manganese --release --features=install-deps --"
+mn = "run --package manganese --bin manganese --release --features install-deps --"
 
 [build]
 # Currently needed for `tokio-console` support.
