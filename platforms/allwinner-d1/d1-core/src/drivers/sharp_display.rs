@@ -87,6 +87,13 @@ impl SharpDisplay {
     ///
     /// Registration will also start the simulated display, meaning that the display
     /// window will appear.
+    #[tracing::instrument(
+        name = "SharpDisplay::register",
+        level = tracing::Level::INFO,
+        skip(kernel),
+        ret(Debug),
+        err(Debug),
+    )]
     pub async fn register(kernel: &'static Kernel) -> Result<(), RegistrationError> {
         // acquire a SPI client first, so that we don't register the display
         // service unless we can get a SPI client.
