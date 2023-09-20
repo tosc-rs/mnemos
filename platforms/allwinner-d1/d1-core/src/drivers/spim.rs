@@ -103,6 +103,13 @@ pub struct SpiSender;
 pub struct SpiSenderServer;
 
 impl SpiSenderServer {
+    #[tracing::instrument(
+        name = "SpiSenderServer::register",
+        level = tracing::Level::INFO,
+        skip(kernel, dmac),
+        ret(Debug),
+        err(Debug),
+    )]
     pub async fn register(
         kernel: &'static Kernel,
         dmac: Dmac,
@@ -129,6 +136,7 @@ impl SpiSenderServer {
                         "SPI_TXD register should be a valid destination register for DMA transfers",
                     );
 
+                tracing::info!(?descr_cfg, "SpiSender worker task running",);
                 loop {
                     let Message { msg, reply } = reqs.next_request().await;
                     let SpiSenderRequest::Send(ref payload) = msg.body;

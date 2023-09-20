@@ -109,7 +109,13 @@ impl D1Uart {
         }
     }
 
-    // Send loop that listens to the bbqueue consumer, and sends it as DMA transactions on the UART
+    // Send loop that listens to the bbqueue consumer, and sends it as DMA
+    // transactions on the UART
+    #[tracing::instrument(
+        name = "D1Uart::sending",
+        level = tracing::Level::INFO,
+        skip(cons, dmac)
+    )]
     async fn sending(cons: Consumer, dmac: Dmac) {
         let thr = unsafe { (*UART0::PTR).thr() };
 
@@ -121,6 +127,8 @@ impl D1Uart {
             .wait_clock_cycles(0)
             .dest_reg(thr, DestDrqType::Uart0Tx)
             .expect("UART0 THR register should be a valid destination register for DMA transfers");
+
+        tracing::info!(?descr_cfg, "UART sender task running");
 
         loop {
             let rx = cons.read_grant().await;
@@ -177,6 +185,13 @@ impl D1Uart {
         }
     }
 
+    #[tracing::instrument(
+        name = "D1Uart::register",
+        level = tracing::Level::INFO,
+        skip(k, dmac)
+        ret(Debug),
+        err(Debug),
+    )]
     pub async fn register(
         k: &'static Kernel,
         dmac: Dmac,
