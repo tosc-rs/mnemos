@@ -31,41 +31,6 @@ pub struct DescriptorBuilder<S = (), D = ()> {
     dest: D,
 }
 
-mycelium_bitfield::bitfield! {
-    struct Cfg<u32> {
-        /// DMA source DRQ type.
-        const SRC_DRQ_TYPE: SrcDrqType;
-
-        /// DMA source block size.
-        const SRC_BLOCK_SIZE: BlockSize;
-
-        /// DMA source address mode.
-        const SRC_ADDR_MODE: AddressMode;
-
-        /// DMA source data width.
-        const SRC_DATA_WIDTH: DataWidth;
-
-        const _RESERVED_0 = 5;
-
-        /// DMA destination DRQ type
-        const DEST_DRQ_TYPE: DestDrqType;
-
-        /// DMA destination block size.
-        const DEST_BLOCK_SIZE: BlockSize;
-
-        /// DMA destination address mode.
-        const DEST_ADDR_MODE: AddressMode;
-
-        /// DMA destination data width.
-        const DEST_DATA_WIDTH: DataWidth;
-
-        const _RESERVED_1 = 3;
-
-        /// BMODE select
-        const BMODE_SEL: BModeSel;
-    }
-}
-
 mycelium_bitfield::enum_from_bits! {
     #[derive(Debug, Eq, PartialEq)]
     #[cfg_attr(test, derive(proptest_derive::Arbitrary))]
@@ -171,6 +136,41 @@ mycelium_bitfield::enum_from_bits! {
     pub enum BModeSel<u8> {
         Normal = 0,
         BMode = 1,
+    }
+}
+
+mycelium_bitfield::bitfield! {
+    struct Cfg<u32> {
+        /// DMA source DRQ type.
+        const SRC_DRQ_TYPE: SrcDrqType;
+
+        /// DMA source block size.
+        const SRC_BLOCK_SIZE: BlockSize;
+
+        /// DMA source address mode.
+        const SRC_ADDR_MODE: AddressMode;
+
+        /// DMA source data width.
+        const SRC_DATA_WIDTH: DataWidth;
+
+        const _RESERVED_0 = 5;
+
+        /// DMA destination DRQ type
+        const DEST_DRQ_TYPE: DestDrqType;
+
+        /// DMA destination block size.
+        const DEST_BLOCK_SIZE: BlockSize;
+
+        /// DMA destination address mode.
+        const DEST_ADDR_MODE: AddressMode;
+
+        /// DMA destination data width.
+        const DEST_DATA_WIDTH: DataWidth;
+
+        const _RESERVED_1 = 3;
+
+        /// BMODE select
+        const BMODE_SEL: BModeSel;
     }
 }
 
