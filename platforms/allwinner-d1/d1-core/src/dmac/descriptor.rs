@@ -5,7 +5,8 @@
 // separate the bits by which field they represent, rather than by their byte.
 #![allow(clippy::unusual_byte_groupings)]
 
-use core::{cmp, fmt, mem, ptr::NonNull};
+use self::errors::*;
+use core::{cmp, mem, ptr::NonNull};
 use d1_pac::generic::{Reg, RegisterSpec};
 
 #[derive(Clone, Debug)]
@@ -28,46 +29,6 @@ pub struct DescriptorBuilder<S = (), D = ()> {
     link: u32,
     source: S,
     dest: D,
-}
-
-/// Errors returned by [`DescriptorBuilder::build`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum InvalidDescriptor {
-    ByteCounterTooLong(usize),
-    LinkAddr(InvalidLink),
-}
-
-/// Errors returned by [`DescriptorBuilder::source_slice`],
-/// [`DescriptorBuilder::dest_slice`], [`DescriptorBuilder::source_reg`], and [`DescriptorBuilder::dest_reg`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct InvalidOperand {
-    reason: InvalidOperandReason,
-    kind: Operand,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-#[non_exhaustive]
-pub enum InvalidOperandReason {
-    /// Indicates that the address of the provided operand was too high in
-    /// memory. Operand addresses for DMA transfers may not exceed
-    /// [`Descriptor::ADDR_MAX`] (34 bits).
-    AddrTooHigh(usize),
-    /// A slice was longer than the maximum supported DMA transfer size of
-    /// [`Descriptor::MAX_LEN`] (25 bits).
-    TooLong(usize),
-}
-
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Operand {
-    Source,
-    Destination,
-}
-
-/// Errors returned by [`Descriptor::set_link`] and [`DescriptorBuilder::build`].
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum InvalidLink {
-    TooLong(usize),
-    Misaligned(usize),
 }
 
 mycelium_bitfield::bitfield! {
@@ -438,10 +399,7 @@ impl<S, D> DescriptorBuilder<S, D> {
     fn check_addr(addr: *const (), kind: Operand) -> Result<(), InvalidOperand> {
         let addr = addr as usize;
         if addr > Descriptor::ADDR_MAX as usize {
-            return Err(InvalidOperand {
-                reason: InvalidOperandReason::AddrTooHigh(addr),
-                kind,
-            });
+            return Err(InvalidOperand::addr_too_high(kind, addr));
         }
 
         Ok(())
@@ -593,87 +551,141 @@ impl Descriptor {
     }
 }
 
-// InvalidDescriptor
+pub mod errors {
+    use super::*;
+    use core::fmt;
 
-impl fmt::Display for InvalidDescriptor {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            InvalidDescriptor::ByteCounterTooLong(counter) => write!(
-                f,
-                "byte counter {counter} is greater than `Descriptor::BYTE_COUNTER_MAX` ({})",
-                Descriptor::MAX_LEN
-            ),
-            InvalidDescriptor::LinkAddr(error) => fmt::Display::fmt(error, f),
-        }
+    /// Errors returned by [`DescriptorBuilder::build`].
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub enum InvalidDescriptor {
+        ByteCounterTooLong(usize),
+        LinkAddr(InvalidLink),
     }
-}
 
-// InvalidLink
+    /// Errors returned by [`DescriptorBuilder::source_slice`],
+    /// [`DescriptorBuilder::dest_slice`], [`DescriptorBuilder::source_reg`], and [`DescriptorBuilder::dest_reg`].
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub struct InvalidOperand {
+        reason: InvalidOperandReason,
+        kind: Operand,
+    }
 
-impl fmt::Display for InvalidLink {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            InvalidLink::TooLong(addr) => write!(
-                f,
-                "link address {addr:#x} is greater than `Descriptor::LINK_ADDR_MAX` ({:#x})",
-                Descriptor::LINK_ADDR_MAX
-            ),
-            InvalidLink::Misaligned(addr) => {
-                write!(f, "link address {addr:#x} is not at least 4-byte aligned!",)
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    #[non_exhaustive]
+    pub enum InvalidOperandReason {
+        /// Indicates that the address of the provided operand was too high in
+        /// memory. Operand addresses for DMA transfers may not exceed
+        /// [`Descriptor::ADDR_MAX`] (34 bits).
+        AddrTooHigh(usize),
+        /// A slice was longer than the maximum supported DMA transfer size of
+        /// [`Descriptor::MAX_LEN`] (25 bits).
+        TooLong(usize),
+    }
+
+    #[derive(Copy, Clone, Debug, Eq, PartialEq)]
+    pub enum Operand {
+        Source,
+        Destination,
+    }
+
+    /// Errors returned by [`Descriptor::set_link`] and [`DescriptorBuilder::build`].
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    pub enum InvalidLink {
+        TooLong(usize),
+        Misaligned(usize),
+    }
+
+    // === InvalidDescriptor ===
+
+    impl fmt::Display for InvalidDescriptor {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                InvalidDescriptor::ByteCounterTooLong(counter) => write!(
+                    f,
+                    "byte counter {counter} is greater than `Descriptor::BYTE_COUNTER_MAX` ({})",
+                    Descriptor::MAX_LEN
+                ),
+                InvalidDescriptor::LinkAddr(error) => fmt::Display::fmt(error, f),
             }
         }
     }
-}
 
-// InvalidOperand
+    // === InvalidLink ===
 
-impl InvalidOperand {
-    /// Returns whether this error describes the source or destination operand of
-    /// a DMA transfer.
-    #[must_use]
-    pub fn operand(&self) -> Operand {
-        self.kind
-    }
-
-    /// Returns an [`InvalidOperandReason`] describing why the operand was
-    /// invalid.
-    #[must_use]
-    pub fn reason(&self) -> &InvalidOperandReason {
-        &self.reason
-    }
-
-    fn too_long(kind: Operand, len: usize) -> Self {
-        Self {
-            reason: InvalidOperandReason::TooLong(len),
-            kind,
+    impl fmt::Display for InvalidLink {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                InvalidLink::TooLong(addr) => write!(
+                    f,
+                    "link address {addr:#x} is greater than `Descriptor::LINK_ADDR_MAX` ({:#x})",
+                    Descriptor::LINK_ADDR_MAX
+                ),
+                InvalidLink::Misaligned(addr) => {
+                    write!(f, "link address {addr:#x} is not at least 4-byte aligned!",)
+                }
+            }
         }
     }
-}
 
-impl fmt::Display for InvalidOperand {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { reason, kind } = self;
-        match kind {
-            Operand::Source => f.write_str("invalid source ")?,
-            Operand::Destination => f.write_str("invalid destination ")?,
+    // === InvalidOperand ===
+
+    impl InvalidOperand {
+        /// Returns whether this error describes the source or destination operand of
+        /// a DMA transfer.
+        #[must_use]
+        pub fn operand(&self) -> Operand {
+            self.kind
         }
-        fmt::Display::fmt(reason, f)
-    }
-}
 
-impl fmt::Display for InvalidOperandReason {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::AddrTooHigh(addr) => write!(
-                f,
-                "address {addr:#x} must be less than `Descriptor::ADDR_MAX` ({:#x})",
-                Descriptor::ADDR_MAX
-            ),
-            Self::TooLong(len) => write!(
-                f,
-                "length {len} is greater than `Descriptor::MAX_LEN` ({})",
-                Descriptor::MAX_LEN
-            ),
+        /// Returns an [`InvalidOperandReason`] describing why the operand was
+        /// invalid.
+        #[must_use]
+        pub fn reason(&self) -> &InvalidOperandReason {
+            &self.reason
+        }
+
+        #[must_use]
+        pub(super) fn too_long(kind: Operand, len: usize) -> Self {
+            Self {
+                reason: InvalidOperandReason::TooLong(len),
+                kind,
+            }
+        }
+
+        #[must_use]
+        pub(super) fn addr_too_high(kind: Operand, addr: usize) -> Self {
+            Self {
+                reason: InvalidOperandReason::AddrTooHigh(addr),
+                kind,
+            }
+        }
+    }
+
+    impl fmt::Display for InvalidOperand {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let Self { reason, kind } = self;
+            match kind {
+                Operand::Source => f.write_str("invalid source ")?,
+                Operand::Destination => f.write_str("invalid destination ")?,
+            }
+            fmt::Display::fmt(reason, f)
+        }
+    }
+
+    impl fmt::Display for InvalidOperandReason {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            match self {
+                Self::AddrTooHigh(addr) => write!(
+                    f,
+                    "address {addr:#x} must be less than `Descriptor::ADDR_MAX` ({:#x})",
+                    Descriptor::ADDR_MAX
+                ),
+                Self::TooLong(len) => write!(
+                    f,
+                    "length {len} is greater than `Descriptor::MAX_LEN` ({})",
+                    Descriptor::MAX_LEN
+                ),
+            }
         }
     }
 }
