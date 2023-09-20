@@ -53,10 +53,6 @@ impl SerialSubscriber {
         SHARED
             .max_level
             .store(level_to_u8(settings.initial_level), Ordering::Release);
-        // acquire sermux port 3
-        let port = serial_mux::PortHandle::open(k, settings.port, settings.sendbuf_capacity)
-            .await
-            .expect("cannot initialize serial tracing, cannot open port 3!");
 
         let (tx, rx) = bbq::new_spsc_channel(settings.tracebuf_capacity).await;
         let (isr_tx, isr_rx) = bbq::new_spsc_channel(settings.tracebuf_capacity).await;
@@ -70,7 +66,14 @@ impl SerialSubscriber {
         };
 
         // spawn a worker to read from the channel and write to the serial port.
-        k.spawn(Self::worker(&SHARED, rx, isr_rx, port, k)).await;
+        k.spawn(async move {
+            // acquire sermux port 3
+            let port = serial_mux::PortHandle::open(k, settings.port, settings.sendbuf_capacity)
+                .await
+                .expect("cannot initialize serial tracing, cannot open port 3!");
+            Self::worker(&SHARED, rx, isr_rx, port, k).await
+        })
+        .await;
 
         subscriber
     }
@@ -362,7 +365,7 @@ impl Subscriber for SerialSubscriber {
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SerialTraceSettings {
     /// Should the serial trace be enabled?

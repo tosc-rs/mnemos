@@ -194,6 +194,8 @@ impl D1 {
                 .unwrap()
         };
 
+        k.initialize_default_services(service_settings);
+
         // Initialize SPI stuff
         k.initialize(async move {
             // Register a new SpiSenderServer
@@ -221,8 +223,6 @@ impl D1 {
             .unwrap();
             i2c0_int
         });
-
-        k.initialize_default_services(service_settings);
 
         Self {
             kernel: k,
