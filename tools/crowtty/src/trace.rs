@@ -208,7 +208,9 @@ impl TraceWorker {
                 )
                 .unwrap();
 
-                self.state.write_span_cx(&mut self.textbuf);
+                if self.state.write_span_cx(&mut self.textbuf) {
+                    self.textbuf.push(' ');
+                }
 
                 let SerializeRecordFields::De(ref fields) = fields else {
                     unreachable!("we are deserializing!");
@@ -355,10 +357,10 @@ impl FormatState {
 
         self.write_span_cx(textbuf);
 
-        write!(textbuf, "{tag} {repr} ({id:04})").unwrap();
+        write!(textbuf, "{repr} {tag} ({id:04})").unwrap();
     }
 
-    fn write_span_cx(&self, textbuf: &mut String) {
+    fn write_span_cx(&self, textbuf: &mut String) -> bool {
         let spans = self.stack.iter().filter_map(|id| self.spans.get(id));
         let mut any = false;
         let delim = ":".if_supports_color(Stream::Stdout, |x| x.dimmed());
@@ -367,9 +369,7 @@ impl FormatState {
             write!(textbuf, "{delim}").unwrap();
             any = true;
         }
-        if any {
-            textbuf.push(' ');
-        }
+        any
     }
 }
 
