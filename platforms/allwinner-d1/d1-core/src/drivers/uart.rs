@@ -22,6 +22,8 @@ use kernel::{
     Kernel,
 };
 
+use tracing::Level;
+
 struct GrantWriter {
     grant: GrantW,
     used: usize,
@@ -53,6 +55,13 @@ pub struct D1Uart {
 pub enum RegistrationError {
     Registry(registry::RegistrationError),
     NoDmaChannels,
+}
+
+#[derive(Debug)]
+pub struct D1UartSettings {
+    pub capacity_in: usize,
+    pub capacity_out: usize,
+    pub request_capacity: usize,
 }
 
 impl D1Uart {
@@ -113,7 +122,7 @@ impl D1Uart {
     // transactions on the UART
     #[tracing::instrument(
         name = "D1Uart::sending",
-        level = tracing::Level::INFO,
+        level = Level::INFO,
         skip(cons, dmac)
     )]
     async fn sending(cons: Consumer, dmac: Dmac) {
@@ -187,25 +196,31 @@ impl D1Uart {
 
     #[tracing::instrument(
         name = "D1Uart::register",
-        level = tracing::Level::INFO,
-        skip(k, dmac)
+        level = Level::INFO,
+        skip(k, dmac, settings)
         ret(Debug),
         err(Debug),
     )]
     pub async fn register(
         k: &'static Kernel,
         dmac: Dmac,
-        cap_in: usize,
-        cap_out: usize,
+        settings: D1UartSettings,
     ) -> Result<(), RegistrationError> {
-        let (fifo_a, fifo_b) = new_bidi_channel(cap_in, cap_out).await;
+        tracing::info!(?settings, "Starting D1Uart service");
+
+        let D1UartSettings {
+            capacity_in,
+            capacity_out,
+            request_capacity,
+        } = settings;
+        let (fifo_a, fifo_b) = new_bidi_channel(capacity_in, capacity_out).await;
 
         let reqs = k
             .registry()
-            .bind_konly::<SimpleSerialService>(4)
+            .bind_konly::<SimpleSerialService>(request_capacity)
             .await
             .map_err(RegistrationError::Registry)?
-            .into_request_stream(4)
+            .into_request_stream(request_capacity)
             .await;
 
         let _server_hdl = k.spawn(D1Uart::serial_server(fifo_b, reqs)).await;
@@ -300,6 +315,16 @@ impl Uart {
         for byte in buf {
             self.0.thr().write(|w| unsafe { w.thr().bits(*byte) });
             while self.0.usr.read().tfnf().bit_is_clear() {}
+        }
+    }
+}
+
+impl Default for D1UartSettings {
+    fn default() -> Self {
+        Self {
+            capacity_in: 4096,
+            capacity_out: 4096,
+            request_capacity: 4,
         }
     }
 }

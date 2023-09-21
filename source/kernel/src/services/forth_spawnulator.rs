@@ -143,21 +143,21 @@ impl SpawnulatorServer {
     /// used to spawn new `Forth` VMs.
     #[tracing::instrument(
         name = "SpawnulatorServer::register",
-        level = tracing::Level::DEBUG,
-        skip(kernel),
-        ret(Debug),
+        level = tracing::Level::INFO,
+        skip(kernel, settings),
+        err(Debug),
     )]
     pub async fn register(
         kernel: &'static Kernel,
         settings: SpawnulatorSettings,
     ) -> Result<(), registry::RegistrationError> {
+        tracing::info!(?settings, "Who spawns the spawnulator?");
         let vms = kernel
             .registry()
             .bind_konly::<SpawnulatorService>(settings.capacity)
             .await?
             .into_request_stream(settings.capacity)
             .await;
-        tracing::debug!("who spawns the spawnulator?");
         kernel
             .spawn(SpawnulatorServer::spawnulate(kernel, vms))
             .await;

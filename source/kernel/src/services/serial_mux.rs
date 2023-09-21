@@ -192,9 +192,9 @@ impl SerialMuxServer {
     ///
     /// Will retry to obtain a [`SimpleSerialClient`] until success.
     #[tracing::instrument(
-        name = "KeyboardMuxServer::register",
-        level = Level::DEBUG,
-        skip(kernel),
+        name = "SerialMuxServer::register",
+        level = Level::INFO,
+        skip(kernel, settings),
         err(Debug),
     )]
     pub async fn register(
@@ -215,6 +215,12 @@ impl SerialMuxServer {
     /// This method does NOT attempt to obtain a [`SimpleSerialClient`] more
     /// than once. Prefer [`SerialMuxServer::register`] unless you will not be
     /// spawning one around the same time as registering this server.
+    #[tracing::instrument(
+        name = "SerialMuxServer::register_no_retry",
+        level = Level::INFO,
+        skip(kernel),
+        err(Debug),
+    )]
     pub async fn register_no_retry(
         kernel: &'static Kernel,
         settings: SerialMuxSettings,
@@ -227,13 +233,16 @@ impl SerialMuxServer {
 
     async fn register_inner(
         kernel: &'static Kernel,
-        SerialMuxSettings {
+        settings: SerialMuxSettings,
+        mut serial_handle: SimpleSerialClient,
+    ) -> Result<(), RegistrationError> {
+        tracing::info!(?settings, "Starting SerialMuxServer");
+
+        let SerialMuxSettings {
             max_ports,
             max_frame,
             ..
-        }: SerialMuxSettings,
-        mut serial_handle: SimpleSerialClient,
-    ) -> Result<(), RegistrationError> {
+        } = settings;
         let max_ports = max_ports as usize;
         let serial_port = serial_handle
             .get_port()
