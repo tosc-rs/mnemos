@@ -379,7 +379,7 @@ fn write_fields<'a>(to: &mut String, fields: &BTreeMap<CowString<'a>, SerializeV
 
     if let Some(message) = fields.get(&CowString::Borrowed("message")) {
         let message = DisplayVal(message);
-        let message = message.if_supports_color(Stream::Stdout, |msg| msg.bold());
+        let message = message.if_supports_color(Stream::Stdout, |msg| msg.italic());
         write!(to, "{message}",).unwrap();
         wrote_anything = true;
     }
