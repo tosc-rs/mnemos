@@ -199,18 +199,19 @@ impl TraceWorker {
                 }
 
                 let level = DisplayLevel(meta.level);
-                write!(
-                    &mut self.textbuf,
-                    "{} {level} {} ",
-                    self.state.tag,
-                    format_args!("{target}:")
-                        .if_supports_color(Stream::Stdout, |target| target.dimmed())
-                )
-                .unwrap();
+                write!(&mut self.textbuf, "{} {level} ", self.state.tag,).unwrap();
 
                 if self.state.write_span_cx(&mut self.textbuf) {
                     self.textbuf.push(' ');
                 }
+
+                write!(
+                    &mut self.textbuf,
+                    "{}",
+                    format_args!("{target}: ")
+                        .if_supports_color(Stream::Stdout, |target| target.dimmed())
+                )
+                .unwrap();
 
                 let SerializeRecordFields::De(ref fields) = fields else {
                     unreachable!("we are deserializing!");
@@ -347,17 +348,17 @@ impl FormatState {
             repr,
             ..
         } = span;
-        write!(
-            textbuf,
-            "{} {level} {} ",
-            self.tag,
-            format_args!("{}:", target).if_supports_color(Stream::Stdout, |target| target.dimmed())
-        )
-        .unwrap();
+        write!(textbuf, "{} {level} ", self.tag).unwrap();
 
         self.write_span_cx(textbuf);
 
-        write!(textbuf, "{repr} {tag} ({id:04})").unwrap();
+        write!(
+            textbuf,
+            "{repr}{target} {tag} ({id:04})",
+            target = format_args!(": {}:", target)
+                .if_supports_color(Stream::Stdout, |target| target.dimmed())
+        )
+        .unwrap();
     }
 
     fn write_span_cx(&self, textbuf: &mut String) -> bool {
