@@ -68,8 +68,9 @@ use kernel::{
         messages::{OpKind, Transfer},
         Addr, I2cService, Transaction,
     },
-    tracing, Kernel,
+    Kernel,
 };
+use tracing::Level;
 
 /// A TWI mapped to the Raspberry Pi header's I²C0 pins.
 pub struct I2c0 {
@@ -299,6 +300,12 @@ impl I2c0 {
         }
     }
 
+    #[tracing::instrument(
+        name = "I2c0::register",
+        level = Level::INFO,
+        skip(kernel, self),
+        err(Debug),
+    )]
     pub async fn register(
         self,
         kernel: &'static Kernel,
@@ -312,7 +319,7 @@ impl I2c0 {
             .await;
 
         kernel.spawn(self.run(rx)).await;
-        tracing::info!("TWI driver task spawned");
+        tracing::info!("TWI driver task started");
 
         Ok(())
     }

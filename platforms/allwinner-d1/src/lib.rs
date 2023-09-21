@@ -205,7 +205,7 @@ impl D1 {
 
         // Initialize SimpleSerial driver
         k.initialize(async move {
-            D1Uart::register(k, dmac, 4096, 4096).await.unwrap();
+            D1Uart::register(k, dmac, Default::default()).await.unwrap();
         })
         .unwrap();
 

@@ -115,12 +115,15 @@ impl SpiSenderServer {
         dmac: Dmac,
         queued: usize,
     ) -> Result<(), registry::RegistrationError> {
+        tracing::info!(queued, "Starting SpiSenderServer");
+
         let reqs = kernel
             .registry()
             .bind_konly::<SpiSender>(queued)
             .await?
             .into_request_stream(queued)
             .await;
+
         kernel
             .spawn(async move {
                 let spi = unsafe { &*SPI_DBI::PTR };

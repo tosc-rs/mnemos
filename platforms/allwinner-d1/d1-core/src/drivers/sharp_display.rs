@@ -82,6 +82,7 @@ pub enum RegistrationError {
 impl SharpDisplay {
     pub const WIDTH: usize = WIDTH;
     pub const HEIGHT: usize = HEIGHT;
+    const CAPACITY: usize = 2;
 
     /// Register the driver instance
     ///
@@ -91,10 +92,16 @@ impl SharpDisplay {
         name = "SharpDisplay::register",
         level = tracing::Level::INFO,
         skip(kernel),
-        ret(Debug),
         err(Debug),
     )]
     pub async fn register(kernel: &'static Kernel) -> Result<(), RegistrationError> {
+        tracing::info!(
+            width = WIDTH,
+            height = HEIGHT,
+            queue_capacity = Self::CAPACITY,
+            "Starting SharpDisplay driver",
+        );
+
         // acquire a SPI client first, so that we don't register the display
         // service unless we can get a SPI client.
         let spim = SpiSenderClient::from_registry(kernel)
@@ -104,10 +111,10 @@ impl SharpDisplay {
         // bind a listener
         let cmd = kernel
             .registry()
-            .bind_konly(2)
+            .bind_konly(Self::CAPACITY)
             .await
             .map_err(RegistrationError::Registration)?
-            .into_request_stream(2)
+            .into_request_stream(Self::CAPACITY)
             .await;
 
         let linebuf = FixedVec::new(FRAME_BYTES).await;

@@ -163,14 +163,17 @@ impl KeyboardMuxServer {
     /// serial mux port.
     #[tracing::instrument(
         name = "KeyboardMuxServer::register",
-        level = Level::DEBUG,
-        skip(kernel),
+        level = Level::INFO,
+        skip(kernel, settings),
         err(Debug),
+        ret(Debug),
     )]
     pub async fn register(
         kernel: &'static Kernel,
         settings: KeyboardMuxSettings,
     ) -> Result<(), RegistrationError> {
+        tracing::info!(?settings, "Registering keyboard mux");
+
         let key_rx = kernel
             .registry()
             .bind_konly::<KeyboardMuxService>(settings.buffer_capacity)
