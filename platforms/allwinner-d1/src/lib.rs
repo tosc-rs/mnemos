@@ -25,6 +25,7 @@ use core::{
 use d1_pac::{Interrupt, TIMER};
 use kernel::{
     mnemos_alloc::containers::Box,
+    services::sdmmc::SdCardClient,
     tracing::{self, Instrument},
     Kernel, KernelServiceSettings, KernelSettings,
 };
@@ -158,6 +159,25 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
     #[cfg(feature = "sharp-display")]
     d1.initialize_sharp_display();
 
+    // #[cfg(feature = "sdcard")]
+    d1.kernel
+        .initialize(async move {
+            let mut sdcard = SdCardClient::from_registry(d1.kernel)
+                .await
+                .expect("no sdmmc service running!");
+
+            d1.kernel.sleep(core::time::Duration::from_secs(3)).await;
+            tracing::debug!("resetting the SD card");
+
+            sdcard.reset().await.expect("can't reset the SD card");
+            let card_type = sdcard
+                .initialize()
+                .await
+                .expect("can't initialize the SD card");
+            tracing::debug!("initialized card of type {card_type:?}");
+        })
+        .expect("failed to spawn sdcard client");
+
     d1.run()
 }
 
@@ -230,7 +250,9 @@ impl D1 {
 
         // Initialize SMHC driver
         k.initialize(async {
+            tracing::debug!("initializing SMHC...");
             smhc.register(k, 4).await.unwrap();
+            tracing::debug!("SMHC initialized!");
         })
         .unwrap();
 
