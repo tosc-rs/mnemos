@@ -90,11 +90,10 @@ pub enum ResponseType {
 }
 
 /// Response returned by the card, can be short or long, depending on command.
-/// For read command, you can find the data in previous buffer?
 #[must_use]
 pub enum Response {
     /// The 32-bit value from the 48-bit response.
-    /// Potentially also includes the data vector if this was a read command.
+    /// Potentially also includes the data buffer if this was a read command.
     Short {
         value: u32,
         data: Option<FixedVec<u8>>,
@@ -142,6 +141,14 @@ pub struct SdCardClient {
     reply: Reusable<Envelope<Result<Response, Error>>>,
 }
 
+/// The different types of cards
+#[derive(Debug, PartialEq)]
+pub enum CardType {
+    SD1,
+    SD2,
+    SDHC,
+}
+
 impl SdCardClient {
     /// Obtain an `SdCardClient`
     ///
@@ -175,19 +182,101 @@ impl SdCardClient {
         })
     }
 
-    pub async fn reset(&mut self) {
-        let response = self
-            .handle
-            .request_oneshot(Command::default(), &self.reply)
+    pub async fn cmd(&mut self, cmd: Command) -> Result<Response, Error> {
+        self.handle
+            .request_oneshot(cmd, &self.reply)
             .await
             .map_err(|error| {
                 tracing::warn!(?error, "failed to send request to SD/MMC service");
                 Error::Other // TODO
             })
-            .and_then(|resp| resp.body);
+            .and_then(|resp| resp.body)
     }
 
-    pub async fn initialize(&mut self) {}
+    pub async fn reset(&mut self) -> Result<(), Error> {
+        self.cmd(Command::default()).await.map(|_| ())
+    }
+
+    pub async fn initialize(&mut self) -> Result<CardType, Error> {
+        /// Request switch to 1.8V
+        #[allow(dead_code)]
+        const OCR_S18R: u32 = 0x1000000;
+        /// Host supports high capacity
+        const OCR_HCS: u32 = 0x40000000;
+        /// Card has finished power up routine if bit is high
+        const OCR_NBUSY: u32 = 0x80000000;
+        /// Valid bits for voltage setting
+        const OCR_VOLTAGE_MASK: u32 = 0x007FFF80;
+
+        let mut card_type = CardType::SD1;
+
+        match self
+            .cmd(Command {
+                index: 8,
+                argument: 0x1AA,
+                kind: CommandKind::Control,
+                rsp_type: ResponseType::Short,
+                rsp_crc: true,
+                buffer: None,
+            })
+            .await?
+        {
+            Response::Short { value, .. } => {
+                tracing::trace!("CMD8 response: {value:#x}");
+                if value == 0x1AA {
+                    card_type = CardType::SD2;
+                }
+            }
+            Response::Long(_) => return Err(Error::Response),
+        }
+
+        // TODO: limit the number of attempts
+        let ocr = loop {
+            // Go to *APP* mode before sending application command
+            self.cmd(Command {
+                index: 55,
+                argument: 0,
+                kind: CommandKind::Control,
+                rsp_type: ResponseType::Short,
+                rsp_crc: true,
+                buffer: None,
+            })
+            .await?;
+
+            let mut op_cond_arg = OCR_VOLTAGE_MASK & 0x00ff8000;
+            if card_type != CardType::SD1 {
+                op_cond_arg = OCR_HCS | op_cond_arg;
+            }
+            match self
+                .cmd(Command {
+                    index: 41,
+                    argument: op_cond_arg,
+                    kind: CommandKind::Control,
+                    rsp_type: ResponseType::Short,
+                    rsp_crc: false,
+                    buffer: None,
+                })
+                .await?
+            {
+                Response::Short { value, .. } => {
+                    tracing::trace!("ACMD41 response: {value:#x}");
+                    if value & OCR_NBUSY == OCR_NBUSY {
+                        // Card has finished power up, data is valid
+                        break value;
+                    }
+                }
+                Response::Long(_) => return Err(Error::Response),
+            }
+
+            // TODO: wait 1ms
+        };
+
+        if (ocr & OCR_HCS) == OCR_HCS {
+            card_type = CardType::SDHC;
+        }
+
+        Ok(card_type)
+    }
 }
 
 /// A client for SDIO cards using the [`SdmmcService`].
