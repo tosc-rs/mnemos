@@ -1,6 +1,6 @@
 //! SD/MMC Driver Service
 //!
-//! Driver for SD memory cards, SDIO cards and (e)MMC cards.
+//! Driver for SD memory cards, SDIO cards and (e)MMC.
 //! This kernel driver will implement the actual protocol
 //! (which commands to send and how to interpret the response),
 //! while the platform driver will implement the device specific part
@@ -55,6 +55,8 @@ pub struct Command {
     pub index: u8,
     /// The argument value for the command
     pub argument: u32,
+    /// Hardware specific configuration that should be applied
+    pub options: HardwareOptions,
     /// The type of command
     pub kind: CommandKind,
     /// The expected type of the response
@@ -63,6 +65,26 @@ pub struct Command {
     pub rsp_crc: bool,
     /// Optional buffer for incoming or outgoing data
     pub buffer: Option<FixedVec<u8>>,
+}
+
+/// The number of lines that are used for data transfer
+#[derive(Debug, Eq, PartialEq)]
+pub enum BusWidth {
+    /// 1-bit bus width, default after power-up or idle
+    Single,
+    /// 4-bit bus width, also called wide bus operation mode for SD cards
+    Quad,
+    /// 8-bit bus width, only available for MMC
+    Octo,
+}
+
+/// TODO
+#[derive(Debug, Eq, PartialEq)]
+pub enum HardwareOptions {
+    /// No change in configuration
+    None,
+    /// Switch the bus width
+    SetBusWidth(BusWidth),
 }
 
 /// TODO
@@ -123,6 +145,7 @@ impl Default for Command {
         Command {
             index: 0,
             argument: 0,
+            options: HardwareOptions::None,
             kind: CommandKind::Control,
             rsp_type: ResponseType::None,
             rsp_crc: false,
@@ -148,6 +171,21 @@ pub enum CardType {
     SD2,
     SDHC,
 }
+
+/// Card status in R1 response format
+pub struct CardStatus(u32);
+
+/// Card identification register in R2 response format
+///   Manufacturer ID       [127:120]
+///   OEM/Application ID    [119:104]
+///   Product name          [103:64]
+///   Product revision      [63:56]
+///   Product serial number [55:24]
+///   Reserved              [23:20]
+///   Manufacturing date    [19:8]
+///   CRC7 checksum         [7:1]
+///   Not used, always 1    [0:0]
+pub struct CardIdentification(u128);
 
 impl SdCardClient {
     /// Obtain an `SdCardClient`
@@ -182,7 +220,7 @@ impl SdCardClient {
         })
     }
 
-    pub async fn cmd(&mut self, cmd: Command) -> Result<Response, Error> {
+    async fn cmd(&mut self, cmd: Command) -> Result<Response, Error> {
         self.handle
             .request_oneshot(cmd, &self.reply)
             .await
@@ -193,10 +231,12 @@ impl SdCardClient {
             .and_then(|resp| resp.body)
     }
 
+    /// TODO
     pub async fn reset(&mut self) -> Result<(), Error> {
         self.cmd(Command::default()).await.map(|_| ())
     }
 
+    /// TODO
     pub async fn initialize(&mut self) -> Result<CardType, Error> {
         /// Request switch to 1.8V
         #[allow(dead_code)]
@@ -214,6 +254,7 @@ impl SdCardClient {
             .cmd(Command {
                 index: 8,
                 argument: 0x1AA,
+                options: HardwareOptions::None,
                 kind: CommandKind::Control,
                 rsp_type: ResponseType::Short,
                 rsp_crc: true,
@@ -236,6 +277,7 @@ impl SdCardClient {
             self.cmd(Command {
                 index: 55,
                 argument: 0,
+                options: HardwareOptions::None,
                 kind: CommandKind::Control,
                 rsp_type: ResponseType::Short,
                 rsp_crc: true,
@@ -251,6 +293,7 @@ impl SdCardClient {
                 .cmd(Command {
                     index: 41,
                     argument: op_cond_arg,
+                    options: HardwareOptions::None,
                     kind: CommandKind::Control,
                     rsp_type: ResponseType::Short,
                     rsp_crc: false,
@@ -276,6 +319,107 @@ impl SdCardClient {
         }
 
         Ok(card_type)
+    }
+
+    /// Get the card identification register
+    pub async fn get_cid(&mut self) -> Result<CardIdentification, Error> {
+        match self
+            .cmd(Command {
+                index: 2,
+                argument: 0,
+                options: HardwareOptions::None,
+                kind: CommandKind::Control,
+                rsp_type: ResponseType::Long,
+                rsp_crc: true,
+                buffer: None,
+            })
+            .await?
+        {
+            Response::Short { .. } => return Err(Error::Response),
+            Response::Long(value) => {
+                tracing::trace!("CMD2 response: {value:#x}");
+                // TODO: map [u32; 4] value to u128
+                Ok(CardIdentification(0))
+            }
+        }
+    }
+
+    /// Get the relative card address
+    pub async fn get_rca(&mut self) -> Result<u32, Error> {
+        match self
+            .cmd(Command {
+                index: 3,
+                argument: 0,
+                options: HardwareOptions::None,
+                kind: CommandKind::Control,
+                rsp_type: ResponseType::Short,
+                rsp_crc: true,
+                buffer: None,
+            })
+            .await?
+        {
+            Response::Short { value, .. } => {
+                tracing::trace!("CMD3 response: {value:#x}");
+                Ok(value)
+            }
+            Response::Long(_) => return Err(Error::Response),
+        }
+    }
+
+    /// Toggle the card between stand-by and transfer state
+    pub async fn select(&mut self, rca: u32) -> Result<CardStatus, Error> {
+        match self
+            .cmd(Command {
+                index: 7,
+                argument: rca,
+                options: HardwareOptions::None,
+                kind: CommandKind::Control,
+                rsp_type: ResponseType::Short,
+                rsp_crc: true,
+                buffer: None,
+            })
+            .await?
+        {
+            Response::Short { value, .. } => {
+                tracing::trace!("CMD7 response: {value:#x}");
+                Ok(CardStatus(value))
+            }
+            Response::Long(_) => return Err(Error::Response),
+        }
+    }
+
+    /// Use 4 data lanes
+    pub async fn set_wide_bus(&mut self, rca: u32) -> Result<CardStatus, Error> {
+        // Go to *APP* mode before sending application command
+        self.cmd(Command {
+            index: 55,
+            argument: rca,
+            options: HardwareOptions::None,
+            kind: CommandKind::Control,
+            rsp_type: ResponseType::Short,
+            rsp_crc: true,
+            buffer: None,
+        })
+        .await?;
+
+        match self
+            .cmd(Command {
+                index: 6,
+                argument: 0b10,
+                options: HardwareOptions::SetBusWidth(BusWidth::Quad),
+                kind: CommandKind::Control,
+                rsp_type: ResponseType::Short,
+                rsp_crc: true,
+                buffer: None,
+            })
+            .await?
+        {
+            Response::Short { value, .. } => {
+                tracing::trace!("ACMD6 response: {value:#x}");
+                Ok(CardStatus(value))
+            }
+            Response::Long(_) => Err(Error::Response),
+        }
     }
 }
 

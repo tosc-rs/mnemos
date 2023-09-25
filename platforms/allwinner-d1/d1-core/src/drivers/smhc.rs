@@ -296,6 +296,18 @@ impl Smhc {
         let long_resp = params.rsp_type == sdmmc::ResponseType::Long;
         let resp_rcv = params.rsp_type != sdmmc::ResponseType::None;
 
+        // Do any required configuration
+        match params.options {
+            sdmmc::HardwareOptions::None => (),
+            sdmmc::HardwareOptions::SetBusWidth(width) => {
+                self.smhc.smhc_ctype.write(|w| match width {
+                    sdmmc::BusWidth::Single => w.card_wid().b1(),
+                    sdmmc::BusWidth::Quad => w.card_wid().b4(),
+                    sdmmc::BusWidth::Octo => w.card_wid().b8(),
+                });
+            }
+        }
+
         // Set the argument to be sent
         self.smhc
             .smhc_cmdarg
