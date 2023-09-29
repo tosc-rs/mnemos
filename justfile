@@ -28,6 +28,8 @@ profile := 'release'
 
 _cargo := "cargo" + if toolchain != "" { " +" + toolchain } else { "" }
 
+_testcmd := if no-nextest != "" { "test" } else { "nextest run" }
+
 _rustflags := env_var_or_default("RUSTFLAGS", "")
 
 # If we're running in Github Actions and cargo-action-fmt is installed, then add
@@ -119,7 +121,7 @@ test *ARGS="--all-features": (nextest "run " + ARGS)
 
 # run a Nextest command
 nextest *ARGS: (_get-cargo-command "nextest" "cargo-nextest" no-nextest)
-    {{ _cargo }} nextest {{ ARGS }}
+    {{ _cargo }} {{ _testcmd }} {{ ARGS }}
 
 # run rustfmt for all crates, across workspaces
 fmt:
@@ -210,6 +212,50 @@ mdbook CMD="build --open": (_get-cargo-bin "mdbook")
 oranda CMD="dev": (_get-cargo-bin "oranda")
     ./scripts/rfc2book.py
     oranda {{ CMD }}
+
+
+loom crate='' *args='': (_get-cargo-command "nextest" "cargo-nextest" no-nextest)
+    #!/usr/bin/env bash
+    set -euo pipefail
+    source "./scripts/_util.sh"
+
+    export RUSTFLAGS="--cfg loom ${RUSTFLAGS:-}"
+    export LOOM_MAX_PREEMPTIONS="${LOOM_MAX_PREEMPTIONS:-2}"
+    export LOOM_LOG="${LOOM_LOG:-mnemos=trace,debug}"
+
+    # if logging is enabled, also enable location tracking.
+    if [[ "${LOOM_LOG}" != "off" ]]; then
+        export LOOM_LOCATION=true
+        status "Enabled" "logging, LOOM_LOG=${LOOM_LOG}"
+    else
+        status "Disabled" "logging and location tracking"
+    fi
+
+    status "Configured" "loom, LOOM_MAX_PREEMPTIONS=${LOOM_MAX_PREEMPTIONS}"
+
+    if [[ "${LOOM_CHECKPOINT_FILE:-}" ]]; then
+        export LOOM_CHECKPOINT_FILE="${LOOM_CHECKPOINT_FILE:-}"
+        export LOOM_CHECKPOINT_INTERVAL="${LOOM_CHECKPOINT_INTERVAL:-100}"
+        status "Saving" "checkpoints to ${LOOM_CHECKPOINT_FILE} every ${LOOM_CHECKPOINT_INTERVAL} iterations"
+    fi
+
+    # if the loom tests fail, we still want to be able to print the checkpoint
+    # location before exiting.
+    set +e
+
+    # run loom tests
+    {{ _cargo }} {{ _testcmd }} \
+        --release \
+        --lib \
+        {{ if crate == '' { '--workspace'} else { '--package' } }} {{ crate }} \
+        {{ args }}
+    status="$?"
+
+    if [[ "${LOOM_CHECKPOINT_FILE:-}" ]]; then
+        status "Checkpoints" "saved to ${LOOM_CHECKPOINT_FILE}"
+    fi
+
+    exit "$status"
 
 _get-cargo-command name pkg skip='':
     #!/usr/bin/env bash

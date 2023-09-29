@@ -1363,7 +1363,7 @@ name = "cordyceps"
 version = "0.3.2"
 source = "git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064#101a4abaa19afdd131b334a16d92c9fb4909c064"
 dependencies = [
- "loom",
+ "loom 0.5.6",
  "tracing 0.1.37",
 ]
 
@@ -1372,7 +1372,7 @@ name = "cordyceps"
 version = "0.3.2"
 source = "git+https://github.com/hawkw/mycelium#1f125194902cd4970b72eab0aa1d85d1b6ec1489"
 dependencies = [
- "loom",
+ "loom 0.5.6",
  "tracing 0.1.37",
 ]
 
@@ -4678,6 +4678,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "loom"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "86a17963e5073acf8d3e2637402657c6b467218f36fe10d696b3e1095ae019bf"
+dependencies = [
+ "cfg-if 1.0.0",
+ "generator",
+ "pin-utils",
+ "scoped-tls",
+ "serde",
+ "serde_json",
+ "tracing 0.1.37",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "lru-cache"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4730,6 +4746,19 @@ dependencies = [
  "pin-project",
  "portable-atomic",
  "tracing 0.1.37",
+]
+
+[[package]]
+name = "maitake-sync"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "68d76dcfa3b14b75b60ff187f5df11c10fa76f227741a42070f3d36215756f24"
+dependencies = [
+ "cordyceps 0.3.2 (git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064)",
+ "loom 0.7.0",
+ "mycelium-bitfield 0.1.3 (git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064)",
+ "pin-project",
+ "portable-atomic",
 ]
 
 [[package]]
@@ -5089,8 +5118,13 @@ dependencies = [
 name = "mnemos-bitslab"
 version = "0.1.0"
 dependencies = [
+ "futures",
+ "loom 0.7.0",
+ "maitake-sync",
  "portable-atomic",
  "proptest",
+ "tracing 0.1.37",
+ "tracing-subscriber",
 ]
 
 [[package]]
@@ -5271,7 +5305,7 @@ version = "0.1.0"
 source = "git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064#101a4abaa19afdd131b334a16d92c9fb4909c064"
 dependencies = [
  "cordyceps 0.3.2 (git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064)",
- "loom",
+ "loom 0.5.6",
  "mycelium-bitfield 0.1.3 (git+https://github.com/hawkw/mycelium.git?rev=101a4abaa19afdd131b334a16d92c9fb4909c064)",
  "tracing 0.2.0",
 ]
@@ -5282,7 +5316,7 @@ version = "0.1.0"
 source = "git+https://github.com/hawkw/mycelium#1f125194902cd4970b72eab0aa1d85d1b6ec1489"
 dependencies = [
  "cordyceps 0.3.2 (git+https://github.com/hawkw/mycelium)",
- "loom",
+ "loom 0.5.6",
  "mycelium-bitfield 0.1.3 (git+https://github.com/hawkw/mycelium)",
  "tracing 0.2.0",
 ]

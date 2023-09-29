@@ -9,7 +9,7 @@ macro_rules! make_index_allocs {
         $(
             pub use self::$modname::$Name;
             mod $modname {
-                use portable_atomic::{$Atomic, Ordering::*};
+                use crate::loom::sync::atomic::{$Atomic, Ordering::*};
 
                 #[doc = concat!("An allocator for up to ", stringify!($cap), " unique indices.")]
                 pub struct $Name($Atomic);
@@ -17,7 +17,15 @@ macro_rules! make_index_allocs {
                 impl $Name {
                     #[doc = concat!("An allocator for up to ", stringify!($cap), " unique indices.")]
                     #[must_use]
+                    #[cfg(not(loom))]
                     pub const fn new() -> Self {
+                        Self(<$Atomic>::new(0))
+                    }
+
+                    #[doc = concat!("An allocator for up to ", stringify!($cap), " unique indices.")]
+                    #[must_use]
+                    #[cfg(loom)]
+                    pub fn new() -> Self {
                         Self(<$Atomic>::new(0))
                     }
 
@@ -235,6 +243,11 @@ macro_rules! make_index_allocs {
                     #[inline]
                     pub const fn capacity(&self) -> u8 {
                         Self::CAPACITY
+                    }
+
+                    pub(crate) fn is_allocated(&self, index: u8) -> bool {
+                        let bit = 1 << index;
+                        self.0.load(Acquire) & bit == bit
                     }
 
                     fn find_zero(u: $Int) -> Option<u8> {
