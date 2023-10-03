@@ -2,7 +2,7 @@ macro_rules! make_index_allocs {
     (
         $(
             mod $modname:ident {
-                pub struct $Name:ident($Atomic:ty, $Int:ty, $capacity:literal);
+                pub struct $Name:ident($Atomic:ty, $Int:ty, $capacity:expr);
             }
         )+
     ) => {
@@ -42,7 +42,7 @@ macro_rules! make_index_allocs {
                     }
 
                     /// The *total* number of indices in this allocator.
-                    const CAPACITY: u8 = $capacity;
+                    pub const CAPACITY: u8 = $capacity as u8;
 
                     /// Release an index back to the pool.
                     ///
@@ -130,7 +130,7 @@ macro_rules! make_index_allocs {
                     /// }
                     ///
                     /// // free all but one index.
-                    #[doc = concat!(" for i in 1..", stringify!($capacity), " {")]
+                    #[doc = concat!(" for i in 1..", stringify!($Name), "::CAPACITY {")]
                     ///     alloc.free(i);
                     ///     assert!(alloc.any_allocated());
                     /// }
@@ -287,5 +287,9 @@ make_index_allocs! {
 
     mod alloc64 {
         pub struct IndexAlloc64(AtomicU64, u64, 64);
+    }
+
+    mod allocword {
+        pub struct IndexAllocWord(AtomicUsize, usize, usize::BITS);
     }
 }
