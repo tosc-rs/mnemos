@@ -151,7 +151,7 @@ macro_rules! make_index_allocs {
                     #[must_use]
                     #[inline]
                     pub fn all_free(&self) -> bool {
-                        self.bitmap.load(Acquire) & self.max_mask == 0
+                        self.bitmap.load(Acquire) & !self.max_mask == 0
                     }
 
                     /// Returns `true` if *any* index in the allocator has been allocated.
@@ -335,6 +335,7 @@ macro_rules! make_index_allocs {
                                 eprintln!("{i}");
                                 prop_assert_eq!(alloc.any_allocated(), i > 0, "if i > 0, `any_allocated` must be true");
                                 prop_assert!(alloc.any_free(), "if we haven't allocated the whole capacity, `any_free` must be true; i = {}", i);
+                                prop_assert_eq!(alloc.all_free(), i == 0);
                                 let allocated = alloc.allocate();
                                 eprintln!("allocated = {allocated:?}");
                                 prop_assert_eq!(allocated, Some(i));
@@ -358,6 +359,7 @@ macro_rules! make_index_allocs {
                             prop_assert_eq!(alloc.allocated_count(), capacity);
                             prop_assert!(alloc.all_allocated());
                             prop_assert!(alloc.any_allocated());
+                            prop_assert!(!alloc.all_free());
 
                             alloc.free(capacity - 1);
                             prop_assert_eq!(alloc.allocate(), Some(capacity - 1));
