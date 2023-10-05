@@ -9,11 +9,7 @@
     - [the kernel](./components/kernel.md)
     - [the drivers](./components/drivers.md)
     - [user applications](./components/userspace.md)
-- [platform support]()
-    - [allwinner D1]()
-    - [esp32c3]()
-    - [x86_64]()
-    - [simulators]()
+- [platform support](./platforms/intro.md)
 
 # mnemOS resources
 
