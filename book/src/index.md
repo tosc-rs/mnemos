@@ -1,6 +1,7 @@
 # Summary
 
-[the mnemOS book](./intro.md)
+- [introduction](./intro.md)
+    - [other resources](./other-resources.md)
 
 # about mnemOS
 
@@ -11,10 +12,8 @@
     - [user applications](./components/userspace.md)
 - [platform support](./platforms/intro.md)
 
-# mnemOS resources
+# mnemOS guide
 
-- [getting involved]()
-    - [try mnemOS]()
-    - [learn more]()
+- [try mnemOS]()
 - [contributing to mnemOS]()
     - [development tools]()
