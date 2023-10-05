@@ -10,15 +10,56 @@ macro_rules! make_index_allocs {
             pub use self::$modname::$Name;
             mod $modname {
                 use portable_atomic::{$Atomic, Ordering::*};
+                use core::fmt;
 
                 #[doc = concat!("An allocator for up to ", stringify!($cap), " unique indices.")]
-                pub struct $Name($Atomic);
+                pub struct $Name {
+                    bitmap: $Atomic,
+                    max_mask: $Int,
+                }
 
                 impl $Name {
-                    #[doc = concat!("An allocator for up to ", stringify!($cap), " unique indices.")]
+                    #[doc = concat!("Returns a new allocator for up to ", stringify!($cap), " unique indices.")]
                     #[must_use]
                     pub const fn new() -> Self {
-                        Self(<$Atomic>::new(0))
+                        Self {
+                            bitmap: <$Atomic>::new(0),
+                            max_mask: 0,
+                        }
+                    }
+
+                    /// Returns a new allocator for up to `capacity` unique
+                    /// indices. If `capacity` indices are allocated, subsequent
+                    /// calls to [`allocate()`](Self::allocate) will return
+                    /// [`None`] until an index is deallocated by a call to
+                    /// [`free()`](Self::free) on this allocator.
+                    ///
+                    #[doc = concat!("A `", stringify!($Name), "` can only ever allocate up to [`Self::MAX_CAPACITY`] indices.")]
+                    /// Therefore, if the provided `capacity` exceeds
+                    /// [`Self::MAX_CAPACITY`], it will be clamped to the
+                    /// maximum capacity.
+                    ///
+                    /// An allocator's actual capacity can be returned
+                    pub const fn with_capacity(capacity: u8) -> Self {
+                        let capacity = if capacity > Self::MAX_CAPACITY {
+                            Self::MAX_CAPACITY
+                        } else {
+                            capacity
+                        };
+
+                        // if capacity is less than max capacity, mask out the
+                        // highest (MAX_CAPACITY - capacity) bits;
+                        let mut max_mask: $Int = 0;
+                        let mut i = Self::MAX_CAPACITY;
+                        while i > capacity {
+                            i -= 1;
+                            max_mask |= 1 << i;
+                        }
+
+                        Self {
+                            bitmap: <$Atomic>::new(max_mask),
+                            max_mask,
+                        }
                     }
 
                     /// Allocate an index from the pool.
@@ -27,12 +68,12 @@ macro_rules! make_index_allocs {
                     /// returned again until after it has been [`free`](Self::free)d.
                     #[must_use]
                     pub fn allocate(&self) -> Option<u8> {
-                        let mut bitmap = self.0.load(Acquire);
+                        let mut bitmap = self.bitmap.load(Acquire);
                         loop {
                             let idx = Self::find_zero(bitmap)?;
                             let new_bitmap = bitmap | (1 << idx);
                             match self
-                                .0
+                                .bitmap
                                 .compare_exchange_weak(bitmap, new_bitmap, AcqRel, Acquire)
                             {
                                 Ok(_) => return Some(idx),
@@ -41,8 +82,9 @@ macro_rules! make_index_allocs {
                         }
                     }
 
-                    /// The *total* number of indices in this allocator.
-                    pub const CAPACITY: u8 = $capacity as u8;
+                    /// The maximum number of indices that can be allocated by
+                    /// an allocator of this type.
+                    pub const MAX_CAPACITY: u8 = $capacity as u8;
 
                     /// Release an index back to the pool.
                     ///
@@ -50,7 +92,8 @@ macro_rules! make_index_allocs {
                     /// [`allocate`](Self::allocate).
                     #[inline]
                     pub fn free(&self, index: u8) {
-                        self.0.fetch_and(!(1 << index), Release);
+                        debug_assert!(index < self.capacity());
+                        self.bitmap.fetch_and(!(1 << index), Release);
                     }
 
                     /// Returns `true` if *all* indices in the allocator have been allocated.
@@ -82,7 +125,7 @@ macro_rules! make_index_allocs {
                     #[must_use]
                     #[inline]
                     pub fn all_allocated(&self) -> bool {
-                        self.0.load(Acquire) == <$Int>::MAX
+                        self.bitmap.load(Acquire) == <$Int>::MAX
                     }
 
                     /// Returns `true` if *none* of this allocator's indices have been
@@ -108,7 +151,7 @@ macro_rules! make_index_allocs {
                     #[must_use]
                     #[inline]
                     pub fn all_free(&self) -> bool {
-                        self.0.load(Acquire) == 0
+                        self.bitmap.load(Acquire) & !self.max_mask == 0
                     }
 
                     /// Returns `true` if *any* index in the allocator has been allocated.
@@ -130,7 +173,7 @@ macro_rules! make_index_allocs {
                     /// }
                     ///
                     /// // free all but one index.
-                    #[doc = concat!(" for i in 1..", stringify!($Name), "::CAPACITY {")]
+                    #[doc = concat!(" for i in 1..", stringify!($Name), "::MAX_CAPACITY {")]
                     ///     alloc.free(i);
                     ///     assert!(alloc.any_allocated());
                     /// }
@@ -142,7 +185,7 @@ macro_rules! make_index_allocs {
                     #[must_use]
                     #[inline]
                     pub fn any_allocated(&self) -> bool {
-                        self.0.load(Acquire) != 0
+                        self.bitmap.load(Acquire) & !self.max_mask != 0
                     }
 
                     /// Returns `true` if *any* index in the allocator is available.
@@ -174,7 +217,7 @@ macro_rules! make_index_allocs {
                     #[must_use]
                     #[inline]
                     pub fn any_free(&self) -> bool {
-                        self.0.load(Acquire) != <$Int>::MAX
+                        self.bitmap.load(Acquire) != <$Int>::MAX
                     }
 
                     /// Returns the current number of free indices in the allocator.
@@ -199,7 +242,7 @@ macro_rules! make_index_allocs {
                     #[must_use]
                     #[inline]
                     pub fn free_count(&self) -> u8 {
-                        self.0.load(Acquire).count_zeros() as u8
+                        self.bitmap.load(Acquire).count_zeros() as u8
                     }
 
                     /// Returns the current number of allocated indices in the allocator.
@@ -226,7 +269,7 @@ macro_rules! make_index_allocs {
                     #[must_use]
                     #[inline]
                     pub fn allocated_count(&self) -> u8 {
-                        self.0.load(Acquire).count_ones() as u8
+                        (self.bitmap.load(Acquire) & !self.max_mask).count_ones() as u8
                     }
 
                     /// Returns the total capacity of this allocator, including any
@@ -234,7 +277,12 @@ macro_rules! make_index_allocs {
                     #[must_use]
                     #[inline]
                     pub const fn capacity(&self) -> u8 {
-                        Self::CAPACITY
+                        Self::MAX_CAPACITY - self.capacity_subtractor()
+                    }
+
+                    #[inline]
+                    const fn capacity_subtractor(&self) -> u8 {
+                        self.max_mask.leading_ones() as u8
                     }
 
                     fn find_zero(u: $Int) -> Option<u8> {
@@ -247,10 +295,22 @@ macro_rules! make_index_allocs {
                     }
                 }
 
+                impl fmt::Debug for $Name {
+                    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                        let Self { max_mask, bitmap } = self;
+                        let bitmap = bitmap.load(Acquire);
+                        f.debug_struct(stringify!($Name))
+                            .field("bitmap", &format_args!("{bitmap:0width$b}", width = Self::MAX_CAPACITY as usize))
+                            .field("max_mask", &format_args!("{max_mask:0width$b}", width = Self::MAX_CAPACITY as usize))
+                            .finish()
+
+                    }
+                }
+
                 #[cfg(test)]
                 mod tests {
                     use super::*;
-                    use proptest::{prop_assert_eq, proptest};
+                    use proptest::{prop_assert_eq, prop_assert, proptest};
 
                     proptest! {
                         #[test]
@@ -264,6 +324,45 @@ macro_rules! make_index_allocs {
                             }
 
                             prop_assert_eq!($Name::find_zero(u), found_zero)
+                        }
+
+                        #[test]
+                        fn max_capacity(capacity in 1..=<$Int>::BITS as u8) {
+                            let alloc = $Name::with_capacity(capacity);
+                            eprintln!("capacity: {capacity};\nalloc: {alloc:#?}");
+                            prop_assert_eq!(alloc.capacity(), capacity, "capacity ({}) should equal requested capacity ({})", alloc.capacity(), capacity);
+                            for i in 0..capacity {
+                                eprintln!("{i}");
+                                prop_assert_eq!(alloc.any_allocated(), i > 0, "if i > 0, `any_allocated` must be true");
+                                prop_assert!(alloc.any_free(), "if we haven't allocated the whole capacity, `any_free` must be true; i = {}", i);
+                                prop_assert_eq!(alloc.all_free(), i == 0);
+                                let allocated = alloc.allocate();
+                                eprintln!("allocated = {allocated:?}");
+                                prop_assert_eq!(allocated, Some(i));
+
+                                prop_assert_eq!(
+                                    alloc.free_count(),
+                                    capacity - (i + 1),
+                                    "`free_count` must be capacity ({}) - (i + 1) ({}) = {}",
+                                    capacity, i + 1,
+                                    capacity - (i + 1),
+                                );
+                                prop_assert_eq!(alloc.allocated_count(), i + 1, "we just allocated the i-th index (i = {})", i);
+                                prop_assert!(alloc.any_allocated());
+
+                                prop_assert_eq!(alloc.any_free(), i < capacity - 1, "if we haven't allocated the whole capacity, `any_free` must be true; i = {}", i);
+                                prop_assert_eq!(alloc.all_allocated(), i == capacity - 1);
+                            }
+
+                            prop_assert_eq!(alloc.allocate(), None);
+                            prop_assert_eq!(alloc.free_count(), 0, "all indices should be allocated so free count should be 0");
+                            prop_assert_eq!(alloc.allocated_count(), capacity);
+                            prop_assert!(alloc.all_allocated());
+                            prop_assert!(alloc.any_allocated());
+                            prop_assert!(!alloc.all_free());
+
+                            alloc.free(capacity - 1);
+                            prop_assert_eq!(alloc.allocate(), Some(capacity - 1));
                         }
                     }
                 }
