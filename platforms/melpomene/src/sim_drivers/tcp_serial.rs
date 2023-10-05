@@ -1,10 +1,7 @@
 use melpo_config::TcpUartConfig;
 use mnemos_kernel::{
-    comms::{
-        bbq::{new_bidi_channel, BidiHandle},
-        kchannel::KChannel,
-    },
-    registry::{self, Message},
+    comms::bbq::{new_bidi_channel, BidiHandle},
+    registry,
     services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     Kernel,
 };
@@ -28,10 +25,12 @@ impl TcpSerial {
     ) -> Result<(), registry::RegistrationError> {
         let (a_ring, b_ring) =
             new_bidi_channel(settings.incoming_size, settings.outgoing_size).await;
-        let (prod, cons) =
-            KChannel::<Message<SimpleSerialService>>::new_async(settings.kchannel_depth)
-                .await
-                .split();
+        let reqs = kernel
+            .registry()
+            .bind_konly::<SimpleSerialService>(settings.kchannel_depth)
+            .await?
+            .into_request_stream(settings.kchannel_depth)
+            .await;
         let socket_addr = &settings.socket_addr;
         let listener = TcpListener::bind(socket_addr).await.unwrap();
         tracing::info!(
@@ -44,15 +43,16 @@ impl TcpSerial {
                 let handle = b_ring;
 
                 // Reply to the first request, giving away the serial port
-                let req = cons.dequeue_async().await.map_err(drop).unwrap();
+                let req = reqs.next_request().await;
                 let Request::GetPort = req.msg.body;
                 let resp = req.msg.reply_with(Ok(Response::PortHandle { handle }));
 
                 req.reply.reply_konly(resp).await.map_err(drop).unwrap();
 
                 // And deny all further requests after the first
+                // TODO(eliza): use a connect error for this?
                 loop {
-                    let req = cons.dequeue_async().await.map_err(drop).unwrap();
+                    let req = reqs.next_request().await;
                     let Request::GetPort = req.msg.body;
                     let resp = req
                         .msg
@@ -82,9 +82,7 @@ impl TcpSerial {
             .instrument(info_span!("TCP Serial", ?socket_addr)),
         );
 
-        kernel
-            .with_registry(|reg| reg.register_konly::<SimpleSerialService>(&prod))
-            .await
+        Ok(())
     }
 }
 

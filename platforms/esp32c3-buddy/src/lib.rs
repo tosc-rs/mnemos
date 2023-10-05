@@ -37,30 +37,26 @@ pub fn init() -> &'static Kernel {
 }
 
 pub fn spawn_daemons(k: &'static Kernel) {
-    // Initialize the SerialMuxServer
-    let sermux_up = k
-        .initialize(services::serial_mux::SerialMuxServer::register(
-            k,
-            Default::default(),
-        ))
-        .expect("failed to spawn SerialMuxService initialization");
-
-    // Initialize Serial Mux daemons.
+    // initialize tracing first, so we can trace the boot process.
     k.initialize(async move {
         use kernel::serial_trace;
-        sermux_up
-            .await
-            .expect("SerialMuxService initialization should not be cancelled")
-            .expect("SerialMuxService initialization failed");
-
-        k.spawn(daemons::sermux::hello(k, Default::default())).await;
-
         let trace_settings = serial_trace::SerialTraceSettings::default()
             // our heap is only 32KB, so allocate a much smaller trace buffer.
             .with_tracebuf_capacity(1024);
         serial_trace::SerialSubscriber::start(k, trace_settings).await;
     })
-    .expect("failed to spawn default serial mux service initialization");
+    .expect("failed to spawn serial tracing daemon");
+
+    // Initialize the SerialMuxServer
+    k.initialize(services::serial_mux::SerialMuxServer::register(
+        k,
+        Default::default(),
+    ))
+    .expect("failed to spawn SerialMuxService initialization");
+
+    // Initialize Serial Mux daemons.
+    k.initialize(daemons::sermux::hello(k, Default::default()))
+        .expect("failed to spawn default serial mux service initialization");
 }
 
 pub fn spawn_serial(
@@ -74,8 +70,8 @@ pub fn spawn_serial(
     k.initialize(drivers::usb_serial::UsbSerialServer::new(dev).register(k, 512, 512))
         .expect("failed to spawn UsbSerialServer!");
 
-    interrupt::enable(Interrupt::USB_SERIAL_JTAG, interrupt::Priority::Priority1)
-        .expect("failed to enable USB_SERIAL_JTAG interrupt");
+    interrupt::enable(Interrupt::USB_DEVICE, interrupt::Priority::Priority1)
+        .expect("failed to enable USB_DEVICE interrupt");
 }
 
 pub fn run(k: &'static Kernel, alarm1: Alarm<Target, 1>) -> ! {

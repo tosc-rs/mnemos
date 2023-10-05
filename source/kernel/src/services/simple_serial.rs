@@ -11,7 +11,7 @@ use crate::comms::bbq::BidiHandle;
 use crate::comms::oneshot::Reusable;
 use crate::Kernel;
 
-use crate::registry::{known_uuids, Envelope, KernelHandle, RegisteredDriver, ReplyTo};
+use crate::registry::{self, known_uuids, Envelope, KernelHandle, RegisteredDriver, ReplyTo};
 
 ////////////////////////////////////////////////////////////////////////////////
 // Service Definition
@@ -23,6 +23,13 @@ impl RegisteredDriver for SimpleSerialService {
     type Request = Request;
     type Response = Response;
     type Error = SimpleSerialError;
+
+    // TODO(eliza): maybe we should do a v2 of this trait where the `Hello`
+    // message is `GetPort` and the request/response types are serial frames?
+    // but we can't do this until services can be bidi pipes instead of req
+    // channels...
+    type Hello = ();
+    type ConnectError = core::convert::Infallible;
 
     const UUID: Uuid = known_uuids::kernel::SIMPLE_SERIAL_PORT;
 }
@@ -54,12 +61,26 @@ pub struct SimpleSerialClient {
 }
 
 impl SimpleSerialClient {
-    pub async fn from_registry(kernel: &'static Kernel) -> Option<Self> {
+    pub async fn from_registry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<SimpleSerialService>> {
+        let kprod = kernel.registry().connect::<SimpleSerialService>(()).await?;
+
+        Ok(SimpleSerialClient {
+            kprod,
+            rosc: Reusable::new_async().await,
+        })
+    }
+
+    pub async fn from_registry_no_retry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<SimpleSerialService>> {
         let kprod = kernel
-            .with_registry(|reg| reg.get::<SimpleSerialService>())
+            .registry()
+            .try_connect::<SimpleSerialService>(())
             .await?;
 
-        Some(SimpleSerialClient {
+        Ok(SimpleSerialClient {
             kprod,
             rosc: Reusable::new_async().await,
         })

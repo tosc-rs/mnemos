@@ -171,7 +171,7 @@ pub mod test {
             }
             assert!(stack.push(Word::data(100)).is_err());
             for i in (0..(ITEMS as i32)).rev() {
-                assert_eq!(unsafe { stack.pop().unwrap().data }, i);
+                assert_eq!(stack.pop().unwrap().into_data(), i);
             }
             assert!(stack.pop().is_none());
         }

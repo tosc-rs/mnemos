@@ -11,13 +11,31 @@
 //! config = { path = "../../source/config", features = ["use-std"] }
 //! ```
 //!
-//! And ensure your build.rs contains:
+//! And ensure your build.rs contains a call to [`buildtime::render_file`], to
+//! render a single config file:
 //!
-//! ```rust,skip
-//! # #![allow(clippy::needless_doctest_main)]
-//! use mnemos_config::buildtime::render_project;
+//! ```rust,no_run
+//! # #![allow(clippy::needless_doctest_main, non_camel_case_types)]
+//! # #[derive(serde::Serialize, serde::Deserialize)]
+//! # struct YOUR_CONFIG_TYPE(u8);
+//! use mnemos_config::buildtime::render_file;
 //! fn main() {
-//!     render_project::<YOUR_CONFIG_TYPE>("YOUR_PLATFORM.toml").unwrap();
+//!     // to render one config file:
+//!     render_file::<YOUR_CONFIG_TYPE>("YOUR_PLATFORM.toml").unwrap();
+//! }
+//! ```
+//!
+//! To render all config files in a directory, [`buildtime::render_all`] may be
+//! used instead:
+//!
+//! ```rust,no_run
+//! # #![allow(clippy::needless_doctest_main, non_camel_case_types)]
+//! # #[derive(serde::Serialize, serde::Deserialize)]
+//! # struct YOUR_CONFIG_TYPE(u8);
+//! use mnemos_config::buildtime::render_all;
+//! fn main() {
+//!     // to render all config files in the `board-configs` directory:
+//!     render_all::<YOUR_CONFIG_TYPE>("board-configs").unwrap();
 //! }
 //! ```
 //!
@@ -32,8 +50,11 @@
 //!
 //! And then you can use this in your main function:
 //!
-//! ```rust,skip
-//! let config = mnemos_config::load_configuration!(YOUR_CONFIG_TYPE).unwrap();
+//! ```rust,ignore
+//! # #![allow(non_camel_case_types)]
+//! # #[derive(serde::Serialize, serde::Deserialize)]
+//! # struct YOUR_CONFIG_TYPE(u8);
+//! let config = mnemos_config::include_config!(YOUR_CONFIG_TYPE).unwrap();
 //! ```
 //!
 //! ## Make an external config crate
@@ -58,10 +79,16 @@ pub struct MnemosConfig<Platform> {
     pub platform: Platform,
 }
 
+pub const CONFIG_DIR_VAR: &str = "MNEMOS_CONFIG_DIR";
+pub const CONFIG_FILE_VAR: &str = "MNEMOS_CONFIG";
+
 /// Tools intended for use in build.rs scripts
 #[cfg(feature = "use-std")]
 pub mod buildtime {
-    use std::{io::Write, path::PathBuf};
+    const OUT_DIR: &str = "OUT_DIR";
+    const TAG: &str = concat!(module_path!(), ":");
+
+    use std::{env, fs, io::Write, path::Path};
 
     use super::*;
     use miette::{Context, IntoDiagnostic, Result};
@@ -81,28 +108,137 @@ pub mod buildtime {
         postcard::to_stdvec(&mc).into_diagnostic()
     }
 
-    /// Load a configuration file from the given path, will be made available
-    /// to the main platform binary when they call [load_configuration!()].
-    pub fn render_project<Platform>(path: &str) -> Result<()>
+    /// Render all configuration files in the given directory.
+    ///
+    /// The resulting configs are stored in the cargo `OUT_DIR`, and may be
+    /// referenced by name in the main platform binary when using
+    /// [`include_config!()`].
+    pub fn render_all<Platform>(config_dir: impl AsRef<Path>) -> Result<()>
     where
         Platform: Serialize + DeserializeOwned + 'static,
     {
-        let cfg = std::fs::read_to_string(path)
+        let config_dir = config_dir.as_ref();
+        let config_dir_disp = config_dir.display();
+        let out_dir = env::var(OUT_DIR)
             .into_diagnostic()
-            .wrap_err_with(|| format!("Failed to find input config file '{path}'"))?;
-        let c: MnemosConfig<Platform> = from_toml(&cfg)?;
+            .wrap_err("Failed to read '{OUT_DIR}' env variable")?;
 
-        let out_dir = std::env::var("OUT_DIR").into_diagnostic()?;
-        let mut out = PathBuf::from(out_dir);
+        println!("cargo:rerun-if-changed={config_dir_disp}");
+        println!("cargo:rustc-env={CONFIG_DIR_VAR}={out_dir}");
 
-        out.push("mnemos-config.postcard");
-        let bin_cfg = to_postcard(&c)?;
-        let mut f = std::fs::File::create(&out).unwrap();
-        f.write_all(&bin_cfg).unwrap();
-        println!("cargo:rustc-env=MNEMOS_CONFIG={}", out.display());
-        println!("cargo:rerun-if-changed={path}");
+        eprintln!("{TAG} {OUT_DIR}={out_dir}");
+
+        (|| -> Result<()> {
+            let mut rendered_any = false;
+            let mut dirs = 0;
+            let mut not_toml = 0;
+            eprintln!("{TAG} rendering configs in '{config_dir_disp}'...");
+            for entry in fs::read_dir(config_dir)
+                .into_diagnostic()
+                .wrap_err_with(|| {
+                    format!("Failed to read config file directory '{config_dir_disp}'")
+                })?
+            {
+                let entry = match entry {
+                    Ok(e) => e,
+                    Err(e) => {
+                        println!("cargo:warning=Error reading config dir entry: {e}");
+                        continue;
+                    }
+                };
+
+                let entry_path = entry.path();
+                let epath_disp = match config_dir.parent() {
+                    Some(parent) => entry_path
+                        .strip_prefix(parent)
+                        .expect("directory path must be a prefix of directory entry path?"),
+                    None => entry_path.as_ref(),
+                }
+                .display();
+
+                eprintln!("{TAG} file: '{epath_disp}'");
+
+                if entry
+                    .metadata()
+                    .into_diagnostic()
+                    .wrap_err_with(|| format!("Failed to read metadata for '{epath_disp}'"))?
+                    .is_dir()
+                {
+                    eprintln!("{TAG}   -> not a file; skipping");
+                    dirs += 1;
+                    continue;
+                }
+
+                let extension = entry_path
+                    .extension()
+                    .map(std::ffi::OsStr::to_string_lossy)
+                    .unwrap_or(std::borrow::Cow::Borrowed(""));
+                if extension != "toml" {
+                    eprintln!("{TAG}   -> not TOML (extension: {extension:?}); skipping");
+                    not_toml += 1;
+                    continue;
+                }
+
+                render_file_to::<Platform>(&entry_path, &out_dir)?;
+                rendered_any = true;
+            }
+
+            if !rendered_any {
+                Err(
+                    miette::MietteDiagnostic::new("No config files were rendered!").with_help(
+                        format!(
+                        "config directory contained {not_toml} non-TOML files, {dirs} directories"
+                    ),
+                    ),
+                )?;
+            }
+
+            Ok(())
+        })()
+        .wrap_err_with(|| format!("Failed to render config directory '{config_dir_disp}'"))?;
 
         Ok(())
+    }
+
+    /// Load a configuration file from the given path, will be made available
+    /// to the main platform binary when they call [`include_config!()`].
+    pub fn render_file<Platform>(path: impl AsRef<Path>) -> Result<()>
+    where
+        Platform: Serialize + DeserializeOwned + 'static,
+    {
+        let out_dir = std::env::var(OUT_DIR)
+            .into_diagnostic()
+            .wrap_err("Failed to read '{OUT_DIR}' env variable")?;
+        eprintln!("{TAG} {OUT_DIR}='{out_dir}'");
+        render_file_to::<Platform>(path, out_dir)
+    }
+
+    fn render_file_to<Platform>(path: impl AsRef<Path>, out: impl AsRef<Path>) -> Result<()>
+    where
+        Platform: Serialize + DeserializeOwned + 'static,
+    {
+        let path = path.as_ref();
+        let path_disp = path.display();
+
+        (|| {
+            let filename = path
+                .file_name()
+                .ok_or_else(|| miette::miette!("Path has no filename!"))?;
+            eprintln!("{TAG} rendering config file '{path_disp}'",);
+            let cfg = std::fs::read_to_string(path).into_diagnostic()?;
+            let c: MnemosConfig<Platform> = from_toml(&cfg)?;
+
+            let mut out = out.as_ref().join(filename);
+            out.set_extension("postcard");
+            let bin_cfg = to_postcard(&c)?;
+            let mut f = std::fs::File::create(&out).into_diagnostic()?;
+            f.write_all(&bin_cfg).into_diagnostic()?;
+            println!("cargo:rustc-env={CONFIG_FILE_VAR}={}", out.display());
+            println!("cargo:rerun-if-changed={path_disp}");
+
+            Ok::<_, miette::Report>(())
+        })()
+        .wrap_err_with(|| format!("Failed to render config file '{path_disp}'"))
     }
 }
 
@@ -128,7 +264,12 @@ pub mod runtime {
 ///
 /// Should be called with the type of your platform specific type
 #[macro_export]
-macro_rules! load_configuration {
+macro_rules! include_config {
+    ($platform: ty, $name: literal) => {{
+        const MNEMOS_CONFIG: &[u8] =
+            include_bytes!(concat!(env!("MNEMOS_CONFIG_DIR"), "/", $name, ".postcard"));
+        $crate::runtime::from_postcard::<$platform>(MNEMOS_CONFIG)
+    }};
     ($platform: ty) => {{
         const MNEMOS_CONFIG: &[u8] = include_bytes!(env!("MNEMOS_CONFIG"));
         $crate::runtime::from_postcard::<$platform>(MNEMOS_CONFIG)

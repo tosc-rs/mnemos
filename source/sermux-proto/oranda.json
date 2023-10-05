@@ -1,5 +1,6 @@
 {
   "components": {
-    "mdbook": false
+    "mdbook": false,
+    "changelog": false
   }
 }

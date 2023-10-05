@@ -8,7 +8,11 @@
 //!
 //! See the docs of [FrameChunk] and [EmbDisplayClient] for additional details
 //! of use.
-use core::time::Duration;
+use embedded_graphics::{
+    pixelcolor::{BinaryColor, Gray8},
+    prelude::*,
+};
+use uuid::Uuid;
 
 use crate::{
     comms::oneshot::Reusable,
@@ -16,11 +20,6 @@ use crate::{
     registry::{self, Envelope, KernelHandle, RegisteredDriver},
     Kernel,
 };
-use embedded_graphics::{
-    pixelcolor::{BinaryColor, Gray8},
-    prelude::*,
-};
-use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Service Definition
@@ -38,6 +37,8 @@ impl RegisteredDriver for EmbDisplayService {
     type Request = Request;
     type Response = Response;
     type Error = FrameError;
+    type Hello = ();
+    type ConnectError = core::convert::Infallible;
     const UUID: Uuid = registry::known_uuids::kernel::EMB_DISPLAY_V2;
 }
 
@@ -59,9 +60,6 @@ pub enum Response {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum FrameError {
-    /// Failed to register a display, the kernel reported that there is already
-    /// an existing EmbDisplay
-    DisplayAlreadyExists,
     /// We are still waiting for a response from the last request
     Busy,
     /// Internal Error
@@ -83,27 +81,30 @@ impl EmbDisplayClient {
     /// [`EmbDisplayService`].
     ///
     /// Will retry until success
-    pub async fn from_registry(kernel: &'static Kernel) -> Self {
-        loop {
-            match Self::from_registry_no_retry(kernel).await {
-                Some(me) => return me,
-                None => {
-                    kernel.sleep(Duration::from_millis(10)).await;
-                }
-            }
-        }
+    pub async fn from_registry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<EmbDisplayService>> {
+        let prod = kernel.registry().connect::<EmbDisplayService>(()).await?;
+
+        Ok(EmbDisplayClient {
+            prod,
+            reply: Reusable::new_async().await,
+        })
     }
 
     /// Obtain a new client handle by querying the registry for a registered
     /// [`EmbDisplayService`].
     ///
     /// Will not retry if not immediately successful
-    pub async fn from_registry_no_retry(kernel: &'static Kernel) -> Option<Self> {
+    pub async fn from_registry_no_retry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<EmbDisplayService>> {
         let prod = kernel
-            .with_registry(|reg| reg.get::<EmbDisplayService>())
+            .registry()
+            .try_connect::<EmbDisplayService>(())
             .await?;
 
-        Some(EmbDisplayClient {
+        Ok(EmbDisplayClient {
             prod,
             reply: Reusable::new_async().await,
         })

@@ -11,9 +11,7 @@ use esp_backtrace as _;
 
 #[entry]
 fn main() -> ! {
-    unsafe {
-        mnemos_esp32c3_buddy::heap::init();
-    }
+    mnemos_esp32c3_buddy::heap::init();
 
     let peripherals = Peripherals::take();
     let mut system = peripherals.SYSTEM.split();

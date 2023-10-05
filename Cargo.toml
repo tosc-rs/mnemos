@@ -26,7 +26,9 @@ members = [
     "tools/*",
 
     # platforms
-    "platforms/allwinner-d1/*",
+    "platforms/allwinner-d1",
+    "platforms/allwinner-d1/d1-config",
+    "platforms/allwinner-d1/d1-core",
     "platforms/beepy",
     "platforms/esp32c3-buddy",
     "platforms/melpomene",
@@ -45,13 +47,17 @@ default-members = [
     "source/*",
 
     # tools
-    "tools/*",
+    # note that this skips `manganese` by default, so that we don't build its
+    # dependency features when running `cargo check --all-features` and similar.
+    "tools/crowtty",
+    "tools/dumbloader",
+    "tools/f3repl",
 
     # platforms
-    "platforms/allwinner-d1/core",
-    "platforms/beepy",
     "platforms/melpomene",
     "platforms/melpomene/melpo-config",
+    "platforms/allwinner-d1/d1-config",
+    "platforms/allwinner-d1/d1-core",
 ]
 # this isn't actually a crate
 exclude = ["source/notes"]
@@ -62,12 +68,30 @@ repository = "https://github.com/tosc-rs/mnemos"
 homepage = "https://mnemos.dev"
 license = "MIT OR Apache-2.0"
 
+### profile settings ###
+
 [profile.release]
+lto = 'thin' # better optimizations at a lower cost
+# symbols are nice and they don't increase the size on Flash
+debug = true
+
+## profile settings for D1 ##
+
+[profile.release.package.mnemos-d1]
 codegen-units = 1 # better optimizations
-debug = 2 # symbols are nice and they don't increase the size on Flash
-lto = true # better optimizations
+# faster optimizations --- we don't need opt-level='s'/'z' on D1, since we have
+# a whopping 1GB of RAM!
+opt-level = 3
+
+[profile.dev.package.mnemos-d1]
+# faster optimizations --- we don't need opt-level='s'/'z' on D1, since we have
+# a whopping 1GB of RAM!
+opt-level = 3
+
+## profile settings for esp32c3-buddy ##
 
 [profile.release.package.mnemos-esp32c3-buddy]
+codegen-units = 1 # better optimizations
 # opt-level='z' is broken on esp32c3.
 #
 # See: https://github.com/esp-rs/esp-hal/pull/198
@@ -80,16 +104,42 @@ rustflags = [
 ]
 
 [profile.dev.package.mnemos-esp32c3-buddy]
+codegen-units = 1 # better optimizations
 # opt-level='z' is broken on esp32c3.
 #
 # See: https://github.com/esp-rs/esp-hal/pull/198
 opt-level = "s"
+# symbols are nice and they don't increase the size on Flash
 rustflags = [
     "-C", "link-arg=-Tlinkall.x",
     # Required to obtain backtraces (e.g. when using the "esp-backtrace" crate.)
     # NOTE: May negatively impact performance of produced code
     "-C", "force-frame-pointers",
 ]
+
+## profile settings for x86_64 ##
+
+[profile.release.package.mnemos-x86_64-core]
+codegen-units = 1 # better optimizations
+# faster optimizations --- we don't need to optimize for size on x86
+opt-level = 3
+
+[profile.dev.package.mnemos-x86_64-core]
+# faster optimizations --- we don't need to optimize for size on x86
+opt-level = 3
+
+## profile settings for host tools ##
+[profile.release.package.crowtty]
+# only generate the debuginfo needed for backtraces, speeding
+# up the build a bit.
+debug = "line-tables-only"
+
+[profile.release.package.melpomene]
+# only generate the debuginfo needed for backtraces, speeding
+# up the build a bit.
+debug = "line-tables-only"
+
+### patches ###
 
 [patch.crates-io.maitake]
 git = "https://github.com/hawkw/mycelium.git"
@@ -117,3 +167,17 @@ rev = "101a4abaa19afdd131b334a16d92c9fb4909c064"
 [patch.crates-io.bbq10kbd]
 git = "https://github.com/hawkw/bbq10kbd"
 branch = "eliza/async"
+
+# necessary to avoid `esp32c3-hal` depending on `log` with version `=0.4.18`,
+# which clashes with the `nextest` dependency of `log` `^0.4.19`. lol. lmao.
+[patch.crates-io.esp32c3-hal]
+git = "https://github.com/esp-rs/esp-hal"
+rev = "5a8be302b4049a6ebc17bd712d97c85a9fd83f76"
+
+[patch.crates-io.esp-hal-common]
+git = "https://github.com/esp-rs/esp-hal"
+rev = "5a8be302b4049a6ebc17bd712d97c85a9fd83f76"
+
+[patch.crates-io.esp-hal-procmacros]
+git = "https://github.com/esp-rs/esp-hal"
+rev = "5a8be302b4049a6ebc17bd712d97c85a9fd83f76"

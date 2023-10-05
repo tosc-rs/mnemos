@@ -33,12 +33,10 @@ use maitake::sync::Mutex;
 use melpo_config::DisplayConfig;
 use mnemos_alloc::containers::{Arc, HeapArray};
 use mnemos_kernel::{
-    comms::kchannel::{KChannel, KConsumer},
-    registry::Message,
+    registry,
     services::{
         emb_display::{
-            DisplayMetadata, EmbDisplayService, FrameChunk, FrameError, FrameKind, MonoChunk,
-            Request, Response,
+            DisplayMetadata, EmbDisplayService, FrameChunk, FrameKind, MonoChunk, Request, Response,
         },
         keyboard::{
             key_event::{self, KeyCode, Modifiers},
@@ -64,25 +62,23 @@ impl SimDisplay {
         settings: DisplayConfig,
         width: u32,
         height: u32,
-    ) -> Result<(), FrameError> {
+    ) -> Result<(), registry::RegistrationError> {
         tracing::debug!("initializing SimDisplay server ({width}x{height})...");
+        let cmd = kernel
+            .registry()
+            .bind_konly(settings.kchannel_depth)
+            .await?
+            .into_request_stream(settings.kchannel_depth)
+            .await;
 
-        let (cmd_prod, cmd_cons) = KChannel::new_async(settings.kchannel_depth).await.split();
         let commander = CommanderTask {
             kernel,
-            cmd: cmd_cons,
+            cmd,
             width,
             height,
         };
 
-        kernel
-            .spawn(commander.run(width, height, settings.frames_per_second))
-            .await;
-
-        kernel
-            .with_registry(|reg| reg.register_konly::<EmbDisplayService>(&cmd_prod))
-            .await
-            .map_err(|_| FrameError::DisplayAlreadyExists)?;
+        kernel.spawn(commander.run(width, height, settings)).await;
 
         tracing::info!("SimDisplayServer initialized!");
 
@@ -99,7 +95,7 @@ impl SimDisplay {
 /// framebuffer.
 struct CommanderTask {
     kernel: &'static Kernel,
-    cmd: KConsumer<Message<EmbDisplayService>>,
+    cmd: registry::listener::RequestStream<EmbDisplayService>,
     width: u32,
     height: u32,
 }
@@ -113,9 +109,10 @@ struct Context {
 
 impl CommanderTask {
     /// The entrypoint for the driver execution
-    async fn run(self, width: u32, height: u32, frames_per_second: usize) {
+    async fn run(self, width: u32, height: u32, settings: DisplayConfig) {
         let output_settings = OutputSettingsBuilder::new()
             .theme(BinaryColorTheme::OledBlue)
+            .scale(settings.scaling)
             .build();
 
         let bytes = (width * height) as usize;
@@ -146,7 +143,7 @@ impl CommanderTask {
         self.kernel
             .spawn({
                 let mutex = mutex.clone();
-                render_loop(self.kernel, mutex, frames_per_second)
+                render_loop(self.kernel, mutex, settings.frames_per_second)
             })
             .await;
 
@@ -159,7 +156,7 @@ impl CommanderTask {
     /// sent us a message and "hung up" without waiting for a response.
     async fn message_loop(&self, mutex: Arc<Mutex<Option<Context>>>) {
         loop {
-            let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
+            let msg = self.cmd.next_request().await;
             let (req, env, reply_tx) = msg.split();
             match req {
                 Request::Draw(FrameChunk::Mono(fc)) => {
@@ -247,7 +244,9 @@ async fn render_loop(
     frames_per_second: usize,
 ) {
     let mut idle_ticks = 0;
-    let mut keymux = KeyboardMuxClient::from_registry(kernel).await;
+    let mut keymux = KeyboardMuxClient::from_registry(kernel)
+        .await
+        .expect("no keyboard mux service!");
     let mut first_done = false;
     let sleep_time = Duration::from_micros(1_000_000 / (frames_per_second as u64));
     loop {
@@ -294,6 +293,8 @@ async fn render_loop(
     }
 }
 
+// TODO: move to shared helper module - https://github.com/tosc-rs/mnemos/issues/260
+// TODO: blocked on e-g update https://github.com/tosc-rs/mnemos/issues/259
 fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u32) {
     let meta = src.meta();
     let data = src.data();
@@ -347,6 +348,9 @@ fn draw_to(dest: &mut HeapArray<u8>, src: &MonoChunk, width: u32, height: u32) {
             });
     }
 }
+
+// TODO: move to shared helper module - https://github.com/tosc-rs/mnemos/issues/260
+// TODO: blocked on e-g update https://github.com/tosc-rs/mnemos/issues/259
 
 /// Create and return a Simulator display object from raw pixel data.
 ///

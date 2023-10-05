@@ -3,3 +3,4 @@
 *-bak
 **/target/*
 public/
+.direnv

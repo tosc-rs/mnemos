@@ -38,22 +38,18 @@
 //! different queue (the scheduler's run queue), but I couldn't easily come up
 //! with another solution...
 
-use core::{convert::Infallible, time::Duration};
-
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use core::convert::Infallible;
 
 use crate::{
-    comms::{
-        kchannel::{KChannel, KConsumer},
-        oneshot::Reusable,
-    },
+    comms::oneshot::Reusable,
     forth::{self, Forth},
     registry::{
-        known_uuids::kernel::FORTH_SPAWNULATOR, Envelope, KernelHandle, Message, RegisteredDriver,
+        self, known_uuids::kernel::FORTH_SPAWNULATOR, Envelope, KernelHandle, RegisteredDriver,
     },
     Kernel,
 };
+use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Service Definition
@@ -64,6 +60,9 @@ impl RegisteredDriver for SpawnulatorService {
     type Request = Request;
     type Response = Response;
     type Error = Infallible;
+
+    type Hello = ();
+    type ConnectError = core::convert::Infallible;
 
     const UUID: Uuid = FORTH_SPAWNULATOR;
 }
@@ -84,24 +83,26 @@ pub struct SpawnulatorClient {
 }
 
 impl SpawnulatorClient {
-    pub async fn from_registry(kernel: &'static Kernel) -> Self {
-        loop {
-            match Self::from_registry_no_retry(kernel).await {
-                Some(port) => return port,
-                None => {
-                    // SerialMux probably isn't registered yet. Try again in a bit
-                    kernel.sleep(Duration::from_millis(10)).await;
-                }
-            }
-        }
+    pub async fn from_registry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<SpawnulatorService>> {
+        let prod = kernel.registry().connect::<SpawnulatorService>(()).await?;
+
+        Ok(SpawnulatorClient {
+            hdl: prod,
+            reply: Reusable::new_async().await,
+        })
     }
 
-    pub async fn from_registry_no_retry(kernel: &'static Kernel) -> Option<Self> {
+    pub async fn from_registry_no_retry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<SpawnulatorService>> {
         let prod = kernel
-            .with_registry(|reg| reg.get::<SpawnulatorService>())
+            .registry()
+            .try_connect::<SpawnulatorService>(())
             .await?;
 
-        Some(SpawnulatorClient {
+        Ok(SpawnulatorClient {
             hdl: prod,
             reply: Reusable::new_async().await,
         })
@@ -129,11 +130,6 @@ impl SpawnulatorClient {
 
 pub struct SpawnulatorServer;
 
-#[derive(Debug)]
-pub enum RegistrationError {
-    SpawnulatorAlreadyRegistered,
-}
-
 #[derive(Debug, Copy, Clone, Serialize, Deserialize)]
 pub struct SpawnulatorSettings {
     #[serde(default)]
@@ -147,32 +143,38 @@ impl SpawnulatorServer {
     /// used to spawn new `Forth` VMs.
     #[tracing::instrument(
         name = "SpawnulatorServer::register",
-        level = tracing::Level::DEBUG,
-        skip(kernel),
-        ret(Debug),
+        level = tracing::Level::INFO,
+        skip(kernel, settings),
+        err(Debug),
     )]
     pub async fn register(
         kernel: &'static Kernel,
         settings: SpawnulatorSettings,
-    ) -> Result<(), RegistrationError> {
-        let (cmd_prod, cmd_cons) = KChannel::new_async(settings.capacity).await.split();
-        tracing::debug!("who spawns the spawnulator?");
+    ) -> Result<(), registry::RegistrationError> {
+        tracing::info!(?settings, "Who spawns the spawnulator?");
+        let vms = kernel
+            .registry()
+            .bind_konly::<SpawnulatorService>(settings.capacity)
+            .await?
+            .into_request_stream(settings.capacity)
+            .await;
         kernel
-            .spawn(SpawnulatorServer::spawnulate(kernel, cmd_cons))
+            .spawn(SpawnulatorServer::spawnulate(kernel, vms))
             .await;
         tracing::debug!("spawnulator spawnulated!");
-        kernel
-            .with_registry(|reg| reg.register_konly::<SpawnulatorService>(&cmd_prod))
-            .await
-            .map_err(|_| RegistrationError::SpawnulatorAlreadyRegistered)?;
+
         tracing::info!("ForthSpawnulatorService registered");
         Ok(())
     }
 
     #[tracing::instrument(skip(kernel, vms))]
-    async fn spawnulate(kernel: &'static Kernel, vms: KConsumer<Message<SpawnulatorService>>) {
+    async fn spawnulate(
+        kernel: &'static Kernel,
+        vms: registry::listener::RequestStream<SpawnulatorService>,
+    ) {
         tracing::debug!("spawnulator running...");
-        while let Ok(msg) = vms.dequeue_async().await {
+        loop {
+            let msg = vms.next_request().await;
             let mut vm = None;
 
             // TODO(AJM): I really need a better "extract request contents" function
@@ -187,7 +189,6 @@ impl SpawnulatorServer {
             let _ = msg.reply.reply_konly(resp).await;
             tracing::trace!(task.id = id, "spawnulated!");
         }
-        tracing::info!("spawnulator channel closed!");
     }
 }
 

@@ -4,6 +4,6 @@ Spitebuf is an async MPSC queue, based on the Vyukov algorithm originally implem
 
 ## Development Documentation
 
-Please see [the development docs](https://mnemos-dev.jamesmunns.com/doc/spitebuf/index.html) for documentation of the current `main` branch.
+Please see [the development docs](https://mnemos.dev/doc/spitebuf/index.html) for documentation of the current `main` branch.
 
 Docs can be built locally with `cargo doc`.

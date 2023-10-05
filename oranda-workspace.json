@@ -3,7 +3,8 @@
     "static_dir": "assets"
   },
   "workspace": {
-    "name": "MnemOS",
+    "name": "",
+    "docs_path": "./assets/INDEX.md",
     "members": [
       {
         "slug": "MnemosProjectOverview",
@@ -22,8 +23,8 @@
         "path": "platforms/pomelo"
       },
       {
-        "slug": "allwinner-core",
-        "path": "platforms/allwinner-d1/core"
+        "slug": "allwinner-d1",
+        "path": "platforms/allwinner-d1"
       },
       {
         "slug": "crowtty",
@@ -62,5 +63,10 @@
         "path": "tools/f3repl"
       }
     ]
+  },
+  "project": {
+    "repository": "https://github.com/tosc-rs/mnemos",
+    "homepage": "https://mnemos.dev",
+    "license": "MIT OR Apache-2.0"
   }
 }

@@ -2,7 +2,6 @@
 //!
 //! These types play well with [MnemosAlloc][crate::heap::MnemosAlloc]
 
-use crate::heap::alloc;
 use core::{
     alloc::Layout,
     cell::UnsafeCell,
@@ -10,6 +9,8 @@ use core::{
     ops::{Deref, DerefMut},
     ptr::NonNull,
 };
+
+use crate::heap::alloc;
 
 //
 // Arc

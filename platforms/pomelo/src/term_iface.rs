@@ -35,7 +35,7 @@ impl Command {
                 let hello_settings = HelloSettings::default();
                 kernel.initialize(hello(kernel, hello_settings)).unwrap();
             }
-            Command::Echo(s) => echo(s),
+            Command::Echo(s) => echo(s + "\n"),
             Command::Forth(s) => sim_drivers::io::send(WellKnown::ForthShell0.into(), s.as_bytes()),
         }
     }

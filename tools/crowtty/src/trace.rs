@@ -1,7 +1,7 @@
 use mnemos_trace_proto::{HostRequest, MetaId, TraceEvent};
 use postcard::accumulator::{CobsAccumulator, FeedResult};
 use std::{
-    collections::HashMap,
+    collections::{BTreeMap, HashMap},
     fmt::{self, Write},
     num::NonZeroU64,
     sync::mpsc,
@@ -9,8 +9,8 @@ use std::{
 };
 use tracing::{level_filters::LevelFilter, subscriber::NoSubscriber, Level};
 use tracing_serde_structured::{
-    CowString, SerializeLevel, SerializeMetadata, SerializeRecordFields, SerializeSpanFields,
-    SerializeValue,
+    CowString, SerializeId, SerializeLevel, SerializeMetadata, SerializeRecordFields,
+    SerializeSpanFields, SerializeValue,
 };
 use tracing_subscriber::{filter::Targets, layer::Layer};
 
@@ -20,10 +20,6 @@ use owo_colors::{OwoColorize, Stream};
 pub(crate) struct TraceWorker {
     tx: mpsc::Sender<Vec<u8>>,
     rx: mpsc::Receiver<Vec<u8>>,
-    tag: LogTag,
-    spans: HashMap<NonZeroU64, Span>,
-    metas: HashMap<MetaId, SerializeMetadata<'static>>,
-    stack: Vec<NonZeroU64>,
     textbuf: String,
     has_set_max_level: bool,
     /// A set of `tracing` targets and levels to enable.
@@ -35,6 +31,14 @@ pub(crate) struct TraceWorker {
     /// fine for the time being.
     filter: Targets,
     ser_max_level: Option<SerializeLevel>,
+    state: FormatState,
+}
+
+struct FormatState {
+    tag: LogTag,
+    spans: HashMap<NonZeroU64, Span>,
+    metas: HashMap<MetaId, SerializeMetadata<'static>>,
+    stack: Vec<NonZeroU64>,
 }
 
 impl TraceWorker {
@@ -57,10 +61,12 @@ impl TraceWorker {
         Self {
             tx,
             rx,
-            tag,
-            spans: HashMap::new(),
-            metas: HashMap::new(),
-            stack: Vec::new(),
+            state: FormatState {
+                tag,
+                spans: HashMap::new(),
+                metas: HashMap::new(),
+                stack: Vec::new(),
+            },
             textbuf: String::new(),
             ser_max_level,
             has_set_max_level: false,
@@ -104,10 +110,10 @@ impl TraceWorker {
     fn event(&mut self, ev: TraceEvent<'_>) {
         match ev {
             TraceEvent::Heartbeat(level) => {
-                if self.tag.verbose {
+                if self.state.tag.verbose {
                     println!(
                         "{} {} Found a heartbeat (level: {:?}; desired: {:?})",
-                        self.tag,
+                        self.state.tag,
                         "BEAT".if_supports_color(Stream::Stdout, |x| x.bright_red()),
                         level.map(DisplayLevel),
                         self.ser_max_level.map(DisplayLevel),
@@ -115,10 +121,10 @@ impl TraceWorker {
                 }
 
                 if level == self.ser_max_level {
-                    if !self.has_set_max_level || self.tag.verbose {
+                    if !self.has_set_max_level || self.state.tag.verbose {
                         println!(
                             "{} {} Max level set to {:?}",
-                            self.tag,
+                            self.state.tag,
                             "BEAT".if_supports_color(Stream::Stdout, |x| x.bright_red()),
                             level.map(DisplayLevel)
                         );
@@ -133,21 +139,21 @@ impl TraceWorker {
                 let req = postcard::to_allocvec_cobs(&HostRequest::SetMaxLevel(self.ser_max_level))
                     .expect("failed to serialize max level request");
                 self.tx.send(req).expect("failed to send host request");
-                if self.tag.verbose {
+                if self.state.tag.verbose {
                     println!(
                         "{} {} Sent request for {:?}",
-                        self.tag,
+                        self.state.tag,
                         "BEAT".if_supports_color(Stream::Stdout, |x| x.bright_red()),
                         self.ser_max_level.map(DisplayLevel),
                     );
                 }
             }
             TraceEvent::RegisterMeta { id, meta } => {
-                if self.tag.verbose {
+                if self.state.tag.verbose {
                     write!(
                         &mut self.textbuf,
                         "{} {} {} {}{}{id:?}: {} {} [{}:{}]",
-                        self.tag,
+                        self.state.tag,
                         "META".if_supports_color(Stream::Stdout, |x| x.bright_blue()),
                         DisplayLevel(meta.level),
                         if meta.is_event { "EVNT " } else { "" }
@@ -170,17 +176,17 @@ impl TraceWorker {
                     println!("{}", self.textbuf);
                     self.textbuf.clear();
                 }
-                self.metas.insert(id, meta.to_owned());
+                self.state.metas.insert(id, meta.to_owned());
             }
             TraceEvent::Event {
                 meta,
                 parent: _,
                 fields,
             } => {
-                let Some(meta) = self.metas.get(&meta) else {
+                let Some(meta) = self.state.metas.get(&meta) else {
                     println!(
                         "{} {} UNKNOWN: {meta:?}",
-                        self.tag,
+                        self.state.tag,
                         "META".if_supports_color(Stream::Stdout, |x| x.bright_blue())
                     );
                     return;
@@ -193,24 +199,30 @@ impl TraceWorker {
                 }
 
                 let level = DisplayLevel(meta.level);
+                write!(&mut self.textbuf, "{} {level} ", self.state.tag,).unwrap();
+
+                if self.state.write_span_cx(&mut self.textbuf) {
+                    self.textbuf.push(' ');
+                }
+
                 write!(
                     &mut self.textbuf,
-                    "{} {level} {} ",
-                    self.tag,
-                    format_args!("{target}:")
+                    "{}",
+                    format_args!("{target}: ")
                         .if_supports_color(Stream::Stdout, |target| target.dimmed())
                 )
                 .unwrap();
-                write_span_cx(&self.stack, &self.spans, &mut self.textbuf);
+
                 let SerializeRecordFields::De(ref fields) = fields else {
                     unreachable!("we are deserializing!");
                 };
                 write_fields(&mut self.textbuf, fields);
+
                 println!("{}", self.textbuf);
                 self.textbuf.clear();
             }
             TraceEvent::NewSpan {
-                id,
+                id: SerializeId { id },
                 meta,
                 fields,
                 parent: _,
@@ -218,10 +230,10 @@ impl TraceWorker {
             } => {
                 let start = Instant::now();
                 let mut repr = String::new();
-                let Some(meta) = self.metas.get(&meta) else {
+                let Some(meta) = self.state.metas.get(&meta) else {
                     println!(
                         "{} {} UNKNOWN: {meta:?}",
-                        self.tag,
+                        self.state.tag,
                         "META".if_supports_color(Stream::Stdout, |x| x.bright_blue())
                     );
                     return;
@@ -239,70 +251,64 @@ impl TraceWorker {
                 write!(
                     repr,
                     "{}",
-                    format_args!("{name}{{").if_supports_color(Stream::Stdout, |x| x.bold())
+                    format_args!("{name}").if_supports_color(Stream::Stdout, |x| x.bold())
                 )
                 .unwrap();
                 let SerializeSpanFields::De(ref fields) = fields else {
                     unreachable!("we are deserializing!");
                 };
-                write_fields(&mut repr, fields);
-                write!(
-                    repr,
-                    "{}",
-                    "}".if_supports_color(Stream::Stderr, |x| x.bold())
-                )
-                .unwrap();
+                if !fields.is_empty() {
+                    write!(
+                        repr,
+                        "{}",
+                        "{".if_supports_color(Stream::Stderr, |x| x.bold())
+                    )
+                    .unwrap();
+                    write_fields(&mut repr, fields);
+                    write!(
+                        repr,
+                        "{}",
+                        "}".if_supports_color(Stream::Stderr, |x| x.bold())
+                    )
+                    .unwrap();
+                }
 
-                write!(
-                    &mut self.textbuf,
-                    "{} {level} {} ",
-                    self.tag,
-                    "SPAN".if_supports_color(Stream::Stdout, |x| x.bright_magenta())
-                )
-                .unwrap();
-                write_span_cx(&self.stack, &self.spans, &mut self.textbuf);
-                write!(
-                    &mut self.textbuf,
-                    "{}{repr} ({:04})",
-                    format_args!("{target}::")
-                        .if_supports_color(Stream::Stdout, |target| target.dimmed()),
-                    id.id,
-                )
-                .unwrap();
+                let tag = "SPAN".if_supports_color(Stream::Stdout, |x| x.bright_magenta());
+                let span = Span {
+                    target: target.to_string(),
+                    level,
+                    repr,
+                    start,
+                    refs: 1,
+                };
+                self.state
+                    .write_span_event(&tag, &span, id, &mut self.textbuf);
+
                 println!("{}", self.textbuf);
                 self.textbuf.clear();
 
-                self.spans.insert(
-                    id.id,
-                    Span {
-                        target: target.to_string(),
-                        level,
-                        repr,
-                        start,
-                        refs: 1,
-                    },
-                );
+                self.state.spans.insert(id, span);
             }
-            TraceEvent::Enter(id) => {
+            TraceEvent::Enter(SerializeId { id }) => {
                 // only put a span on the stack if we enabled it when it was created.
-                if self.spans.contains_key(&id.id) {
-                    self.stack.push(id.id);
+                if self.state.spans.contains_key(&id) {
+                    self.state.stack.push(id);
                 }
             }
-            TraceEvent::Exit(id) => {
+            TraceEvent::Exit(SerializeId { id }) => {
                 // only popped the span if we enabled it when it was created.
-                if self.spans.contains_key(&id.id) {
-                    let popped = self.stack.pop();
-                    debug_assert_eq!(popped, Some(id.id));
+                if self.state.spans.contains_key(&id) {
+                    let popped = self.state.stack.pop();
+                    debug_assert_eq!(popped, Some(id));
                 }
             }
-            TraceEvent::CloneSpan(id) => {
-                if let Some(span) = self.spans.get_mut(&id.id) {
+            TraceEvent::CloneSpan(SerializeId { id }) => {
+                if let Some(span) = self.state.spans.get_mut(&id) {
                     span.refs += 1;
                 }
             }
-            TraceEvent::DropSpan(id) => {
-                let end = if let Some(span) = self.spans.get_mut(&id.id) {
+            TraceEvent::DropSpan(SerializeId { id }) => {
+                let end = if let Some(span) = self.state.spans.get_mut(&id) {
                     span.refs -= 1;
                     span.refs == 0
                 } else {
@@ -311,93 +317,118 @@ impl TraceWorker {
                 };
 
                 if end {
-                    let Span {
-                        repr,
-                        target,
-                        level,
-                        start,
-                        refs: _,
-                    } = self.spans.remove(&id.id).unwrap();
+                    let span = self.state.spans.remove(&id).unwrap();
 
-                    let end = "END".if_supports_color(Stream::Stdout, |x| x.bright_red());
-                    write!(
-                        &mut self.textbuf,
-                        "{} {level}  {end} {}{repr} ({:04}): {:?}",
-                        self.tag,
-                        format_args!("{target}::")
-                            .if_supports_color(Stream::Stdout, |target| target.dimmed()),
-                        id.id,
-                        start.elapsed()
-                    )
-                    .unwrap();
-                    println!("{}", self.textbuf);
+                    let end = " END".if_supports_color(Stream::Stdout, |x| x.bright_red());
+                    self.state
+                        .write_span_event(&end, &span, id, &mut self.textbuf);
+
+                    println!("{}: {:?}", self.textbuf, span.start.elapsed());
                     self.textbuf.clear();
                 }
             }
             dropped @ TraceEvent::Discarded { .. } => {
-                println!("{} {dropped:?}", self.tag);
+                println!("{} {dropped:?}", self.state.tag);
             }
         }
     }
 }
 
-fn write_span_cx(stack: &[NonZeroU64], spans: &HashMap<NonZeroU64, Span>, textbuf: &mut String) {
-    let spans = stack.iter().filter_map(|id| spans.get(id));
-    let mut any = false;
-    let delim = ":".if_supports_color(Stream::Stdout, |x| x.dimmed());
-    for span in spans {
-        textbuf.push_str(span.repr.as_str());
-        write!(textbuf, "{delim}").unwrap();
-        any = true;
+impl FormatState {
+    fn write_span_event(
+        &self,
+        tag: &impl fmt::Display,
+        span: &Span,
+        id: NonZeroU64,
+        textbuf: &mut String,
+    ) {
+        let Span {
+            target,
+            level,
+            repr,
+            ..
+        } = span;
+        write!(textbuf, "{} {level} ", self.tag).unwrap();
+
+        self.write_span_cx(textbuf);
+
+        write!(
+            textbuf,
+            "{repr}{target} {tag} ({id:04})",
+            target = format_args!(": {}:", target)
+                .if_supports_color(Stream::Stdout, |target| target.dimmed())
+        )
+        .unwrap();
     }
-    if any {
-        textbuf.push(' ');
+
+    fn write_span_cx(&self, textbuf: &mut String) -> bool {
+        let spans = self.stack.iter().filter_map(|id| self.spans.get(id));
+        let mut any = false;
+        let delim = ":".if_supports_color(Stream::Stdout, |x| x.dimmed());
+        for span in spans {
+            textbuf.push_str(span.repr.as_str());
+            write!(textbuf, "{delim}").unwrap();
+            any = true;
+        }
+        any
     }
 }
 
-fn write_fields<'a>(
-    to: &mut String,
-    fields: impl IntoIterator<Item = (&'a CowString<'a>, &'a SerializeValue<'a>)>,
-) {
-    let mut fields = fields.into_iter();
-    if let Some((key, val)) = fields.next() {
-        write_kv(key, val, to);
-        for (key, val) in fields {
-            write!(
-                to,
-                "{}",
-                ", ".if_supports_color(Stream::Stdout, |delim| delim.dimmed())
-            )
-            .unwrap();
-            write_kv(key, val, to);
+fn write_fields<'a>(to: &mut String, fields: &BTreeMap<CowString<'a>, SerializeValue<'a>>) {
+    let comma = ", ".if_supports_color(Stream::Stdout, |delim| delim.dimmed());
+    let mut wrote_anything = false;
+
+    if let Some(message) = fields.get(&CowString::Borrowed("message")) {
+        let message = DisplayVal(message);
+        let message = message.if_supports_color(Stream::Stdout, |msg| msg.italic());
+        write!(to, "{message}",).unwrap();
+        wrote_anything = true;
+    }
+
+    for (key, val) in fields {
+        if key.as_str() == "message" {
+            continue;
         }
+        if wrote_anything {
+            write!(to, "{comma}").unwrap();
+        } else {
+            wrote_anything = true;
+        }
+        write_kv(key, val, to);
     }
 }
 
 fn write_kv(key: &CowString<'_>, val: &SerializeValue<'_>, to: &mut String) {
-    use tracing_serde_structured::DebugRecord;
-
     let key = key.as_str();
     let key = key.if_supports_color(Stream::Stdout, |k| k.italic());
+    let val = DisplayVal(val);
     write!(
         to,
-        "{key}{}",
+        "{key}{}{val}",
         "=".if_supports_color(Stream::Stdout, |delim| delim.dimmed())
     )
     .unwrap();
+}
 
-    match val {
-        SerializeValue::Debug(DebugRecord::De(d)) => to.push_str(d.as_str()),
-        SerializeValue::Debug(DebugRecord::Ser(d)) => write!(to, "{d}").unwrap(),
-        SerializeValue::Str(s) => write!(to, "{s:?}").unwrap(),
-        SerializeValue::F64(x) => write!(to, "{x}").unwrap(),
-        SerializeValue::I64(x) => write!(to, "{x}").unwrap(),
-        SerializeValue::U64(x) => write!(to, "{x}").unwrap(),
-        SerializeValue::Bool(x) => write!(to, "{x}").unwrap(),
-        _ => to.push_str("???"),
+struct DisplayVal<'a>(&'a SerializeValue<'a>);
+
+impl fmt::Display for DisplayVal<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use tracing_serde_structured::DebugRecord;
+        match self.0 {
+            SerializeValue::Debug(DebugRecord::De(d)) => f.write_str(d.as_str()),
+            SerializeValue::Debug(DebugRecord::Ser(d)) => write!(f, "{d}"),
+            SerializeValue::Str(s) => write!(f, "{s:?}"),
+            SerializeValue::F64(x) => write!(f, "{x}"),
+            SerializeValue::I64(x) => write!(f, "{x}"),
+            SerializeValue::U64(x) => write!(f, "{x}"),
+            SerializeValue::Bool(x) => write!(f, "{x}"),
+            _ => f.write_str("???"),
+        }
     }
 }
 
+#[derive(Copy, Clone)]
 struct DisplayLevel(SerializeLevel);
 
 impl fmt::Display for DisplayLevel {

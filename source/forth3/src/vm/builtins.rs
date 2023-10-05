@@ -182,11 +182,39 @@ impl<T: 'static> Forth<T> {
         builtin!("(jmp)", Self::jump),
         // NOTE: REQUIRED for `:` (if you want literals)
         builtin!("(literal)", Self::literal),
+        // NOTE: REQUIRED for `:` (if you want literals)
+        builtin!("(rliteral)", Self::rliteral),
         // NOTE: REQUIRED for `constant`
         builtin!("(constant)", Self::constant),
         // NOTE: REQUIRED for `variable` or `array`
         builtin!("(variable)", Self::variable),
+        builtin!("panic", Self::panic),
     ];
+
+    /// Dumps all stacks and ends the currently executing program
+    pub fn panic(&mut self) -> Result<(), Error> {
+        writeln!(&mut self.output, "cstack",)?;
+
+        while let Some(c) = self.call_stack.pop() {
+            writeln!(
+                &mut self.output,
+                "{} ({}/{})",
+                unsafe { (*c.eh.as_ptr()).name.as_str() },
+                c.idx,
+                c.len,
+            )?;
+        }
+
+        writeln!(&mut self.output, "\ndstack",)?;
+
+        while self.pop_print().is_ok() {}
+
+        writeln!(&mut self.output, "\nrstack",)?;
+
+        while self.return_to_data_stack().is_ok() && self.pop_print().is_ok() {}
+
+        Ok(())
+    }
 
     pub fn dict_free(&mut self) -> Result<(), Error> {
         let capa = self.dict.alloc.capacity();
@@ -205,7 +233,7 @@ impl<T: 'static> Forth<T> {
         write!(&mut self.output, "<{}> ", depth)?;
         for d in (0..depth).rev() {
             let val = self.data_stack.try_peek_back_n(d)?;
-            write!(&mut self.output, "{} ", unsafe { val.data })?;
+            write!(&mut self.output, "{} ", val.into_data())?;
         }
         self.output.push_str("\n")?;
         Ok(())
@@ -265,7 +293,10 @@ impl<T: 'static> Forth<T> {
         let w_addr = self.data_stack.try_pop()?;
         let w_val = self.data_stack.try_pop()?;
         unsafe {
-            w_addr.ptr.cast::<u8>().write((w_val.data & 0xFF) as u8);
+            w_addr
+                .ptr
+                .cast::<u8>()
+                .write((w_val.into_data() & 0xFF) as u8);
         }
         Ok(())
     }
@@ -435,7 +466,7 @@ impl<T: 'static> Forth<T> {
 
     pub fn spaces(&mut self) -> Result<(), Error> {
         let num = self.data_stack.try_pop()?;
-        let num = unsafe { num.data };
+        let num = num.into_data();
 
         if num.is_negative() {
             return Err(Error::LoopCountIsNegative);
@@ -471,7 +502,7 @@ impl<T: 'static> Forth<T> {
     pub fn and(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
-        let val = Word::data(unsafe { a.data & b.data });
+        let val = Word::data(a.into_data() & b.into_data());
         self.data_stack.push(val)?;
         Ok(())
     }
@@ -491,7 +522,7 @@ impl<T: 'static> Forth<T> {
     pub fn greater(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
-        let val = if unsafe { b.data > a.data } { -1 } else { 0 };
+        let val = if b.into_data() > a.into_data() { -1 } else { 0 };
         self.data_stack.push(Word::data(val))?;
         Ok(())
     }
@@ -499,7 +530,7 @@ impl<T: 'static> Forth<T> {
     pub fn less(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
-        let val = if unsafe { b.data < a.data } { -1 } else { 0 };
+        let val = if b.into_data() < a.into_data() { -1 } else { 0 };
         self.data_stack.push(Word::data(val))?;
         Ok(())
     }
@@ -522,12 +553,12 @@ impl<T: 'static> Forth<T> {
     pub fn div_mod(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
-        if unsafe { a.data == 0 } {
+        if a.into_data() == 0 {
             return Err(Error::DivideByZero);
         }
-        let rem = unsafe { Word::data(b.data % a.data) };
+        let rem = Word::data(b.into_data() % a.into_data());
         self.data_stack.push(rem)?;
-        let val = unsafe { Word::data(b.data / a.data) };
+        let val = Word::data(b.into_data() / a.into_data());
         self.data_stack.push(val)?;
         Ok(())
     }
@@ -535,11 +566,11 @@ impl<T: 'static> Forth<T> {
     pub fn div(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
-        let val = unsafe {
-            if a.data == 0 {
+        let val = {
+            if a.into_data() == 0 {
                 return Err(Error::DivideByZero);
             }
-            Word::data(b.data / a.data)
+            Word::data(b.into_data() / a.into_data())
         };
         self.data_stack.push(val)?;
         Ok(())
@@ -548,11 +579,11 @@ impl<T: 'static> Forth<T> {
     pub fn modu(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
-        let val = unsafe {
-            if a.data == 0 {
+        let val = {
+            if a.into_data() == 0 {
                 return Err(Error::DivideByZero);
             }
-            Word::data(b.data % a.data)
+            Word::data(b.into_data() % a.into_data())
         };
         self.data_stack.push(val)?;
         Ok(())
@@ -577,22 +608,32 @@ impl<T: 'static> Forth<T> {
     }
 
     pub fn loop_leave(&mut self) -> Result<(), Error> {
+        // Pop the loop counter and limit
         let _ = self.return_stack.try_pop()?;
-        let a = self.return_stack.try_peek()?;
-        self.return_stack
-            .push(unsafe { Word::data(a.data.wrapping_sub(1)) })?;
+        let _ = self.return_stack.try_pop()?;
+        // Pop the "end of loop" value
+        let idx = self.return_stack.try_pop()?;
+        let idx = idx.into_data();
+        let idx = u16::try_from(idx).map_err(|_| Error::BadCfaOffset)?;
+
+        // Move the parent's interpreter index forward to the end of loop index
+        let parent = self.call_stack.try_peek_back_n_mut(1)?;
+        parent.idx = idx;
+
         Ok(())
     }
 
     pub fn jump_doloop(&mut self) -> Result<(), Error> {
         let a = self.return_stack.try_pop()?;
         let b = self.return_stack.try_peek()?;
-        let ctr = unsafe { Word::data(a.data + 1) };
+        let ctr = Word::data(a.into_data() + 1);
         let do_jmp = ctr != b;
         if do_jmp {
             self.return_stack.push(ctr)?;
             self.jump()
         } else {
+            self.return_stack.try_pop()?;
+            // also pop the loop len counter
             self.return_stack.try_pop()?;
             self.skip_literal()
         }
@@ -600,15 +641,15 @@ impl<T: 'static> Forth<T> {
 
     pub fn emit(&mut self) -> Result<(), Error> {
         let val = self.data_stack.try_pop()?;
-        let val = unsafe { val.data };
+        let val = val.into_data();
         self.output.push_bstr(&[val as u8])?;
         Ok(())
     }
 
     pub fn jump_if_zero(&mut self) -> Result<(), Error> {
-        let do_jmp = unsafe {
+        let do_jmp = {
             let val = self.data_stack.try_pop()?;
-            val.data == 0
+            val.into_data() == 0
         };
         if do_jmp {
             self.jump()
@@ -662,13 +703,13 @@ impl<T: 'static> Forth<T> {
 
     pub fn pop_print(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
-        write!(&mut self.output, "{} ", unsafe { a.data })?;
+        write!(&mut self.output, "{} ", a.into_data())?;
         Ok(())
     }
 
     pub fn unsigned_pop_print(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
-        write!(&mut self.output, "{} ", unsafe { a.data } as u32)?;
+        write!(&mut self.output, "{} ", a.into_data() as u32)?;
         Ok(())
     }
 
@@ -700,21 +741,21 @@ impl<T: 'static> Forth<T> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack
-            .push(Word::data(unsafe { a.data.wrapping_mul(b.data) }))?;
+            .push(Word::data(a.into_data().wrapping_mul(b.into_data())))?;
         Ok(())
     }
 
     pub fn abs(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         self.data_stack
-            .push(Word::data(unsafe { a.data.wrapping_abs() }))?;
+            .push(Word::data(a.into_data().wrapping_abs()))?;
         Ok(())
     }
 
     pub fn negate(&mut self) -> Result<(), Error> {
         let a = self.data_stack.try_pop()?;
         self.data_stack
-            .push(Word::data(unsafe { a.data.wrapping_neg() }))?;
+            .push(Word::data(a.into_data().wrapping_neg()))?;
         Ok(())
     }
 
@@ -722,7 +763,7 @@ impl<T: 'static> Forth<T> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack
-            .push(Word::data(unsafe { a.data.min(b.data) }))?;
+            .push(Word::data(a.into_data().min(b.into_data())))?;
         Ok(())
     }
 
@@ -730,7 +771,7 @@ impl<T: 'static> Forth<T> {
         let a = self.data_stack.try_pop()?;
         let b = self.data_stack.try_pop()?;
         self.data_stack
-            .push(Word::data(unsafe { a.data.max(b.data) }))?;
+            .push(Word::data(a.into_data().max(b.into_data())))?;
         Ok(())
     }
 
@@ -751,10 +792,10 @@ impl<T: 'static> Forth<T> {
         let n3 = self.data_stack.try_pop()?;
         let n2 = self.data_stack.try_pop()?;
         let n1 = self.data_stack.try_pop()?;
-        self.data_stack.push(Word::data(unsafe {
-            (n1.data as i64)
-                .wrapping_mul(n2.data as i64)
-                .wrapping_div(n3.data as i64) as i32
+        self.data_stack.push(Word::data({
+            (i64::from(n1.into_data()))
+                .wrapping_mul(i64::from(n2.into_data()))
+                .wrapping_div(i64::from(n3.into_data())) as i32
         }))?;
         Ok(())
     }
@@ -763,14 +804,12 @@ impl<T: 'static> Forth<T> {
         let n3 = self.data_stack.try_pop()?;
         let n2 = self.data_stack.try_pop()?;
         let n1 = self.data_stack.try_pop()?;
-        unsafe {
-            let top = (n1.data as i64).wrapping_mul(n2.data as i64);
-            let div = n3.data as i64;
-            let quo = top / div;
-            let rem = top % div;
-            self.data_stack.push(Word::data(rem as i32))?;
-            self.data_stack.push(Word::data(quo as i32))?;
-        }
+        let top = i64::from(n1.into_data()).wrapping_mul(i64::from(n2.into_data()));
+        let div = i64::from(n3.into_data());
+        let quo = top / div;
+        let rem = top % div;
+        self.data_stack.push(Word::data(rem as i32))?;
+        self.data_stack.push(Word::data(quo as i32))?;
         Ok(())
     }
 
@@ -844,6 +883,16 @@ impl<T: 'static> Forth<T> {
             self.output.push_bstr(u8_sli)?;
         }
         parent.offset(len_words as i32)?;
+        Ok(())
+    }
+
+    /// `(rliteral)` is used mid-interpret to put the NEXT word of the parent's
+    /// CFA into the *return* stack as a value
+    pub fn rliteral(&mut self) -> Result<(), Error> {
+        let parent = self.call_stack.try_peek_back_n_mut(1)?;
+        let literal = parent.get_current_word()?;
+        parent.offset(1)?;
+        self.return_stack.push(literal)?;
         Ok(())
     }
 

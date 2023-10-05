@@ -1,0 +1,31 @@
+[kernel]
+max_drivers = 16
+timer_granularity = { secs = 0, nanos = 333 }
+
+[services.spawnulator]
+enabled = true
+
+[services.keyboard_mux]
+enabled = true
+
+[services.serial_mux]
+enabled = true
+
+[services.sermux_loopback]
+enabled = true
+
+[services.sermux_hello]
+enabled = true
+
+[services.sermux_trace]
+enabled = true
+
+[platform.i2c]
+enabled = true
+mapping = "TWI2"
+
+[platform.i2c_puppet]
+enabled = false
+
+[platform.blink_service]
+enabled = true

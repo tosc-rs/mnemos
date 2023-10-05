@@ -5,18 +5,11 @@
 //! This module includes the service definition, client definition, as well
 //! as a server definition that relies on the [`SimpleSerial`][crate::services::simple_serial]
 //! service to provide the service implementation.
-
-use core::time::Duration;
-
 use crate::comms::bbq::GrantR;
 use crate::{
-    comms::{
-        bbq,
-        kchannel::{KChannel, KConsumer},
-        oneshot::Reusable,
-    },
-    registry::{Envelope, KernelHandle, Message, RegisteredDriver},
-    services::simple_serial::SimpleSerialClient,
+    comms::{bbq, oneshot::Reusable},
+    registry::{self, Envelope, KernelHandle, Message, RegisteredDriver},
+    services::simple_serial::{SimpleSerialClient, SimpleSerialService},
     Kernel,
 };
 use maitake::sync::Mutex;
@@ -40,6 +33,11 @@ impl RegisteredDriver for SerialMuxService {
     type Request = Request;
     type Response = Response;
     type Error = SerialMuxError;
+    // TODO(eliza): we could convert this service into a design where
+    // `RegisterPort` is the `Hello` message rather than the `Request`...let's
+    // do that later, once bidi has been added to `RegisteredDriver`?
+    type Hello = ();
+    type ConnectError = core::convert::Infallible;
     const UUID: Uuid = crate::registry::known_uuids::kernel::SERIAL_MUX;
 }
 
@@ -87,16 +85,15 @@ impl SerialMuxClient {
     /// Obtain a `SerialMuxClient`
     ///
     /// If the [`SerialMuxServer`] hasn't been registered yet, we will retry until it has been
-    pub async fn from_registry(kernel: &'static Kernel) -> Self {
-        loop {
-            match SerialMuxClient::from_registry_no_retry(kernel).await {
-                Some(port) => return port,
-                None => {
-                    // SerialMux probably isn't registered yet. Try again in a bit
-                    kernel.sleep(Duration::from_millis(10)).await;
-                }
-            }
-        }
+    pub async fn from_registry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<SerialMuxService>> {
+        let prod = kernel.registry().connect::<SerialMuxService>(()).await?;
+
+        Ok(SerialMuxClient {
+            prod,
+            reply: Reusable::new_async().await,
+        })
     }
 
     /// Obtain a `SerialMuxClient`
@@ -105,12 +102,15 @@ impl SerialMuxClient {
     ///
     /// Prefer [`SerialMuxClient::from_registry`] unless you will not be spawning one
     /// around the same time as obtaining a client.
-    pub async fn from_registry_no_retry(kernel: &'static Kernel) -> Option<Self> {
+    pub async fn from_registry_no_retry(
+        kernel: &'static Kernel,
+    ) -> Result<Self, registry::ConnectError<SerialMuxService>> {
         let prod = kernel
-            .with_registry(|reg| reg.get::<SerialMuxService>())
+            .registry()
+            .try_connect::<SerialMuxService>(())
             .await?;
 
-        Some(SerialMuxClient {
+        Ok(SerialMuxClient {
             prod,
             reply: Reusable::new_async().await,
         })
@@ -138,7 +138,7 @@ impl PortHandle {
     /// If you need to open multiple ports at once, probably get a [SerialMuxClient] instead
     /// to reuse it for both ports
     pub async fn open(kernel: &'static Kernel, port_id: u16, capacity: usize) -> Option<Self> {
-        let mut client = SerialMuxClient::from_registry(kernel).await;
+        let mut client = SerialMuxClient::from_registry(kernel).await.ok()?;
         client.open_port(port_id, capacity).await
     }
 
@@ -192,28 +192,19 @@ impl SerialMuxServer {
     ///
     /// Will retry to obtain a [`SimpleSerialClient`] until success.
     #[tracing::instrument(
-        name = "KeyboardMuxServer::register",
-        level = Level::DEBUG,
-        skip(kernel),
+        name = "SerialMuxServer::register",
+        level = Level::INFO,
+        skip(kernel, settings),
         err(Debug),
     )]
     pub async fn register(
         kernel: &'static Kernel,
         settings: SerialMuxSettings,
     ) -> Result<(), RegistrationError> {
-        loop {
-            match SerialMuxServer::register_no_retry(kernel, settings).await {
-                Ok(_) => break,
-                Err(RegistrationError::SerialPortNotFound) => {
-                    // Uart probably isn't registered yet. Try again in a bit
-                    kernel.sleep(Duration::from_millis(10)).await;
-                }
-                Err(e) => {
-                    panic!("uhhhh {e:?}");
-                }
-            }
-        }
-        Ok(())
+        let serial_handle = SimpleSerialClient::from_registry(kernel)
+            .await
+            .map_err(RegistrationError::Connect)?;
+        Self::register_inner(kernel, settings, serial_handle).await
     }
 
     /// Register the SerialMuxServer.
@@ -224,32 +215,54 @@ impl SerialMuxServer {
     /// This method does NOT attempt to obtain a [`SimpleSerialClient`] more
     /// than once. Prefer [`SerialMuxServer::register`] unless you will not be
     /// spawning one around the same time as registering this server.
+    #[tracing::instrument(
+        name = "SerialMuxServer::register_no_retry",
+        level = Level::INFO,
+        skip(kernel),
+        err(Debug),
+    )]
     pub async fn register_no_retry(
         kernel: &'static Kernel,
-        SerialMuxSettings {
+        settings: SerialMuxSettings,
+    ) -> Result<(), RegistrationError> {
+        let serial_handle = SimpleSerialClient::from_registry_no_retry(kernel)
+            .await
+            .map_err(RegistrationError::Connect)?;
+        Self::register_inner(kernel, settings, serial_handle).await
+    }
+
+    async fn register_inner(
+        kernel: &'static Kernel,
+        settings: SerialMuxSettings,
+        mut serial_handle: SimpleSerialClient,
+    ) -> Result<(), RegistrationError> {
+        tracing::info!(?settings, "Starting SerialMuxServer");
+
+        let SerialMuxSettings {
             max_ports,
             max_frame,
             ..
-        }: SerialMuxSettings,
-    ) -> Result<(), RegistrationError> {
+        } = settings;
         let max_ports = max_ports as usize;
-        let mut serial_handle = SimpleSerialClient::from_registry(kernel)
-            .await
-            .ok_or(RegistrationError::SerialPortNotFound)?;
         let serial_port = serial_handle
             .get_port()
             .await
             .ok_or(RegistrationError::NoSerialPortAvailable)?;
-
         let (sprod, scons) = serial_port.split();
         let sprod = sprod.into_mpmc_producer().await;
 
         let ports = FixedVec::new(max_ports).await;
         let imutex = Arc::new(Mutex::new(MuxingInfo { ports, max_frame })).await;
-        let (cmd_prod, cmd_cons) = KChannel::new_async(max_ports).await.split();
+
+        let listener = kernel
+            .registry()
+            .bind_konly::<SerialMuxService>(max_ports)
+            .await
+            .map_err(|_| RegistrationError::MuxAlreadyRegistered)?;
+
         let buf = FixedVec::new(max_frame).await;
         let commander = CommanderTask {
-            cmd: cmd_cons,
+            cmd: listener.into_request_stream(max_ports).await,
             out: sprod,
             mux: imutex.clone(),
         };
@@ -266,11 +279,6 @@ impl SerialMuxServer {
                 muxer.run().await;
             })
             .await;
-
-        kernel
-            .with_registry(|reg| reg.register_konly::<SerialMuxService>(&cmd_prod))
-            .await
-            .map_err(|_| RegistrationError::MuxAlreadyRegistered)?;
 
         Ok(())
     }
@@ -308,7 +316,8 @@ impl Default for SerialMuxSettings {
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum RegistrationError {
-    SerialPortNotFound,
+    /// An error occurred connecting to the [`SimpleSerialService`].
+    Connect(registry::ConnectError<SimpleSerialService>),
     NoSerialPortAvailable,
     MuxAlreadyRegistered,
 }
@@ -324,7 +333,7 @@ struct MuxingInfo {
 }
 
 struct CommanderTask {
-    cmd: KConsumer<Message<SerialMuxService>>,
+    cmd: registry::listener::RequestStream<SerialMuxService>,
     out: bbq::MpscProducer,
     mux: Arc<Mutex<MuxingInfo>>,
 }
@@ -373,8 +382,7 @@ impl MuxingInfo {
 impl CommanderTask {
     async fn run(self) {
         loop {
-            let msg = self.cmd.dequeue_async().await.map_err(drop).unwrap();
-            let Message { msg: req, reply } = msg;
+            let Message { msg: req, reply } = self.cmd.next_request().await;
             match req.body {
                 Request::RegisterPort { port_id, capacity } => {
                     let res = {

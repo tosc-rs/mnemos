@@ -1,0 +1,53 @@
+body {
+    font-family: Helvetica, Arial, sans-serif;
+    text-align: center;
+    color: #333;
+}
+
+a:link {
+    color: #666;
+}
+
+a:visited {
+    color: #999;
+}
+
+/* mouse over link */
+a:hover {
+    color: hotpink;
+}
+
+
+
+div#intro {
+    width: 50%;
+    margin: 2em auto;
+    text-align: left;
+}
+
+span.code {
+    font-family: 'Courier New', Courier, monospace;
+    background-color: #edc;
+}
+
+div#graphics {
+    background-color: #223344;
+    width: 480px;
+    height: 480px;
+}
+
+div#terminal {
+    width: 50%;
+    background-color: #2D2E2C;
+    margin-left: 20px;
+    text-align: left;
+}
+
+div.window {
+    margin: 0 auto;
+    display: inline-block;
+    vertical-align: top;
+    padding: 10px;
+    border-radius: 6px;
+    filter: drop-shadow(6px 6px 10px rgba(0, 0, 0, 0.4935));
+}

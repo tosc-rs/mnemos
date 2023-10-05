@@ -1,0 +1,73 @@
+cargo-features = ["per-package-target", "profile-rustflags"]
+
+[package]
+name = "mnemos-d1"
+version = "0.1.0"
+edition = "2021"
+description = """
+A hardware abstraction library for the Allwinner D1, targeted
+at use in the mnemos operating system.
+"""
+repository = "https://github.com/tosc-rs/mnemos"
+homepage = "https://mnemos.dev"
+readme = "./README.md"
+license = "MIT OR Apache-2.0"
+default-target = "riscv64imac-unknown-none-elf"
+
+[lib]
+test = false
+bench = false
+
+[[bin]]
+name = "lichee-rv"
+test = false
+bench = false
+
+[[bin]]
+name = "mq-pro"
+test = false
+bench = false
+
+[features]
+default = ["i2c_puppet", "sharp-display", "serial-trace"]
+# enable i2c_puppet driver
+i2c_puppet = ["mnemos-beepy"]
+# enable the SHARP Memory Display driver
+sharp-display = ["mnemos-d1-core/sharp-display"]
+# enable `mnemos-trace-proto` serial tracing.
+serial-trace = ["mnemos/serial-trace"]
+
+[build-dependencies]
+d1-config = { path = "./d1-config" }
+serde = { version = "1.0.178", features = ["derive"] }
+mnemos-config = { path = "../../source/config", features = ["use-std"] }
+mnemos = { path = "../../source/kernel" }
+miette = "5.10.0"
+
+[dependencies]
+serde = { version = "1.0.178", features = ["derive"], default-features = false }
+d1-config = { path = "./d1-config" }
+mnemos-config = { path = "../../source/config" }
+mnemos-d1-core = { path = "./d1-core" }
+
+d1-pac = "0.0.31"
+critical-section = "1.1.1"
+riscv-rt = "0.11.0"
+
+# kernel
+[dependencies.mnemos]
+path = "../../source/kernel"
+default-features = false
+
+[dependencies.mnemos-beepy]
+path = "../beepy"
+optional = true
+
+[dependencies.tracing]
+version = "0.1.37"
+features = ["attributes"]
+default-features = false
+
+[dependencies.riscv]
+version = "0.10"
+features =[ "critical-section-single-hart"]

@@ -19,10 +19,9 @@ use crate::{
         kchannel::{self, KChannel},
         oneshot,
     },
-    registry::{known_uuids, RegisteredDriver},
+    registry::{self, known_uuids, RegisteredDriver},
     Kernel,
 };
-use core::time::Duration;
 
 pub mod key_event;
 pub mod mux;
@@ -37,6 +36,8 @@ impl RegisteredDriver for KeyboardService {
     type Request = Subscribe;
     type Response = Subscribed;
     type Error = KeyboardError;
+    type Hello = ();
+    type ConnectError = core::convert::Infallible;
 
     const UUID: Uuid = known_uuids::kernel::KEYBOARD;
 }
@@ -98,22 +99,28 @@ pub struct KeyClient {
     rx: kchannel::KConsumer<KeyEvent>,
 }
 
+#[derive(Debug)]
+pub enum FromRegistryError {
+    Connect(registry::ConnectError<KeyboardService>),
+    Service(KeyboardError),
+    Request(registry::OneshotRequestError),
+}
+
 impl KeyClient {
     /// Obtain a `KeyClient`
     ///
     /// If the [`KeyboardService`] hasn't been registered yet, we will retry until it
     /// has been registered.
-    #[must_use]
-    pub async fn from_registry(kernel: &'static Kernel, subscribe: Subscribe) -> Self {
-        loop {
-            match Self::from_registry_no_retry(kernel, subscribe).await {
-                Some(port) => return port,
-                None => {
-                    // I2C probably isn't registered yet. Try again in a bit
-                    kernel.sleep(Duration::from_millis(10)).await;
-                }
-            }
-        }
+    pub async fn from_registry(
+        kernel: &'static Kernel,
+        subscribe: Subscribe,
+    ) -> Result<Self, FromRegistryError> {
+        let handle = kernel
+            .registry()
+            .connect::<KeyboardService>(())
+            .await
+            .map_err(FromRegistryError::Connect)?;
+        Self::from_handle(subscribe, handle).await
     }
 
     /// Obtain an `KeyClient`
@@ -122,22 +129,30 @@ impl KeyClient {
     ///
     /// Prefer [`KeyClient::from_registry`] unless you will not be spawning one
     /// around the same time as obtaining a client.
-    #[must_use]
     pub async fn from_registry_no_retry(
         kernel: &'static Kernel,
         subscribe: Subscribe,
-    ) -> Option<Self> {
-        let mut handle = kernel
-            .with_registry(|reg| reg.get::<KeyboardService>())
-            .await?;
+    ) -> Result<Self, FromRegistryError> {
+        let handle = kernel
+            .registry()
+            .try_connect::<KeyboardService>(())
+            .await
+            .map_err(FromRegistryError::Connect)?;
+        Self::from_handle(subscribe, handle).await
+    }
+
+    async fn from_handle(
+        subscribe: Subscribe,
+        mut handle: registry::KernelHandle<KeyboardService>,
+    ) -> Result<Self, FromRegistryError> {
         let reply = oneshot::Reusable::new_async().await;
         let Subscribed { rx } = handle
             .request_oneshot(subscribe, &reply)
             .await
-            .ok()?
+            .map_err(FromRegistryError::Request)?
             .body
-            .ok()?;
-        Some(Self { rx })
+            .map_err(FromRegistryError::Service)?;
+        Ok(Self { rx })
     }
 
     /// Returns the next [`KeyEvent`] received from the [`KeyboardService`].

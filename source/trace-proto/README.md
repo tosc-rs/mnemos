@@ -4,6 +4,6 @@ Wire types used by the binary tracing subscriber used on hardware targets. Extra
 
 ## Development Documentation
 
-Please see [the development docs](https://mnemos-dev.jamesmunns.com/doc/trace-proto/index.html) for documentation of the current `main` branch.
+Please see [the development docs](https://mnemos.dev/doc/trace-proto/index.html) for documentation of the current `main` branch.
 
 Docs can be built locally with `cargo doc`.

@@ -67,7 +67,7 @@
 //! The pieces that exist currently are likely to be removed or reworked heavily before they are
 //! usable, and should be considered nonfunctional at the moment.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
 #![allow(clippy::missing_safety_doc)]
 #![feature(impl_trait_in_assoc_type)]
 #![feature(async_fn_in_trait)] // needed for `embedded-hal-async`
@@ -85,6 +85,9 @@ pub mod retry;
 pub mod serial_trace;
 pub mod services;
 
+#[cfg(test)]
+pub(crate) mod test_util;
+
 use abi::{
     bbqueue_ipc::BBBuffer,
     syscall::{KernelResponse, UserRequest},
@@ -95,7 +98,6 @@ pub use embedded_hal_async;
 pub use maitake;
 use maitake::{
     scheduler::LocalScheduler,
-    sync::Mutex,
     task::{BoxStorage, JoinHandle, Storage},
     time::{Duration, Sleep, Timeout, Timer},
 };
@@ -130,8 +132,8 @@ pub struct Kernel {
     /// Items that do not require a lock to access, and must only
     /// be accessed with shared refs
     inner: KernelInner,
-    /// The run-time driver registry, accessed via an async Mutex
-    registry: Mutex<Registry>,
+    /// The run-time driver registry.
+    registry: Registry,
 }
 
 unsafe impl Sync for Kernel {}
@@ -172,11 +174,8 @@ impl Kernel {
             timer: Timer::new(settings.timer_granularity),
         };
 
-        let new_kernel = Box::try_new(Kernel {
-            inner,
-            registry: Mutex::new(registry),
-        })
-        .map_err(|_| "Kernel allocation failed.")?;
+        let new_kernel =
+            Box::try_new(Kernel { inner, registry }).map_err(|_| "Kernel allocation failed.")?;
 
         Ok(new_kernel)
     }
@@ -224,12 +223,11 @@ impl Kernel {
         self.spawn_allocated(bx)
     }
 
-    pub async fn with_registry<F, R>(&'static self, f: F) -> R
-    where
-        F: FnOnce(&mut Registry) -> R,
-    {
-        let mut guard = self.registry.lock().await;
-        f(&mut guard)
+    /// Immutably borrow the kernel's [`Registry`].
+    #[inline]
+    #[must_use]
+    pub fn registry(&self) -> &Registry {
+        &self.registry
     }
 
     #[track_caller]
@@ -301,58 +299,35 @@ impl Kernel {
         // the global timer.
         let _ = self.set_global_timer();
 
-        // Initialize the kernel keyboard mux service.
-        if settings.keyboard_mux.enabled {
-            self.initialize(KeyboardMuxServer::register(self, settings.keyboard_mux))
-                .expect("failed to spawn KeyboardMuxService initialization");
-        }
-
-        // Initialize the SerialMuxServer
-        let sermux_up = if settings.serial_mux.enabled {
-            Some(
-                self.initialize(SerialMuxServer::register(self, settings.serial_mux))
-                    .expect("failed to spawn SerialMuxService initialization"),
-            )
-        } else {
-            None
-        };
-
-        // Initialize the Forth spawnulator.
-        if settings.spawnulator.enabled {
-            self.initialize(SpawnulatorServer::register(self, settings.spawnulator))
-                .expect("failed to spawn SpawnulatorService initialization");
-        }
-
-        // Initialize Serial Mux daemons.
-        if let Some(sermux_up) = sermux_up {
-            self.initialize(async move {
-                sermux_up
-                    .await
-                    .expect("SerialMuxService initialization should not be cancelled")
-                    .expect("SerialMuxService initialization failed");
-
-                #[cfg(feature = "serial-trace")]
-                if settings.sermux_trace.enabled {
+        if settings.serial_mux.enabled {
+            // Initialize tracing first, so that we can collect more traces from
+            // the initialization process.
+            #[cfg(feature = "serial-trace")]
+            if settings.sermux_trace.enabled {
+                self.initialize(async move {
                     let subscriber =
                         crate::serial_trace::SerialSubscriber::start(self, settings.sermux_trace)
                             .await;
                     tracing::subscriber::set_global_default(subscriber)
                         .expect("default tracing subscriber already set!");
-                }
+                })
+                .expect("failed to start tracing subscriber!");
+            }
 
-                if settings.sermux_loopback.enabled {
-                    self.spawn(daemons::sermux::loopback(self, settings.sermux_loopback))
-                        .await;
-                    tracing::debug!("SerMux loopback started");
-                }
+            // Initialize the SerialMuxServer
+            self.initialize(SerialMuxServer::register(self, settings.serial_mux))
+                .expect("failed to spawn SerialMuxService initialization");
 
-                if settings.sermux_hello.enabled {
-                    self.spawn(daemons::sermux::hello(self, settings.sermux_hello))
-                        .await;
-                    tracing::debug!("SerMux Hello World started");
-                }
-            })
-            .expect("failed to spawn default serial mux service initialization");
+            // Initialize Serial Mux daemons.
+            if settings.sermux_loopback.enabled {
+                self.initialize(daemons::sermux::loopback(self, settings.sermux_loopback))
+                    .expect("failed to spawn SerMux loopback");
+            }
+
+            if settings.sermux_hello.enabled {
+                self.initialize(daemons::sermux::hello(self, settings.sermux_hello))
+                    .expect("failed to spawn SerMux hello world daemon");
+            }
         } else {
             let deps = [
                 #[cfg(feature = "serial-trace")]
@@ -364,6 +339,18 @@ impl Kernel {
             if deps.into_iter().any(identity) {
                 tracing::error!("Sermux services configured without sermux! Skipping.");
             }
+        }
+
+        // Initialize the kernel keyboard mux service.
+        if settings.keyboard_mux.enabled {
+            self.initialize(KeyboardMuxServer::register(self, settings.keyboard_mux))
+                .expect("failed to spawn KeyboardMuxService initialization");
+        }
+
+        // Initialize the Forth spawnulator.
+        if settings.spawnulator.enabled {
+            self.initialize(SpawnulatorServer::register(self, settings.spawnulator))
+                .expect("failed to spawn SpawnulatorService initialization");
         }
     }
 }

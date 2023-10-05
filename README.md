@@ -57,11 +57,34 @@ Melpomene can be run using the `just melpomene` [`just` recipe], or using
 using WebAssembly. A hosted version of Pomelo can be found at
 [https://anatol.versteht.es/mlem/][mlem].
 
+> [!NOTE]
+>
+> Some [`just` recipe]s in the Justfile have additional build-time dependencies
+> which must be installed on the user's system in order to run those recipes.
+>
+> In order to automate installing (most of) these dependencies, the
+> [`manganese`] tool provides a wrapper for `just` recipes that depends on all
+> Rust build dependencies from `crates.io` as normal cargo deps. To run a `just`
+> recipe using `manganese`, run:
+>
+> ```bash
+> cargo mn $RECIPE
+> ```
+>
+> rather than
+>
+> ```bash
+> just $RECIPE
+> ```
+>
+> where `$RECIPE` is the name of the desired `just` recipe.
+
 [`platforms/allwinner-d1/README.md`]: ./platforms/allwinner-d1/README.md
 [Melpomene]: ./platforms/melpomene
 [Pomelo]: https://github.com/tosc-rs/mnemos/tree/main/platforms/pomelo
 [mlem]: https://anatol.versteht.es/mlem/
 [`just` recipe]: ./justfile
+[`manganese`]: ./tools/manganese/
 
 ## Learn More
 
@@ -99,8 +122,8 @@ Join us on Matrix: [#mnemos-dev:beeper.com](https://matrix.to/#/#mnemos-dev:beep
 
 [MIT] + [Apache 2.0].
 
-[MIT]: ./LICENSE-MIT
-[Apache 2.0]: ./LICENSE-APACHE
+[MIT]: https://github.com/tosc-rs/mnemos/blob/main/LICENSE-MIT
+[Apache 2.0]: https://github.com/tosc-rs/mnemos/blob/main/LICENSE-APACHE
 
 ### Code of Conduct
 

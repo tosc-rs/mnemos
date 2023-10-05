@@ -4,7 +4,7 @@ The MnemOS Kernel. Built around asynchronous kernel tasks which use message pass
 
 ## Development Documentation
 
-Please see [the development docs](https://mnemos-dev.jamesmunns.com/doc/kernel/index.html) for documentation of the current `main` branch.
+Please see [the development docs](https://mnemos.dev/doc/kernel/index.html) for documentation of the current `main` branch.
 
 Docs can be built locally with `cargo doc`.
 
@@ -12,5 +12,5 @@ Docs can be built locally with `cargo doc`.
 
 [MIT] + [Apache 2.0].
 
-[MIT]: ./../../LICENSE-MIT
-[Apache 2.0]: ./../../LICENSE-APACHE
+[MIT]: https://github.com/tosc-rs/mnemos/blob/main/LICENSE-MIT
+[Apache 2.0]: https://github.com/tosc-rs/mnemos/blob/main/LICENSE-APACHE
