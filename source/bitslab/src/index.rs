@@ -1,3 +1,13 @@
+/// An iterator over a *snapshot* of the currently allocated indices in an index
+/// allocator.
+#[derive(Debug, Clone)]
+#[must_use = "iterators are lazy and do nothing unless consumed"]
+pub struct AllocatedIndices {
+    map: u64,
+    idx: u8,
+    end: u8,
+}
+
 macro_rules! make_index_allocs {
     (
         $(
@@ -280,6 +290,18 @@ macro_rules! make_index_allocs {
                         Self::MAX_CAPACITY - self.capacity_subtractor()
                     }
 
+                    /// Returns an iterator over the indices that have been
+                    /// allocated *at the current point in time*.
+                    #[inline]
+                    #[must_use]
+                    pub fn iter_allocated(&self) -> super::AllocatedIndices {
+                        let map = self.bitmap.load(Acquire) & !self.max_mask;
+                        let end = self.capacity();
+                        super::AllocatedIndices {
+                            map: map as u64, end, idx: 0,
+                        }
+                    }
+
                     #[inline]
                     const fn capacity_subtractor(&self) -> u8 {
                         self.max_mask.leading_ones() as u8
@@ -310,7 +332,18 @@ macro_rules! make_index_allocs {
                 #[cfg(test)]
                 mod tests {
                     use super::*;
-                    use proptest::{prop_assert_eq, prop_assert, proptest};
+                    use std::collections::BTreeSet;
+                    use proptest::prelude::*;
+
+                    prop_compose! {
+                        fn cap_with_frees()
+                            (n in 1..=<$Int>::BITS as u8)
+                            (n in Just(n), frees in proptest::collection::btree_set(0..n, 0..n as usize))
+                            -> (u8, BTreeSet<u8>)
+                        {
+                            (n, frees)
+                        }
+                    }
 
                     proptest! {
                         #[test]
@@ -364,11 +397,84 @@ macro_rules! make_index_allocs {
                             alloc.free(capacity - 1);
                             prop_assert_eq!(alloc.allocate(), Some(capacity - 1));
                         }
+
+                        #[test]
+                        fn iter(n in 1..=<$Int>::BITS as u8) {
+                            let alloc = $Name::new();
+                            for i in 0..n {
+                                let idx = alloc.allocate();
+                                prop_assert_eq!(idx, Some(i));
+                            }
+
+                            let mut iter = alloc.iter_allocated();
+                            let mut cnt = 0;
+
+                            prop_assert_eq!(iter.size_hint(), (n as usize, Some(n as usize)));
+                            while let Some(idx) = iter.next() {
+                                prop_assert!(cnt <= n);
+                                prop_assert_eq!(idx, cnt);
+
+                                cnt += 1;
+
+                                let rem = (n - cnt) as usize;
+                                prop_assert_eq!(iter.size_hint(), (rem, Some(rem as usize)));
+                            }
+                        }
+
+                        #[test]
+                        fn iter_with_frees((n, frees) in cap_with_frees()) {
+                            let alloc = $Name::new();
+                            let mut idxs = BTreeSet::new();
+                            for i in 0..n {
+                                let idx = alloc.allocate();
+                                prop_assert_eq!(idx, Some(i));
+                                idxs.insert(idx.unwrap());
+                            }
+
+                            for idx in frees {
+                                alloc.free(idx);
+                                prop_assert!(idxs.remove(&idx));
+                            }
+
+                            let iter = alloc.iter_allocated();
+
+                            prop_assert_eq!(iter.size_hint(), (idxs.len(), Some(idxs.len())));
+                            let expected = idxs.into_iter().collect::<Vec<_>>();
+                            let actual = iter.collect::<Vec<_>>();
+                            prop_assert_eq!(actual, expected);
+                        }
                     }
                 }
             }
         )+
     };
+}
+
+impl Iterator for AllocatedIndices {
+    type Item = u8;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        while self.idx < self.end {
+            let idx = self.idx;
+            self.idx += 1;
+            if self.map & (1 << idx) != 0 {
+                return Some(idx);
+            }
+        }
+
+        None
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        // don't overflow when shifting to construct the mask.
+        if self.idx == 64 {
+            return (0, Some(0));
+        }
+
+        let mask: u64 = !((1 << self.idx) - 1);
+        let rem = (self.map & mask).count_ones() as usize;
+        (rem, Some(rem))
+    }
 }
 
 make_index_allocs! {
