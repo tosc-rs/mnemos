@@ -293,7 +293,6 @@ macro_rules! make_index_allocs {
                     /// Returns an iterator over the indices that have been
                     /// allocated *at the current point in time*.
                     #[inline]
-                    #[must_use]
                     pub fn iter_allocated(&self) -> super::AllocatedIndices {
                         let map = self.bitmap.load(Acquire) & !self.max_mask;
                         let end = self.capacity();
