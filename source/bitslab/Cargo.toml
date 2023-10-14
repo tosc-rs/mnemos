@@ -10,5 +10,8 @@ license.workspace = true
 [dependencies]
 portable-atomic = { version = "1", default-features = false }
 
+[target.'cfg(loom)'.dependencies]
+loom = { version = "0.7", default-features = false}
+
 [dev-dependencies]
 proptest = "1"

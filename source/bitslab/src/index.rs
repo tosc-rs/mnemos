@@ -19,7 +19,10 @@ macro_rules! make_index_allocs {
         $(
             pub use self::$modname::$Name;
             mod $modname {
+                #[cfg(not(loom))]
                 use portable_atomic::{$Atomic, Ordering::*};
+                #[cfg(loom)]
+                use loom::sync::atomic::{$Atomic, Ordering::*};
                 use core::fmt;
 
                 #[doc = concat!("An allocator for up to ", stringify!($cap), " unique indices.")]
@@ -31,6 +34,7 @@ macro_rules! make_index_allocs {
                 impl $Name {
                     #[doc = concat!("Returns a new allocator for up to ", stringify!($cap), " unique indices.")]
                     #[must_use]
+                    #[cfg(not(loom))]
                     pub const fn new() -> Self {
                         Self {
                             bitmap: <$Atomic>::new(0),
@@ -50,7 +54,47 @@ macro_rules! make_index_allocs {
                     /// maximum capacity.
                     ///
                     /// An allocator's actual capacity can be returned
+                    #[cfg(not(loom))]
                     pub const fn with_capacity(capacity: u8) -> Self {
+                        let max_mask = Self::max_mask(capacity);
+                        Self {
+                            bitmap: <$Atomic>::new(max_mask),
+                            max_mask,
+                        }
+                    }
+
+                    #[doc = concat!("Returns a new allocator for up to ", stringify!($cap), " unique indices.")]
+                    #[must_use]
+                    #[cfg(loom)]
+                    pub fn new() -> Self {
+                        Self {
+                            bitmap: <$Atomic>::new(0),
+                            max_mask: 0,
+                        }
+                    }
+
+                    /// Returns a new allocator for up to `capacity` unique
+                    /// indices. If `capacity` indices are allocated, subsequent
+                    /// calls to [`allocate()`](Self::allocate) will return
+                    /// [`None`] until an index is deallocated by a call to
+                    /// [`free()`](Self::free) on this allocator.
+                    ///
+                    #[doc = concat!("A `", stringify!($Name), "` can only ever allocate up to [`Self::MAX_CAPACITY`] indices.")]
+                    /// Therefore, if the provided `capacity` exceeds
+                    /// [`Self::MAX_CAPACITY`], it will be clamped to the
+                    /// maximum capacity.
+                    ///
+                    /// An allocator's actual capacity can be returned
+                    #[cfg(loom)]
+                    pub fn with_capacity(capacity: u8) -> Self {
+                        let max_mask = Self::max_mask(capacity);
+                        Self {
+                            bitmap: <$Atomic>::new(max_mask),
+                            max_mask,
+                        }
+                    }
+
+                    const fn max_mask(capacity: u8) -> $Int {
                         let capacity = if capacity > Self::MAX_CAPACITY {
                             Self::MAX_CAPACITY
                         } else {
@@ -65,11 +109,7 @@ macro_rules! make_index_allocs {
                             i -= 1;
                             max_mask |= 1 << i;
                         }
-
-                        Self {
-                            bitmap: <$Atomic>::new(max_mask),
-                            max_mask,
-                        }
+                        max_mask
                     }
 
                     /// Allocate an index from the pool.
