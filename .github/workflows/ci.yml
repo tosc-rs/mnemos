@@ -3,10 +3,14 @@
 name: CI
 
 on:
+  # always run CI on pushes to PRs and to the `main` branch
   pull_request:
-  workflow_dispatch:
   push:
     branches: ["main"]
+  # allow manually triggering CI.
+  workflow_dispatch:
+  # enable merge queue.
+  merge_group:
 
 env:
   # disable incremental compilation.
