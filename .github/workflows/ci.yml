@@ -35,6 +35,26 @@ env:
   RUST_BACKTRACE: short
 
 jobs:
+  # dummy job to indicate everything has passed.
+  #
+  # this is used to gate merging branches, rather than requiring the individual
+  # checks in the GitHub branch protection UI. this allows us to declare which
+  # jobs gate merging in this file, rather than out of band in the UI.
+  all_systems_go:
+    name: "all systems go!"
+    runs-on: ubuntu-latest
+    needs:
+    - check
+    - clippy
+    - build-bins
+    - test
+    - test-host-miri
+    - docs
+    - rustfmt
+    - netlify_dryrun
+    steps:
+    - run: exit 0
+
   # run `just check`
   check:
     name: just check
