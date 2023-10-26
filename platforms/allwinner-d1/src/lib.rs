@@ -24,7 +24,7 @@ use core::{
 };
 use d1_pac::{Interrupt, TIMER};
 use kernel::{
-    mnemos_alloc::containers::Box,
+    mnemos_alloc::containers::{Box, FixedVec},
     services::sdmmc::SdCardClient,
     tracing::{self, Instrument},
     Kernel, KernelServiceSettings, KernelSettings,
@@ -175,6 +175,24 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
                 .await
                 .expect("can't initialize the SD card");
             tracing::debug!("initialized card of type {card_type:?}");
+
+            sdcard.get_cid().await.expect("can't get CID");
+            let rca = sdcard.get_rca().await.expect("can't get RCA");
+            let card_status = sdcard.select(rca).await.expect("can't select card");
+            tracing::debug!("card status: {card_status:?}");
+            sdcard
+                .set_wide_bus(rca)
+                .await
+                .expect("can't set wide bus mode");
+
+            let buffer = FixedVec::new(512).await;
+            match sdcard.read(80, 1, buffer).await {
+                Ok(buffer) => {
+                    let tmp = &buffer.as_slice()[0..16];
+                    tracing::info!("Read data from SD card: {tmp:?}")
+                }
+                Err(_) => tracing::error!("Failed to read SD card"),
+            }
         })
         .expect("failed to spawn sdcard client");
 

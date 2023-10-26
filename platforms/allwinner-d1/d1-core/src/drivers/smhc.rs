@@ -16,7 +16,6 @@ use core::{
 use crate::ccu::{BusGatingResetRegister, Ccu};
 use d1_pac::{smhc, Interrupt, GPIO, SMHC0, SMHC1, SMHC2};
 use kernel::{
-    comms::kchannel::{KChannel, KConsumer},
     mnemos_alloc::containers::FixedVec,
     registry,
     services::sdmmc::{self, SdmmcService},
@@ -62,12 +61,12 @@ enum SmhcOp {
     Control,
     Read {
         buf: FixedVec<u8>,
-        cnt: u32,
+        cnt: usize,
         auto_stop: bool,
     },
     Write {
         buf: FixedVec<u8>,
-        cnt: u32,
+        cnt: usize,
         auto_stop: bool,
     },
 }
@@ -79,6 +78,8 @@ enum State {
     Idle,
     /// Waiting for command to be completed.
     WaitForCommand,
+    /// Waiting for the DMA operation to be completed.
+    WaitForDma,
     /// Waiting for data transfer to be completed.
     WaitForDataTransfer,
     /// Waiting for the auto-stop command to be sent and completed.
@@ -167,6 +168,13 @@ impl Smhc {
             w.re_int_en().set_bit();
             w
         });
+        smhc.smhc_idie.write(|w| {
+            w.des_unavl_int_enb().set_bit();
+            w.ferr_int_enb().set_bit();
+            w.rx_int_enb().set_bit();
+            w.tx_int_enb().set_bit();
+            w
+        });
 
         Self::init(
             unsafe { &*SMHC0::ptr() },
@@ -216,7 +224,8 @@ impl Smhc {
         // Set the sample delay to 0 (as done in Linux and Allwinner BSP)
         smhc.smhc_smap_dl.write(|w| {
             w.samp_dl_sw().variant(0);
-            w.samp_dl_sw_en().set_bit()
+            w.samp_dl_sw_en().set_bit();
+            w
         });
 
         // Enable the card clock
@@ -233,6 +242,60 @@ impl Smhc {
             smhc,
             isr: &SMHC0_ISR,
             int: (int, isr),
+        }
+    }
+
+    /// # Safety
+    /// The descriptor chain needs to live at least as long as the DMA transfer.
+    /// Additionally, their content (e.g., the validity of the buffers they point to)
+    /// also needs to be verified by the user.
+    unsafe fn prepare_dma(&self, descriptor: &idmac::Descriptor, byte_cnt: u32) {
+        self.smhc.smhc_ctrl.modify(|_, w| {
+            w.dma_enb().set_bit();
+            w.dma_rst().set_bit();
+            w
+        });
+        while self.smhc.smhc_ctrl.read().dma_rst().bit_is_set() {}
+
+        // Configure the address of the first DMA descriptor
+        // Right-shift by 2 because it is a *word-address*.
+        self.smhc
+            .smhc_dlba
+            .write(|w| unsafe { w.bits((descriptor as *const _ as u32) >> 2) });
+
+        // Set number of bytes that will be read or written.
+        self.smhc.smhc_bytcnt.write(|w| unsafe { w.bits(byte_cnt) });
+
+        // Soft reset of DMA controller
+        self.smhc.smhc_idmac.write(|w| w.idmac_rst().set_bit());
+
+        // Configure the burst size and TX/RX trigger level
+        self.smhc.smhc_fifoth.write(|w| {
+            w.tx_tl().variant(8);
+            w.rx_tl().variant(7);
+            w.bsize_of_trans().t8();
+            w
+        });
+
+        // Configure the transfer interrupt, receive interrupt, and abnormal interrupt.
+        self.smhc.smhc_idie.write(|w| {
+            w.rx_int_enb().set_bit();
+            w.tx_int_enb().set_bit();
+            w.err_sum_int_enb().set_bit();
+            w
+        });
+
+        // Enable the IDMAC and configure burst transfers
+        self.smhc.smhc_idmac.write(|w| {
+            w.idmac_enb().set_bit();
+            w.fix_bust_ctrl().set_bit();
+            w
+        });
+
+        // Reset the FIFO
+        self.smhc.smhc_ctrl.modify(|_, w| w.fifo_rst().reset());
+        while self.smhc.smhc_ctrl.read().fifo_rst().is_reset() {
+            core::hint::spin_loop();
         }
     }
 
@@ -308,6 +371,75 @@ impl Smhc {
             }
         }
 
+        let mut guard = self.isr.lock(self.smhc);
+        guard.data.op = match (params.kind, params.buffer) {
+            (sdmmc::CommandKind::Control, _) => SmhcOp::Control,
+            (sdmmc::CommandKind::Read(cnt), Some(buf)) => SmhcOp::Read {
+                buf,
+                cnt,
+                auto_stop,
+            },
+            (sdmmc::CommandKind::Write(cnt), Some(buf)) => SmhcOp::Write {
+                buf,
+                cnt,
+                auto_stop,
+            },
+            _ => {
+                tracing::error!("did not provide a buffer for read/write");
+                return Err(sdmmc::Error::Other);
+            }
+        };
+
+        // Statically allocate space for 16 DMA descriptors.
+        // Each descriptor can do a transfer of 4KB, giving a max total transfer of 64KB.
+        // By declaring them in this scope the descriptor memory will live long enough,
+        // however currently this is up to the user to guarantuee.
+        // Safety: a zero'ed descriptor is valid and will simply be ignored by the IDMAC.
+        let mut descriptors: [idmac::Descriptor; 16] = unsafe { core::mem::zeroed() };
+
+        // Perform checks on arguments to make sure we won't overflow the buffer
+        match &guard.data.op {
+            SmhcOp::Read { buf, cnt, .. } | SmhcOp::Write { buf, cnt, .. } => {
+                // Currently we limit the number of data that can be read at once
+                if *cnt > 0x10000 || buf.capacity() < *cnt {
+                    return Err(sdmmc::Error::Data);
+                }
+
+                tracing::debug!("Creating descriptor chain from buffer");
+                let buf_ptr = buf.as_slice().as_ptr();
+                let mut remaining = *cnt;
+                let mut index = 0;
+                while remaining > 0x1000 {
+                    descriptors[index] = idmac::Descriptor::try_from(idmac::DescriptorConfig {
+                        disable_int_on_complete: true,
+                        first: index == 0,
+                        last: false,
+                        buff_size: 0x1000,
+                        buff_addr: unsafe { buf_ptr.add(index * 0x1000) },
+                        next_desc: Some(&descriptors[index + 1] as *const _ as _),
+                    })
+                    .map_err(|_| sdmmc::Error::Other)?;
+                    remaining -= 0x1000;
+                    index += 1;
+                }
+
+                descriptors[index] = idmac::Descriptor::try_from(idmac::DescriptorConfig {
+                    disable_int_on_complete: false,
+                    first: index == 0,
+                    last: true,
+                    buff_size: remaining as u16,
+                    buff_addr: unsafe { buf_ptr.add(index * 0x1000) },
+                    next_desc: None,
+                })
+                .map_err(|_| sdmmc::Error::Other)?;
+
+                // TODO: should this return some kind of guard, which needs to be used later
+                // to make sure the descriptor has a long enough lifetime?
+                unsafe { self.prepare_dma(&descriptors[0], *cnt as u32) };
+            }
+            _ => (),
+        }
+
         // Set the argument to be sent
         self.smhc
             .smhc_cmdarg
@@ -327,27 +459,8 @@ impl Smhc {
             w
         });
 
-        // Now wait for completion or error interrupt
-        let mut guard = self.isr.lock(self.smhc);
         guard.data.state = State::WaitForCommand;
-        guard.data.op = match (params.kind, params.buffer) {
-            (sdmmc::CommandKind::Control, _) => SmhcOp::Control,
-            (sdmmc::CommandKind::Read(cnt), Some(buf)) => SmhcOp::Read {
-                buf,
-                cnt,
-                auto_stop,
-            },
-            (sdmmc::CommandKind::Write(cnt), Some(buf)) => SmhcOp::Write {
-                buf,
-                cnt,
-                auto_stop,
-            },
-            _ => {
-                tracing::warn!("did not provide a buffer for read/write");
-                return Err(sdmmc::Error::Other);
-            }
-        };
-
+        // Now wait for completion or error interrupt
         guard.wait_for_irq().await;
         tracing::trace!("SMHC operation completed");
         let res = if let Some(error) = guard.data.err.take() {
@@ -425,70 +538,103 @@ impl DerefMut for SmhcDataGuard<'_> {
 }
 
 impl SmhcData {
+    /// Check for error bits in the interrupt status registers.
     fn error_status(smhc: &smhc::RegisterBlock) -> Option<ErrorKind> {
         let mint = smhc.smhc_mintsts.read();
-        if mint.m_rto_back_int().bit_is_set() {
-            return Some(ErrorKind::ResponseTimeout);
-        }
-        if mint.m_rce_int().bit_is_set() {
-            return Some(ErrorKind::ResponseCrc);
-        }
-        if mint.m_re_int().bit_is_set() {
-            return Some(ErrorKind::Response);
-        }
-        if mint.m_dsto_vsd_int().bit_is_set() {
-            return Some(ErrorKind::DataStarvationTimeout);
-        }
-        if mint.m_dto_bds_int().bit_is_set() {
-            return Some(ErrorKind::DataTimeout);
-        }
-        if mint.m_dce_int().bit_is_set() {
-            return Some(ErrorKind::DataCrc);
-        }
-        if mint.m_fu_fo_int().bit_is_set() {
-            return Some(ErrorKind::FifoUnderrunOverflow);
-        }
-        if mint.m_cb_iw_int().bit_is_set() {
-            return Some(ErrorKind::CommandBusyIllegalWrite);
-        }
-        if mint.m_dse_bc_int().bit_is_set() {
-            return Some(ErrorKind::DataStart);
-        }
-        if mint.m_dee_int().bit_is_set() {
-            return Some(ErrorKind::DataEnd);
-        }
+        let idst = smhc.smhc_idst.read();
 
-        None
+        if mint.m_dsto_vsd_int().bit_is_set() {
+            Some(ErrorKind::DataStarvationTimeout)
+        } else if mint.m_fu_fo_int().bit_is_set() {
+            Some(ErrorKind::FifoUnderrunOverflow)
+        } else if mint.m_cb_iw_int().bit_is_set() {
+            Some(ErrorKind::CommandBusyIllegalWrite)
+        } else if mint.m_rto_back_int().bit_is_set() {
+            Some(ErrorKind::ResponseTimeout)
+        } else if mint.m_rce_int().bit_is_set() {
+            Some(ErrorKind::ResponseCrc)
+        } else if mint.m_re_int().bit_is_set() {
+            Some(ErrorKind::Response)
+        } else if mint.m_dto_bds_int().bit_is_set() {
+            Some(ErrorKind::DataTimeout)
+        } else if mint.m_dce_int().bit_is_set() {
+            Some(ErrorKind::DataCrc)
+        } else if mint.m_dse_bc_int().bit_is_set() {
+            Some(ErrorKind::DataStart)
+        } else if mint.m_dee_int().bit_is_set() {
+            Some(ErrorKind::DataEnd)
+        } else if idst.des_unavl_int().bit_is_set() || idst.fatal_berr_int().bit_is_set() {
+            Some(ErrorKind::Dma)
+        } else {
+            None
+        }
     }
 
     fn advance_isr(&mut self, smhc: &smhc::RegisterBlock, num: u8) {
         tracing::trace!(state = ?self.state, smhc = num, "SMHC{num} interrupt");
 
+        let mut needs_wake = false;
+
         self.err = Self::error_status(smhc);
-        let mut needs_wake = self.err.is_some();
+        if let Some(err) = self.err {
+            // Clear all interrupt bits
+            smhc.smhc_rintsts.write(|w| unsafe { w.bits(0xFFFF_FFFF) });
+            smhc.smhc_idst.write(|w| unsafe { w.bits(0x3FF) });
+
+            needs_wake = true;
+        }
 
         self.state = match self.state {
             State::Idle => State::Idle,
             State::WaitForCommand => {
                 if smhc.smhc_mintsts.read().m_cc_int().bit_is_set() {
+                    smhc.smhc_rintsts.write(|w| w.cc().set_bit());
                     match self.op {
                         SmhcOp::None => State::Idle,
                         SmhcOp::Control => {
                             needs_wake = true;
                             State::Idle
                         }
-                        SmhcOp::Read { .. } | SmhcOp::Write { .. } => State::WaitForDataTransfer,
+                        SmhcOp::Read { .. } | SmhcOp::Write { .. } => State::WaitForDma,
                     }
+                } else {
+                    self.state
+                }
+            }
+            State::WaitForDma => {
+                // TODO: better way to check for RX and TX,
+                // *normal interrupt summary* does not seem to work
+                if smhc.smhc_idst.read().bits() != 0 {
+                    smhc.smhc_idst.write(|w| {
+                        w.nor_int_sum().set_bit();
+                        w.rx_int().set_bit();
+                        w.tx_int().set_bit();
+                        w
+                    });
+                    State::WaitForDataTransfer
                 } else {
                     self.state
                 }
             }
             State::WaitForDataTransfer => {
                 if smhc.smhc_mintsts.read().m_dtc_int().bit_is_set() {
-                    match self.op {
+                    smhc.smhc_rintsts.write(|w| w.dtc().set_bit());
+                    match &mut self.op {
                         SmhcOp::None | SmhcOp::Control => State::Idle,
-                        SmhcOp::Read { auto_stop, .. } | SmhcOp::Write { auto_stop, .. } => {
-                            if auto_stop {
+                        SmhcOp::Read {
+                            auto_stop,
+                            buf,
+                            cnt,
+                        }
+                        | SmhcOp::Write {
+                            auto_stop,
+                            buf,
+                            cnt,
+                        } => {
+                            tracing::trace!("setting buf len: {cnt}");
+                            // TODO: Safety?
+                            unsafe { buf.as_vec_mut().set_len(*cnt) };
+                            if *auto_stop {
                                 State::WaitForAutoStop
                             } else {
                                 needs_wake = true;
@@ -502,6 +648,7 @@ impl SmhcData {
             }
             State::WaitForAutoStop => {
                 if smhc.smhc_mintsts.read().m_acd_int().bit_is_set() {
+                    smhc.smhc_rintsts.write(|w| w.acd().set_bit());
                     needs_wake = true;
                     State::Idle
                 } else {
@@ -517,8 +664,99 @@ impl SmhcData {
                 smhc.smhc_ctrl.modify(|_, w| w.ine_enb().disable());
             }
         }
+    }
+}
 
-        // Clear all pending interrupts
-        smhc.smhc_rintsts.write(|w| unsafe { w.bits(0xFFFF_FFFF) });
+/// Internal DMA controller
+mod idmac {
+    #[repr(C, align(4))]
+    #[derive(Default, Debug)]
+    pub struct Descriptor {
+        des0: u32,
+        des1: u32,
+        des2: u32,
+        des3: u32,
+    }
+
+    impl Descriptor {
+        /// Indicates whether the descriptor is currently owned by the IDMAC.
+        pub fn is_owned(&self) -> bool {
+            self.des0 & (1 << 31) != 0
+        }
+
+        /// Indicates whether an error happened during transfer.
+        pub fn is_err(&self) -> bool {
+            self.des0 & (1 << 30) != 0
+        }
+    }
+
+    pub struct DescriptorConfig {
+        /// When true, this will prevent the setting of the TX/RX interrupt
+        /// bit of the IDMAC status register for data that ends in the buffer the
+        /// descriptor points to.
+        pub disable_int_on_complete: bool,
+        /// If this is the first descriptor.
+        pub first: bool,
+        /// If this is the last descriptor.
+        pub last: bool,
+        /// Buffer data size in bytes, must be a multiple of 4.
+        pub buff_size: u16,
+        /// The physical address of the data buffer.
+        pub buff_addr: *const u8,
+        /// The physical address of the next descriptor.
+        pub next_desc: Option<*const ()>,
+    }
+
+    #[derive(Debug)]
+    pub enum Error {
+        InvalidBufferAddr,
+        InvalidBufferSize,
+    }
+
+    impl TryFrom<DescriptorConfig> for Descriptor {
+        type Error = Error;
+
+        fn try_from(value: DescriptorConfig) -> Result<Self, Self::Error> {
+            let mut descriptor = Descriptor {
+                des0: 0,
+                des1: 0,
+                des2: 0,
+                des3: 0,
+            };
+
+            if value.disable_int_on_complete {
+                descriptor.des0 |= 1 << 1;
+            }
+            if value.last {
+                descriptor.des0 |= 1 << 2;
+            }
+            if value.first {
+                descriptor.des0 |= 1 << 3;
+            }
+
+            // These always need to be set
+            descriptor.des0 |= 1 << 4;
+            descriptor.des0 |= 1 << 31;
+
+            if value.buff_size < (1 << 13) && (value.buff_size & 0b11) == 0 {
+                descriptor.des1 = value.buff_size as u32;
+            } else {
+                return Err(Error::InvalidBufferSize);
+            }
+
+            if !value.buff_addr.is_null() {
+                // Right-shift by 2 because it is a *word-address*.
+                descriptor.des2 = (value.buff_addr as u32) >> 2;
+            } else {
+                return Err(Error::InvalidBufferAddr);
+            }
+
+            if let Some(next) = value.next_desc {
+                // Right-shift by 2 because it is a *word-address*.
+                descriptor.des3 = (next as u32) >> 2;
+            }
+
+            Ok(descriptor)
+        }
     }
 }

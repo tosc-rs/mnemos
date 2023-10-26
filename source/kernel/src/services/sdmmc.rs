@@ -93,9 +93,9 @@ pub enum CommandKind {
     /// Command without data transfer
     Control,
     /// Command for reading data, contains the number of bytes to read
-    Read(u32),
+    Read(usize),
     /// Command for writing data, contains the number of bytes to write
-    Write(u32),
+    Write(usize),
 }
 
 /// TODO
@@ -173,6 +173,7 @@ pub enum CardType {
 }
 
 /// Card status in R1 response format
+#[derive(Debug, PartialEq)]
 pub struct CardStatus(u32);
 
 /// Card identification register in R2 response format
@@ -231,12 +232,12 @@ impl SdCardClient {
             .and_then(|resp| resp.body)
     }
 
-    /// TODO
+    /// Reset the card
     pub async fn reset(&mut self) -> Result<(), Error> {
         self.cmd(Command::default()).await.map(|_| ())
     }
 
-    /// TODO
+    /// Initialize the card
     pub async fn initialize(&mut self) -> Result<CardType, Error> {
         /// Request switch to 1.8V
         #[allow(dead_code)]
@@ -311,7 +312,7 @@ impl SdCardClient {
                 Response::Long(_) => return Err(Error::Response),
             }
 
-            // TODO: wait 1ms
+            // TODO: wait some time (e.g., 1ms?)
         };
 
         if (ocr & OCR_HCS) == OCR_HCS {
@@ -337,7 +338,7 @@ impl SdCardClient {
         {
             Response::Short { .. } => return Err(Error::Response),
             Response::Long(value) => {
-                tracing::trace!("CMD2 response: {value:#x}");
+                tracing::trace!("CMD2 response: {value:?}");
                 // TODO: map [u32; 4] value to u128
                 Ok(CardIdentification(0))
             }
@@ -419,6 +420,36 @@ impl SdCardClient {
                 Ok(CardStatus(value))
             }
             Response::Long(_) => Err(Error::Response),
+        }
+    }
+
+    /// Read the desired number of data blocks into the provided buffer, starting at the given sector.
+    pub async fn read(
+        &mut self,
+        sector: u32,
+        blocks: usize,
+        buf: FixedVec<u8>,
+    ) -> Result<FixedVec<u8>, Error> {
+        match self
+            .cmd(Command {
+                index: 18,
+                argument: sector,
+                options: HardwareOptions::None,
+                kind: CommandKind::Read(512 * blocks),
+                rsp_type: ResponseType::Short,
+                rsp_crc: true,
+                buffer: Some(buf),
+            })
+            .await?
+        {
+            Response::Short {
+                value,
+                data: Some(res),
+            } => {
+                tracing::trace!("CMD18 response: {value:#x}");
+                Ok(res)
+            }
+            _ => Err(Error::Response),
         }
     }
 }
