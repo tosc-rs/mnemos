@@ -7,10 +7,7 @@
 //! (how to send and receive the data).
 #![warn(missing_docs)]
 use crate::{
-    comms::{
-        kchannel::{KChannel, KConsumer, KProducer},
-        oneshot::{self, Reusable},
-    },
+    comms::oneshot::Reusable,
     mnemos_alloc::containers::FixedVec,
     registry::{self, known_uuids, Envelope, KernelHandle, RegisteredDriver},
     Kernel,
@@ -177,16 +174,23 @@ pub enum CardType {
 pub struct CardStatus(u32);
 
 /// Card identification register in R2 response format
-///   Manufacturer ID       [127:120]
-///   OEM/Application ID    [119:104]
-///   Product name          [103:64]
-///   Product revision      [63:56]
-///   Product serial number [55:24]
-///   Reserved              [23:20]
-///   Manufacturing date    [19:8]
-///   CRC7 checksum         [7:1]
-///   Not used, always 1    [0:0]
+///
+/// | Field                 | Bits        |
+/// |:----------------------|------------:|
+/// | Manufacturer ID       | `[127:120]` |
+/// | OEM/Application ID    | `[119:104]` |
+/// | Product name          | `[103:64]`  |
+/// | Product revision      | `[63:56]`   |
+/// | Product serial number | `[55:24]`   |
+/// | Reserved              | `[23:20]`   |
+/// | Manufacturing date    | `[19:8]`    |
+/// | CRC7 checksum         | `[7:1]`     |
+/// | Not used, always 1    | `[0:0]`     |
 pub struct CardIdentification(u128);
+
+/// Published RCA in R6 response format
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub struct RelativeCardAddress(u32);
 
 impl SdCardClient {
     /// Obtain an `SdCardClient`
@@ -346,7 +350,7 @@ impl SdCardClient {
     }
 
     /// Get the relative card address
-    pub async fn get_rca(&mut self) -> Result<u32, Error> {
+    pub async fn get_rca(&mut self) -> Result<RelativeCardAddress, Error> {
         match self
             .cmd(Command {
                 index: 3,
@@ -361,18 +365,18 @@ impl SdCardClient {
         {
             Response::Short { value, .. } => {
                 tracing::trace!("CMD3 response: {value:#x}");
-                Ok(value)
+                Ok(RelativeCardAddress(value))
             }
             Response::Long(_) => return Err(Error::Response),
         }
     }
 
     /// Toggle the card between stand-by and transfer state
-    pub async fn select(&mut self, rca: u32) -> Result<CardStatus, Error> {
+    pub async fn select(&mut self, rca: RelativeCardAddress) -> Result<CardStatus, Error> {
         match self
             .cmd(Command {
                 index: 7,
-                argument: rca,
+                argument: rca.0,
                 options: HardwareOptions::None,
                 kind: CommandKind::Control,
                 rsp_type: ResponseType::Short,
@@ -390,11 +394,11 @@ impl SdCardClient {
     }
 
     /// Use 4 data lanes
-    pub async fn set_wide_bus(&mut self, rca: u32) -> Result<CardStatus, Error> {
+    pub async fn set_wide_bus(&mut self, rca: RelativeCardAddress) -> Result<CardStatus, Error> {
         // Go to *APP* mode before sending application command
         self.cmd(Command {
             index: 55,
-            argument: rca,
+            argument: rca.0,
             options: HardwareOptions::None,
             kind: CommandKind::Control,
             rsp_type: ResponseType::Short,
@@ -430,6 +434,11 @@ impl SdCardClient {
         blocks: usize,
         buf: FixedVec<u8>,
     ) -> Result<FixedVec<u8>, Error> {
+        // The provider buffer should have space for the requested amount of data
+        if buf.capacity() < 512 * blocks {
+            return Err(Error::Data);
+        }
+
         match self
             .cmd(Command {
                 index: 18,
@@ -455,12 +464,14 @@ impl SdCardClient {
 }
 
 /// A client for SDIO cards using the [`SdmmcService`].
+#[allow(dead_code)]
 pub struct SdioClient {
     handle: KernelHandle<SdmmcService>,
     reply: Reusable<Envelope<Result<Response, Error>>>,
 }
 
 /// A client for MMC cards using the [`SdmmcService`].
+#[allow(dead_code)]
 pub struct MmcClient {
     handle: KernelHandle<SdmmcService>,
     reply: Reusable<Envelope<Result<Response, Error>>>,

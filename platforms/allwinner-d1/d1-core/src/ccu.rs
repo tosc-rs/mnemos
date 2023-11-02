@@ -18,12 +18,24 @@ pub struct Ccu {
     ccu: CCU,
 }
 
+#[derive(PartialEq)]
+pub enum BusGating {
+    Mask,
+    Pass,
+}
+
+#[derive(PartialEq)]
+pub enum BusReset {
+    Assert,
+    Deassert,
+}
+
 /// Trait to be implemented for module clocks that can be gated and reset
 pub trait BusGatingResetRegister {
     /// Enable or disable the clock gating bit
-    fn gating(ccu: &mut CCU, pass: bool);
+    fn gating(ccu: &mut CCU, gating: BusGating);
     /// Enable or disable the clock reset bit
-    fn reset(ccu: &mut CCU, assert: bool);
+    fn reset(ccu: &mut CCU, reset: BusReset);
 }
 
 // TODO: should this move into the `Clint`?
@@ -49,16 +61,16 @@ impl Ccu {
 
     /// De-assert the reset bit and enable the clock gating bit for the given module
     pub fn enable_module<MODULE: BusGatingResetRegister>(&mut self, _mod: &mut MODULE) {
-        MODULE::reset(&mut self.ccu, false);
+        MODULE::reset(&mut self.ccu, BusReset::Deassert);
         sdelay(20);
-        MODULE::gating(&mut self.ccu, true);
+        MODULE::gating(&mut self.ccu, BusGating::Pass);
     }
 
     /// Disable the clock gating bit and assert the reset bit for the given module
     pub fn disable_module<MODULE: BusGatingResetRegister>(&mut self, _mod: &mut MODULE) {
-        MODULE::gating(&mut self.ccu, false);
+        MODULE::gating(&mut self.ccu, BusGating::Mask);
         // TODO: delay?
-        MODULE::reset(&mut self.ccu, true);
+        MODULE::reset(&mut self.ccu, BusReset::Assert);
     }
 
     /// Allow modules to configure their own clock on a PAC level
@@ -248,12 +260,24 @@ macro_rules! impl_bgr {
     ($($MODULE:ident : ($reg:ident, $gating:ident, $reset:ident),)+) => {
         $(
             impl BusGatingResetRegister for $MODULE {
-                fn gating(ccu: &mut CCU, pass: bool) {
-                    ccu.$reg.modify(|_, w| w.$gating().bit(pass));
+                fn gating(ccu: &mut CCU, gating: BusGating) {
+                    ccu.$reg.modify(|_, w| {
+                        if gating == BusGating::Mask {
+                            w.$gating().clear_bit()
+                        } else {
+                            w.$gating().set_bit()
+                        }
+                    });
                 }
 
-                fn reset(ccu: &mut CCU, assert: bool) {
-                    ccu.$reg.modify(|_, w| w.$reset().bit(!assert));
+                fn reset(ccu: &mut CCU, reset: BusReset) {
+                    ccu.$reg.modify(|_, w| {
+                        if reset == BusReset::Assert {
+                            w.$reset().clear_bit()
+                        } else {
+                            w.$reset().set_bit()
+                        }
+                    });
                 }
             }
         )+

@@ -124,7 +124,7 @@ impl Smhc {
     ///
     /// # Safety
     /// TODO
-    pub unsafe fn new(mut smhc: SMHC0, ccu: &mut Ccu, gpio: &mut GPIO) -> Self {
+    pub unsafe fn smhc0(mut smhc: SMHC0, ccu: &mut Ccu, gpio: &mut GPIO) -> Self {
         // Configure default pin mapping for TF (micro SD) card socket.
         // This is valid for the Lichee RV SOM and Mango Pi MQ Pro.
         gpio.pf_cfg0.modify(|_, w| {
@@ -236,7 +236,7 @@ impl Smhc {
         // Default bus width after power up or idle is 1-bit
         smhc.smhc_ctype.write(|w| w.card_wid().b1());
         // Blocksize is fixed to 512 bytes
-        smhc.smhc_blksiz.write(|w| unsafe { w.bits(0x200) });
+        smhc.smhc_blksiz.write(|w| unsafe { w.bits(512) });
 
         Self {
             smhc,
@@ -348,12 +348,12 @@ impl Smhc {
         }
 
         let cmd_idx = params.index;
-        // TODO: naive `auto_stop` selection, probably only works in case of SD memory cards.
+        // TODO: naive `auto_stop` selection, this depends on the command (argument) that is used.
         // Should this (auto_stop select) be part of the params?
         let (data_trans, trans_dir, auto_stop) = match params.kind {
             sdmmc::CommandKind::Control => (false, false, false),
-            sdmmc::CommandKind::Read(len) => (true, false, len > 512),
-            sdmmc::CommandKind::Write(len) => (true, true, len > 512),
+            sdmmc::CommandKind::Read(len) => (true, false, true),
+            sdmmc::CommandKind::Write(len) => (true, true, true),
         };
         let chk_resp_crc = params.rsp_crc;
         let long_resp = params.rsp_type == sdmmc::ResponseType::Long;
@@ -400,8 +400,10 @@ impl Smhc {
         // Perform checks on arguments to make sure we won't overflow the buffer
         match &guard.data.op {
             SmhcOp::Read { buf, cnt, .. } | SmhcOp::Write { buf, cnt, .. } => {
+                const DESCR_BUFF_SIZE: usize = 0x1000;
+
                 // Currently we limit the number of data that can be read at once
-                if *cnt > 0x10000 || buf.capacity() < *cnt {
+                if *cnt > DESCR_BUFF_SIZE * descriptors.len() || buf.capacity() < *cnt {
                     return Err(sdmmc::Error::Data);
                 }
 
@@ -409,29 +411,22 @@ impl Smhc {
                 let buf_ptr = buf.as_slice().as_ptr();
                 let mut remaining = *cnt;
                 let mut index = 0;
-                while remaining > 0x1000 {
+                while remaining > 0 {
+                    let buff_size = core::cmp::min(DESCR_BUFF_SIZE, remaining) as u16;
+                    remaining = remaining.saturating_sub(DESCR_BUFF_SIZE);
+                    let first = index == 0;
+                    let last = remaining == 0;
                     descriptors[index] = idmac::Descriptor::try_from(idmac::DescriptorConfig {
-                        disable_int_on_complete: true,
-                        first: index == 0,
-                        last: false,
-                        buff_size: 0x1000,
-                        buff_addr: unsafe { buf_ptr.add(index * 0x1000) },
-                        next_desc: Some(&descriptors[index + 1] as *const _ as _),
+                        disable_int_on_complete: !last,
+                        first,
+                        last,
+                        buff_size,
+                        buff_addr: unsafe { buf_ptr.add(index * DESCR_BUFF_SIZE) },
+                        next_desc: (!last).then_some(&descriptors[index + 1] as *const _ as _),
                     })
                     .map_err(|_| sdmmc::Error::Other)?;
-                    remaining -= 0x1000;
                     index += 1;
                 }
-
-                descriptors[index] = idmac::Descriptor::try_from(idmac::DescriptorConfig {
-                    disable_int_on_complete: false,
-                    first: index == 0,
-                    last: true,
-                    buff_size: remaining as u16,
-                    buff_addr: unsafe { buf_ptr.add(index * 0x1000) },
-                    next_desc: None,
-                })
-                .map_err(|_| sdmmc::Error::Other)?;
 
                 // TODO: should this return some kind of guard, which needs to be used later
                 // to make sure the descriptor has a long enough lifetime?
@@ -463,28 +458,25 @@ impl Smhc {
         // Now wait for completion or error interrupt
         guard.wait_for_irq().await;
         tracing::trace!("SMHC operation completed");
-        let res = if let Some(error) = guard.data.err.take() {
+        if let Some(error) = guard.data.err.take() {
             tracing::warn!(?error, "SMHC error");
             Err(sdmmc::Error::Other) // TODO
+        } else if long_resp {
+            Ok(sdmmc::Response::Long([
+                self.smhc.smhc_resp0.read().bits(),
+                self.smhc.smhc_resp1.read().bits(),
+                self.smhc.smhc_resp2.read().bits(),
+                self.smhc.smhc_resp3.read().bits(),
+            ]))
         } else {
-            if long_resp {
-                Ok(sdmmc::Response::Long([
-                    self.smhc.smhc_resp0.read().bits(),
-                    self.smhc.smhc_resp1.read().bits(),
-                    self.smhc.smhc_resp2.read().bits(),
-                    self.smhc.smhc_resp3.read().bits(),
-                ]))
-            } else {
-                Ok(sdmmc::Response::Short {
-                    value: self.smhc.smhc_resp0.read().bits(),
-                    data: match core::mem::replace(&mut guard.data.op, SmhcOp::None) {
-                        SmhcOp::Read { buf, .. } => Some(buf),
-                        _ => None,
-                    },
-                })
-            }
-        };
-        res
+            Ok(sdmmc::Response::Short {
+                value: self.smhc.smhc_resp0.read().bits(),
+                data: match core::mem::replace(&mut guard.data.op, SmhcOp::None) {
+                    SmhcOp::Read { buf, .. } => Some(buf),
+                    _ => None,
+                },
+            })
+        }
     }
 }
 

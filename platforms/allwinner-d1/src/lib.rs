@@ -52,7 +52,7 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
 
     let uart = unsafe { uart::kernel_uart(&mut ccu, &mut p.GPIO, p.UART0) };
     let spim = unsafe { spim::kernel_spim1(p.SPI_DBI, &mut ccu, &mut p.GPIO) };
-    let smhc0 = unsafe { Smhc::new(p.SMHC0, &mut ccu, &mut p.GPIO) };
+    let smhc0 = unsafe { Smhc::smhc0(p.SMHC0, &mut ccu, &mut p.GPIO) };
 
     let i2c0 = match config.platform.i2c {
         d1_config::I2cConfiguration { enabled: false, .. } => None,
@@ -185,8 +185,8 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
                 .await
                 .expect("can't set wide bus mode");
 
-            let buffer = FixedVec::new(512).await;
-            match sdcard.read(80, 1, buffer).await {
+            let buffer = FixedVec::new(16 * 512).await;
+            match sdcard.read(2048, 16, buffer).await {
                 Ok(buffer) => {
                     let tmp = &buffer.as_slice()[0..16];
                     tracing::info!("Read data from SD card: {tmp:?}")
