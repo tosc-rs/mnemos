@@ -141,11 +141,11 @@ impl Smhc {
         smhc.smhc_clkdiv.write(|w| w.cclk_enb().off());
 
         ccu.disable_module(&mut smhc);
-        // Set module clock rate to 200 MHz
+        // Set module clock rate to 100 MHz
         // TODO: ccu should provide a higher-level abstraction for this
         ccu.borrow_raw().smhc0_clk.write(|w| {
             w.clk_src_sel().pll_peri_1x();
-            w.factor_n().variant(d1_pac::ccu::smhc0_clk::FACTOR_N_A::N1);
+            w.factor_n().variant(d1_pac::ccu::smhc0_clk::FACTOR_N_A::N2);
             w.factor_m().variant(2);
             w.clk_gating().set_bit();
             w
