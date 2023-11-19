@@ -398,7 +398,7 @@ impl Smhc {
         let mut descriptors: [idmac::Descriptor; 16] = unsafe { core::mem::zeroed() };
 
         // Perform checks on arguments to make sure we won't overflow the buffer
-        match &guard.data.op {
+        match &mut guard.data.op {
             SmhcOp::Read { buf, cnt, .. } | SmhcOp::Write { buf, cnt, .. } => {
                 const DESCR_BUFF_SIZE: usize = 0x1000;
 
@@ -407,24 +407,28 @@ impl Smhc {
                     return Err(sdmmc::Error::Data);
                 }
 
-                tracing::debug!("Creating descriptor chain from buffer");
-                let buf_ptr = buf.as_slice().as_ptr();
+                tracing::debug!(cnt, "Creating descriptor chain from buffer");
+                let buf_ptr = buf.as_slice_mut().as_mut_ptr();
                 let mut remaining = *cnt;
                 let mut index = 0;
                 while remaining > 0 {
-                    let buff_size = core::cmp::min(DESCR_BUFF_SIZE, remaining) as u16;
+                    let buff_size = core::cmp::min(DESCR_BUFF_SIZE, remaining);
+                    let buff_addr = unsafe { buf_ptr.add(index * DESCR_BUFF_SIZE) };
+                    // Having to construct the slice in this manual way is not ideal,
+                    // but it allows us to use `&mut [u8]` in the DescriptorBuilder.
+                    let slice = unsafe { core::slice::from_raw_parts_mut(buff_addr, buff_size) };
                     remaining = remaining.saturating_sub(DESCR_BUFF_SIZE);
                     let first = index == 0;
                     let last = remaining == 0;
-                    descriptors[index] = idmac::Descriptor::try_from(idmac::DescriptorConfig {
-                        disable_int_on_complete: !last,
-                        first,
-                        last,
-                        buff_size,
-                        buff_addr: unsafe { buf_ptr.add(index * DESCR_BUFF_SIZE) },
-                        next_desc: (!last).then_some(&descriptors[index + 1] as *const _ as _),
-                    })
-                    .map_err(|_| sdmmc::Error::Other)?;
+                    descriptors[index] = idmac::DescriptorBuilder::new()
+                        .disable_irq(!last)
+                        .first(first)
+                        .last(last)
+                        .link((!last).then(|| (&descriptors[index + 1]).into()))
+                        .expect("Should be able to link to next descriptor")
+                        .buff_slice(slice)
+                        .expect("Should be able to configure data buffer with slice")
+                        .build();
                     index += 1;
                 }
 
@@ -661,94 +665,183 @@ impl SmhcData {
 
 /// Internal DMA controller
 mod idmac {
+    use core::mem;
+    use core::ptr::NonNull;
+    use mycelium_bitfield::{bitfield, enum_from_bits};
+
+    /// A descriptor that describes how memory needs to transfer data
+    /// between the SMHC port and host memory. Multiple DMA transfers
+    /// can be configured by creating a descriptor *chain* (linked list).
+    #[derive(Clone, Debug)]
     #[repr(C, align(4))]
-    #[derive(Default, Debug)]
-    pub struct Descriptor {
-        des0: u32,
-        des1: u32,
-        des2: u32,
-        des3: u32,
+    pub(super) struct Descriptor {
+        /// The descriptor configuration.
+        configuration: Cfg,
+        /// The size of the data buffer.
+        buff_size: BuffSize,
+        /// The (*word*) address of the data buffer.
+        buff_addr: u32,
+        /// The (*word*) address of the next descriptor, for creating a descriptor chain.
+        next_desc: u32,
+    }
+
+    /// A builder for constructing an IDMAC [`Descriptor`].
+    #[derive(Copy, Clone, Debug)]
+    #[must_use = "a `DescriptorBuilder` does nothing unless `DescriptorBuilder::build()` is called"]
+    pub(super) struct DescriptorBuilder<B = ()> {
+        cfg: Cfg,
+        buff: B,
+        link: u32,
+    }
+
+    #[derive(Debug)]
+    pub(super) enum Error {
+        InvalidBufferAddr,
+        InvalidBufferSize,
+        InvalidLink,
+    }
+
+    bitfield! {
+        /// The first 32-bit word of an IDMAC descriptor, containing configuration data.
+        struct Cfg<u32> {
+            // Bit 0 is reserved.
+            const _RESERVED_0 = 1;
+
+            /// Disable interrupts on completion.
+            const CUR_TXRX_OVER_INT_DIS = 1;
+
+            /// When set to 1, this bit indicates that the buffers this descriptor points to
+            /// are the last data buffer.
+            const LAST_FLAG = 1;
+
+            /// When set to 1, this bit indicates that this descriptor contains
+            /// the first buffer of data. It must be set to 1 in the first DES.
+            const FIRST_FLAG = 1;
+
+            /// When set to 1, this bit indicates that the second address in the descriptor
+            /// is the next descriptor address. It must be set to 1.
+            const CHAIN_MOD = 1;
+
+            /// Bits 29:5 are reserved.
+            const _RESERVED_1 = 25;
+
+            /// When some errors happen in transfer, this bit will be set to 1 by the IDMAC.
+            const ERR_FLAG = 1;
+
+            /// When set to 1, this bit indicates that the descriptor is owned by the IDMAC.
+            /// When this bit is reset, it indicates that the descriptor is owned by the host.
+            /// This bit is cleared when the transfer is over.
+            const DES_OWN_FLAG = 1;
+        }
+    }
+
+    bitfield! {
+        /// The second 32-bit word of an IDMAC descriptor, containing data buffer size.
+        struct BuffSize<u32> {
+            /// The data buffer byte size, which must be a multiple of 4 bytes.
+            /// If this field is 0, the DMA ignores this buffer and proceeds to the next descriptor.
+            const SIZE = 13;
+
+            /// Bits 31:13 are reserved.
+            const _RESERVED_0 = 19;
+        }
+    }
+
+    impl DescriptorBuilder {
+        pub const fn new() -> Self {
+            Self {
+                cfg: Cfg::new(),
+                buff: (),
+                link: 0,
+            }
+        }
+
+        pub fn disable_irq(self, val: bool) -> Self {
+            Self {
+                cfg: self.cfg.with(Cfg::CUR_TXRX_OVER_INT_DIS, val as u32),
+                ..self
+            }
+        }
+
+        pub fn first(self, val: bool) -> Self {
+            Self {
+                cfg: self.cfg.with(Cfg::FIRST_FLAG, val as u32),
+                ..self
+            }
+        }
+
+        pub fn last(self, val: bool) -> Self {
+            Self {
+                cfg: self.cfg.with(Cfg::LAST_FLAG, val as u32),
+                ..self
+            }
+        }
+
+        pub fn buff_slice(
+            self,
+            buff: &'_ mut [u8],
+        ) -> Result<DescriptorBuilder<&'_ mut [u8]>, Error> {
+            if buff.len() > Descriptor::MAX_LEN as usize {
+                return Err(Error::InvalidBufferSize);
+            }
+
+            if (buff.len() & 0b11) > 0 {
+                return Err(Error::InvalidBufferSize);
+            }
+
+            Ok(DescriptorBuilder {
+                cfg: self.cfg,
+                buff,
+                link: self.link,
+            })
+        }
+
+        pub fn link(self, link: impl Into<Option<NonNull<Descriptor>>>) -> Result<Self, Error> {
+            let link = link
+                .into()
+                .map(Descriptor::addr_to_link)
+                .transpose()?
+                .unwrap_or(0);
+            Ok(Self { link, ..self })
+        }
+    }
+
+    impl DescriptorBuilder<&'_ mut [u8]> {
+        pub fn build(self) -> Descriptor {
+            let buff_size = BuffSize::new().with(BuffSize::SIZE, self.buff.len() as u32);
+            let buff_addr = (self.buff.as_mut_ptr() as *mut _ as u32) >> 2;
+
+            Descriptor {
+                configuration: self.cfg.with(Cfg::CHAIN_MOD, 1).with(Cfg::DES_OWN_FLAG, 1),
+                buff_size,
+                buff_addr,
+                next_desc: self.link,
+            }
+        }
     }
 
     impl Descriptor {
+        /// Maximum length for arguments to [`DescriptorBuilder::buff_slice`].
+        /// Must be 13 bits wide or less.
+        pub const MAX_LEN: u32 = (1 << 13) - 1;
+
         /// Indicates whether the descriptor is currently owned by the IDMAC.
         pub fn is_owned(&self) -> bool {
-            self.des0 & (1 << 31) != 0
+            self.configuration.get(Cfg::DES_OWN_FLAG) != 0
         }
 
         /// Indicates whether an error happened during transfer.
         pub fn is_err(&self) -> bool {
-            self.des0 & (1 << 30) != 0
+            self.configuration.get(Cfg::ERR_FLAG) != 0
         }
-    }
 
-    pub struct DescriptorConfig {
-        /// When true, this will prevent the setting of the TX/RX interrupt
-        /// bit of the IDMAC status register for data that ends in the buffer the
-        /// descriptor points to.
-        pub disable_int_on_complete: bool,
-        /// If this is the first descriptor.
-        pub first: bool,
-        /// If this is the last descriptor.
-        pub last: bool,
-        /// Buffer data size in bytes, must be a multiple of 4.
-        pub buff_size: u16,
-        /// The physical address of the data buffer.
-        pub buff_addr: *const u8,
-        /// The physical address of the next descriptor.
-        pub next_desc: Option<*const ()>,
-    }
-
-    #[derive(Debug)]
-    pub enum Error {
-        InvalidBufferAddr,
-        InvalidBufferSize,
-    }
-
-    impl TryFrom<DescriptorConfig> for Descriptor {
-        type Error = Error;
-
-        fn try_from(value: DescriptorConfig) -> Result<Self, Self::Error> {
-            let mut descriptor = Descriptor {
-                des0: 0,
-                des1: 0,
-                des2: 0,
-                des3: 0,
-            };
-
-            if value.disable_int_on_complete {
-                descriptor.des0 |= 1 << 1;
-            }
-            if value.last {
-                descriptor.des0 |= 1 << 2;
-            }
-            if value.first {
-                descriptor.des0 |= 1 << 3;
+        fn addr_to_link(link: NonNull<Self>) -> Result<u32, Error> {
+            let addr = link.as_ptr() as usize;
+            if addr & (mem::align_of::<Self>() - 1) > 0 {
+                return Err(Error::InvalidLink);
             }
 
-            // These always need to be set
-            descriptor.des0 |= 1 << 4;
-            descriptor.des0 |= 1 << 31;
-
-            if value.buff_size < (1 << 13) && (value.buff_size & 0b11) == 0 {
-                descriptor.des1 = value.buff_size as u32;
-            } else {
-                return Err(Error::InvalidBufferSize);
-            }
-
-            if !value.buff_addr.is_null() {
-                // Right-shift by 2 because it is a *word-address*.
-                descriptor.des2 = (value.buff_addr as u32) >> 2;
-            } else {
-                return Err(Error::InvalidBufferAddr);
-            }
-
-            if let Some(next) = value.next_desc {
-                // Right-shift by 2 because it is a *word-address*.
-                descriptor.des3 = (next as u32) >> 2;
-            }
-
-            Ok(descriptor)
+            Ok((addr as u32) >> 2)
         }
     }
 }
