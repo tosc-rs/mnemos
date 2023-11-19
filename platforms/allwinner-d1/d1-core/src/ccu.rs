@@ -262,21 +262,13 @@ macro_rules! impl_bgr {
             impl BusGatingResetRegister for $MODULE {
                 fn gating(ccu: &mut CCU, gating: BusGating) {
                     ccu.$reg.modify(|_, w| {
-                        if gating == BusGating::Mask {
-                            w.$gating().clear_bit()
-                        } else {
-                            w.$gating().set_bit()
-                        }
+                        w.$gating().bit(gating == BusGating::Pass)
                     });
                 }
 
                 fn reset(ccu: &mut CCU, reset: BusReset) {
                     ccu.$reg.modify(|_, w| {
-                        if reset == BusReset::Assert {
-                            w.$reset().clear_bit()
-                        } else {
-                            w.$reset().set_bit()
-                        }
+                        w.$reset().bit(reset == BusReset::Deassert)
                     });
                 }
             }
