@@ -207,11 +207,7 @@ impl Smhc {
             core::hint::spin_loop();
         }
 
-        // Reset the FIFO
-        smhc.smhc_ctrl.modify(|_, w| w.fifo_rst().reset());
-        while smhc.smhc_ctrl.read().fifo_rst().is_reset() {
-            core::hint::spin_loop();
-        }
+        Self::reset_fifo(smhc);
 
         // Global interrupt disable
         smhc.smhc_ctrl.modify(|_, w| w.ine_enb().disable());
@@ -242,6 +238,14 @@ impl Smhc {
             smhc,
             isr: &SMHC0_ISR,
             int: (int, isr),
+        }
+    }
+
+    #[inline(always)]
+    fn reset_fifo(regs: &smhc::RegisterBlock) {
+        regs.smhc_ctrl.modify(|_, w| w.fifo_rst().reset());
+        while regs.smhc_ctrl.read().fifo_rst().is_reset() {
+            core::hint::spin_loop();
         }
     }
 
@@ -292,11 +296,7 @@ impl Smhc {
             w
         });
 
-        // Reset the FIFO
-        self.smhc.smhc_ctrl.modify(|_, w| w.fifo_rst().reset());
-        while self.smhc.smhc_ctrl.read().fifo_rst().is_reset() {
-            core::hint::spin_loop();
-        }
+        Self::reset_fifo(self.smhc);
     }
 
     pub fn handle_smhc0_interrupt() {
