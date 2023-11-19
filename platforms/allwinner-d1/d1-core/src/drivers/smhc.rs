@@ -1,3 +1,6 @@
+// Note: We sometimes force a pass by ref mut to enforce exclusive access
+#![allow(clippy::needless_pass_by_ref_mut)]
+
 //! Driver for the Allwinner D1's SMHC peripheral.
 //!
 //! The D1 contains three separate SD/MMC Host Controllers: [`SMHC0`], [`SMHC1`] and [`SMHC2`].
@@ -13,7 +16,7 @@ use core::{
     task::{Poll, Waker},
 };
 
-use crate::ccu::{BusGatingResetRegister, Ccu};
+use crate::ccu::Ccu;
 use d1_pac::{smhc, Interrupt, GPIO, SMHC0, SMHC1, SMHC2};
 use kernel::{
     mnemos_alloc::containers::FixedVec,
@@ -356,8 +359,8 @@ impl Smhc {
         // Should this (auto_stop select) be part of the params?
         let (data_trans, trans_dir, auto_stop) = match params.kind {
             sdmmc::CommandKind::Control => (false, false, false),
-            sdmmc::CommandKind::Read(len) => (true, false, true),
-            sdmmc::CommandKind::Write(len) => (true, true, true),
+            sdmmc::CommandKind::Read(_len) => (true, false, true),
+            sdmmc::CommandKind::Write(_len) => (true, true, true),
         };
         let chk_resp_crc = params.rsp_crc;
         let long_resp = params.rsp_type == sdmmc::ResponseType::Long;
@@ -579,7 +582,7 @@ impl SmhcData {
         // you have to *write* a 1 to their location (W1C = write 1 to clear).
 
         self.err = Self::error_status(smhc);
-        if let Some(err) = self.err {
+        if self.err.is_some() {
             // Clear all interrupt bits
             smhc.smhc_rintsts.write(|w| unsafe { w.bits(0xFFFF_FFFF) });
             smhc.smhc_idst.write(|w| unsafe { w.bits(0x3FF) });
@@ -674,7 +677,7 @@ impl SmhcData {
 mod idmac {
     use core::mem;
     use core::ptr::NonNull;
-    use mycelium_bitfield::{bitfield, enum_from_bits};
+    use mycelium_bitfield::bitfield;
 
     /// A descriptor that describes how memory needs to transfer data
     /// between the SMHC port and host memory. Multiple DMA transfers
@@ -703,9 +706,9 @@ mod idmac {
 
     #[derive(Debug)]
     pub(super) enum Error {
-        InvalidBufferAddr,
-        InvalidBufferSize,
-        InvalidLink,
+        BufferAddr,
+        BufferSize,
+        Link,
     }
 
     bitfield! {
@@ -789,11 +792,16 @@ mod idmac {
             buff: &'_ mut [u8],
         ) -> Result<DescriptorBuilder<&'_ mut [u8]>, Error> {
             if buff.len() > Descriptor::MAX_LEN as usize {
-                return Err(Error::InvalidBufferSize);
+                return Err(Error::BufferSize);
             }
 
             if (buff.len() & 0b11) > 0 {
-                return Err(Error::InvalidBufferSize);
+                return Err(Error::BufferSize);
+            }
+
+            let buff_addr = buff.as_mut_ptr() as *mut _ as u32;
+            if (buff_addr & 0b11) > 0 {
+                return Err(Error::BufferAddr);
             }
 
             Ok(DescriptorBuilder {
@@ -832,20 +840,10 @@ mod idmac {
         /// Must be 13 bits wide or less.
         pub const MAX_LEN: u32 = (1 << 13) - 1;
 
-        /// Indicates whether the descriptor is currently owned by the IDMAC.
-        pub fn is_owned(&self) -> bool {
-            self.configuration.get(Cfg::DES_OWN_FLAG) != 0
-        }
-
-        /// Indicates whether an error happened during transfer.
-        pub fn is_err(&self) -> bool {
-            self.configuration.get(Cfg::ERR_FLAG) != 0
-        }
-
         fn addr_to_link(link: NonNull<Self>) -> Result<u32, Error> {
             let addr = link.as_ptr() as usize;
             if addr & (mem::align_of::<Self>() - 1) > 0 {
-                return Err(Error::InvalidLink);
+                return Err(Error::Link);
             }
 
             Ok((addr as u32) >> 2)

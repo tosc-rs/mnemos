@@ -12,7 +12,6 @@ use crate::{
     registry::{self, known_uuids, Envelope, KernelHandle, RegisteredDriver},
     Kernel,
 };
-use core::{convert::Infallible, fmt, time::Duration};
 use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -114,7 +113,9 @@ pub enum Response {
     /// The 32-bit value from the 48-bit response.
     /// Potentially also includes the data buffer if this was a read command.
     Short {
+        /// The response on the command line.
         value: u32,
+        /// The received data, in case of a read command.
         data: Option<FixedVec<u8>>,
     },
     /// The 128-bit value from the 136-bit response.
@@ -164,8 +165,11 @@ pub struct SdCardClient {
 /// The different types of cards
 #[derive(Debug, PartialEq)]
 pub enum CardType {
+    /// Standard capacity v1
     SD1,
+    /// Standard capacity v2 (or later)
     SD2,
+    /// High capacity
     SDHC,
 }
 
@@ -279,7 +283,7 @@ impl SdCardClient {
         // TODO: limit the number of attempts
         let ocr = loop {
             // Go to *APP* mode before sending application command
-            self.cmd(Command {
+            let _ = self.cmd(Command {
                 index: 55,
                 argument: 0,
                 options: HardwareOptions::None,
@@ -292,7 +296,7 @@ impl SdCardClient {
 
             let mut op_cond_arg = OCR_VOLTAGE_MASK & 0x00ff8000;
             if card_type != CardType::SD1 {
-                op_cond_arg = OCR_HCS | op_cond_arg;
+                op_cond_arg |= OCR_HCS;
             }
             match self
                 .cmd(Command {
@@ -340,7 +344,7 @@ impl SdCardClient {
             })
             .await?
         {
-            Response::Short { .. } => return Err(Error::Response),
+            Response::Short { .. } => Err(Error::Response),
             Response::Long(value) => {
                 tracing::trace!("CMD2 response: {value:?}");
                 // TODO: map [u32; 4] value to u128
@@ -367,7 +371,7 @@ impl SdCardClient {
                 tracing::trace!("CMD3 response: {value:#x}");
                 Ok(RelativeCardAddress(value))
             }
-            Response::Long(_) => return Err(Error::Response),
+            Response::Long(_) => Err(Error::Response),
         }
     }
 
@@ -389,14 +393,14 @@ impl SdCardClient {
                 tracing::trace!("CMD7 response: {value:#x}");
                 Ok(CardStatus(value))
             }
-            Response::Long(_) => return Err(Error::Response),
+            Response::Long(_) => Err(Error::Response),
         }
     }
 
     /// Use 4 data lanes
     pub async fn set_wide_bus(&mut self, rca: RelativeCardAddress) -> Result<CardStatus, Error> {
         // Go to *APP* mode before sending application command
-        self.cmd(Command {
+        let _ = self.cmd(Command {
             index: 55,
             argument: rca.0,
             options: HardwareOptions::None,
