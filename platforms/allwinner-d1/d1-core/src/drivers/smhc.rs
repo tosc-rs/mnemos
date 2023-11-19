@@ -259,7 +259,9 @@ impl Smhc {
             w.dma_rst().set_bit();
             w
         });
-        while self.smhc.smhc_ctrl.read().dma_rst().bit_is_set() {}
+        while self.smhc.smhc_ctrl.read().dma_rst().bit_is_set() {
+            core::hint::spin_loop();
+        }
 
         // Configure the address of the first DMA descriptor
         // Right-shift by 2 because it is a *word-address*.
@@ -274,6 +276,8 @@ impl Smhc {
         self.smhc.smhc_idmac.write(|w| w.idmac_rst().set_bit());
 
         // Configure the burst size and TX/RX trigger level
+        // to the same values as used in the Linux implementation:
+        // Burst size = 8, RX_TL = 7, TX_TL = 8
         self.smhc.smhc_fifoth.write(|w| {
             w.tx_tl().variant(8);
             w.rx_tl().variant(7);
@@ -570,6 +574,9 @@ impl SmhcData {
         tracing::trace!(state = ?self.state, smhc = num, "SMHC{num} interrupt");
 
         let mut needs_wake = false;
+
+        // NOTE: to clear bits in the interrupt status registers,
+        // you have to *write* a 1 to their location (W1C = write 1 to clear).
 
         self.err = Self::error_status(smhc);
         if let Some(err) = self.err {
