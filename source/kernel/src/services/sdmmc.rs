@@ -349,8 +349,12 @@ impl SdCardClient {
             Response::Short { .. } => Err(Error::Response),
             Response::Long(value) => {
                 tracing::trace!("CMD2 response: {value:?}");
-                // TODO: map [u32; 4] value to u128
-                Ok(CardIdentification(0))
+                let mut bytes = [0u8; 16];
+                bytes[0..4].copy_from_slice(&value[0].to_le_bytes());
+                bytes[4..8].copy_from_slice(&value[1].to_le_bytes());
+                bytes[8..12].copy_from_slice(&value[2].to_le_bytes());
+                bytes[12..16].copy_from_slice(&value[3].to_le_bytes());
+                Ok(CardIdentification(u128::from_le_bytes(bytes)))
             }
         }
     }
