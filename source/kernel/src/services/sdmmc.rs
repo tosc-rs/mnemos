@@ -74,7 +74,7 @@ pub enum BusWidth {
     Octo,
 }
 
-/// TODO
+/// Hardware configuration that should be applied as part of the command
 #[derive(Debug, Eq, PartialEq)]
 pub enum HardwareOptions {
     /// No change in configuration
@@ -83,7 +83,7 @@ pub enum HardwareOptions {
     SetBusWidth(BusWidth),
 }
 
-/// TODO
+/// The different types of commands that can be sent to the card
 #[derive(Debug, Eq, PartialEq)]
 pub enum CommandKind {
     /// Command without data transfer
@@ -94,7 +94,7 @@ pub enum CommandKind {
     Write(usize),
 }
 
-/// TODO
+/// The different types of responses that can be sent by the card
 #[derive(Debug, Eq, PartialEq)]
 pub enum ResponseType {
     /// No Response
@@ -119,22 +119,23 @@ pub enum Response {
         data: Option<FixedVec<u8>>,
     },
     /// The 128-bit value from the 136-bit response.
-    // TODO: make this `u128`?
     Long([u32; 4]),
 }
 
-/// TODO
+/// Errors returned by the [`SdmmcService`]
 #[derive(Debug, Eq, PartialEq)]
 pub enum Error {
-    /// TODO
+    /// The service is currently busy and cannot handle the request
     Busy,
-    /// TODO
+    /// Invalid or unexpected response was received
     Response,
-    /// TODO
+    /// Invalid or unexpected data was received
     Data,
-    /// TODO
+    /// The provided buffer does not meet the requirements
+    Buffer,
+    /// A timeout occurred
     Timeout,
-    /// TODO
+    /// A different error has occurred
     Other,
 }
 
@@ -442,7 +443,7 @@ impl SdCardClient {
     ) -> Result<FixedVec<u8>, Error> {
         // The provider buffer should have space for the requested amount of data
         if buf.capacity() < 512 * blocks {
-            return Err(Error::Data);
+            return Err(Error::Buffer);
         }
 
         match self

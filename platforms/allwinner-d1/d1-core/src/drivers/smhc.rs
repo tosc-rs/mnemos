@@ -433,7 +433,7 @@ impl Smhc {
 
                 // Currently we limit the number of data that can be read at once
                 if *cnt > DESCR_BUFF_SIZE * descriptors.len() || buf.capacity() < *cnt {
-                    return Err(sdmmc::Error::Data);
+                    return Err(sdmmc::Error::Buffer);
                 }
 
                 tracing::debug!(cnt, "Creating descriptor chain from buffer");
@@ -456,7 +456,7 @@ impl Smhc {
                         .link((!last).then(|| (&descriptors[index + 1]).into()))
                         .expect("Should be able to link to next descriptor")
                         .buff_slice(slice)
-                        .expect("Should be able to configure data buffer with slice")
+                        .map_err(|_| sdmmc::Error::Buffer)?
                         .build();
                     index += 1;
                 }
@@ -493,7 +493,20 @@ impl Smhc {
         tracing::trace!("SMHC operation completed");
         if let Some(error) = guard.data.err.take() {
             tracing::warn!(?error, "SMHC error");
-            Err(sdmmc::Error::Other) // TODO
+            Err(match error {
+                ErrorKind::Response => sdmmc::Error::Response,
+                ErrorKind::ResponseCrc => sdmmc::Error::Response,
+                ErrorKind::DataCrc => sdmmc::Error::Data,
+                ErrorKind::ResponseTimeout => sdmmc::Error::Timeout,
+                ErrorKind::DataTimeout => sdmmc::Error::Timeout,
+                ErrorKind::DataStarvationTimeout => sdmmc::Error::Timeout,
+                ErrorKind::FifoUnderrunOverflow => sdmmc::Error::Data,
+                ErrorKind::CommandBusyIllegalWrite => sdmmc::Error::Busy,
+                ErrorKind::DataStart => sdmmc::Error::Data,
+                ErrorKind::DataEnd => sdmmc::Error::Data,
+                ErrorKind::Dma => sdmmc::Error::Other,
+                ErrorKind::Other => sdmmc::Error::Other,
+            })
         } else if long_resp {
             Ok(sdmmc::Response::Long([
                 self.smhc.smhc_resp0.read().bits(),
@@ -660,7 +673,7 @@ impl SmhcData {
                             cnt,
                         } => {
                             tracing::trace!("setting buf len: {cnt}");
-                            // TODO: Safety?
+                            // Safety: we have already checked that cnt <= buf capacity
                             unsafe { buf.as_vec_mut().set_len(*cnt) };
                             if *auto_stop {
                                 State::WaitForAutoStop
