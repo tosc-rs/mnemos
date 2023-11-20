@@ -283,16 +283,17 @@ impl SdCardClient {
         // TODO: limit the number of attempts
         let ocr = loop {
             // Go to *APP* mode before sending application command
-            let _ = self.cmd(Command {
-                index: 55,
-                argument: 0,
-                options: HardwareOptions::None,
-                kind: CommandKind::Control,
-                rsp_type: ResponseType::Short,
-                rsp_crc: true,
-                buffer: None,
-            })
-            .await?;
+            let _ = self
+                .cmd(Command {
+                    index: 55,
+                    argument: 0,
+                    options: HardwareOptions::None,
+                    kind: CommandKind::Control,
+                    rsp_type: ResponseType::Short,
+                    rsp_crc: true,
+                    buffer: None,
+                })
+                .await?;
 
             let mut op_cond_arg = OCR_VOLTAGE_MASK & 0x00ff8000;
             if card_type != CardType::SD1 {
@@ -400,16 +401,17 @@ impl SdCardClient {
     /// Use 4 data lanes
     pub async fn set_wide_bus(&mut self, rca: RelativeCardAddress) -> Result<CardStatus, Error> {
         // Go to *APP* mode before sending application command
-        let _ = self.cmd(Command {
-            index: 55,
-            argument: rca.0,
-            options: HardwareOptions::None,
-            kind: CommandKind::Control,
-            rsp_type: ResponseType::Short,
-            rsp_crc: true,
-            buffer: None,
-        })
-        .await?;
+        let _ = self
+            .cmd(Command {
+                index: 55,
+                argument: rca.0,
+                options: HardwareOptions::None,
+                kind: CommandKind::Control,
+                rsp_type: ResponseType::Short,
+                rsp_crc: true,
+                buffer: None,
+            })
+            .await?;
 
         match self
             .cmd(Command {

@@ -186,6 +186,22 @@ impl Smhc {
         )
     }
 
+    /// Initialize SMHC1 for SDIO cards.
+    ///
+    /// # Safety
+    /// TODO
+    pub unsafe fn smhc1(_smhc: SMHC1, _ccu: &mut Ccu, _gpio: &mut GPIO) -> Self {
+        todo!()
+    }
+
+    /// Initialize SMHC2 for MMC cards.
+    ///
+    /// # Safety
+    /// TODO
+    pub unsafe fn smhc2(_smhc: SMHC2, _ccu: &mut Ccu, _gpio: &mut GPIO) -> Self {
+        todo!()
+    }
+
     /// This assumes the GPIO pin mappings and module clock are already configured.
     unsafe fn init(smhc: &'static smhc::RegisterBlock, int: Interrupt, isr: fn()) -> Self {
         // Closure to change the card clock
@@ -306,6 +322,12 @@ impl Smhc {
         Self::reset_fifo(self.smhc);
     }
 
+    /// Returns the interrupt and ISR for this SMHC.
+    pub fn interrupt(&self) -> (Interrupt, fn()) {
+        self.int
+    }
+
+    /// Handle an interrupt for SMHC0
     pub fn handle_smhc0_interrupt() {
         let _isr = kernel::isr::Isr::enter();
         let smhc = unsafe { &*SMHC0::ptr() };
