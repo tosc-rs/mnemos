@@ -756,30 +756,30 @@ mod idmac {
             const _RESERVED_0 = 1;
 
             /// Disable interrupts on completion.
-            const CUR_TXRX_OVER_INT_DIS = 1;
+            const CUR_TXRX_OVER_INT_DIS: bool;
 
-            /// When set to 1, this bit indicates that the buffers this descriptor points to
-            /// are the last data buffer.
-            const LAST_FLAG = 1;
+            /// When set to 1, this bit indicates that the buffer this descriptor points to
+            /// is the last data buffer.
+            const LAST: bool;
 
             /// When set to 1, this bit indicates that this descriptor contains
             /// the first buffer of data. It must be set to 1 in the first DES.
-            const FIRST_FLAG = 1;
+            const FIRST: bool;
 
             /// When set to 1, this bit indicates that the second address in the descriptor
             /// is the next descriptor address. It must be set to 1.
-            const CHAIN_MOD = 1;
+            const CHAIN_MOD: bool;
 
             /// Bits 29:5 are reserved.
             const _RESERVED_1 = 25;
 
             /// When some errors happen in transfer, this bit will be set to 1 by the IDMAC.
-            const ERR_FLAG = 1;
+            const ERR: bool;
 
             /// When set to 1, this bit indicates that the descriptor is owned by the IDMAC.
             /// When this bit is reset, it indicates that the descriptor is owned by the host.
             /// This bit is cleared when the transfer is over.
-            const DES_OWN_FLAG = 1;
+            const DES_OWN: bool;
         }
     }
 
@@ -806,21 +806,21 @@ mod idmac {
 
         pub fn disable_irq(self, val: bool) -> Self {
             Self {
-                cfg: self.cfg.with(Cfg::CUR_TXRX_OVER_INT_DIS, val as u32),
+                cfg: self.cfg.with(Cfg::CUR_TXRX_OVER_INT_DIS, val),
                 ..self
             }
         }
 
         pub fn first(self, val: bool) -> Self {
             Self {
-                cfg: self.cfg.with(Cfg::FIRST_FLAG, val as u32),
+                cfg: self.cfg.with(Cfg::FIRST, val),
                 ..self
             }
         }
 
         pub fn last(self, val: bool) -> Self {
             Self {
-                cfg: self.cfg.with(Cfg::LAST_FLAG, val as u32),
+                cfg: self.cfg.with(Cfg::LAST, val),
                 ..self
             }
         }
@@ -865,7 +865,7 @@ mod idmac {
             let buff_addr = (self.buff.as_mut_ptr() as *mut _ as u32) >> 2;
 
             Descriptor {
-                configuration: self.cfg.with(Cfg::CHAIN_MOD, 1).with(Cfg::DES_OWN_FLAG, 1),
+                configuration: self.cfg.with(Cfg::CHAIN_MOD, true).with(Cfg::DES_OWN, true),
                 buff_size,
                 buff_addr,
                 next_desc: self.link,
