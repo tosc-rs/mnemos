@@ -30,6 +30,7 @@ pub struct Smhc {
     isr: &'static IsrData,
     smhc: &'static smhc::RegisterBlock,
     int: (Interrupt, fn()),
+    num: u8,
 }
 
 /// TODO
@@ -183,6 +184,7 @@ impl Smhc {
             unsafe { &*SMHC0::ptr() },
             Interrupt::SMHC0,
             Self::handle_smhc0_interrupt,
+            0,
         )
     }
 
@@ -203,7 +205,7 @@ impl Smhc {
     }
 
     /// This assumes the GPIO pin mappings and module clock are already configured.
-    unsafe fn init(smhc: &'static smhc::RegisterBlock, int: Interrupt, isr: fn()) -> Self {
+    unsafe fn init(smhc: &'static smhc::RegisterBlock, int: Interrupt, isr: fn(), num: u8) -> Self {
         // Closure to change the card clock
         let prg_clk = || {
             smhc.smhc_cmd.write(|w| {
@@ -257,6 +259,7 @@ impl Smhc {
             smhc,
             isr: &SMHC0_ISR,
             int: (int, isr),
+            num,
         }
     }
 
@@ -355,7 +358,7 @@ impl Smhc {
         Ok(())
     }
 
-    #[tracing::instrument(name = "SMHC", level = tracing::Level::INFO, skip(self, rx))]
+    #[tracing::instrument(name = "SMHC", fields(num = self.num), level = tracing::Level::INFO, skip(self, rx))]
     async fn run(self, rx: registry::listener::RequestStream<SdmmcService>) {
         tracing::info!("starting SMHC driver task");
         loop {
