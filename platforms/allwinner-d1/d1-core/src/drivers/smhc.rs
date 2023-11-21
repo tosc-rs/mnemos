@@ -25,7 +25,6 @@ use kernel::{
     tracing, Kernel,
 };
 
-/// TODO
 pub struct Smhc {
     isr: &'static IsrData,
     smhc: &'static smhc::RegisterBlock,
@@ -33,7 +32,7 @@ pub struct Smhc {
     num: u8,
 }
 
-/// TODO
+/// Data used by a SMHC interrupt.
 struct IsrData {
     data: UnsafeCell<SmhcData>,
 }
@@ -75,7 +74,7 @@ enum SmhcOp {
     },
 }
 
-/// TODO
+/// SMHC state machine
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[allow(dead_code)]
 enum State {
@@ -90,7 +89,7 @@ enum State {
     WaitForAutoStop,
 }
 
-/// TODO
+/// The different errors that can occur in this module.
 #[derive(Debug, Copy, Clone)]
 #[non_exhaustive]
 pub enum ErrorKind {
@@ -127,7 +126,8 @@ impl Smhc {
     /// Initialize SMHC0 for SD cards.
     ///
     /// # Safety
-    /// TODO
+    /// - The `SMHC0` register block must not be concurrently written to.
+    /// - This function should be called only while running on an Allwinner D1.
     pub unsafe fn smhc0(mut smhc: SMHC0, ccu: &mut Ccu, gpio: &mut GPIO) -> Self {
         // Configure default pin mapping for TF (micro SD) card socket.
         // This is valid for the Lichee RV SOM and Mango Pi MQ Pro.
