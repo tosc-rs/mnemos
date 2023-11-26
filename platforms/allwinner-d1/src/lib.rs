@@ -24,8 +24,7 @@ use core::{
 };
 use d1_pac::{Interrupt, TIMER};
 use kernel::{
-    mnemos_alloc::containers::{Box, FixedVec},
-    services::sdmmc::SdCardClient,
+    mnemos_alloc::containers::Box,
     tracing::{self, Instrument},
     Kernel, KernelServiceSettings, KernelSettings,
 };
@@ -158,43 +157,6 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
 
     #[cfg(feature = "sharp-display")]
     d1.initialize_sharp_display();
-
-    // #[cfg(feature = "sdcard")]
-    d1.kernel
-        .initialize(async move {
-            let mut sdcard = SdCardClient::from_registry(d1.kernel)
-                .await
-                .expect("no sdmmc service running!");
-
-            d1.kernel.sleep(core::time::Duration::from_secs(3)).await;
-            tracing::debug!("resetting the SD card");
-
-            sdcard.reset().await.expect("can't reset the SD card");
-            let card_type = sdcard
-                .initialize()
-                .await
-                .expect("can't initialize the SD card");
-            tracing::debug!("initialized card of type {card_type:?}");
-
-            sdcard.get_cid().await.expect("can't get CID");
-            let rca = sdcard.get_rca().await.expect("can't get RCA");
-            let card_status = sdcard.select(rca).await.expect("can't select card");
-            tracing::debug!("card status: {card_status:?}");
-            sdcard
-                .set_wide_bus(rca)
-                .await
-                .expect("can't set wide bus mode");
-
-            let buffer = FixedVec::new(16 * 512).await;
-            match sdcard.read(2048, 16, buffer).await {
-                Ok(buffer) => {
-                    let tmp = &buffer.as_slice()[0..16];
-                    tracing::info!("Read data from SD card: {tmp:?}")
-                }
-                Err(_) => tracing::error!("Failed to read SD card"),
-            }
-        })
-        .expect("failed to spawn sdcard client");
 
     d1.run()
 }
