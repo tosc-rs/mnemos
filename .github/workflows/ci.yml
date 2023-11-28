@@ -102,7 +102,9 @@ jobs:
     - name: install rust toolchain
       run: rustup show
     - name: install nextest
-      uses: taiki-e/install-action@nextest
+      uses: taiki-e/install-action@v2
+      with:
+        tool: cargo-nextest@0.9.61
     - uses: actions/checkout@v2
     - uses: extractions/setup-just@v1
     - name: just test
