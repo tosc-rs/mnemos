@@ -17,7 +17,7 @@ use uuid::Uuid;
 use crate::{
     comms::oneshot::Reusable,
     mnemos_alloc::containers::HeapArray,
-    registry::{self, Envelope, KernelHandle, RegisteredDriver},
+    registry::{self, Envelope, KernelHandle, Service},
     Kernel,
 };
 
@@ -33,7 +33,7 @@ use crate::{
 pub struct EmbDisplayService;
 
 // impl EmbDisplay
-impl RegisteredDriver for EmbDisplayService {
+impl Service for EmbDisplayService {
     type Request = Request;
     type Response = Response;
     type Error = FrameError;

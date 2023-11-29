@@ -43,9 +43,7 @@ use core::convert::Infallible;
 use crate::{
     comms::oneshot::Reusable,
     forth::{self, Forth},
-    registry::{
-        self, known_uuids::kernel::FORTH_SPAWNULATOR, Envelope, KernelHandle, RegisteredDriver,
-    },
+    registry::{self, known_uuids::kernel::FORTH_SPAWNULATOR, Envelope, KernelHandle, Service},
     Kernel,
 };
 use serde::{Deserialize, Serialize};
@@ -56,7 +54,7 @@ use uuid::Uuid;
 ////////////////////////////////////////////////////////////////////////////////
 pub struct SpawnulatorService;
 
-impl RegisteredDriver for SpawnulatorService {
+impl Service for SpawnulatorService {
     type Request = Request;
     type Response = Response;
     type Error = Infallible;

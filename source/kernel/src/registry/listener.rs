@@ -1,17 +1,14 @@
 //! A [`Listener`] is used by a [`RegisteredDriver`] to [accept incoming
 //! connections](Handshake) from clients.
 #![warn(missing_docs)]
-use super::{Message, RegisteredDriver};
-use crate::comms::{
-    kchannel::{KChannel, KConsumer, KProducer},
-    oneshot,
-};
+use super::{Message, Service};
+use calliope::tricky_pipe::{bidi::BiDi, mpsc, oneshot};
 use futures::{select_biased, FutureExt};
 
 /// A listener for incoming connection [`Handshake`]s to a [`RegisteredDriver`].
 #[must_use = "a `Listener` does nothing if incoming connections are not accepted"]
-pub struct Listener<D: RegisteredDriver> {
-    rx: KConsumer<Handshake<D>>,
+pub struct Listener<D: Service> {
+    rx: mpsc::Receiver<Handshake<D>>,
 }
 
 /// A registration for a [`RegisteredDriver`]. This type is provided to
@@ -19,8 +16,8 @@ pub struct Listener<D: RegisteredDriver> {
 ///
 /// [`Registry::register`]: crate::registry::Registry::register
 #[must_use = "a `Registration` does nothing if not registered with a `Registry`"]
-pub struct Registration<D: RegisteredDriver> {
-    pub(super) tx: KProducer<Handshake<D>>,
+pub struct Registration<D: Service> {
+    pub(super) tx: mpsc::Sender<Handshake<D>>,
 }
 
 /// A connection request received from a [`Listener`].
@@ -33,7 +30,7 @@ pub struct Registration<D: RegisteredDriver> {
 /// [`Hello`]: RegisteredDriver::Hello
 #[must_use = "a `Handshake` does nothing if not `accept`ed or `reject`ed"]
 #[non_exhaustive]
-pub struct Handshake<D: RegisteredDriver> {
+pub struct Handshake<D: Service> {
     /// The [`RegisteredDriver::Hello`] message sent by the client to identify
     /// the requested incoming connection.
     pub hello: D::Hello,
@@ -51,7 +48,7 @@ pub struct Handshake<D: RegisteredDriver> {
 
 /// Accepts or rejects an incoming connection [`Handshake`].
 #[must_use = "an `Accept` does nothing if not `accept`ed or `reject`ed"]
-pub struct Accept<D: RegisteredDriver> {
+pub struct Accept<D: Service> {
     pub(super) reply: oneshot::Sender<Result<Channel<D>, D::ConnectError>>,
 }
 
@@ -84,9 +81,9 @@ pub struct Accept<D: RegisteredDriver> {
 /// [`Hello`]: RegisteredDriver::Hello
 /// [`ConnectError`]: RegisteredDriver::ConnectError
 #[must_use = "a `RequestStream` does nothing if `next_request` is not called"]
-pub struct RequestStream<D: RegisteredDriver> {
-    chan: KConsumer<Message<D>>,
-    listener: Listener<D>,
+pub struct RequestStream<D: Service> {
+    // chan: KConsumer<Message<D>>,
+    // listener: Listener<D>,
 }
 
 /// Errors returned by [`Handshake::accept`], [`Accept::accept`],
@@ -97,18 +94,21 @@ pub enum AcceptError {
     Canceled,
 }
 
-type Channel<D> = KProducer<Message<D>>;
+pub type Channel<D> =
+    BiDi<<D as Service>::ClientMsg, <D as Service>::ServerMsg, calliope::message::Reset>;
 
 // === impl Listener ===
 
-impl<D: RegisteredDriver> Listener<D> {
+impl<D: Service> Listener<D> {
     /// Returns a new `Listener` and an associated [`Registration`].
     ///
     /// The `Listener`'s channel will have capacity for up to
     /// `incoming_capacity` un-accepted connections before clients have to wait
     /// to send a connection.
-    pub async fn new(incoming_capacity: usize) -> (Self, Registration<D>) {
-        let (tx, rx) = KChannel::new(incoming_capacity).split();
+    pub async fn new(incoming_capacity: u8) -> (Self, Registration<D>) {
+        let pipe = mpsc::TrickyPipe::new(incoming_capacity);
+        let tx = pipe.sender();
+        let rx = pipe.receiver().unwrap();
         let registration = Registration { tx };
         let listener = Self { rx };
         (listener, registration)
@@ -161,17 +161,18 @@ impl<D: RegisteredDriver> Listener<D> {
     ///
     /// [`Hello`]: RegisteredDriver::Hello
     pub async fn into_request_stream(self, capacity: usize) -> RequestStream<D> {
-        let chan = KChannel::new(capacity).into_consumer();
-        RequestStream {
-            chan,
-            listener: self,
-        }
+        //     let chan = KChannel::new(capacity).into_consumer();
+        //     RequestStream {
+        //         chan,
+        //         listener: self,
+        //     }
+        todo!()
     }
 }
 
 // === impl Handshake ===
 
-impl<D: RegisteredDriver> Handshake<D> {
+impl<D: Service> Handshake<D> {
     /// Accept the connection, returning the provided `channel` to the client.
     ///
     /// Any requests sent by the client once the connection has been accepted
@@ -204,7 +205,7 @@ impl<D: RegisteredDriver> Handshake<D> {
 
 // === impl Accept ===
 
-impl<D: RegisteredDriver> Accept<D> {
+impl<D: Service> Accept<D> {
     /// Accept the connection, returning the provided `channel` to the client.
     ///
     /// Any requests sent by the client once the connection has been accepted
@@ -219,13 +220,9 @@ impl<D: RegisteredDriver> Accept<D> {
     ///   connection (and may or may not still exist), and the service may
     ///   ignore this connection request.
     pub fn accept(self, channel: Channel<D>) -> Result<(), AcceptError> {
-        match self.reply.send(Ok(channel)) {
-            Ok(()) => Ok(()),
-            Err(oneshot::ReusableError::ChannelClosed) => Err(AcceptError::Canceled),
-            Err(error) => unreachable!(
-                "we are the sender, so we should only ever see `ChannelClosed` errors: {error:?}"
-            ),
-        }
+        self.reply
+            .send(Ok(channel))
+            .map_err(|_| AcceptError::Canceled)
     }
 
     /// Reject the connection, returning the provided `error` to the client.
@@ -237,19 +234,15 @@ impl<D: RegisteredDriver> Accept<D> {
     /// - [`Err`]`(`[`AcceptError`]`)` if the connection was canceled by the
     ///   client.
     pub fn reject(self, error: D::ConnectError) -> Result<(), AcceptError> {
-        match self.reply.send(Err(error)) {
-            Ok(()) => Ok(()),
-            Err(oneshot::ReusableError::ChannelClosed) => Err(AcceptError::Canceled),
-            Err(error) => unreachable!(
-                "we are the sender, so we should only ever see `ChannelClosed` errors: {error:?}"
-            ),
-        }
+        self.reply
+            .send(Err(error))
+            .map_err(|_| AcceptError::Canceled)
     }
 }
 
 // === impl RequestStream ===
 
-impl<D: RegisteredDriver> RequestStream<D> {
+impl<D: Service> RequestStream<D> {
     /// Returns the next incoming message, accepting any new connections until a
     /// message is received.
     ///

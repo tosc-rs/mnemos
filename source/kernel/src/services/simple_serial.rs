@@ -11,7 +11,7 @@ use crate::comms::bbq::BidiHandle;
 use crate::comms::oneshot::Reusable;
 use crate::Kernel;
 
-use crate::registry::{self, known_uuids, Envelope, KernelHandle, RegisteredDriver, ReplyTo};
+use crate::registry::{self, known_uuids, Envelope, KernelHandle, ReplyTo, Service};
 
 ////////////////////////////////////////////////////////////////////////////////
 // Service Definition
@@ -19,7 +19,7 @@ use crate::registry::{self, known_uuids, Envelope, KernelHandle, RegisteredDrive
 
 pub struct SimpleSerialService;
 
-impl RegisteredDriver for SimpleSerialService {
+impl Service for SimpleSerialService {
     type Request = Request;
     type Response = Response;
     type Error = SimpleSerialError;

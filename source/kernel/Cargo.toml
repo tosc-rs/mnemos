@@ -35,6 +35,11 @@ serial-trace = ["mnemos-trace-proto", "tracing-core", "tracing-serde-structured"
 
 [dependencies]
 
+[dependencies.calliope]
+git = "https://github.com/tosc-rs/mgnp"
+branch = "eliza/arc-owns-pipe"
+features = ["alloc"]
+
 [dependencies.futures]
 version = "0.3.21"
 features = ["async-await"]

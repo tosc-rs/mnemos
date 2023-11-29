@@ -6,6 +6,10 @@ use core::{
 };
 
 use crate::comms::{kchannel, oneshot::Reusable};
+pub use calliope::{
+    req_rsp::{Request, Response},
+    Service as UserService,
+};
 use maitake::sync::{RwLock, WaitQueue};
 use mnemos_alloc::containers::FixedVec;
 use portable_atomic::{AtomicU32, Ordering};
@@ -67,16 +71,9 @@ pub mod known_uuids {
 /// [`Registry::try_connect`], [`Registry::connect_userspace`], or
 /// [`Registry::try_connect_userspace] (depending on the service), after
 /// the service has been registered.
-pub trait RegisteredDriver {
-    /// This is the type of the request sent TO the driver service
-    type Request: 'static;
-
-    /// This is the type of a SUCCESSFUL response sent FROM the driver service
-    type Response: 'static;
-
-    /// This is the type of an UNSUCCESSFUL response sent FROM the driver service
-    type Error: 'static;
-
+pub trait Service {
+    type ClientMsg: 'static;
+    type ServerMsg: 'static;
     /// An initial message sent to the service by a client when establishing a
     /// connection.
     ///
@@ -104,9 +101,8 @@ pub trait RegisteredDriver {
     fn type_id() -> RegistryType {
         RegistryType {
             tuple_type_id: TypeId::of::<(
-                Self::Request,
-                Self::Response,
-                Self::Error,
+                Self::ClientMsg,
+                Self::ServerMsg,
                 Self::Hello,
                 Self::ConnectError,
             )>(),
@@ -224,7 +220,7 @@ pub struct OpenEnvelope<P> {
 /// It contains the Request, e.g. [RegisteredDriver::Request], as well
 /// as a [ReplyTo] that allows the driver service to respond to a given
 /// request
-pub struct Message<RD: RegisteredDriver> {
+pub struct Message<RD: Service> {
     pub msg: Envelope<RD::Request>,
     pub reply: ReplyTo<RD>,
 }
@@ -233,7 +229,7 @@ pub struct Message<RD: RegisteredDriver> {
 /// way that the driver SERVICE replies to us. Essentially, this acts
 /// as a "self addressed stamped envelope" for the SERVICE to use to
 /// reply to the CLIENT.
-pub enum ReplyTo<RD: RegisteredDriver> {
+pub enum ReplyTo<RD: Service> {
     // This can be used to reply directly to another kernel entity,
     // without a serialization step
     KChannel(KProducer<Envelope<Result<RD::Response, RD::Error>>>),
@@ -271,7 +267,7 @@ pub enum RegistrationError {
 }
 
 /// Errors returned by [`Registry::connect`] and [`Registry::try_connect`].
-pub enum ConnectError<D: RegisteredDriver> {
+pub enum ConnectError<D: Service> {
     /// No [`RegisteredDriver`] of this type was found!
     ///
     /// The [`RegisteredDriver::Hello`] message is returned, so that it can be
@@ -286,7 +282,7 @@ pub enum ConnectError<D: RegisteredDriver> {
 
 /// Errors returned by [`Registry::connect_userspace`] and
 /// [`Registry::try_connect_userspace`].
-pub enum UserConnectError<D: RegisteredDriver> {
+pub enum UserConnectError<D: Service> {
     /// No [`RegisteredDriver`] of this type was found!
     NotFound,
     /// The remote [`RegisteredDriver`] rejected the connection.
@@ -348,7 +344,7 @@ pub struct UserspaceHandle {
 
 /// A KernelHandle is used to send typed messages to a kernelspace Driver
 /// service.
-pub struct KernelHandle<RD: RegisteredDriver> {
+pub struct KernelHandle<RD: Service> {
     prod: KProducer<Message<RD>>,
     service_id: ServiceId,
     client_id: ClientId,
@@ -376,9 +372,7 @@ type ErasedHandshake = unsafe fn(
 /// without knowing the proper typeid. Kernel space drivers should always check that the
 /// tuple type id is correct.
 struct RegistryValue {
-    req_resp_tuple_id: TypeId,
     conn_prod: ErasedKProducer,
-    user_vtable: Option<UserVtable>,
     service_id: ServiceId,
 }
 
@@ -435,7 +429,7 @@ impl Registry {
     /// with [`Registry::bind`] which allows for userspace access.
     pub async fn bind_konly<RD>(&self, capacity: usize) -> Result<Listener<RD>, RegistrationError>
     where
-        RD: RegisteredDriver,
+        RD: Service,
     {
         let (listener, registration) = Listener::new(capacity).await;
         self.register_konly(registration).await?;
@@ -455,13 +449,9 @@ impl Registry {
     /// [`DeserializeOwned`]. Driver services whose message types are *not*
     /// serializable may still bind listeners using [`Registry::bind_konly`],
     /// but these listeners will not be accessible from userspace.
-    pub async fn bind<RD>(&self, capacity: usize) -> Result<Listener<RD>, RegistrationError>
+    pub async fn bind<S>(&self, capacity: usize) -> Result<Listener<S>, RegistrationError>
     where
-        RD: RegisteredDriver + 'static,
-        RD::Hello: Serialize + DeserializeOwned,
-        RD::ConnectError: Serialize + DeserializeOwned,
-        RD::Request: Serialize + DeserializeOwned,
-        RD::Response: Serialize + DeserializeOwned,
+        S: UserService,
     {
         let (listener, registration) = Listener::new(capacity).await;
         self.register(registration).await?;
@@ -481,7 +471,7 @@ impl Registry {
         fields(svc = %any::type_name::<RD>()),
         err(Display),
     )]
-    pub async fn register_konly<RD: RegisteredDriver>(
+    pub async fn register_konly<RD: Service>(
         &self,
         registration: listener::Registration<RD>,
     ) -> Result<(), RegistrationError> {
@@ -512,26 +502,22 @@ impl Registry {
         name = "Registry::register",
         level = Level::INFO,
         skip(self, registration),
-        fields(svc = %any::type_name::<RD>()),
+        fields(svc = %any::type_name::<S>()),
         err(Display),
     )]
-    pub async fn register<RD>(
+    pub async fn register<S>(
         &self,
-        registration: listener::Registration<RD>,
+        registration: listener::Registration<S>,
     ) -> Result<(), RegistrationError>
     where
-        RD: RegisteredDriver + 'static,
-        RD::Hello: Serialize + DeserializeOwned,
-        RD::ConnectError: Serialize + DeserializeOwned,
-        RD::Request: Serialize + DeserializeOwned,
-        RD::Response: Serialize + DeserializeOwned,
+        S: UserService + 'static,
     {
         let service_id = self.counter.fetch_add(1, Ordering::Relaxed);
         let conn_prod = registration.tx.type_erase();
         self.insert_item(RegistryItem {
-            key: RD::UUID,
+            key: S::UUID,
             value: RegistryValue {
-                req_resp_tuple_id: RD::type_id().type_of(),
+                req_resp_tuple_id: S::type_id().type_of(),
                 conn_prod,
                 user_vtable: Some(UserVtable::new::<RD>()),
                 service_id: ServiceId(service_id),
@@ -579,7 +565,7 @@ impl Registry {
         skip(self, hello),
         fields(svc = %any::type_name::<RD>()),
     )]
-    pub async fn try_connect<RD: RegisteredDriver>(
+    pub async fn try_connect<RD: Service>(
         &self,
         hello: RD::Hello,
     ) -> Result<KernelHandle<RD>, ConnectError<RD>> {
@@ -687,7 +673,7 @@ impl Registry {
     )]
     pub async fn connect<RD>(&self, hello: RD::Hello) -> Result<KernelHandle<RD>, ConnectError<RD>>
     where
-        RD: RegisteredDriver,
+        RD: Service,
     {
         let mut hello = Some(hello);
         let mut is_full = false;
@@ -734,7 +720,7 @@ impl Registry {
         user_hello: &[u8],
     ) -> Result<UserspaceHandle, UserConnectError<RD>>
     where
-        RD: RegisteredDriver,
+        RD: Service,
         RD::Hello: Serialize + DeserializeOwned,
         RD::ConnectError: Serialize + DeserializeOwned,
         RD::Request: Serialize + DeserializeOwned,
@@ -775,7 +761,7 @@ impl Registry {
         user_hello: &[u8],
     ) -> Result<UserspaceHandle, UserConnectError<RD>>
     where
-        RD: RegisteredDriver,
+        RD: Service,
         RD::Hello: Serialize + DeserializeOwned,
         RD::ConnectError: Serialize + DeserializeOwned,
         RD::Request: Serialize + DeserializeOwned,
@@ -867,7 +853,7 @@ impl Registry {
         Ok(())
     }
 
-    fn get<RD: RegisteredDriver>(items: &FixedVec<RegistryItem>) -> Option<&RegistryItem> {
+    fn get<RD: Service>(items: &FixedVec<RegistryItem>) -> Option<&RegistryItem> {
         let Some(item) = items.as_slice().iter().find(|i| i.key == RD::UUID) else {
             debug!(
                 svc = %any::type_name::<RD>(),
@@ -956,7 +942,7 @@ impl<P> Envelope<P> {
 
 // Message
 
-impl<RD: RegisteredDriver> Message<RD> {
+impl<RD: Service> Message<RD> {
     // Would adding type aliases really make this any better? Who cares.
     #[allow(clippy::type_complexity)]
     pub fn split(
@@ -974,7 +960,7 @@ impl<RD: RegisteredDriver> Message<RD> {
 
 // ReplyTo
 
-impl<RD: RegisteredDriver> ReplyTo<RD> {
+impl<RD: Service> ReplyTo<RD> {
     pub async fn reply_konly(
         self,
         envelope: Envelope<Result<RD::Response, RD::Error>>,
@@ -999,7 +985,7 @@ impl<RD: RegisteredDriver> ReplyTo<RD> {
     }
 }
 
-impl<RD: RegisteredDriver> ReplyTo<RD>
+impl<RD: Service> ReplyTo<RD>
 where
     RD::Response: Serialize + MaxSize,
     RD::Error: Serialize + MaxSize,
@@ -1070,7 +1056,7 @@ impl UserspaceHandle {
 
 // KernelHandle
 
-impl<RD: RegisteredDriver> KernelHandle<RD> {
+impl<RD: Service> KernelHandle<RD> {
     pub async fn send(&mut self, msg: RD::Request, reply: ReplyTo<RD>) -> Result<(), SendError> {
         let request_id = RequestResponseId::new(self.request_ctr, MessageKind::Request);
         self.request_ctr = self.request_ctr.wrapping_add(1);
@@ -1116,7 +1102,7 @@ impl<RD: RegisteredDriver> KernelHandle<RD> {
 impl UserVtable {
     const fn new<RD>() -> Self
     where
-        RD: RegisteredDriver + 'static,
+        RD: Service + 'static,
         RD::Hello: Serialize + DeserializeOwned,
         RD::ConnectError: Serialize + DeserializeOwned,
         RD::Request: Serialize + DeserializeOwned,
@@ -1145,7 +1131,7 @@ unsafe fn map_deser<RD>(
     client_id: ClientId,
 ) -> Result<(), UserHandlerError>
 where
-    RD: RegisteredDriver,
+    RD: Service,
     RD::Request: Serialize + DeserializeOwned,
     RD::Response: Serialize + DeserializeOwned,
 {
@@ -1207,7 +1193,7 @@ unsafe fn erased_user_handshake<RD>(
     outptr: core::ptr::NonNull<()>,
 ) -> maitake::task::JoinHandle<Result<(), postcard::Error>>
 where
-    RD: RegisteredDriver + 'static,
+    RD: Service + 'static,
     RD::Hello: Serialize + DeserializeOwned,
     RD::ConnectError: Serialize + DeserializeOwned,
     RD::Request: Serialize + DeserializeOwned,
@@ -1275,7 +1261,7 @@ impl fmt::Display for UserHandlerError {
 
 impl<D> PartialEq for ConnectError<D>
 where
-    D: RegisteredDriver,
+    D: Service,
     D::ConnectError: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
@@ -1290,14 +1276,14 @@ where
 
 impl<D> Eq for ConnectError<D>
 where
-    D: RegisteredDriver,
+    D: Service,
     D::ConnectError: Eq,
 {
 }
 
 impl<D> fmt::Debug for ConnectError<D>
 where
-    D: RegisteredDriver,
+    D: Service,
     D::ConnectError: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1317,7 +1303,7 @@ where
 
 impl<D> fmt::Display for ConnectError<D>
 where
-    D: RegisteredDriver,
+    D: Service,
     D::ConnectError: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1334,7 +1320,7 @@ where
 
 impl<D> PartialEq for UserConnectError<D>
 where
-    D: RegisteredDriver,
+    D: Service,
     D::ConnectError: PartialEq,
 {
     fn eq(&self, other: &Self) -> bool {
@@ -1351,14 +1337,14 @@ where
 
 impl<D> Eq for UserConnectError<D>
 where
-    D: RegisteredDriver,
+    D: Service,
     D::ConnectError: Eq,
 {
 }
 
 impl<D> fmt::Debug for UserConnectError<D>
 where
-    D: RegisteredDriver,
+    D: Service,
     D::ConnectError: fmt::Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1385,7 +1371,7 @@ where
 
 impl<D> fmt::Display for UserConnectError<D>
 where
-    D: RegisteredDriver,
+    D: Service,
     D::ConnectError: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -1419,4 +1405,19 @@ impl fmt::Display for RegistrationError {
             }
         }
     }
+}
+
+impl<R> calliope::Service for R
+where
+    R: Service,
+    R::Hello: Serialize + DeserializeOwned + Send + Sync + 'static,
+    R::ClientMsg: Serialize + DeserializeOwned + Send + Sync + 'static,
+    R::ServerMsg: Serialize + DeserializeOwned + Send + Sync + 'static,
+    R::ConnectError: Serialize + DeserializeOwned + Send + Sync + 'static,
+{
+    const UUID: Uuid = R::UUID;
+    type ClientMsg = R::ClientMsg;
+    type ServerMsg = R::ServerMsg;
+    type Hello = R::Hello;
+    type ConnectError = R::ConnectError;
 }

@@ -5,7 +5,7 @@ use crate::{comms, test_util::TestKernel, Kernel};
 
 struct TestService;
 
-impl RegisteredDriver for TestService {
+impl Service for TestService {
     type Request = TestMessage;
     type Response = TestMessage;
     type Error = TestMessage;

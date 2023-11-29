@@ -15,9 +15,7 @@ use crate::{
         oneshot::Reusable,
     },
     mnemos_alloc::containers::FixedVec,
-    registry::{
-        self, known_uuids, listener, Envelope, KernelHandle, OneshotRequestError, RegisteredDriver,
-    },
+    registry::{self, known_uuids, listener, Envelope, KernelHandle, OneshotRequestError, Service},
     services::serial_mux,
     Kernel,
 };
@@ -34,7 +32,7 @@ use uuid::Uuid;
 /// Service definition for the keyboard multiplexer.
 pub struct KeyboardMuxService;
 
-impl RegisteredDriver for KeyboardMuxService {
+impl Service for KeyboardMuxService {
     type Request = Publish;
     type Response = Response;
     type Error = core::convert::Infallible;

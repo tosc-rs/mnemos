@@ -8,7 +8,7 @@
 use crate::comms::bbq::GrantR;
 use crate::{
     comms::{bbq, oneshot::Reusable},
-    registry::{self, Envelope, KernelHandle, Message, RegisteredDriver},
+    registry::{self, Envelope, KernelHandle, Message, Service},
     services::simple_serial::{SimpleSerialClient, SimpleSerialService},
     Kernel,
 };
@@ -29,7 +29,7 @@ pub use sermux_proto::WellKnown;
 /// SerialMux is the registered driver type
 pub struct SerialMuxService;
 
-impl RegisteredDriver for SerialMuxService {
+impl Service for SerialMuxService {
     type Request = Request;
     type Response = Response;
     type Error = SerialMuxError;

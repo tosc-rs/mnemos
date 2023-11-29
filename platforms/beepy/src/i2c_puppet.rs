@@ -12,7 +12,7 @@ use kernel::{
     embedded_hal_async::i2c::{self, I2c},
     maitake::sync::WaitCell,
     mnemos_alloc::containers::FixedVec,
-    registry::{self, Envelope, KernelHandle, RegisteredDriver},
+    registry::{self, Envelope, KernelHandle, Service},
     retry::{AlwaysRetry, ExpBackoff, Retry, WithMaxRetries},
     services::{
         i2c::{I2cClient, I2cError, I2cService},
@@ -31,7 +31,7 @@ use uuid::{uuid, Uuid};
 ////////////////////////////////////////////////////////////////////////////////
 pub struct I2cPuppetService;
 
-impl RegisteredDriver for I2cPuppetService {
+impl Service for I2cPuppetService {
     type Request = Request;
     type Response = Response;
     type Error = Error;

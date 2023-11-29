@@ -19,7 +19,7 @@ use crate::{
         kchannel::{self, KChannel},
         oneshot,
     },
-    registry::{self, known_uuids, RegisteredDriver},
+    registry::{self, known_uuids, Service},
     Kernel,
 };
 
@@ -32,7 +32,7 @@ pub mod mux;
 
 pub struct KeyboardService;
 
-impl RegisteredDriver for KeyboardService {
+impl Service for KeyboardService {
     type Request = Subscribe;
     type Response = Subscribed;
     type Error = KeyboardError;

@@ -15,7 +15,7 @@ use kernel::{
     comms::oneshot::Reusable,
     maitake::sync::WaitCell,
     mnemos_alloc::containers::FixedVec,
-    registry::{self, uuid, Envelope, KernelHandle, Message, RegisteredDriver, ReplyTo, Uuid},
+    registry::{self, uuid, Envelope, KernelHandle, Message, ReplyTo, Service, Uuid},
     Kernel,
 };
 
@@ -89,7 +89,7 @@ pub unsafe fn kernel_spim1(mut spi1: SPI_DBI, ccu: &mut Ccu, gpio: &mut GPIO) ->
     Spim1 { _x: () }
 }
 
-impl RegisteredDriver for SpiSender {
+impl Service for SpiSender {
     type Request = SpiSenderRequest;
     type Response = SpiSenderResponse;
     type Error = SpiSenderError;

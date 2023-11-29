@@ -97,7 +97,7 @@ use crate::{
         oneshot::{self, Reusable},
     },
     mnemos_alloc::containers::FixedVec,
-    registry::{self, known_uuids, Envelope, KernelHandle, RegisteredDriver},
+    registry::{self, known_uuids, Envelope, KernelHandle, Service},
     Kernel,
 };
 use core::{convert::Infallible, fmt};
@@ -114,7 +114,7 @@ use uuid::Uuid;
 /// using this service.
 pub struct I2cService;
 
-impl RegisteredDriver for I2cService {
+impl Service for I2cService {
     type Request = StartTransaction;
     type Response = Transaction;
     type Error = core::convert::Infallible;
