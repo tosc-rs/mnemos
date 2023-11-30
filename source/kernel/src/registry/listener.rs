@@ -1,7 +1,7 @@
 //! A [`Listener`] is used by a [`RegisteredDriver`] to [accept incoming
 //! connections](Handshake) from clients.
 #![warn(missing_docs)]
-use super::{Message, Service};
+use super::Service;
 use calliope::tricky_pipe::{bidi::BiDi, mpsc, oneshot};
 use futures::{select_biased, FutureExt};
 
@@ -48,8 +48,8 @@ pub struct Handshake<D: Service> {
 
 /// Accepts or rejects an incoming connection [`Handshake`].
 #[must_use = "an `Accept` does nothing if not `accept`ed or `reject`ed"]
-pub struct Accept<D: Service> {
-    pub(super) reply: oneshot::Sender<Result<Channel<D>, D::ConnectError>>,
+pub struct Accept<S: Service> {
+    pub(super) reply: oneshot::Sender<HandshakeResult<S>>,
 }
 
 /// A stream of incoming requests from all clients.
@@ -96,6 +96,8 @@ pub enum AcceptError {
 
 pub type Channel<D> =
     BiDi<<D as Service>::ClientMsg, <D as Service>::ServerMsg, calliope::message::Reset>;
+
+pub(super) type HandshakeResult<S> = Result<Channel<S>, <S as Service>::ConnectError>;
 
 // === impl Listener ===
 

@@ -82,6 +82,12 @@ impl<T> Arc<T> {
     pub unsafe fn increment_strong_count(ptr: *const T) {
         alloc::sync::Arc::increment_strong_count(ptr)
     }
+
+    #[inline(always)]
+    #[must_use]
+    pub fn into_inner(self) -> alloc::sync::Arc<T> {
+        self.inner
+    }
 }
 
 impl<T> Clone for Arc<T> {

@@ -849,7 +849,7 @@ dependencies = [
 [[package]]
 name = "calliope"
 version = "0.1.0"
-source = "git+https://github.com/tosc-rs/mgnp?branch=eliza/arc-owns-pipe#8e6f89398c6dae35f4b5dd360ce03ab1825e8417"
+source = "git+https://github.com/tosc-rs/mgnp?branch=eliza/erased-tx#72ae9cd441d165ae8ec41e81fe7192b22a1e6f68"
 dependencies = [
  "cobs",
  "futures",
@@ -8894,7 +8894,7 @@ dependencies = [
 [[package]]
 name = "tricky-pipe"
 version = "0.1.0"
-source = "git+https://github.com/tosc-rs/mgnp?branch=eliza/arc-owns-pipe#8e6f89398c6dae35f4b5dd360ce03ab1825e8417"
+source = "git+https://github.com/tosc-rs/mgnp?branch=eliza/erased-tx#72ae9cd441d165ae8ec41e81fe7192b22a1e6f68"
 dependencies = [
  "futures",
  "maitake-sync 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -9043,7 +9043,7 @@ version = "1.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
 dependencies = [
- "cfg-if 1.0.0",
+ "cfg-if 0.1.10",
  "static_assertions",
 ]
 
