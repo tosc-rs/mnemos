@@ -37,7 +37,7 @@ serial-trace = ["mnemos-trace-proto", "tracing-core", "tracing-serde-structured"
 
 [dependencies.calliope]
 git = "https://github.com/tosc-rs/mgnp"
-branch = "eliza/erased-tx"
+branch = "eliza/pub-reqresp"
 features = ["alloc"]
 
 [dependencies.futures]

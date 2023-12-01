@@ -5,15 +5,18 @@ use core::{
     mem, ptr,
 };
 
-use crate::comms::{kchannel, oneshot::Reusable};
+use crate::comms::{
+    bbq, bidi,
+    mpsc::{
+        self,
+        error::{RecvError, SendError},
+        ErasedPermit, ErasedSender,
+    },
+};
 pub use calliope::{
     message::Reset,
     req_rsp::{Request, Response},
-    tricky_pipe::{
-        bidi,
-        mpsc::{ErasedPermit, ErasedSender},
-        oneshot,
-    },
+    tricky_pipe::oneshot,
     Service as UserService,
 };
 use maitake::sync::{RwLock, WaitQueue};
@@ -21,12 +24,12 @@ use mnemos_alloc::containers::{Arc, FixedVec};
 use portable_atomic::{AtomicU32, Ordering};
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use spitebuf::EnqueueError;
 use tracing::{self, debug, info, trace, warn, Level};
 pub use uuid::{uuid, Uuid};
 
 pub mod listener;
 pub use self::listener::{Listener, Registration};
+mod req_rsp;
 
 #[cfg(test)]
 mod tests;
@@ -72,8 +75,8 @@ pub mod known_uuids {
 /// [`Registry::try_connect_userspace] (depending on the service), after
 /// the service has been registered.
 pub trait Service {
-    type ClientMsg: 'static;
-    type ServerMsg: 'static;
+    type ClientMsg: Send + Sync + 'static;
+    type ServerMsg: Send + Sync + 'static;
     /// An initial message sent to the service by a client when establishing a
     /// connection.
     ///
@@ -83,14 +86,14 @@ pub trait Service {
     /// data from the client, this type can be set to [`()`].
     // XXX(eliza): ideally, we could default `Hello` to () and `ConnectError` to
     // `Infallible`...do we want to do that? it requires a nightly feature.
-    type Hello: 'static;
+    type Hello: Send + Sync + 'static;
 
     /// Errors returned by the service if an incoming connection handshake is
     /// rejected.
     ///
     /// If the service does not reject connections, this should be set to
     /// [`core::convert::Infallible`].
-    type ConnectError: 'static;
+    type ConnectError: Send + Sync + 'static;
 
     /// This is the UUID of the driver service
     const UUID: Uuid;
@@ -277,41 +280,6 @@ pub enum UserConnectError<D: Service> {
     Connect(ConnectError<D>),
 }
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum OneshotRequestError {
-    /// An error occurred while acquiring a sender.
-    Sender(ReusableError),
-    /// Sending the request failed.
-    Send,
-    /// An error occurred while receiving the response.
-    Receive(ReusableError),
-}
-
-#[derive(Debug, Eq, PartialEq)]
-pub enum SendError {
-    /// The service on the other end of the [`KernelHandle`] has terminated!
-    Closed,
-}
-
-impl From<ReusableError> for ReplyError {
-    fn from(err: ReusableError) -> Self {
-        match err {
-            ReusableError::ChannelClosed => ReplyError::ReplyChannelClosed,
-            _ => ReplyError::InternalError,
-        }
-    }
-}
-
-impl<T> From<EnqueueError<T>> for ReplyError {
-    fn from(enq: EnqueueError<T>) -> Self {
-        match enq {
-            // Should not be possible with async calls
-            EnqueueError::Full(_) => ReplyError::InternalError,
-            EnqueueError::Closed(_) => ReplyError::ReplyChannelClosed,
-        }
-    }
-}
-
 /// A UserspaceHandle is used to process incoming serialized messages from
 /// userspace. It contains a method that can be used to deserialize messages
 /// from a given UUID, and send that request (if the deserialization is
@@ -326,18 +294,9 @@ pub struct UserspaceHandle {
 /// service.
 pub struct KernelHandle<S: Service> {
     chan: bidi::BiDi<S::ServerMsg, S::ClientMsg, Reset>,
-    // prod: KProducer<Message<RD>>,
     service_id: ServiceId,
     client_id: ClientId,
 }
-
-type ErasedReqDeser = unsafe fn(
-    UserRequest<'_>,
-    &ErasedKProducer,
-    &bbq::MpscProducer,
-    ServiceId,
-    ClientId,
-) -> Result<(), UserHandlerError>;
 
 /// The payload of a registry item.
 ///
@@ -345,20 +304,9 @@ type ErasedReqDeser = unsafe fn(
 /// without knowing the proper typeid. Kernel space drivers should always check that the
 /// tuple type id is correct.
 struct RegistryValue {
-    type_id: RegistryType,
+    type_id: TypeId,
     conns: ErasedSender,
     service_id: ServiceId,
-}
-
-/// A [virtual function pointer table][vtable] (vtable) that specifies how
-/// userspace requests are serialized and deserialized.
-///
-/// [vtable]: https://en.wikipedia.org/wiki/Virtual_method_table
-#[derive(Copy, Clone)]
-struct UserVtable {
-    /// Deserializes userspace requests.
-    req_deser: ErasedReqDeser,
-    send_handshake: fn(&[u8], &ErasedSender) -> Result<oneshot::ErasedReceiver, postcard::Error>,
 }
 
 /// Right now we don't use a real HashMap, but rather a hand-rolled index map.
@@ -431,61 +379,20 @@ impl Registry {
         Ok(listener)
     }
 
-    /// Register a driver service ONLY for use in the kernel, including drivers.
-    ///
-    /// Driver services registered with [Registry::register_konly] can NOT be queried
-    /// or interfaced with from Userspace. If a registered service has request
-    /// and response types that are serializable, it can instead be registered
-    /// with [Registry::register] which allows for userspace access.
+    /// Register a service with this registry.
     #[tracing::instrument(
         name = "Registry::register_konly",
-        level = Level::INFO,
-        skip(self, registration),
-        fields(svc = %any::type_name::<RD>()),
-        err(Display),
-    )]
-    pub async fn register_konly<RD: Service>(
-        &self,
-        registration: listener::Registration<RD>,
-    ) -> Result<(), RegistrationError> {
-        let conns = registration.tx.type_erase();
-        let service_id = self.counter.fetch_add(1, Ordering::Relaxed);
-        self.insert_item(RegistryItem {
-            key: RD::UUID,
-            value: RegistryValue {
-                type_id: RD::type_id().type_of(),
-                conns,
-                service_id: ServiceId(service_id),
-            },
-        })
-        .await?;
-
-        info!(uuid = ?RD::UUID, service_id, "Registered KOnly");
-
-        Ok(())
-    }
-
-    /// Register a driver service for use in the kernel (including drivers) as
-    /// well as in userspace.
-    ///
-    /// See [Registry::register_konly] if the request and response types are not
-    /// serializable.
-    #[tracing::instrument(
-        name = "Registry::register",
         level = Level::INFO,
         skip(self, registration),
         fields(svc = %any::type_name::<S>()),
         err(Display),
     )]
-    pub async fn register<S>(
+    pub async fn register_konly<S: Service>(
         &self,
         registration: listener::Registration<S>,
-    ) -> Result<(), RegistrationError>
-    where
-        S: UserService + 'static,
-    {
+    ) -> Result<(), RegistrationError> {
+        let conns = registration.tx.into_erased();
         let service_id = self.counter.fetch_add(1, Ordering::Relaxed);
-        let conns = registration.tx.type_erase();
         self.insert_item(RegistryItem {
             key: S::UUID,
             value: RegistryValue {
@@ -496,7 +403,7 @@ impl Registry {
         })
         .await?;
 
-        info!(uuid = ?S::UUID, service_id, "Registered");
+        info!(uuid = ?S::UUID, service_id, "Registered KOnly");
 
         Ok(())
     }
@@ -781,161 +688,6 @@ impl Registry {
         Some(item)
     }
 }
-
-// UserRequest
-
-// Envelope
-
-impl<P> OpenEnvelope<P> {
-    pub fn fill(self, contents: P) -> Envelope<P> {
-        Envelope {
-            body: contents,
-            service_id: self.service_id,
-            client_id: self.client_id,
-            request_id: self.request_id,
-        }
-    }
-}
-
-impl<P> Envelope<P> {
-    // NOTE: proper types are constrained by [Message::split]
-    fn split_reply<R>(self) -> (P, OpenEnvelope<R>) {
-        let env = OpenEnvelope {
-            body: PhantomData,
-            service_id: self.service_id,
-            client_id: self.client_id,
-            request_id: RequestResponseId::new(self.request_id.id(), MessageKind::Response),
-        };
-        (self.body, env)
-    }
-
-    /// Create a response Envelope from a given request Envelope.
-    ///
-    /// Maintains the same Service ID and Client ID, and increments the
-    /// request ID by one.
-    pub fn reply_with<U>(&self, body: U) -> Envelope<U> {
-        Envelope {
-            body,
-            service_id: self.service_id,
-            client_id: self.client_id,
-            request_id: RequestResponseId::new(self.request_id.id(), MessageKind::Response),
-        }
-    }
-
-    /// Create a response Envelope from a given request Envelope.
-    ///
-    /// Maintains the same Service ID and Client ID, and increments the
-    /// request ID by one.
-    ///
-    /// This variant also gives you the request body in case you need it for
-    /// the response.
-    pub fn reply_with_body<F, U>(self, f: F) -> Envelope<U>
-    where
-        F: FnOnce(P) -> U,
-    {
-        Envelope {
-            service_id: self.service_id,
-            client_id: self.client_id,
-            request_id: RequestResponseId::new(self.request_id.id(), MessageKind::Response),
-            body: f(self.body),
-        }
-    }
-}
-
-// Message
-
-impl<RD: Service> Message<RD> {
-    // Would adding type aliases really make this any better? Who cares.
-    #[allow(clippy::type_complexity)]
-    pub fn split(
-        self,
-    ) -> (
-        RD::Request,
-        OpenEnvelope<Result<RD::Response, RD::Error>>,
-        ReplyTo<RD>,
-    ) {
-        let Self { msg, reply } = self;
-        let (req, env) = msg.split_reply();
-        (req, env, reply)
-    }
-}
-
-// ReplyTo
-
-impl<RD: Service> ReplyTo<RD> {
-    pub async fn reply_konly(
-        self,
-        envelope: Envelope<Result<RD::Response, RD::Error>>,
-    ) -> Result<(), ReplyError> {
-        trace!(
-            service_id = envelope.service_id.0,
-            client_id = envelope.client_id.0,
-            response_id = envelope.request_id.id(),
-            svc = %any::type_name::<RD>(),
-            "Replying KOnly",
-        );
-        match self {
-            ReplyTo::KChannel(kprod) => {
-                kprod.enqueue_async(envelope).await?;
-            }
-            ReplyTo::OneShot(sender) => {
-                sender.send(envelope)?;
-            }
-            ReplyTo::Userspace { .. } => return Err(ReplyError::KOnlyUserspaceResponse),
-        }
-        Ok(())
-    }
-}
-
-impl<RD: Service> ReplyTo<RD>
-where
-    RD::Response: Serialize + MaxSize,
-    RD::Error: Serialize + MaxSize,
-{
-    pub async fn reply(
-        self,
-        uuid_source: Uuid,
-        envelope: Envelope<Result<RD::Response, RD::Error>>,
-    ) -> Result<(), ReplyError> {
-        trace!(
-            service_id = envelope.service_id.0,
-            client_id = envelope.client_id.0,
-            response_id = envelope.request_id.id(),
-            svc = %any::type_name::<RD>(),
-            "Replying",
-        );
-        match self {
-            ReplyTo::KChannel(kprod) => {
-                kprod.enqueue_async(envelope).await?;
-                Ok(())
-            }
-            ReplyTo::OneShot(sender) => {
-                sender.send(envelope)?;
-                Ok(())
-            }
-            ReplyTo::Userspace { nonce, outgoing } => {
-                let mut wgr = outgoing
-                    .send_grant_exact(
-                        <UserResponse<RD::Response, RD::Error> as MaxSize>::POSTCARD_MAX_SIZE,
-                    )
-                    .await;
-                let used = postcard::to_slice(
-                    &UserResponse {
-                        uuid: uuid_source,
-                        nonce,
-                        reply: envelope.body,
-                    },
-                    &mut wgr,
-                )
-                .map_err(|_| ReplyError::UserspaceSerializationError)?;
-                let len = used.len();
-                wgr.commit(len);
-                Ok(())
-            }
-        }
-    }
-}
-
 // UserspaceHandle
 
 impl UserspaceHandle {
@@ -958,44 +710,12 @@ impl UserspaceHandle {
 
 // KernelHandle
 
-impl<RD: Service> KernelHandle<RD> {
-    pub async fn send(&mut self, msg: RD::Request, reply: ReplyTo<RD>) -> Result<(), SendError> {
-        let request_id = RequestResponseId::new(self.request_ctr, MessageKind::Request);
-        self.request_ctr = self.request_ctr.wrapping_add(1);
-        self.prod
-            .enqueue_async(Message {
-                msg: Envelope {
-                    body: msg,
-                    service_id: self.service_id,
-                    client_id: self.client_id,
-                    request_id,
-                },
-                reply,
-            })
-            .await
-            .map_err(|_| SendError::Closed)?;
-        trace!(
-            service_id = self.service_id.0,
-            client_id = self.client_id.0,
-            request_id = request_id.id(),
-            svc = %any::type_name::<RD>(),
-            "Sent Request"
-        );
-        Ok(())
-    }
-
-    /// Send a [`ReplyTo::OneShot`] request using the provided [`Reusable`]
-    /// oneshot channel, and await the response from that channel.
-    pub async fn request_oneshot(
-        &mut self,
-        msg: RD::Request,
-        reply: &Reusable<Envelope<Result<RD::Response, RD::Error>>>,
-    ) -> Result<Envelope<Result<RD::Response, RD::Error>>, OneshotRequestError> {
-        let tx = reply.sender().await.map_err(OneshotRequestError::Sender)?;
-        self.send(msg, ReplyTo::OneShot(tx))
-            .await
-            .map_err(|_| OneshotRequestError::Send)?;
-        reply.receive().await.map_err(OneshotRequestError::Receive)
+impl<S: Service> KernelHandle<S> {
+    pub async fn send(
+        &self,
+        msg: S::ClientMsg,
+    ) -> Result<(), mpsc::error::SendError<Reset, S::ClientMsg>> {
+        self.chan.tx().send(msg).await
     }
 }
 
@@ -1071,30 +791,6 @@ where
 
 // UserConnectError
 
-impl<D> PartialEq for UserConnectError<D>
-where
-    D: Service,
-    D::ConnectError: PartialEq,
-{
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::DeserializationFailed(this), Self::DeserializationFailed(that)) => this == that,
-            (Self::Rejected(this), Self::Rejected(that)) => this == that,
-            (Self::NotFound, Self::NotFound) => true,
-            (Self::DriverDead, Self::DriverDead) => true,
-            (Self::NotUserspace, Self::NotUserspace) => true,
-            _ => false,
-        }
-    }
-}
-
-impl<D> Eq for UserConnectError<D>
-where
-    D: Service,
-    D::ConnectError: Eq,
-{
-}
-
 impl<D> fmt::Debug for UserConnectError<D>
 where
     D: Service,
@@ -1108,14 +804,7 @@ where
                 d.field("error", error);
                 d
             }
-            Self::NotFound => f.debug_struct("NotFound"),
-            Self::DriverDead => f.debug_struct("NotFound"),
-            Self::Rejected(error) => {
-                let mut d = f.debug_struct("Rejected");
-                d.field("error", &error);
-                d
-            }
-            Self::NotUserspace => f.debug_struct("NotUserspace"),
+            Self::Self::NotUserspace => f.debug_struct("NotUserspace"),
         }
         .field("svc", &mycelium_util::fmt::display(any::type_name::<D>()))
         .finish()
@@ -1128,11 +817,8 @@ where
     D::ConnectError: fmt::Display,
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let name = any::type_name::<D>();
         match self {
-            Self::DriverDead => write!(f, "the {name} service has terminated"),
-            Self::NotFound => write!(f, "no {name} service found in the registry"),
-            Self::Rejected(err) => write!(f, "the {name} service rejected the connection: {err}",),
+            Self::Connect(err) => fmt::Display::fmt(f, err),
             Self::DeserializationFailed(err) => write!(
                 f,
                 "failed to deserialize userspace Hello for the {} service: {err}",
@@ -1155,19 +841,15 @@ impl fmt::Display for RegistrationError {
     }
 }
 
-impl<R> calliope::Service for R
+impl<S> Service for S
 where
-    R: Service,
-    R::Hello: Serialize + DeserializeOwned + Send + Sync + 'static,
-    R::ClientMsg: Serialize + DeserializeOwned + Send + Sync + 'static,
-    R::ServerMsg: Serialize + DeserializeOwned + Send + Sync + 'static,
-    R::ConnectError: Serialize + DeserializeOwned + Send + Sync + 'static,
+    S: UserService,
 {
-    const UUID: Uuid = R::UUID;
-    type ClientMsg = R::ClientMsg;
-    type ServerMsg = R::ServerMsg;
-    type Hello = R::Hello;
-    type ConnectError = R::ConnectError;
+    const UUID: Uuid = S::UUID;
+    type ClientMsg = S::ClientMsg;
+    type ServerMsg = S::ServerMsg;
+    type Hello = S::Hello;
+    type ConnectError = S::ConnectError;
 }
 
 fn tuple_type_id<S: Service>() -> TypeId {
