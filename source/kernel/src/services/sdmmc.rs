@@ -154,6 +154,15 @@ impl Default for Command {
     }
 }
 
+impl core::fmt::Debug for Response {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Response::Short { value, data: _ } => write!(f, "{:#x}", value),
+            Response::Long(value) => write!(f, "{:#x}", value),
+        }
+    }
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // Client Definition
 ////////////////////////////////////////////////////////////////////////////////
@@ -232,14 +241,18 @@ impl SdCardClient {
     }
 
     async fn cmd(&mut self, cmd: Command) -> Result<Response, Error> {
-        self.handle
+        let index = cmd.index;
+        let result = self
+            .handle
             .request_oneshot(cmd, &self.reply)
             .await
             .map_err(|error| {
                 tracing::warn!(?error, "failed to send request to SD/MMC service");
                 Error::Other // TODO
             })
-            .and_then(|resp| resp.body)
+            .and_then(|resp| resp.body);
+        tracing::trace!("CMD{} response: {:?}", index, result);
+        result
     }
 
     /// Reset the card
@@ -274,7 +287,6 @@ impl SdCardClient {
             .await?
         {
             Response::Short { value, .. } => {
-                tracing::trace!("CMD8 response: {value:#x}");
                 if value == 0x1AA {
                     card_type = CardType::SD2;
                 }
@@ -314,7 +326,6 @@ impl SdCardClient {
                 .await?
             {
                 Response::Short { value, .. } => {
-                    tracing::trace!("ACMD41 response: {value:#x}");
                     if value & OCR_NBUSY == OCR_NBUSY {
                         // Card has finished power up, data is valid
                         break value;
@@ -366,10 +377,7 @@ impl SdCardClient {
             })
             .await?
         {
-            Response::Short { value, .. } => {
-                tracing::trace!("CMD3 response: {value:#x}");
-                Ok(RelativeCardAddress(value))
-            }
+            Response::Short { value, .. } => Ok(RelativeCardAddress(value)),
             Response::Long(_) => Err(Error::Response),
         }
     }
@@ -388,10 +396,7 @@ impl SdCardClient {
             })
             .await?
         {
-            Response::Short { value, .. } => {
-                tracing::trace!("CMD7 response: {value:#x}");
-                Ok(CardStatus(value))
-            }
+            Response::Short { value, .. } => Ok(CardStatus(value)),
             Response::Long(_) => Err(Error::Response),
         }
     }
@@ -423,10 +428,7 @@ impl SdCardClient {
             })
             .await?
         {
-            Response::Short { value, .. } => {
-                tracing::trace!("ACMD6 response: {value:#x}");
-                Ok(CardStatus(value))
-            }
+            Response::Short { value, .. } => Ok(CardStatus(value)),
             Response::Long(_) => Err(Error::Response),
         }
     }
@@ -456,12 +458,8 @@ impl SdCardClient {
             .await?
         {
             Response::Short {
-                value,
-                data: Some(res),
-            } => {
-                tracing::trace!("CMD18 response: {value:#x}");
-                Ok(res)
-            }
+                data: Some(res), ..
+            } => Ok(res),
             _ => Err(Error::Response),
         }
     }
