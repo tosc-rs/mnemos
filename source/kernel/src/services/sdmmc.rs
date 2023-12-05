@@ -12,6 +12,7 @@ use crate::{
     registry::{self, known_uuids, Envelope, KernelHandle, RegisteredDriver},
     Kernel,
 };
+use maitake::time::{self, Duration};
 use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -322,7 +323,7 @@ impl SdCardClient {
                 Response::Long(_) => return Err(Error::Response),
             }
 
-            // TODO: wait some time (e.g., 1ms?)
+            time::sleep(Duration::from_millis(1)).await;
         };
 
         if (ocr & OCR_HCS) == OCR_HCS {
