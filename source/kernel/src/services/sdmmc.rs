@@ -120,7 +120,7 @@ pub enum Response {
         data: Option<FixedVec<u8>>,
     },
     /// The 128-bit value from the 136-bit response.
-    Long([u32; 4]),
+    Long(u128),
 }
 
 /// Errors returned by the [`SdmmcService`]
@@ -348,15 +348,7 @@ impl SdCardClient {
             .await?
         {
             Response::Short { .. } => Err(Error::Response),
-            Response::Long(value) => {
-                tracing::trace!("CMD2 response: {value:?}");
-                union CidResponse {
-                    value: [u32; 4],
-                    cid: u128,
-                }
-                let rsp = CidResponse { value };
-                Ok(CardIdentification(unsafe { rsp.cid }))
-            }
+            Response::Long(value) => Ok(CardIdentification(value)),
         }
     }
 

@@ -511,12 +511,13 @@ impl Smhc {
                 ErrorKind::Other => sdmmc::Error::Other,
             })
         } else if long_resp {
-            Ok(sdmmc::Response::Long([
+            let rsp: [u32; 4] = [
                 self.smhc.smhc_resp0.read().bits(),
                 self.smhc.smhc_resp1.read().bits(),
                 self.smhc.smhc_resp2.read().bits(),
                 self.smhc.smhc_resp3.read().bits(),
-            ]))
+            ];
+            Ok(sdmmc::Response::Long(unsafe { core::mem::transmute(rsp) }))
         } else {
             Ok(sdmmc::Response::Short {
                 value: self.smhc.smhc_resp0.read().bits(),
