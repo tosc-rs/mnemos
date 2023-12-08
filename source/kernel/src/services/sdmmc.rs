@@ -108,24 +108,32 @@ pub enum ResponseType {
     Long,
 }
 
-/// Response returned by the card, can be short or long, depending on command.
+/// Response returned by the card, can be short or long, depending on command
 #[must_use]
 pub enum Response {
     /// The 32-bit value from the 48-bit response.
-    /// Potentially also includes the data buffer if this was a read command.
+    /// Potentially also includes the data buffer if this was a read command
     Short {
-        /// The response on the command line.
+        /// The response on the command line
         value: u32,
-        /// The received data, in case of a read command.
+        /// The received data, in case of a read command
         data: Option<FixedVec<u8>>,
     },
-    /// The 128-bit value from the 136-bit response.
+    /// The 128-bit value from the 136-bit response
     Long(u128),
 }
 
 /// Errors returned by the [`SdmmcService`]
 #[derive(Debug, Eq, PartialEq)]
-pub enum Error {
+pub struct Error {
+    kind: ErrorKind,
+    message: Option<&'static str>,
+}
+
+/// The different types of errors that can occur
+#[derive(Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum ErrorKind {
     /// The service is currently busy and cannot handle the request
     Busy,
     /// Invalid or unexpected response was received
@@ -151,6 +159,41 @@ impl Default for Command {
             rsp_crc: false,
             buffer: None,
         }
+    }
+}
+
+impl Error {
+    /// Create an error from a type and message
+    pub fn new(kind: ErrorKind, message: &'static str) -> Self {
+        Self {
+            kind,
+            message: Some(message),
+        }
+    }
+}
+
+impl From<ErrorKind> for Error {
+    fn from(value: ErrorKind) -> Self {
+        Self {
+            kind: value,
+            message: None,
+        }
+    }
+}
+
+impl core::fmt::Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "SD/MMC error: ")?;
+        match self.kind {
+            ErrorKind::Busy => write!(f, "busy "),
+            ErrorKind::Response => write!(f, "response "),
+            ErrorKind::Data => write!(f, "data "),
+            ErrorKind::Buffer => write!(f, "buffer "),
+            ErrorKind::Timeout => write!(f, "timeout "),
+            ErrorKind::Other => write!(f, "other "),
+        }?;
+
+        self.message.map_or_else(|| Ok(()), |msg| msg.fmt(f))
     }
 }
 
@@ -248,7 +291,7 @@ impl SdCardClient {
             .await
             .map_err(|error| {
                 tracing::warn!(?error, "failed to send request to SD/MMC service");
-                Error::Other // TODO
+                Error::from(ErrorKind::Other) // TODO
             })
             .and_then(|resp| resp.body);
         tracing::trace!("CMD{} response: {:?}", index, result);
@@ -291,7 +334,7 @@ impl SdCardClient {
                     card_type = CardType::SD2;
                 }
             }
-            Response::Long(_) => return Err(Error::Response),
+            Response::Long(_) => return Err(Error::from(ErrorKind::Response)),
         }
 
         // TODO: limit the number of attempts
@@ -331,7 +374,7 @@ impl SdCardClient {
                         break value;
                     }
                 }
-                Response::Long(_) => return Err(Error::Response),
+                Response::Long(_) => return Err(Error::from(ErrorKind::Response)),
             }
 
             time::sleep(Duration::from_millis(1)).await;
@@ -358,7 +401,7 @@ impl SdCardClient {
             })
             .await?
         {
-            Response::Short { .. } => Err(Error::Response),
+            Response::Short { .. } => Err(Error::from(ErrorKind::Response)),
             Response::Long(value) => Ok(CardIdentification(value)),
         }
     }
@@ -378,7 +421,7 @@ impl SdCardClient {
             .await?
         {
             Response::Short { value, .. } => Ok(RelativeCardAddress(value)),
-            Response::Long(_) => Err(Error::Response),
+            Response::Long(_) => Err(Error::from(ErrorKind::Response)),
         }
     }
 
@@ -397,7 +440,7 @@ impl SdCardClient {
             .await?
         {
             Response::Short { value, .. } => Ok(CardStatus(value)),
-            Response::Long(_) => Err(Error::Response),
+            Response::Long(_) => Err(Error::from(ErrorKind::Response)),
         }
     }
 
@@ -419,7 +462,7 @@ impl SdCardClient {
         match self
             .cmd(Command {
                 index: 6,
-                argument: 0b10,
+                argument: 0b10, // instruct card to use 4-bits bus
                 options: HardwareOptions::SetBusWidth(BusWidth::Quad),
                 kind: CommandKind::Control,
                 rsp_type: ResponseType::Short,
@@ -429,7 +472,7 @@ impl SdCardClient {
             .await?
         {
             Response::Short { value, .. } => Ok(CardStatus(value)),
-            Response::Long(_) => Err(Error::Response),
+            Response::Long(_) => Err(Error::from(ErrorKind::Response)),
         }
     }
 
@@ -442,7 +485,7 @@ impl SdCardClient {
     ) -> Result<FixedVec<u8>, Error> {
         // The provider buffer should have space for the requested amount of data
         if buf.capacity() < 512 * blocks {
-            return Err(Error::Buffer);
+            return Err(Error::from(ErrorKind::Buffer));
         }
 
         match self
@@ -460,7 +503,7 @@ impl SdCardClient {
             Response::Short {
                 data: Some(res), ..
             } => Ok(res),
-            _ => Err(Error::Response),
+            _ => Err(Error::from(ErrorKind::Response)),
         }
     }
 }

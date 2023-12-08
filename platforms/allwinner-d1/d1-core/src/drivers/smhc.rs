@@ -376,7 +376,7 @@ impl Smhc {
     #[tracing::instrument(level = tracing::Level::DEBUG, skip(self, params))]
     async fn command(&self, params: sdmmc::Command) -> Result<sdmmc::Response, sdmmc::Error> {
         if self.smhc.smhc_cmd.read().cmd_load().bit_is_set() {
-            return Err(sdmmc::Error::Busy);
+            return Err(sdmmc::Error::from(sdmmc::ErrorKind::Busy));
         }
 
         let cmd_idx = params.index;
@@ -418,7 +418,7 @@ impl Smhc {
             },
             _ => {
                 tracing::error!("did not provide a buffer for read/write");
-                return Err(sdmmc::Error::Other);
+                return Err(sdmmc::Error::from(sdmmc::ErrorKind::Buffer));
             }
         };
 
@@ -436,7 +436,7 @@ impl Smhc {
 
                 // Currently we limit the number of data that can be read at once
                 if *cnt > DESCR_BUFF_SIZE * descriptors.len() || buf.capacity() < *cnt {
-                    return Err(sdmmc::Error::Buffer);
+                    return Err(sdmmc::Error::from(sdmmc::ErrorKind::Buffer));
                 }
 
                 tracing::debug!(cnt, "Creating descriptor chain from buffer");
@@ -459,7 +459,7 @@ impl Smhc {
                         .link((!last).then(|| (&descriptors[index + 1]).into()))
                         .expect("Should be able to link to next descriptor")
                         .buff_slice(slice)
-                        .map_err(|_| sdmmc::Error::Buffer)?
+                        .map_err(|_| sdmmc::Error::from(sdmmc::ErrorKind::Buffer))?
                         .build();
                     index += 1;
                 }
@@ -496,20 +496,21 @@ impl Smhc {
         tracing::trace!("SMHC operation completed");
         if let Some(error) = guard.data.err.take() {
             tracing::warn!(?error, "SMHC error");
-            Err(match error {
-                ErrorKind::Response => sdmmc::Error::Response,
-                ErrorKind::ResponseCrc => sdmmc::Error::Response,
-                ErrorKind::DataCrc => sdmmc::Error::Data,
-                ErrorKind::ResponseTimeout => sdmmc::Error::Timeout,
-                ErrorKind::DataTimeout => sdmmc::Error::Timeout,
-                ErrorKind::DataStarvationTimeout => sdmmc::Error::Timeout,
-                ErrorKind::FifoUnderrunOverflow => sdmmc::Error::Data,
-                ErrorKind::CommandBusyIllegalWrite => sdmmc::Error::Busy,
-                ErrorKind::DataStart => sdmmc::Error::Data,
-                ErrorKind::DataEnd => sdmmc::Error::Data,
-                ErrorKind::Dma => sdmmc::Error::Other,
-                ErrorKind::Other => sdmmc::Error::Other,
-            })
+            let (kind, msg) = match error {
+                ErrorKind::Response => (sdmmc::ErrorKind::Response, "Response"),
+                ErrorKind::ResponseCrc => (sdmmc::ErrorKind::Response, "CRC"),
+                ErrorKind::DataCrc => (sdmmc::ErrorKind::Data, "CRC"),
+                ErrorKind::ResponseTimeout => (sdmmc::ErrorKind::Timeout, "Response"),
+                ErrorKind::DataTimeout => (sdmmc::ErrorKind::Timeout, "Data"),
+                ErrorKind::DataStarvationTimeout => (sdmmc::ErrorKind::Timeout, "DataStarvation"),
+                ErrorKind::FifoUnderrunOverflow => (sdmmc::ErrorKind::Data, "FIFO"),
+                ErrorKind::CommandBusyIllegalWrite => (sdmmc::ErrorKind::Busy, "Command"),
+                ErrorKind::DataStart => (sdmmc::ErrorKind::Data, "DataStart"),
+                ErrorKind::DataEnd => (sdmmc::ErrorKind::Data, "DataEnd"),
+                ErrorKind::Dma => (sdmmc::ErrorKind::Other, "DMA"),
+                ErrorKind::Other => (sdmmc::ErrorKind::Other, "Unknown"),
+            };
+            Err(sdmmc::Error::new(kind, msg))
         } else if long_resp {
             let rsp: [u32; 4] = [
                 self.smhc.smhc_resp0.read().bits(),
