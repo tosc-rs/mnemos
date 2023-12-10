@@ -185,12 +185,12 @@ impl core::fmt::Display for Error {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "SD/MMC error: ")?;
         match self.kind {
-            ErrorKind::Busy => write!(f, "busy "),
-            ErrorKind::Response => write!(f, "response "),
-            ErrorKind::Data => write!(f, "data "),
-            ErrorKind::Buffer => write!(f, "buffer "),
-            ErrorKind::Timeout => write!(f, "timeout "),
-            ErrorKind::Other => write!(f, "other "),
+            ErrorKind::Busy => f.write_str("busy "),
+            ErrorKind::Response => f.write_str("response "),
+            ErrorKind::Data => f.write_str("data "),
+            ErrorKind::Buffer => f.write_str("buffer "),
+            ErrorKind::Timeout => f.write_str("timeout "),
+            ErrorKind::Other => f.write_str("other "),
         }?;
 
         self.message.map_or_else(|| Ok(()), |msg| msg.fmt(f))
@@ -200,8 +200,8 @@ impl core::fmt::Display for Error {
 impl core::fmt::Debug for Response {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Response::Short { value, data: _ } => write!(f, "{:#x}", value),
-            Response::Long(value) => write!(f, "{:#x}", value),
+            Response::Short { value, data: _ } => write!(f, "{value:#x}"),
+            Response::Long(value) => write!(f, "{value:#x}"),
         }
     }
 }
@@ -290,11 +290,14 @@ impl SdCardClient {
             .request_oneshot(cmd, &self.reply)
             .await
             .map_err(|error| {
-                tracing::warn!(?error, "failed to send request to SD/MMC service");
+                tracing::warn!(
+                    ?error,
+                    "failed to send CMD{index} request to SD/MMC service"
+                );
                 Error::from(ErrorKind::Other) // TODO
             })
             .and_then(|resp| resp.body);
-        tracing::trace!("CMD{} response: {:?}", index, result);
+        tracing::trace!("CMD{index} response: {result:?}");
         result
     }
 
@@ -314,13 +317,15 @@ impl SdCardClient {
         const OCR_NBUSY: u32 = 0x80000000;
         /// Valid bits for voltage setting
         const OCR_VOLTAGE_MASK: u32 = 0x007FFF80;
+        // Set 'voltage supplied' to 2.7-3.6V and 'check pattern' to 0xAA
+        const CMD8_ARG: u32 = 0x1AA;
 
         let mut card_type = CardType::SD1;
 
         match self
             .cmd(Command {
                 index: 8,
-                argument: 0x1AA,
+                argument: CMD8_ARG,
                 options: HardwareOptions::None,
                 kind: CommandKind::Control,
                 rsp_type: ResponseType::Short,
@@ -330,7 +335,7 @@ impl SdCardClient {
             .await?
         {
             Response::Short { value, .. } => {
-                if value == 0x1AA {
+                if value == CMD8_ARG {
                     card_type = CardType::SD2;
                 }
             }
@@ -483,8 +488,11 @@ impl SdCardClient {
         blocks: usize,
         buf: FixedVec<u8>,
     ) -> Result<FixedVec<u8>, Error> {
+        const BLOCK_SIZE: usize = 512;
+
+        let bytes = BLOCK_SIZE * blocks;
         // The provider buffer should have space for the requested amount of data
-        if buf.capacity() < 512 * blocks {
+        if buf.capacity() < bytes {
             return Err(Error::from(ErrorKind::Buffer));
         }
 
@@ -493,7 +501,7 @@ impl SdCardClient {
                 index: 18,
                 argument: sector,
                 options: HardwareOptions::None,
-                kind: CommandKind::Read(512 * blocks),
+                kind: CommandKind::Read(bytes),
                 rsp_type: ResponseType::Short,
                 rsp_crc: true,
                 buffer: Some(buf),
