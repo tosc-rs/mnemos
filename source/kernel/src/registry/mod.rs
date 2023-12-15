@@ -1,17 +1,11 @@
 use core::{
     any::{self, TypeId},
     fmt,
-    marker::PhantomData,
-    mem, ptr,
 };
 
 use crate::comms::{
-    bbq, bidi,
-    mpsc::{
-        self,
-        error::{RecvError, SendError},
-        ErasedPermit, ErasedSender,
-    },
+    bidi,
+    mpsc::{self, error::RecvError, ErasedSender},
 };
 pub use calliope::{
     message::Reset,
@@ -24,7 +18,7 @@ use mnemos_alloc::containers::{Arc, FixedVec};
 use portable_atomic::{AtomicU32, Ordering};
 use postcard::experimental::max_size::MaxSize;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use tracing::{self, debug, info, trace, warn, Level};
+use tracing::{self, debug, info, warn, Level};
 pub use uuid::{uuid, Uuid};
 
 pub mod listener;
@@ -74,7 +68,7 @@ pub mod known_uuids {
 /// [`Registry::try_connect`], [`Registry::connect_userspace`], or
 /// [`Registry::try_connect_userspace] (depending on the service), after
 /// the service has been registered.
-pub trait Service {
+pub trait Service: Send + Sync + 'static {
     type ClientMsg: Send + Sync + 'static;
     type ServerMsg: Send + Sync + 'static;
     /// An initial message sent to the service by a client when establishing a
@@ -337,43 +331,13 @@ impl Registry {
         }
     }
 
-    /// Bind a kernel-only [`Listener`] for a driver service of type `RD`.
-    ///
-    /// This is a helper method which creates a [`Listener`] using
-    /// [`Listener::new`] and then registers that [`Listener`]'s
-    /// [`listener::Registration`] with the registry using
-    /// [`Registry::register_konly`].
-    ///
-    /// Driver services registered with [`Registry::bind_konly`] can NOT be queried
-    /// or interfaced with from Userspace. If a registered service has request
-    /// and response types that are serializable, it can instead be registered
-    /// with [`Registry::bind`] which allows for userspace access.
-    pub async fn bind_konly<RD>(&self, capacity: usize) -> Result<Listener<RD>, RegistrationError>
-    where
-        RD: Service,
-    {
-        let (listener, registration) = Listener::new(capacity).await;
-        self.register_konly(registration).await?;
-        Ok(listener)
-    }
-
-    /// Bind a [`Listener`] for a driver service of type `RD`.
+    /// Bind a [`Listener`] for a driver service of type `S`.
     ///
     /// This is a helper method which creates a [`Listener`] using
     /// [`Listener::new`] and then registers that [`Listener`]'s
     /// [`listener::Registration`] with the registry using
     /// [`Registry::register`].
-    ///
-    /// Driver services registered with [`Registry::bind`] can be accessed both
-    /// by the kernel and by userspace. This requires that the
-    /// [`RegisteredDriver`]'s message types implement [`Serialize`] and
-    /// [`DeserializeOwned`]. Driver services whose message types are *not*
-    /// serializable may still bind listeners using [`Registry::bind_konly`],
-    /// but these listeners will not be accessible from userspace.
-    pub async fn bind<S>(&self, capacity: usize) -> Result<Listener<S>, RegistrationError>
-    where
-        S: UserService,
-    {
+    pub async fn bind<S: Service>(&self, capacity: u8) -> Result<Listener<S>, RegistrationError> {
         let (listener, registration) = Listener::new(capacity).await;
         self.register(registration).await?;
         Ok(listener)
@@ -381,29 +345,50 @@ impl Registry {
 
     /// Register a service with this registry.
     #[tracing::instrument(
-        name = "Registry::register_konly",
+        name = "Registry::register",
         level = Level::INFO,
         skip(self, registration),
-        fields(svc = %any::type_name::<S>()),
+        fields(svc = %any::type_name::<S>(), svc.uuid = ?S::UUID),
         err(Display),
     )]
-    pub async fn register_konly<S: Service>(
+    pub async fn register<S: Service>(
         &self,
         registration: listener::Registration<S>,
     ) -> Result<(), RegistrationError> {
+        // construct the registry entry for the new service.
         let conns = registration.tx.into_erased();
         let service_id = self.counter.fetch_add(1, Ordering::Relaxed);
-        self.insert_item(RegistryItem {
+        let entry = RegistryItem {
             key: S::UUID,
             value: RegistryValue {
                 type_id: tuple_type_id::<S>(),
                 conns,
                 service_id: ServiceId(service_id),
             },
-        })
-        .await?;
+        };
 
-        info!(uuid = ?S::UUID, service_id, "Registered KOnly");
+        // insert the entry into the registry.
+        let mut lock = self.items.write().await;
+        if lock.as_slice().iter().any(|i| i.key == entry.key) {
+            warn!("Failed to register service: the UUID is already registered!");
+            return Err(RegistrationError::UuidAlreadyRegistered(entry.key));
+        }
+
+        lock.try_push(entry).map_err(|_| {
+            warn!("Failed to register service: the registry is full!");
+            // close the "service added" waitcell, because no new services will
+            // ever be added.
+            self.service_added.close();
+            RegistrationError::RegistryFull
+        })?;
+
+        // release the lock on the registry *before* waking any tasks waiting
+        // for new services to be added, so that they can access the new
+        // service's entry without waiting for the lock to be released.
+        drop(lock);
+        self.service_added.wake_all();
+
+        info!(svc.id = service_id, "Registered service");
 
         Ok(())
     }
@@ -457,7 +442,9 @@ impl Registry {
             // able to connect while we're waiting for the handshake,
             // potentially causing a deadlock...
             let items = self.items.read().await;
-            let item = Self::get::<S>(&items).ok_or_else(|| UserConnectError::NotFound)?;
+            let Some(item) = Self::get::<S>(&items) else {
+                return Err(ConnectError::NotFound(hello));
+            };
             let conns = item.value.conns.clone();
             let service_id = item.value.service_id;
             (conns, service_id)
@@ -466,7 +453,9 @@ impl Registry {
         let permit = conns
             .reserve()
             .await
-            .map_err(|_| UserConnectError::DriverDead)?;
+            .map_err(|_| ConnectError::DriverDead)?
+            .downcast::<listener::Handshake<S>>()
+            .expect("downcasting a service entry to the expected service type must succeed!");
 
         let handshake_rx = Arc::new(oneshot::Oneshot::<listener::HandshakeResult<S>>::new())
             .await
@@ -482,9 +471,8 @@ impl Registry {
         let chan = handshake_rx
             .recv()
             .await
-            .map_err(|_| UserConnectError::DriverDead)?
-            .map_err(UserConnectError::Rejected)?
-            .into_serde();
+            .map_err(|_| ConnectError::DriverDead)?
+            .map_err(ConnectError::Rejected)?;
 
         let client_id = self.counter.fetch_add(1, Ordering::Relaxed);
 
@@ -576,21 +564,20 @@ impl Registry {
         name = "Registry::connect_userspace",
         level = Level::DEBUG,
         skip(self),
-        fields(svc = %any::type_name::<RD>()),
+        fields(svc = %any::type_name::<S>()),
     )]
-    pub async fn connect_userspace<RD>(
+    pub async fn connect_userspace<S>(
         &self,
-        scheduler: &maitake::scheduler::LocalScheduler,
         user_hello: &[u8],
-    ) -> Result<UserspaceHandle, UserConnectError<RD>>
+    ) -> Result<UserspaceHandle, UserConnectError<S>>
     where
-        RD: UserService,
+        S: UserService + Send + Sync + 'static,
     {
         let mut is_full = false;
         loop {
-            match self.try_connect_userspace(scheduler, user_hello).await {
+            match self.try_connect_userspace(user_hello).await {
                 Ok(handle) => return Ok(handle),
-                Err(UserConnectError::NotFound) if !is_full => {
+                Err(UserConnectError::Connect(ConnectError::NotFound(_))) if !is_full => {
                     debug!("no service found; waiting for one to be added...");
                     // wait for a service to be added to the registry
                     is_full = self.service_added.wait().await.is_err();
@@ -612,16 +599,15 @@ impl Registry {
     #[tracing::instrument(
         name = "Registry::try_connect_userspace",
         level = Level::DEBUG,
-        skip(self, scheduler),
+        skip(self),
         fields(svc = %any::type_name::<S>()),
     )]
     pub async fn try_connect_userspace<S>(
         &self,
-        scheduler: &maitake::scheduler::LocalScheduler,
         user_hello: &[u8],
     ) -> Result<UserspaceHandle, UserConnectError<S>>
     where
-        S: Service + UserService,
+        S: UserService + Send + Sync + 'static,
     {
         let hello = postcard::from_bytes::<<S as UserService>::Hello>(user_hello)
             .map_err(UserConnectError::DeserializationFailed)?;
@@ -641,43 +627,22 @@ impl Registry {
         })
     }
 
-    async fn insert_item(&self, item: RegistryItem) -> Result<(), RegistrationError> {
-        {
-            let mut items = self.items.write().await;
-            if items.as_slice().iter().any(|i| i.key == item.key) {
-                return Err(RegistrationError::UuidAlreadyRegistered(item.key));
-            }
-
-            items.try_push(item).map_err(|_| {
-                warn!("failed to insert new registry item; the registry is full!");
-                // close the "service added" waitcell, because no new services will
-                // ever be added.
-                self.service_added.close();
-                RegistrationError::RegistryFull
-            })?;
-        }
-
-        self.service_added.wake_all();
-
-        Ok(())
-    }
-
-    fn get<RD: Service>(items: &FixedVec<RegistryItem>) -> Option<&RegistryItem> {
-        let Some(item) = items.as_slice().iter().find(|i| i.key == RD::UUID) else {
+    fn get<S: Service>(items: &FixedVec<RegistryItem>) -> Option<&RegistryItem> {
+        let Some(item) = items.as_slice().iter().find(|i| i.key == S::UUID) else {
             debug!(
-                svc = %any::type_name::<RD>(),
-                uuid = ?RD::UUID,
+                svc = %any::type_name::<S>(),
+                uuid = ?S::UUID,
                 "No service for this UUID exists in the registry!"
             );
             return None;
         };
 
-        let expected_type_id = RD::type_id().type_of();
+        let expected_type_id = tuple_type_id::<S>();
         let actual_type_id = item.value.type_id;
         if expected_type_id != actual_type_id {
             warn!(
-                svc = %any::type_name::<RD>(),
-                uuid = ?RD::UUID,
+                svc = %any::type_name::<S>(),
+                uuid = ?S::UUID,
                 type_id.expected = ?expected_type_id,
                 type_id.actual = ?actual_type_id,
                 "Registry entry's type ID did not match driver's type ID. This is (probably?) a bug!"
@@ -690,23 +655,23 @@ impl Registry {
 }
 // UserspaceHandle
 
-impl UserspaceHandle {
-    pub fn process_msg(
-        &self,
-        user_msg: UserRequest<'_>,
-        user_ring: &bbq::MpscProducer,
-    ) -> Result<(), UserHandlerError> {
-        unsafe {
-            (self.req_deser)(
-                user_msg,
-                &self.req_producer_leaked,
-                user_ring,
-                self.service_id,
-                self.client_id,
-            )
-        }
-    }
-}
+// impl UserspaceHandle {
+//     pub fn process_msg(
+//         &self,
+//         user_msg: UserRequest<'_>,
+//         user_ring: &bbq::MpscProducer,
+//     ) -> Result<(), UserHandlerError> {
+//         unsafe {
+//             (self.req_deser)(
+//                 user_msg,
+//                 &self.req_producer_leaked,
+//                 user_ring,
+//                 self.service_id,
+//                 self.client_id,
+//             )
+//         }
+//     }
+// }
 
 // KernelHandle
 
@@ -716,6 +681,10 @@ impl<S: Service> KernelHandle<S> {
         msg: S::ClientMsg,
     ) -> Result<(), mpsc::error::SendError<Reset, S::ClientMsg>> {
         self.chan.tx().send(msg).await
+    }
+
+    pub async fn recv(&self) -> Result<S::ServerMsg, RecvError<Reset>> {
+        self.chan.rx().recv().await
     }
 }
 
@@ -800,11 +769,15 @@ where
         match self {
             Self::DeserializationFailed(error) => {
                 let mut d = f.debug_struct("DeserializationFailed");
+                d.field("error", error);
+                d
+            }
+            Self::Connect(error) => {
+                let mut d = f.debug_struct("Connect");
 
                 d.field("error", error);
                 d
             }
-            Self::Self::NotUserspace => f.debug_struct("NotUserspace"),
         }
         .field("svc", &mycelium_util::fmt::display(any::type_name::<D>()))
         .finish()
@@ -818,7 +791,7 @@ where
 {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Connect(err) => fmt::Display::fmt(f, err),
+            Self::Connect(err) => fmt::Display::fmt(err, f),
             Self::DeserializationFailed(err) => write!(
                 f,
                 "failed to deserialize userspace Hello for the {} service: {err}",
@@ -843,7 +816,7 @@ impl fmt::Display for RegistrationError {
 
 impl<S> Service for S
 where
-    S: UserService,
+    S: UserService + Send + Sync + 'static,
 {
     const UUID: Uuid = S::UUID;
     type ClientMsg = S::ClientMsg;

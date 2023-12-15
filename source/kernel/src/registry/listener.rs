@@ -98,7 +98,7 @@ pub enum AcceptError {
 }
 
 pub type Channel<S> =
-    BiDi<<S as Service>::ClientMsg, <S as Service>::ServerMsg, calliope::message::Reset>;
+    BiDi<<S as Service>::ServerMsg, <S as Service>::ClientMsg, calliope::message::Reset>;
 
 pub(super) type HandshakeResult<S> = Result<Channel<S>, <S as Service>::ConnectError>;
 
