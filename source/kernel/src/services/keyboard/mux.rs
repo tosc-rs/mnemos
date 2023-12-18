@@ -7,19 +7,18 @@
 //! [`KeyboardService`] implementation). Keyboard drivers use the
 //! [`KeyboardMuxService`] to publish events from their keyboards to the
 //! multiplexer, which broadcasts those events to all clients.
-use super::{key_event, KeyEvent, KeyboardError, KeyboardService, Subscribed};
+use super::{key_event, KeyEvent, KeyboardError, KeyboardService};
 use crate::{
     comms::{
         bbq,
         kchannel::{KChannel, KProducer},
-        oneshot::Reusable,
+        mpsc,
     },
     mnemos_alloc::containers::FixedVec,
-    registry::{self, known_uuids, listener, Envelope, KernelHandle, OneshotRequestError, Service},
+    registry::{self, known_uuids, KernelHandle, KernelSendError, Listener, Reset, UserService},
     services::serial_mux,
     Kernel,
 };
-use core::convert::Infallible;
 use futures::{future, FutureExt};
 use serde::{Deserialize, Serialize};
 use tracing::Level;
@@ -32,12 +31,11 @@ use uuid::Uuid;
 /// Service definition for the keyboard multiplexer.
 pub struct KeyboardMuxService;
 
-impl Service for KeyboardMuxService {
-    type Request = Publish;
-    type Response = Response;
-    type Error = core::convert::Infallible;
+impl UserService for KeyboardMuxService {
+    type ClientMsg = Publish;
+    type ServerMsg = ();
     type Hello = ();
-    type ConnectError = core::convert::Infallible;
+    type ConnectError = ();
 
     const UUID: Uuid = known_uuids::kernel::KEYBOARD_MUX;
 }
@@ -46,7 +44,7 @@ impl Service for KeyboardMuxService {
 // Message and Error Types
 ////////////////////////////////////////////////////////////////////////////////
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Publish(KeyEvent);
 
 pub struct Response {
@@ -64,7 +62,6 @@ pub struct Response {
 /// [`KeyboardMuxClient::from_registry`].
 pub struct KeyboardMuxClient {
     handle: KernelHandle<KeyboardMuxService>,
-    reply: Reusable<Envelope<Result<Response, Infallible>>>,
 }
 
 impl KeyboardMuxClient {
@@ -76,10 +73,7 @@ impl KeyboardMuxClient {
         kernel: &'static Kernel,
     ) -> Result<Self, registry::ConnectError<KeyboardMuxService>> {
         let handle = kernel.registry().connect::<KeyboardMuxService>(()).await?;
-        Ok(Self {
-            handle,
-            reply: Reusable::new_async().await,
-        })
+        Ok(Self { handle })
     }
 
     /// Obtain an `KeyboardMuxClient`
@@ -95,21 +89,15 @@ impl KeyboardMuxClient {
             .registry()
             .try_connect::<KeyboardMuxService>(())
             .await?;
-        Ok(Self {
-            handle,
-            reply: Reusable::new_async().await,
-        })
+        Ok(Self { handle })
     }
 
     pub async fn publish_key(
         &mut self,
         event: impl Into<KeyEvent>,
-    ) -> Result<(), OneshotRequestError> {
+    ) -> Result<(), KernelSendError<Publish>> {
         let event = event.into();
-        let _ = self
-            .handle
-            .request_oneshot(Publish(event), &self.reply)
-            .await?;
+        let _ = self.handle.send(Publish(event)).await?;
         Ok(())
     }
 }
@@ -126,8 +114,10 @@ impl KeyboardMuxClient {
 /// implementation is used for tasks that consume keyboard input to subscribe to
 /// key events.
 pub struct KeyboardMuxServer {
-    key_rx: listener::RequestStream<KeyboardMuxService>,
-    sub_rx: listener::RequestStream<KeyboardService>,
+    key_rx: mpsc::Receiver<KeyEvent, Reset>,
+    pub_sock: Listener<KeyboardMuxService>,
+    sub_sock: Listener<KeyboardService>,
+    key_pipe: mpsc::TrickyPipe<KeyEvent, Reset>,
     subscriptions: FixedVec<KProducer<KeyEvent>>,
     settings: KeyboardMuxSettings,
     sermux_port: Option<serial_mux::PortHandle>,
@@ -137,10 +127,10 @@ pub struct KeyboardMuxServer {
 pub struct KeyboardMuxSettings {
     #[serde(default)]
     pub enabled: bool,
-    #[serde(default = "KeyboardMuxSettings::default_buffer_capacity")]
-    pub max_keyboards: usize,
     #[serde(default = "KeyboardMuxSettings::default_max_keyboards")]
-    pub buffer_capacity: usize,
+    pub max_keyboards: usize,
+    #[serde(default = "KeyboardMuxSettings::default_buffer_capacity")]
+    pub buffer_capacity: u8,
     #[serde(default = "KeyboardMuxSettings::default_sermux_port")]
     pub sermux_port: Option<u16>,
 }
@@ -172,20 +162,19 @@ impl KeyboardMuxServer {
     ) -> Result<(), RegistrationError> {
         tracing::info!(?settings, "Registering keyboard mux");
 
-        let key_rx = kernel
+        let pub_sock = kernel
             .registry()
-            .bind_konly::<KeyboardMuxService>(settings.buffer_capacity)
+            .bind::<KeyboardMuxService>(settings.buffer_capacity)
             .await
-            .map_err(RegistrationError::RegisterMux)?
-            .into_request_stream(settings.buffer_capacity)
-            .await;
-        let sub_rx = kernel
+            .map_err(RegistrationError::RegisterMux)?;
+        let sub_sock = kernel
             .registry()
-            .bind_konly::<KeyboardService>(8)
+            .bind::<KeyboardService>(8)
             .await
-            .map_err(RegistrationError::RegisterKeyboard)?
-            .into_request_stream(8)
-            .await;
+            .map_err(RegistrationError::RegisterKeyboard)?;
+        // TODO(eliza): async
+        let key_pipe = mpsc::TrickyPipe::new(settings.buffer_capacity);
+        let key_rx = key_pipe.receiver().unwrap();
 
         let subscriptions = FixedVec::new(settings.max_keyboards).await;
         let sermux_port = if let Some(port) = settings.sermux_port {
@@ -195,7 +184,7 @@ impl KeyboardMuxServer {
             tracing::info!("opening Serial Mux port {port}");
             Some(
                 client
-                    .open_port(port, settings.buffer_capacity)
+                    .open_port(port, settings.buffer_capacity as usize)
                     .await
                     // TODO(eliza): this could be a custom RegistrationError variant...
                     .expect("failed to acquire serial mux keyboard port!"),
@@ -207,7 +196,9 @@ impl KeyboardMuxServer {
         kernel
             .spawn(
                 Self {
-                    sub_rx,
+                    pub_sock,
+                    sub_sock,
+                    key_pipe,
                     key_rx,
                     subscriptions,
                     settings,
@@ -281,11 +272,11 @@ impl KeyboardMuxServer {
 }
 
 impl KeyboardMuxSettings {
-    pub const DEFAULT_BUFFER_CAPACITY: usize = 32;
+    pub const DEFAULT_BUFFER_CAPACITY: u8 = 32;
     pub const DEFAULT_MAX_KEYBOARDS: usize = 8;
     pub const DEFAULT_SERMUX_PORT: Option<u16> = Some(serial_mux::WellKnown::PseudoKeyboard as u16);
 
-    const fn default_buffer_capacity() -> usize {
+    const fn default_buffer_capacity() -> u8 {
         Self::DEFAULT_BUFFER_CAPACITY
     }
     const fn default_max_keyboards() -> usize {

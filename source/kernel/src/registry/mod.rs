@@ -114,6 +114,8 @@ pub struct UserRequest<'a> {
     req_bytes: &'a [u8],
 }
 
+pub type KernelSendError<T> = mpsc::error::SendError<Reset, T>;
+
 // TODO: This probably goes into the ABI crate, here is fine for now
 #[derive(Serialize, Deserialize)]
 pub struct UserResponse<U, E> {

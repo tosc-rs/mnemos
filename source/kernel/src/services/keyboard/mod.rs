@@ -19,7 +19,7 @@ use crate::{
         kchannel::{self, KChannel},
         oneshot,
     },
-    registry::{self, known_uuids, Service},
+    registry::{self, known_uuids, KernelHandle, UserService},
     Kernel,
 };
 
@@ -32,12 +32,11 @@ pub mod mux;
 
 pub struct KeyboardService;
 
-impl Service for KeyboardService {
-    type Request = Subscribe;
-    type Response = Subscribed;
-    type Error = KeyboardError;
-    type Hello = ();
-    type ConnectError = core::convert::Infallible;
+impl UserService for KeyboardService {
+    type ClientMsg = ();
+    type ServerMsg = KeyEvent;
+    type Hello = Subscribe;
+    type ConnectError = KeyboardError;
 
     const UUID: Uuid = known_uuids::kernel::KEYBOARD;
 }
@@ -50,10 +49,6 @@ pub use self::key_event::KeyEvent;
 #[derive(Copy, Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Subscribe {
     buffer_capacity: usize,
-}
-
-pub struct Subscribed {
-    rx: kchannel::KConsumer<KeyEvent>,
 }
 
 #[derive(Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -83,27 +78,19 @@ impl Subscribe {
     }
 }
 
-impl Subscribed {
-    pub fn new(Subscribe { buffer_capacity }: Subscribe) -> (kchannel::KProducer<KeyEvent>, Self) {
-        let (tx, rx) = KChannel::new(buffer_capacity).split();
-        (tx, Self { rx })
-    }
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // Client types
 ////////////////////////////////////////////////////////////////////////////////
 
 /// A client that receives [`KeyEvent`]s from a [`KeyboardService`].
 pub struct KeyClient {
-    rx: kchannel::KConsumer<KeyEvent>,
+    handle: KernelHandle<KeyboardService>,
 }
 
 #[derive(Debug)]
 pub enum FromRegistryError {
     Connect(registry::ConnectError<KeyboardService>),
     Service(KeyboardError),
-    Request(registry::OneshotRequestError),
 }
 
 impl KeyClient {
@@ -117,7 +104,7 @@ impl KeyClient {
     ) -> Result<Self, FromRegistryError> {
         let handle = kernel
             .registry()
-            .connect::<KeyboardService>(())
+            .connect::<KeyboardService>(subscribe)
             .await
             .map_err(FromRegistryError::Connect)?;
         Self::from_handle(subscribe, handle).await
@@ -139,20 +126,6 @@ impl KeyClient {
             .await
             .map_err(FromRegistryError::Connect)?;
         Self::from_handle(subscribe, handle).await
-    }
-
-    async fn from_handle(
-        subscribe: Subscribe,
-        mut handle: registry::KernelHandle<KeyboardService>,
-    ) -> Result<Self, FromRegistryError> {
-        let reply = oneshot::Reusable::new_async().await;
-        let Subscribed { rx } = handle
-            .request_oneshot(subscribe, &reply)
-            .await
-            .map_err(FromRegistryError::Request)?
-            .body
-            .map_err(FromRegistryError::Service)?;
-        Ok(Self { rx })
     }
 
     /// Returns the next [`KeyEvent`] received from the [`KeyboardService`].
