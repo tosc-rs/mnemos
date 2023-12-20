@@ -22,5 +22,6 @@ pub mod emb_display;
 pub mod forth_spawnulator;
 pub mod i2c;
 pub mod keyboard;
+pub mod sdmmc;
 pub mod serial_mux;
 pub mod simple_serial;
