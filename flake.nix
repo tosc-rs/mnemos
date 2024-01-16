@@ -35,7 +35,8 @@
         # use the Rust toolchain specified in the project's rust-toolchain.toml
         rustToolchain = pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile
           ./rust-toolchain.toml;
-      in {
+      in
+      {
         devShell = with pkgs;
           mkShell rec {
             name = "mnemos-dev";
