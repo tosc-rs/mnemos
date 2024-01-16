@@ -4,11 +4,28 @@
 //! This extends the underlying bbqueue type exposed by the ABI crate, allowing
 //! for async kernel-to-kernel (including driver services) usage.
 
-#![no_std]
+#![cfg_attr(not(test), no_std)]
+
+#[cfg(not(test))]
+macro_rules! test_dbg {
+    ($e:expr) => {
+        $e
+    };
+}
+
+#[cfg(test)]
+macro_rules! test_dbg {
+    ($e:expr) => {
+        std::dbg!($e)
+    };
+}
+
 use core::{
     fmt,
     ops::{Deref, DerefMut},
 };
+
+mod async_fmt;
 
 use abi::bbqueue_ipc::{BBBuffer, Consumer as InnerConsumer, Producer as InnerProducer};
 use abi::bbqueue_ipc::{GrantR as InnerGrantR, GrantW as InnerGrantW};
@@ -44,6 +61,11 @@ impl BidiHandle {
 
     pub fn split(self) -> (SpscProducer, Consumer) {
         (self.producer, self.consumer)
+    }
+
+    pub async fn write_fmt(&self, fmt: impl fmt::Debug) -> fmt::Result {
+        async_fmt::fmt_to_bbq(self, fmt).await;
+        Ok(())
     }
 }
 
@@ -273,6 +295,11 @@ impl MpscProducer {
         let producer = producer.as_ref().unwrap();
         producer_send_grant_exact(size, producer, &self.storage).await
     }
+
+    pub async fn write_fmt(&self, fmt: impl fmt::Debug) -> fmt::Result {
+        async_fmt::fmt_to_bbq(self, fmt).await;
+        Ok(())
+    }
 }
 
 impl SpscProducer {
@@ -294,6 +321,11 @@ impl SpscProducer {
     )]
     pub async fn send_grant_exact(&self, size: usize) -> GrantW {
         producer_send_grant_exact(size, &self.producer, &self.storage).await
+    }
+
+    pub async fn write_fmt(&self, fmt: impl fmt::Debug) -> fmt::Result {
+        async_fmt::fmt_to_bbq(self, fmt).await;
+        Ok(())
     }
 }
 

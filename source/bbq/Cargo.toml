@@ -25,3 +25,6 @@ path = "../alloc"
 version = "0.1.35"
 features = ["attributes"]
 default-features = false
+
+[dev-dependencies]
+tokio = { version = "1.35", features = ["rt", "macros", "time"] }
