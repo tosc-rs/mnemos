@@ -118,32 +118,32 @@ impl BBBuffer {
 
             buf_len: AtomicUsize::new(0),
 
-            /// Owned by the writer
+            // Owned by the writer
             write: AtomicUsize::new(0),
 
-            /// Owned by the reader
+            // Owned by the reader
             read: AtomicUsize::new(0),
 
-            /// Cooperatively owned
-            ///
-            /// NOTE: This should generally be initialized as size_of::<self.buf>(), however
-            /// this would prevent the structure from being entirely zero-initialized,
-            /// and can cause the .data section to be much larger than necessary. By
-            /// forcing the `last` pointer to be zero initially, we place the structure
-            /// in an "inverted" condition, which will be resolved on the first commited
-            /// bytes that are written to the structure.
-            ///
-            /// When read == last == write, no bytes will be allowed to be read (good), but
-            /// write grants can be given out (also good).
+            // Cooperatively owned
+            //
+            // NOTE: This should generally be initialized as size_of::<self.buf>(), however
+            // this would prevent the structure from being entirely zero-initialized,
+            // and can cause the .data section to be much larger than necessary. By
+            // forcing the `last` pointer to be zero initially, we place the structure
+            // in an "inverted" condition, which will be resolved on the first commited
+            // bytes that are written to the structure.
+            //
+            // When read == last == write, no bytes will be allowed to be read (good), but
+            // write grants can be given out (also good).
             last: AtomicUsize::new(0),
 
-            /// Owned by the Writer, "private"
+            // Owned by the Writer, "private"
             reserve: AtomicUsize::new(0),
 
-            /// Owned by the Reader, "private"
+            // Owned by the Reader, "private"
             read_in_progress: AtomicBool::new(false),
 
-            /// Owned by the Writer, "private"
+            // Owned by the Writer, "private"
             write_in_progress: AtomicBool::new(false),
         }
     }

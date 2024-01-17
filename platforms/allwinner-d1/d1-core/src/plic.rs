@@ -31,7 +31,7 @@ pub struct Plic {
 }
 
 impl Plic {
-    /// Create a new `Plic` from the [`PLIC`](d1_pac::PLIC) peripheral
+    /// Create a new `Plic` from the [`PLIC`] peripheral
     pub fn new(plic: PLIC) -> Self {
         // TODO any initial setup we should be doing for the PLIC at startup?
         Self { plic }
