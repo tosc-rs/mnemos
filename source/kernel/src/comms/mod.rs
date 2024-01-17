@@ -1,5 +1,5 @@
 //! Kernel Communications Interfaces
 
-pub mod bbq;
+pub use mnemos_bbq as bbq;
 pub mod kchannel;
 pub mod oneshot;

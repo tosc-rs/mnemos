@@ -4,9 +4,29 @@
 //! This extends the underlying bbqueue type exposed by the ABI crate, allowing
 //! for async kernel-to-kernel (including driver services) usage.
 
-use core::ops::{Deref, DerefMut};
+#![cfg_attr(not(test), no_std)]
 
-use crate::fmt;
+#[cfg(not(test))]
+macro_rules! test_dbg {
+    ($e:expr) => {
+        $e
+    };
+}
+
+#[cfg(test)]
+macro_rules! test_dbg {
+    ($e:expr) => {
+        std::dbg!($e)
+    };
+}
+
+use core::{
+    fmt,
+    ops::{Deref, DerefMut},
+};
+
+mod async_fmt;
+
 use abi::bbqueue_ipc::{BBBuffer, Consumer as InnerConsumer, Producer as InnerProducer};
 use abi::bbqueue_ipc::{GrantR as InnerGrantR, GrantW as InnerGrantW};
 use maitake::sync::Mutex;
@@ -41,6 +61,11 @@ impl BidiHandle {
 
     pub fn split(self) -> (SpscProducer, Consumer) {
         (self.producer, self.consumer)
+    }
+
+    pub async fn write_fmt(&self, fmt: impl fmt::Debug) -> fmt::Result {
+        async_fmt::fmt_to_bbq(self, fmt).await;
+        Ok(())
     }
 }
 
@@ -251,7 +276,7 @@ impl MpscProducer {
         name = "MpscProducer::send_grant_max",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
+        fields(queue = ?fmt_ptr(self.storage.deref())),
     )]
     pub async fn send_grant_max(&self, max: usize) -> GrantW {
         let producer = self.storage.producer.lock().await;
@@ -263,12 +288,17 @@ impl MpscProducer {
         name = "MpscProducer::send_grant_exact",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
+        fields(queue = ?fmt_ptr(self.storage.deref())),
     )]
     pub async fn send_grant_exact(&self, size: usize) -> GrantW {
         let producer = self.storage.producer.lock().await;
         let producer = producer.as_ref().unwrap();
         producer_send_grant_exact(size, producer, &self.storage).await
+    }
+
+    pub async fn write_fmt(&self, fmt: impl fmt::Debug) -> fmt::Result {
+        async_fmt::fmt_to_bbq(self, fmt).await;
+        Ok(())
     }
 }
 
@@ -277,7 +307,7 @@ impl SpscProducer {
         name = "SpscProducer::send_grant_max",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
+        fields(queue = ?fmt_ptr(self.storage.deref())),
     )]
     pub async fn send_grant_max(&self, max: usize) -> GrantW {
         producer_send_grant_max(max, &self.producer, &self.storage).await
@@ -287,10 +317,15 @@ impl SpscProducer {
         name = "SpscProducer::send_grant_exact",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
+        fields(queue = ?fmt_ptr(self.storage.deref())),
     )]
     pub async fn send_grant_exact(&self, size: usize) -> GrantW {
         producer_send_grant_exact(size, &self.producer, &self.storage).await
+    }
+
+    pub async fn write_fmt(&self, fmt: impl fmt::Debug) -> fmt::Result {
+        async_fmt::fmt_to_bbq(self, fmt).await;
+        Ok(())
     }
 }
 
@@ -299,7 +334,7 @@ impl Consumer {
         name = "Consumer::read_grant",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
+        fields(queue = ?fmt_ptr(self.storage.deref())),
     )]
     pub async fn read_grant(&self) -> GrantR {
         loop {
@@ -330,7 +365,7 @@ impl SpscProducer {
         name = "SpscProducer::send_grant_exact_sync",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
+        fields(queue = ?fmt_ptr(self.storage.deref())),
     )]
     pub fn send_grant_exact_sync(&self, size: usize) -> Option<GrantW> {
         self.producer.grant_exact(size).ok().map(|wgr| GrantW {
@@ -343,7 +378,7 @@ impl SpscProducer {
         name = "SpscProducer::send_grant_max_sync",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
+        fields(queue = ?fmt_ptr(self.storage.deref())),
     )]
     pub fn send_grant_max_sync(&self, max: usize) -> Option<GrantW> {
         self.producer
@@ -361,7 +396,7 @@ impl MpscProducer {
         name = "MpscProducer::send_grant_exact_sync",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
+        fields(queue = ?fmt_ptr(self.storage.deref())),
     )]
     pub fn send_grant_exact_sync(&self, size: usize) -> Option<GrantW> {
         let producer = self.storage.producer.try_lock()?;
@@ -376,7 +411,7 @@ impl MpscProducer {
         name = "MpscProducer::send_grant_max_sync",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
+        fields(queue = ?fmt_ptr(self.storage.deref())),
     )]
     pub fn send_grant_max_sync(&self, max: usize) -> Option<GrantW> {
         let producer = self.storage.producer.try_lock()?;
@@ -393,12 +428,26 @@ impl Consumer {
         name = "Consumer::read_grant_sync",
         level = "trace",
         skip(self),
-        fields(queue = ?fmt::ptr(self.storage.deref())),
+        fields(queue = ?fmt_ptr(self.storage.deref())),
     )]
     pub fn read_grant_sync(&self) -> Option<GrantR> {
         self.consumer.read().ok().map(|rgr| GrantR {
             grant: rgr,
             storage: self.storage.clone(),
         })
+    }
+}
+
+#[inline]
+fn fmt_ptr<P: fmt::Pointer>(ptr: P) -> DebugPtr<P> {
+    DebugPtr(ptr)
+}
+
+#[derive(Copy, Clone)]
+pub(crate) struct DebugPtr<P: fmt::Pointer>(P);
+
+impl<P: fmt::Pointer> fmt::Debug for DebugPtr<P> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{:p}", self.0)
     }
 }

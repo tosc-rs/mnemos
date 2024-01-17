@@ -1,0 +1,30 @@
+[package]
+name = "mnemos-bbq"
+version = "0.1.0"
+edition.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies.mnemos-abi]
+version = "0.1.0"
+path = "../abi"
+
+[dependencies.maitake]
+version = "0.1.0"
+default-features = false
+features = ["alloc"]
+
+[dependencies.mnemos-alloc]
+version = "0.1.0"
+path = "../alloc"
+
+[dependencies.tracing]
+version = "0.1.35"
+features = ["attributes"]
+default-features = false
+
+[dev-dependencies]
+tokio = { version = "1.35", features = ["rt", "macros", "time"] }

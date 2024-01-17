@@ -149,10 +149,11 @@ impl Forth {
                             .input_mut()
                             .fill(input)
                             .expect("eliza: why would this fail?");
-                        read.release(len);
                     }
                     Err(_e) => todo!("eliza: what to do if the input is not utf8?"),
                 };
+
+                read.release(len);
             }
         }
     }

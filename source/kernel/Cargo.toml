@@ -92,6 +92,10 @@ version = "0.7.10"
 version = "0.1.0"
 path = "../abi"
 
+[dependencies.mnemos-bbq]
+version = "0.1.0"
+path = "../bbq"
+
 [dependencies.serde]
 version = "1.0.136"
 default-features = false

@@ -288,6 +288,16 @@ pub mod test {
     }
 
     #[test]
+    fn builtins() {
+        all_runtest(
+            r#"
+            > builtins
+            <
+        "#,
+        );
+    }
+
+    #[test]
     fn forth() {
         let mut lbforth = LBForth::from_params(
             LBForthParams::default(),
