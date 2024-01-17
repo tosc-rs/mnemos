@@ -2,8 +2,7 @@
 //!
 //! This is an early attempt at a "frame buffer" style display driver. It provides a
 //! [emb_display service][kernel::services::emb_display] server, and uses the
-//! d1-core specific [SpiSender][crate::drivers::spim::SpiSender] service as an SPI
-//! "backend" for rendering.
+//! d1-core specific [SpiSender] service as an SPI "backend" for rendering.
 //!
 //! This implementation is sort of a work in progress, it isn't really a *great*
 //! long-term solution, but rather "okay for now".

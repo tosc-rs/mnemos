@@ -9,13 +9,13 @@ pub struct Clint {
 }
 
 impl Clint {
-    /// Create a new `Clint` from the [`CLINT`](d1_pac::CLINT) peripheral
+    /// Create a new `Clint` from the [`CLINT`] peripheral
     #[must_use]
     pub fn new(clint: CLINT) -> Self {
         Self { clint }
     }
 
-    /// Release the underlying [`CLINT`](d1_pac::CLINT) peripheral
+    /// Release the underlying [`CLINT`] peripheral
     #[must_use]
     pub fn release(self) -> CLINT {
         self.clint
