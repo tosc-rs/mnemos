@@ -29,7 +29,7 @@ yes, this is a wildly deranged idea. i'm so smart.
 invoking `cargo mn` without a subcommand will print a list of available
 commands, which will look sort of like this:
 
-```console
+```shell
 $ cargo mn
    Compiling manganese v0.1.0 (/home/eliza/Code/mnemos/tools/manganese)
     Finished release [optimized + debuginfo] target(s) in 3.99s

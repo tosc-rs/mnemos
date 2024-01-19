@@ -44,7 +44,7 @@ The simplest way to build a MnemOS image for an Allwinner D1 board is to use the
 The `just build-d1` recipe takes an optional argument to select which bin target
 is built; by default, the `mq-pro` bin target is selected. For example:
 
-```console
+```shell
 $ just build-d1             # builds MnemOS for the MangoPi MQ Pro
 $ just build-d1 mq-pro      # also builds MnemOS for the MQ Pro
 $ just build-d1 lichee-rv   # builds MnemOS for the Lichee RV
@@ -53,7 +53,7 @@ $ just build-d1 lichee-rv   # builds MnemOS for the Lichee RV
 Alternatively, Allwinner D1 images can be built manually using Cargo. To build
 using Cargo, run the following commands:
 
-```console
+```shell
 # set which board binary to build
 $ export BOARD="mq-pro" # or "lichee-rv"
 
@@ -82,7 +82,7 @@ none is provided.
 
 For example, running `just flash-d1 mq-pro` should print output like this:
 
-```console
+```shell
 $ just flash-d1 mq-pro
        Found cargo objcopy
    Compiling mnemos-d1 v0.1.0 (/home/eliza/Code/mnemos/platforms/allwinner-d1/boards)
