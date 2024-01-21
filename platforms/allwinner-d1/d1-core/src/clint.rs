@@ -34,15 +34,26 @@ impl Clint {
         }
     }
 
+    /// Spin until `delay_us` microseconds have elapsed (as determined by
+    /// [`Self::get_mtime`]).
+    // TODO: should this move into the `Clint`?
+    pub(crate) fn spin_delay_us(delay_us: usize) {
+        let t = Self::get_mtime();
+        // TODO: verify that mtime sourced directly from DXCO (24 MHz)
+        while Self::get_mtime() < (t + 24 * delay_us) {
+            core::hint::spin_loop()
+        }
+    }
+
     /// Get the (machine) time value.
     #[cfg(not(any(target_arch = "riscv64", target_arch = "riscv32")))]
-    pub fn get_mtime(&self) -> usize {
+    pub fn get_mtime() -> usize {
         unimplemented!("called `Clint::get_mtime` on a non-RISC-V architecture, this shouldn't happen while running host tests!")
     }
 
     /// Get the (machine) time value.
     #[cfg(any(target_arch = "riscv64", target_arch = "riscv32"))]
-    pub fn get_mtime(&self) -> usize {
+    pub fn get_mtime() -> usize {
         // Note that the CLINT of the C906 core does not implement
         // the `mtime` register and we need to get the time value
         // with a CSR, which the `riscv` crate implements for us.
