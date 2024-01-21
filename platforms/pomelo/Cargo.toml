@@ -23,7 +23,7 @@ gloo-utils = { version = "0.2", features = ["serde"] }
 serde = { version = "1.0.171", features = ["derive"] }
 # waiting for PR merge
 # embedded-graphics-web-simulator = "0.3.0"
-embedded-graphics-web-simulator = { git = 'https://github.com/spookyvision/embedded-graphics-web-simulator' }
+embedded-graphics-web-simulator = { git = 'https://github.com/spookyvision/embedded-graphics-web-simulator', rev = "4772be9" }
 embedded-graphics = "0.8"
 console_error_panic_hook = "0.1.7"
 
