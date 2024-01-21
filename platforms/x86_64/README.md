@@ -48,7 +48,7 @@ MnemOS can boot using either legacy [BIOS] or [UEFI] (using [`ovmf-prebuilt`]).
 The `--boot` argument can be passed to `just run-x86` to determine which boot
 method is used:
 
-```console
+```shell
 $ just run-x86 --boot uefi # boots using UEFI
 $ just run-x86 --boot bios # boots using legacy BIOS
 ```

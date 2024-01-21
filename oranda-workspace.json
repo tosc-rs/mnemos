@@ -7,7 +7,7 @@
     "docs_path": "./assets/INDEX.md",
     "members": [
       {
-        "slug": "MnemosProjectOverview",
+        "slug": "mnemosprojectoverview",
         "path": "."
       },
       {
@@ -25,6 +25,14 @@
       {
         "slug": "allwinner-d1",
         "path": "platforms/allwinner-d1"
+      },
+      {
+        "slug": "esp32c3-buddy",
+        "path": "platforms/esp32c3-buddy"
+      },
+      {
+        "slug": "x86_64",
+        "path": "platforms/x86_64"
       },
       {
         "slug": "crowtty",

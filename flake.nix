@@ -6,10 +6,7 @@
     # (not available in stable nixpkgs yet).
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     oranda = {
-      # use my fork of Oranda until upstream merges PR
-      # https://github.com/axodotdev/oranda/pull/609 (this is necessary to fix
-      # the flake)
-      url = "github:hawkw/oranda?rev=8e5eff3d1f9c4e3642d8c327032d4072d2ca4a00";
+      url = "github:axodotdev/oranda";
       inputs.nixpkgs.follows = "nixpkgs";
     };
     flake-utils = {
@@ -35,7 +32,8 @@
         # use the Rust toolchain specified in the project's rust-toolchain.toml
         rustToolchain = pkgs.pkgsBuildHost.rust-bin.fromRustupToolchainFile
           ./rust-toolchain.toml;
-      in {
+      in
+      {
         devShell = with pkgs;
           mkShell rec {
             name = "mnemos-dev";

@@ -1,1 +1,1 @@
-# MnemOS RFCs
+# mnemOS RFCs

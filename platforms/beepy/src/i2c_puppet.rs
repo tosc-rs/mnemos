@@ -338,7 +338,13 @@ impl I2cPuppetServer {
     ///   [`None`], the driver will only poll the `i2c_puppet` device when
     ///   [`settings.poll_interval`](I2cPuppetSettings#structfield.poll_interval)
     ///   elapses.
-    #[instrument(level = Level::DEBUG, skip(kernel, irq_waker))]
+    #[instrument(
+        name = "I2cPuppetServer::register",
+        level = Level::INFO,
+        skip(kernel, irq_waker),
+        ret(Debug),
+        err(Debug),
+    )]
     pub async fn register(
         kernel: &'static Kernel,
         settings: I2cPuppetSettings,

@@ -2,10 +2,10 @@
 <nav class="nav">
     <img src = "https://mnemos.dev/mnemosprojectoverview/assets/logo-mnemos-1280px.png" width = "700" alt="MnemOS" />
     <ul>
-        <li><a href="https://mnemos.dev/mnemosprojectoverview/book/">book</a></li>
-        <li><a href="https://mnemos.dev/doc/kernel/">API RustDoc</a></li>
+        <li><a href="/mnemosprojectoverview/book/">book</a></li>
+        <li><a href="/doc/kernel/">API RustDoc</a></li>
         <li><a href="https://github.com/tosc-rs/mnemos">GitHub</a></li>
-        <li><a href="https://mnemos.dev/mnemosprojectoverview/changelog/">dev updates</a></li>
+        <li><a href="/mnemosprojectoverview/changelog/">dev updates</a></li>
     </ul>
 </nav>
 <!-- oranda doesn't automatically put the markdown in a container with this
@@ -31,13 +31,13 @@ To get involved in MnemOS development, you can:
 
 The following pages summarize various components of MnemOS:
 
-[name]: https://mnemos.dev/mnemosprojectoverview/book/#where-does-the-name-come-fromhow-do-i-pronounce-it
+[name]: /book/#where-does-the-name-come-fromhow-do-i-pronounce-it
 [d1]: https://github.com/tosc-rs/mnemos/tree/main/platforms/allwinner-d1
 [x86]: https://github.com/tosc-rs/mnemos/tree/main/platforms/x86_64
 [Erlang]: https://en.wikipedia.org/wiki/Erlang_(programming_language)#Processes
 [microkernels]: https://en.wikipedia.org/wiki/Microkernel
-[book]: https://mnemos.dev/mnemosprojectoverview/book/
-[project overview]: https://mnemos.dev/mnemosprojectoverview/
+[book]: /mnemosprojectoverview/book/
+[project overview]: /mnemosprojectoverview/
 [dev blogs]: https://onevariable.com/blog/mnemos-moment-1/
 [pomelo]: https://anatol.versteht.es/mlem/
 [#mnemos-dev:beeper.com]: https://matrix.to/#/#mnemos-dev:beeper.com

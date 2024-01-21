@@ -2,8 +2,7 @@
 //!
 //! This is an early attempt at a "frame buffer" style display driver. It provides a
 //! [emb_display service][kernel::services::emb_display] server, and uses the
-//! d1-core specific [SpiSender][crate::drivers::spim::SpiSender] service as an SPI
-//! "backend" for rendering.
+//! d1-core specific [SpiSender] service as an SPI "backend" for rendering.
 //!
 //! This implementation is sort of a work in progress, it isn't really a *great*
 //! long-term solution, but rather "okay for now".
@@ -82,12 +81,26 @@ pub enum RegistrationError {
 impl SharpDisplay {
     pub const WIDTH: usize = WIDTH;
     pub const HEIGHT: usize = HEIGHT;
+    const CAPACITY: usize = 2;
 
     /// Register the driver instance
     ///
     /// Registration will also start the simulated display, meaning that the display
     /// window will appear.
+    #[tracing::instrument(
+        name = "SharpDisplay::register",
+        level = tracing::Level::INFO,
+        skip(kernel),
+        err(Debug),
+    )]
     pub async fn register(kernel: &'static Kernel) -> Result<(), RegistrationError> {
+        tracing::info!(
+            width = WIDTH,
+            height = HEIGHT,
+            queue_capacity = Self::CAPACITY,
+            "Starting SharpDisplay driver",
+        );
+
         // acquire a SPI client first, so that we don't register the display
         // service unless we can get a SPI client.
         let spim = SpiSenderClient::from_registry(kernel)
@@ -97,10 +110,10 @@ impl SharpDisplay {
         // bind a listener
         let cmd = kernel
             .registry()
-            .bind_konly(2)
+            .bind_konly(Self::CAPACITY)
             .await
             .map_err(RegistrationError::Registration)?
-            .into_request_stream(2)
+            .into_request_stream(Self::CAPACITY)
             .await;
 
         let linebuf = FixedVec::new(FRAME_BYTES).await;
@@ -293,7 +306,11 @@ impl Draw {
             // Drop the mutex once we're done using the framebuffer data
             drop(c);
 
-            tracing::debug!(drawn, "Drew all dirty lines");
+            if drawn > 0 {
+                tracing::debug!(drawn, "Drew all dirty lines");
+            } else {
+                tracing::trace!("No dirty lines, didn't draw anything...");
+            }
 
             self.buf = self.spim.send_wait(self.buf).await.map_err(drop).unwrap();
 

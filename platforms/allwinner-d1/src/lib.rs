@@ -8,6 +8,7 @@ use self::{
     ccu::Ccu,
     dmac::Dmac,
     drivers::{
+        smhc::Smhc,
         spim::{self, SpiSenderServer},
         twi,
         uart::{self, D1Uart, Uart},
@@ -50,6 +51,7 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
 
     let uart = unsafe { uart::kernel_uart(&mut ccu, &mut p.GPIO, p.UART0) };
     let spim = unsafe { spim::kernel_spim1(p.SPI_DBI, &mut ccu, &mut p.GPIO) };
+    let smhc0 = unsafe { Smhc::smhc0(p.SMHC0, &mut ccu, &mut p.GPIO) };
 
     let i2c0 = match config.platform.i2c {
         d1_config::I2cConfiguration { enabled: false, .. } => None,
@@ -79,6 +81,7 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
         dmac,
         uart,
         spim,
+        smhc0,
         plic,
         i2c0,
         config.kernel,
@@ -183,6 +186,7 @@ impl D1 {
         dmac: Dmac,
         uart: Uart,
         spim: spim::Spim1,
+        smhc: Smhc,
         plic: Plic,
         i2c0: Option<twi::I2c0>,
         kernel_settings: KernelSettings,
@@ -194,6 +198,8 @@ impl D1 {
                 .unwrap()
         };
 
+        k.initialize_default_services(service_settings);
+
         // Initialize SPI stuff
         k.initialize(async move {
             // Register a new SpiSenderServer
@@ -203,7 +209,7 @@ impl D1 {
 
         // Initialize SimpleSerial driver
         k.initialize(async move {
-            D1Uart::register(k, dmac, 4096, 4096).await.unwrap();
+            D1Uart::register(k, dmac, Default::default()).await.unwrap();
         })
         .unwrap();
 
@@ -222,7 +228,13 @@ impl D1 {
             i2c0_int
         });
 
-        k.initialize_default_services(service_settings);
+        // Initialize SMHC driver
+        k.initialize(async {
+            tracing::debug!("initializing SMHC...");
+            smhc.register(k, 4).await.unwrap();
+            tracing::debug!("SMHC initialized!");
+        })
+        .unwrap();
 
         Self {
             kernel: k,
@@ -320,9 +332,11 @@ impl D1 {
             plic.register(Interrupt::TIMER1, Self::timer1_int);
             plic.register(Interrupt::DMAC_NS, Dmac::handle_interrupt);
             plic.register(Interrupt::UART0, D1Uart::handle_uart0_int);
+            plic.register(Interrupt::SMHC0, Smhc::handle_smhc0_interrupt);
 
             plic.activate(Interrupt::DMAC_NS, Priority::P1).unwrap();
             plic.activate(Interrupt::UART0, Priority::P1).unwrap();
+            plic.activate(Interrupt::SMHC0, Priority::P1).unwrap();
 
             if let Some((i2c0_int, i2c0_isr)) = i2c0_int {
                 plic.register(i2c0_int, i2c0_isr);

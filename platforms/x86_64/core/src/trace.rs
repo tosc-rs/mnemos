@@ -87,7 +87,7 @@ where
     }
 
     fn exit(&self, span: &span::Id) {
-        with_serial(|serial| serial.enter(span));
+        with_serial(|serial| serial.exit(span));
     }
 
     fn record_follows_from(&self, _: &span::Id, _: &span::Id) {

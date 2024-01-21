@@ -7,9 +7,7 @@ use core::ptr::NonNull;
 
 use crate::ccu::Ccu;
 use crate::dmac::{
-    descriptor::{
-        AddressMode, BModeSel, BlockSize, DataWidth, DescriptorConfig, DestDrqType, SrcDrqType,
-    },
+    descriptor::{BlockSize, DataWidth, Descriptor, DestDrqType},
     ChannelMode, Dmac,
 };
 use d1_pac::{GPIO, SPI_DBI};
@@ -105,77 +103,102 @@ pub struct SpiSender;
 pub struct SpiSenderServer;
 
 impl SpiSenderServer {
+    #[tracing::instrument(
+        name = "SpiSenderServer::register",
+        level = tracing::Level::INFO,
+        skip(kernel, dmac),
+        ret(Debug),
+        err(Debug),
+    )]
     pub async fn register(
         kernel: &'static Kernel,
         dmac: Dmac,
         queued: usize,
     ) -> Result<(), registry::RegistrationError> {
+        tracing::info!(queued, "Starting SpiSenderServer");
+
         let reqs = kernel
             .registry()
             .bind_konly::<SpiSender>(queued)
             .await?
             .into_request_stream(queued)
             .await;
+
         kernel
             .spawn(async move {
                 let spi = unsafe { &*SPI_DBI::PTR };
 
-                let txd_ptr: *mut u32 = spi.spi_txd.as_ptr();
-                let txd_ptr: *mut u8 = txd_ptr.cast();
-                let txd_ptr: *mut () = txd_ptr.cast();
+                let descr_cfg = Descriptor::builder()
+                    .dest_data_width(DataWidth::Bit8)
+                    .dest_block_size(BlockSize::Byte1)
+                    .src_data_width(DataWidth::Bit8)
+                    .src_block_size(BlockSize::Byte1)
+                    .wait_clock_cycles(0)
+                    .dest_reg(&spi.spi_txd, DestDrqType::Spi1Tx)
+                    .expect(
+                        "SPI_TXD register should be a valid destination register for DMA transfers",
+                    );
 
+                tracing::info!(?descr_cfg, "SpiSender worker task running",);
                 loop {
                     let Message { msg, reply } = reqs.next_request().await;
                     let SpiSenderRequest::Send(ref payload) = msg.body;
 
-                    let len = payload.as_slice().len();
-
-                    spi.spi_bcc.modify(|_r, w| {
-                        // "Single Mode Transmit Counter" - the number of bytes to send
-                        w.stc().variant(len as u32);
-                        w
-                    });
-                    spi.spi_mbc.modify(|_r, w| {
-                        // Master Burst Counter
-                        w.mbc().variant(len as u32);
-                        w
-                    });
-                    spi.spi_mtc.modify(|_r, w| {
-                        w.mwtc().variant(len as u32);
-                        w
-                    });
-                    // Start transfer
-                    spi.spi_tcr.modify(|_r, w| {
-                        w.xch().initiate_exchange();
-                        w
-                    });
-
-                    let d_cfg = DescriptorConfig {
-                        source: payload.as_slice().as_ptr().cast(),
-                        destination: txd_ptr,
-                        byte_counter: len,
-                        link: None,
-                        wait_clock_cycles: 0,
-                        bmode: BModeSel::Normal,
-                        dest_width: DataWidth::Bit8,
-                        dest_addr_mode: AddressMode::IoMode,
-                        dest_block_size: BlockSize::Byte1,
-                        dest_drq_type: DestDrqType::Spi1Tx,
-                        src_data_width: DataWidth::Bit8,
-                        src_addr_mode: AddressMode::LinearMode,
-                        src_block_size: BlockSize::Byte1,
-                        src_drq_type: SrcDrqType::Dram,
-                    };
-                    let descriptor = d_cfg.try_into().map_err(drop)?;
-
-                    // start the DMA transfer.
+                    let mut chan = dmac.claim_channel().await;
                     unsafe {
-                        dmac.transfer(
-                            ChannelMode::Wait,
-                            ChannelMode::Handshake,
-                            NonNull::from(&descriptor),
-                        )
-                        .await;
+                        chan.set_channel_modes(ChannelMode::Wait, ChannelMode::Handshake);
+                    }
+
+                    // if the payload is longer than the maximum DMA buffer
+                    // length, split it down to the maximum size and send each
+                    // chunk as a separate DMA transfer.
+                    let chunks = payload
+                        .as_slice()
+                        // TODO(eliza): since the `MAX_LEN` is a constant,
+                        // we could consider using `slice::array_chunks` instead to
+                        // get these as fixed-size arrays, once that function is stable?
+                        .chunks(Descriptor::MAX_LEN as usize);
+
+                    for chunk in chunks {
+                        // this cast will never truncate because
+                        // `BYTE_COUNTER_MAX` is less than 32 bits.
+                        debug_assert!(chunk.len() <= Descriptor::MAX_LEN as usize);
+                        let len = chunk.len() as u32;
+
+                        spi.spi_bcc.modify(|_r, w| {
+                            // "Single Mode Transmit Counter" - the number of bytes to send
+                            w.stc().variant(len);
+                            w
+                        });
+                        spi.spi_mbc.modify(|_r, w| {
+                            // Master Burst Counter
+                            w.mbc().variant(len);
+                            w
+                        });
+                        spi.spi_mtc.modify(|_r, w| {
+                            w.mwtc().variant(len);
+                            w
+                        });
+                        // Start transfer
+                        spi.spi_tcr.modify(|_r, w| {
+                            w.xch().initiate_exchange();
+                            w
+                        });
+
+                        // TODO(eliza): we could use the `Descriptor::link`
+                        // field to chain all the chunks together, instead of
+                        // doing a bunch of transfers. But, we would need some
+                        // place to put all the descriptors...let's figure that
+                        // out later.
+                        let descriptor = descr_cfg
+                            .source_slice(chunk)
+                            .expect("slice should be a valid DMA source")
+                            .build();
+
+                        // start the DMA transfer.
+                        unsafe {
+                            chan.transfer(NonNull::from(&descriptor)).await;
+                        }
                     }
 
                     reply

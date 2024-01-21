@@ -36,7 +36,7 @@ pub mod descriptor;
 /// This struct is constructed using [`Dmac::new`], which initializes the DMA
 /// controller and returns a `Dmac`. Since this struct is essentially a token
 /// representing that the DMAC has been initialized, it may be freely copied
-/// into any driver that wishes to perform DMA oeprations.
+/// into any driver that wishes to perform DMA operations.
 #[derive(Copy, Clone)]
 pub struct Dmac {
     // this struct is essentially used as a "yes, the DMAC is initialized now" token...
@@ -89,7 +89,7 @@ pub enum ChannelMode {
     /// transfer completes, and waits for the peripheral to pull the DMA
     /// Active signal low before starting the next transfer.
     ///
-    /// The Allwinner documentationh for the D1 describes this mode as follows:
+    /// The Allwinner documentation for the D1 describes this mode as follows:
     ///
     /// > * When the DMAC detects a valid external request signal, the DMAC
     /// >   starts to operate the peripheral device. The internal DRQ always
@@ -222,7 +222,7 @@ impl Dmac {
     /// some of the data it wanted. If we were reading from a device, reads may
     /// have side effects and incomplete reads may leave the device in a weird
     /// state. Cancelling an incomplete transfer may result in, for example,
-    /// writing out half of a string to the UART, or only part  of a structured
+    /// writing out half of a string to the UART, or only part of a structured
     /// message over SPI, and so on. But, at least we don't have abandoned DMA
     /// transfers running around in random parts of the heap you probably wanted
     /// to use for normal stuff like having strings, or whatever it is that
@@ -398,6 +398,7 @@ impl Channel {
     /// dropped, the descriptor and its associated memory region may also be
     /// dropped safely.
     ///
+    /// Of course, the transfer may still have completed partially. If we
     /// were writing to a device, the device may be unhappy to have only gotten
     /// some of the data it wanted. If we were reading from a device, reads may
     /// have side effects and incomplete reads may leave the device in a weird

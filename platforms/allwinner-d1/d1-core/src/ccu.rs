@@ -14,26 +14,30 @@ use d1_pac::{SPI0, SPI_DBI};
 use d1_pac::{TWI0, TWI1, TWI2, TWI3};
 use d1_pac::{UART0, UART1, UART2, UART3, UART4, UART5};
 
+use crate::clint::Clint;
+
 pub struct Ccu {
     ccu: CCU,
 }
 
-/// Trait to be implemented for module clocks that can be gated and reset
-pub trait BusGatingResetRegister {
-    /// Enable or disable the clock reset bit
-    fn gating(ccu: &mut CCU, pass: bool);
-    /// Enable or disable the clock gating bit
-    fn reset(ccu: &mut CCU, deassert: bool);
+#[derive(PartialEq)]
+pub enum BusGating {
+    Mask,
+    Pass,
 }
 
-// TODO: should this move into the `Clint`?
-fn sdelay(delay_us: usize) {
-    let clint = unsafe { crate::clint::Clint::summon() };
-    let t = clint.get_mtime();
-    // TODO: verify that mtime sourced directly from DXCO (24 MHz)
-    while clint.get_mtime() < (t + 24 * delay_us) {
-        core::hint::spin_loop()
-    }
+#[derive(PartialEq)]
+pub enum BusReset {
+    Assert,
+    Deassert,
+}
+
+/// Trait to be implemented for module clocks that can be gated and reset
+pub trait BusGatingResetRegister {
+    /// Enable or disable the clock gating bit
+    fn gating(ccu: &mut CCU, gating: BusGating);
+    /// Enable or disable the clock reset bit
+    fn reset(ccu: &mut CCU, reset: BusReset);
 }
 
 impl Ccu {
@@ -49,16 +53,16 @@ impl Ccu {
 
     /// De-assert the reset bit and enable the clock gating bit for the given module
     pub fn enable_module<MODULE: BusGatingResetRegister>(&mut self, _mod: &mut MODULE) {
-        MODULE::reset(&mut self.ccu, true);
-        sdelay(20);
-        MODULE::gating(&mut self.ccu, true);
+        MODULE::reset(&mut self.ccu, BusReset::Deassert);
+        Clint::spin_delay_us(20);
+        MODULE::gating(&mut self.ccu, BusGating::Pass);
     }
 
     /// Disable the clock gating bit and assert the reset bit for the given module
     pub fn disable_module<MODULE: BusGatingResetRegister>(&mut self, _mod: &mut MODULE) {
-        MODULE::gating(&mut self.ccu, false);
+        MODULE::gating(&mut self.ccu, BusGating::Mask);
         // TODO: delay?
-        MODULE::reset(&mut self.ccu, false);
+        MODULE::reset(&mut self.ccu, BusReset::Assert);
     }
 
     /// Allow modules to configure their own clock on a PAC level
@@ -81,32 +85,32 @@ impl Ccu {
         self.set_mbus();
 
         macro_rules! set_module {
-            ($self: ident, $module: ident) => {
-                if ($self.ccu.$module.read().pll_en().bit_is_clear()) {
-                    $self.ccu.$module.modify(|_, w| {
+            ($module: ident) => {
+                if (self.ccu.$module.read().pll_en().bit_is_clear()) {
+                    self.ccu.$module.modify(|_, w| {
                         w.pll_ldo_en().enable();
                         w.pll_en().enable();
                         w
                     });
 
-                    $self.ccu.$module.modify(|_, w| w.lock_enable().enable());
+                    self.ccu.$module.modify(|_, w| w.lock_enable().enable());
 
-                    while $self.ccu.$module.read().lock().bit_is_clear() {
+                    while self.ccu.$module.read().lock().bit_is_clear() {
                         core::hint::spin_loop();
                     }
-                    sdelay(20);
+                    Clint::spin_delay_us(20);
 
-                    $self.ccu.$module.modify(|_, w| w.lock_enable().disable());
+                    self.ccu.$module.modify(|_, w| w.lock_enable().disable());
                 }
             };
         }
 
-        set_module!(self, pll_peri_ctrl);
-        set_module!(self, pll_video0_ctrl);
-        set_module!(self, pll_video1_ctrl);
-        set_module!(self, pll_ve_ctrl);
-        set_module!(self, pll_audio0_ctrl);
-        set_module!(self, pll_audio1_ctrl);
+        set_module!(pll_peri_ctrl);
+        set_module!(pll_video0_ctrl);
+        set_module!(pll_video1_ctrl);
+        set_module!(pll_ve_ctrl);
+        set_module!(pll_audio0_ctrl);
+        set_module!(pll_audio1_ctrl);
     }
 
     fn set_pll_cpux_axi(&mut self) {
@@ -118,7 +122,7 @@ impl Ccu {
             w.div_cfg().variant(1);
             w
         });
-        sdelay(1);
+        Clint::spin_delay_us(1);
 
         // Disable PLL gating
         self.ccu
@@ -127,7 +131,7 @@ impl Ccu {
 
         // Enable PLL LDO
         self.ccu.pll_cpu_ctrl.modify(|_, w| w.pll_ldo_en().enable());
-        sdelay(5);
+        Clint::spin_delay_us(5);
 
         // Set default clock to 1008 MHz
         self.ccu.pll_cpu_ctrl.modify(|r, w| {
@@ -150,7 +154,7 @@ impl Ccu {
         while self.ccu.pll_cpu_ctrl.read().lock().bit_is_clear() {
             core::hint::spin_loop();
         }
-        sdelay(20);
+        Clint::spin_delay_us(20);
 
         // Enable PLL gating
         self.ccu
@@ -161,7 +165,7 @@ impl Ccu {
         self.ccu
             .pll_cpu_ctrl
             .modify(|_, w| w.lock_enable().disable());
-        sdelay(1);
+        Clint::spin_delay_us(1);
 
         // Change the CPU clock source to PLL_CPU.
         // Sets the RISC-V clock to 1008 MHz and the RISC-V AXI clock to 504 MHz.
@@ -171,7 +175,7 @@ impl Ccu {
             w.div_cfg().variant(0);
             w
         });
-        sdelay(1);
+        Clint::spin_delay_us(1);
     }
 
     fn set_pll_periph0(&mut self) {
@@ -198,7 +202,7 @@ impl Ccu {
         while self.ccu.pll_peri_ctrl.read().lock().bit_is_clear() {
             core::hint::spin_loop();
         }
-        sdelay(20);
+        Clint::spin_delay_us(20);
 
         // Unlock the PLL
         self.ccu
@@ -215,7 +219,7 @@ impl Ccu {
         self.ccu
             .psi_clk
             .modify(|_, w| w.clk_src_sel().pll_peri_1x());
-        sdelay(1);
+        Clint::spin_delay_us(1);
     }
 
     fn set_apb(&mut self) {
@@ -223,13 +227,13 @@ impl Ccu {
         // the `xboot` implementation which also splits this in 2 operations.
         self.ccu.apb_clk[0].write(|w| w.factor_m().variant(2).factor_n().n2());
         self.ccu.apb_clk[0].modify(|_, w| w.clk_src_sel().pll_peri_1x());
-        sdelay(1);
+        Clint::spin_delay_us(1);
     }
 
     fn set_mbus(&mut self) {
         // Reset the MBUS domain
         self.ccu.mbus_clk.modify(|_, w| w.mbus_rst().deassert());
-        sdelay(1);
+        Clint::spin_delay_us(1);
         // Enable MBUS master clock gating
         self.ccu.mbus_mat_clk_gating.write(|w| {
             w.dma_mclk_en().pass();
@@ -248,12 +252,16 @@ macro_rules! impl_bgr {
     ($($MODULE:ident : ($reg:ident, $gating:ident, $reset:ident),)+) => {
         $(
             impl BusGatingResetRegister for $MODULE {
-                fn gating(ccu: &mut CCU, pass: bool) {
-                    ccu.$reg.modify(|_, w| w.$gating().bit(pass));
+                fn gating(ccu: &mut CCU, gating: BusGating) {
+                    ccu.$reg.modify(|_, w| {
+                        w.$gating().bit(gating == BusGating::Pass)
+                    });
                 }
 
-                fn reset(ccu: &mut CCU, deassert: bool) {
-                    ccu.$reg.modify(|_, w| w.$reset().bit(deassert));
+                fn reset(ccu: &mut CCU, reset: BusReset) {
+                    ccu.$reg.modify(|_, w| {
+                        w.$reset().bit(reset == BusReset::Deassert)
+                    });
                 }
             }
         )+

@@ -17,6 +17,7 @@ sharp-display = []
 [dependencies]
 serde = { version = "1.0.178", features = ["derive"], default-features = false }
 mnemos-bitslab = { path = "../../../source/bitslab" }
+mycelium-bitfield = "0.1.3"
 
 d1-pac = "0.0.31"
 critical-section = "1.1.1"
@@ -42,3 +43,7 @@ version = "0.7.1"
 version = "0.3.21"
 features = ["async-await"]
 default-features = false
+
+[dev-dependencies]
+proptest = "1"
+proptest-derive = "0.4.0"

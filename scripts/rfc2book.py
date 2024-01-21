@@ -51,7 +51,10 @@ def main():
         summary = summary_in.read()
         with open(f'{src_path}/SUMMARY.md', 'w') as summary_out:
             summary_out.write(summary)
-            index_item = '\n\n- [RFCs](rfcs/README.md)\n';
+            header = "\n# mnemOS RFCs\n"
+            print(header, end='')
+            summary_out.write(header)
+            index_item = '\n- [introduction](rfcs/README.md)\n';
             print(index_item, end='')
             summary_out.write(f'\n{index_item}')
             collect(summary_out, rfc_path, src_path, 1)

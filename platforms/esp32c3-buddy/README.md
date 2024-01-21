@@ -37,7 +37,7 @@ pin assignment to match the target devboard before calling into shared code:
 The `just build-c3` recipe takes a required argument to select which bin target
 is built. For example:
 
-```console
+```shell
 $ just build-c3 qtpy   # builds MnemOS for the Adafruit QT Py ESP32-C3
 $ just build-c3 xiao   # builds MnemOS for the Seeedstudio XIAO ESP32-C3
 ```
@@ -45,7 +45,7 @@ $ just build-c3 xiao   # builds MnemOS for the Seeedstudio XIAO ESP32-C3
 Alternatively, Allwinner D1 images can be built manually using Cargo. To build
 using Cargo, run:
 
-```console
+```shell
 # builds MnemOS for the Adafruit QT Py ESP32-C3
 $ cargo build -p mnemos-esp32c3-buddy --bin qtpy --release
 # builds MnemOS for the Seeedstudio XIAO ESP32-C3
@@ -61,7 +61,7 @@ anywhere in the MnemOS repository.
 
 Like `just build-c3`, the target board must be provided:
 
-```console
+```shell
 $ just flash-c3 qtpy   # build and flash the Adafruit QT Py ESP32-C3
 $ just flash-c3 xiao   # build and flash the Seeedstudio XIAO ESP32-C3
 ```
@@ -74,7 +74,7 @@ $ just flash-c3 xiao   # build and flash the Seeedstudio XIAO ESP32-C3
 
 If everything worked successfully, you should see output similar to this:
 
-```console
+```shell
 $ just flash-c3 qtpy
        Found cargo-espflash
 cargo build --package mnemos-esp32c3-buddy --bin qtpy --release
@@ -98,7 +98,7 @@ App/part. size:    209,760/4,128,768 bytes, 5.08%
 
 Alternatively, the board can be flashed manually using [`cargo-espflash`]. For
 example:
-```console
+```shell
 $ cargo espflash flash \
     --package mnemos-esp32c3-buddy \
     --bin qtpy \ # or 'xiao'

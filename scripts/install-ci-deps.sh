@@ -10,7 +10,7 @@ curl \
     --proto '=https' \
     --tlsv1.2 \
     -LsSf \
-    https://github.com/axodotdev/oranda/releases/download/v0.3.1/oranda-installer.sh \
+    https://github.com/axodotdev/oranda/releases/download/v0.6.1/oranda-installer.sh \
     | sh
 
 # Install just
