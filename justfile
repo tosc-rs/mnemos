@@ -154,7 +154,7 @@ flash-d1 board='mq-pro' *CARGO_ARGS='': (build-d1 board CARGO_ARGS)
 # build a MnemOS binary for the ESP32-C3
 build-c3 board *CARGO_ARGS='':
     {{ _cargo }} build \
-        --profile {{ profile }} \
+        --profile espbuddy-release \
         --package {{ _espbuddy_pkg }} \
         --bin {{ board }} \
         {{ CARGO_ARGS }}
