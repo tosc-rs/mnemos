@@ -1,4 +1,4 @@
-fn main() -> anyhow::Result<()> {
+fn main() -> miette::Result<()> {
     #[cfg(feature = "_any-deps")]
     install_deps()?;
 
@@ -6,8 +6,8 @@ fn main() -> anyhow::Result<()> {
 }
 
 #[cfg(feature = "_any-deps")]
-fn install_deps() -> anyhow::Result<()> {
-    use anyhow::{Context, Result};
+fn install_deps() -> miette::Result<()> {
+    use miette::{miette, IntoDiagnostic, Result, WrapErr};
     use std::{
         env, fs,
         path::{Path, PathBuf},
@@ -24,7 +24,7 @@ fn install_deps() -> anyhow::Result<()> {
 
     fn path_from_env(var: &str) -> Result<PathBuf> {
         env::var_os(var)
-            .ok_or_else(|| anyhow::anyhow!("environment variable `{var}` not set"))
+            .ok_or_else(|| miette!("environment variable `{var}` not set"))
             .map(PathBuf::from)
     }
 
@@ -39,18 +39,20 @@ fn install_deps() -> anyhow::Result<()> {
         let link = link.as_ref();
 
         if link.exists() {
-            fs::remove_file(link).with_context(|| {
+            fs::remove_file(link).into_diagnostic().with_context(|| {
                 format!("failed to remove existing symlink at {}", link.display())
             })?;
         }
 
-        symlink_file_os(original, link).with_context(|| {
-            format!(
-                "failed to create symlink:\nsrc: {}\ndst: {}",
-                original.display(),
-                link.display(),
-            )
-        })?;
+        symlink_file_os(original, link)
+            .into_diagnostic()
+            .with_context(|| {
+                format!(
+                    "failed to create symlink:\nsrc: {}\ndst: {}",
+                    original.display(),
+                    link.display(),
+                )
+            })?;
 
         Ok(())
     }
@@ -61,6 +63,7 @@ fn install_deps() -> anyhow::Result<()> {
     let bins_path = out_dir.join("manganese-bins");
 
     fs::create_dir_all(&bins_path)
+        .into_diagnostic()
         .with_context(|| format!("failed to create bins directory {}", bins_path.display()))?;
 
     if cfg!(feature = "cargo-nextest") {

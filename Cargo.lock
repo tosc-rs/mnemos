@@ -4736,11 +4736,11 @@ dependencies = [
 name = "manganese"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "cargo-binutils",
  "cargo-espflash",
  "cargo-nextest",
  "just",
+ "miette",
  "trunk",
 ]
 
@@ -5183,9 +5183,9 @@ dependencies = [
 name = "mnemos-x86_64-bootloader"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "bootloader",
  "clap 4.4.0",
+ "miette",
  "mnemos-x86_64-core",
  "ovmf-prebuilt",
 ]

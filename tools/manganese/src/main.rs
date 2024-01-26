@@ -1,5 +1,5 @@
 #![doc = include_str!("../README.md")]
-use anyhow::{Context, Result};
+use miette::{IntoDiagnostic, Result, WrapErr};
 use std::{env, path::Path, process};
 
 const MN_CARGO_BINS: Option<&str> = option_env!("MN_CARGO_BINS");
@@ -48,8 +48,10 @@ fn main() -> Result<()> {
 
     let status = cmd
         .spawn()
+        .into_diagnostic()
         .with_context(|| format!("failed to spawn `just` command\ncommand: {cmd:?}"))?
         .wait()
+        .into_diagnostic()
         .with_context(|| {
             format!("failed to wait for `just` command to complete\ncommand: {cmd:?}")
         })?;

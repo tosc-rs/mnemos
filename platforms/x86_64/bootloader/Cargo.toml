@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-anyhow = "1"
+miette = { version = "5.10.0", features = ["fancy"] }
 # used for UEFI booting in QEMU
 ovmf-prebuilt = "0.1.0-alpha.1"
 # used for the QEMU runner

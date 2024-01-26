@@ -34,10 +34,10 @@ cargo-espflash = ["dep:cargo-espflash", "_any-deps"]
 _any-deps = []
 
 [dependencies]
-anyhow = "1"
+miette = { version = "5.10.0", features = ["fancy"] }
 
 [build-dependencies]
-anyhow = "1"
+miette = { version = "5.10.0", features = ["fancy"] }
 
 [build-dependencies.just]
 version = "1.14.0"

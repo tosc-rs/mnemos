@@ -1,5 +1,5 @@
-use anyhow::Context;
 use clap::Parser;
+use miette::{IntoDiagnostic, WrapErr};
 use std::{fmt, path::PathBuf};
 
 /// Boots a MnemOS x86_64 kernel using QEMU.
@@ -44,7 +44,7 @@ enum BootMode {
 // === impl Args ===
 
 impl Args {
-    pub fn run(self) -> anyhow::Result<()> {
+    pub fn run(self) -> miette::Result<()> {
         let Args {
             uefi_path,
             bios_path,
@@ -75,11 +75,17 @@ impl Args {
             cmd.args(&qemu_args);
         }
 
-        let mut child = cmd.spawn().context("failed to spawn QEMU child process")?;
-        let status = child.wait().context("QEMU child process failed")?;
+        let mut child = cmd
+            .spawn()
+            .into_diagnostic()
+            .context("failed to spawn QEMU child process")?;
+        let status = child
+            .wait()
+            .into_diagnostic()
+            .context("QEMU child process failed")?;
 
         if !status.success() {
-            anyhow::bail!("QEMU exited with status: {}", status);
+            miette::bail!("QEMU exited with status: {}", status);
         }
 
         Ok(())
