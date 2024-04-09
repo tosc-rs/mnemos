@@ -98,8 +98,14 @@ impl Plic {
         let claim_u16 = claim as u16;
 
         // Is this a known interrupt?
-        let handler = INTERRUPT_ARRAY.iter().find(|i| i.id == claim_u16);
-        if let Some(Vectored { id: _id, handler }) = handler {
+        let handler = INTERRUPT_ARRAY.get(claim_u16 as usize);
+        if let Some(Vectored { id, handler }) = handler {
+            debug_assert_eq!(
+                *id, claim_u16,
+                "FLAGRANT ERROR: interrupt ID ({id}) does not match index \
+                ({claim_u16}); perhaps the interrupt dispatch table has \
+                somehow been corrupted?"
+            );
             let ptr = handler.load(Ordering::SeqCst); // todo: ordering
             if !ptr.is_null() {
                 let hdlr: fn() = unsafe { core::mem::transmute(ptr) };
@@ -117,11 +123,19 @@ impl Plic {
             .write(|w| w.mclaim().variant(interrupt.into_bits() as u16));
     }
 
+    #[track_caller]
     pub unsafe fn register(&self, interrupt: Interrupt, new_hdl: fn()) {
-        let v = INTERRUPT_ARRAY.iter().find(|v| v.id == interrupt as u16);
-        if let Some(Vectored { id: _id, handler }) = v {
-            handler.store(new_hdl as *mut fn() as *mut (), Ordering::Release);
-        }
+        let idx = interrupt as u16;
+        let Some(Vectored { id, handler }) = INTERRUPT_ARRAY.get(idx as usize) else {
+            panic!("interrupt not found in dispatch table: {interrupt:?} (index {idx})")
+        };
+        assert_eq!(
+            *id, idx,
+            "FLAGRANT ERROR: interrupt ID for {interrupt:?} (id) does not \
+            match index ({idx}); perhaps the interrupt dispatch table has \
+            somehow been corrupted?"
+        );
+        handler.store(new_hdl as *mut fn() as *mut (), Ordering::Release);
     }
 
     pub unsafe fn activate(&self, interrupt: Interrupt, prio: Priority) -> Result<(), MaskError> {
@@ -138,16 +152,19 @@ impl Plic {
     }
 
     fn can_mask(&self, interrupt: Interrupt) -> Result<(), MaskError> {
-        let v = INTERRUPT_ARRAY
-            .iter()
-            .find(|v| v.id == interrupt as u16)
+        let &Vectored { id, ref handler } = INTERRUPT_ARRAY
+            .get(interrupt as usize)
             .ok_or(MaskError::NotFound(interrupt))?;
 
-        if v.handler.load(Ordering::SeqCst).is_null() {
-            Err(MaskError::NoHandler(interrupt))
-        } else {
-            Ok(())
+        if id != interrupt as u16 {
+            return Err(MaskError::NotFound(interrupt));
         }
+
+        if handler.load(Ordering::SeqCst).is_null() {
+            return Err(MaskError::NoHandler(interrupt));
+        }
+
+        Ok(())
     }
 
     #[inline(always)]
