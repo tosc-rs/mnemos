@@ -132,7 +132,7 @@ default-features = false
 version = "0.6.1"
 
 [dependencies.mycelium-bitfield]
-version = "0.1.2"
+version = "0.1.5"
 
 [build-dependencies]
 vergen = { version = "8.0.0", features = ["cargo", "git", "gitcl", "rustc",] }
