@@ -679,52 +679,9 @@ impl TwiData {
 
 unsafe impl Sync for IsrData {}
 
-// TODO(eliza): this ought to go in `mycelium-bitfield` eventually
-macro_rules! enum_try_from {
-    (
-        $(#[$meta:meta])* $vis:vis enum $name:ident<$repr:ty> {
-            $(
-                $(#[$var_meta:meta])*
-                $variant:ident = $value:expr
-            ),* $(,)?
-        }
-    ) => {
-        $(#[$meta])*
-        #[repr($repr)]
-        $vis enum $name {
-            $(
-                $(#[$var_meta])*
-                $variant = $value
-            ),*
-        }
-
-
-        impl core::convert::TryFrom<$repr> for $name {
-            type Error = &'static str;
-
-            fn try_from(value: $repr) -> Result<Self, Self::Error> {
-                match value {
-                    $(
-                        $value => Ok(Self::$variant),
-                    )*
-                    _ => Err(concat!(
-                        "invalid value for ",
-                        stringify!($name),
-                        ": expected one of [",
-                        $(
-                            stringify!($value),
-                            ", ",
-                        )* "]")
-                    ),
-                }
-            }
-        }
-    };
-}
-
-enum_try_from! {
+mycelium_bitfield::enum_from_bits! {
     /// Values of the `TWI_STAT` register.
-    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    #[derive(Debug, Eq, PartialEq)]
     enum Status<u8> {
         /// 0x00: Bus error
         BusError = 0x00,
