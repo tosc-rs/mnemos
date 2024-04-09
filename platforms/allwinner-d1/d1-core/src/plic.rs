@@ -54,16 +54,14 @@ impl Plic {
     ///
     /// May effect normal interrupt processing
     pub unsafe fn unmask(&self, interrupt: Interrupt) {
-        let nr = interrupt.into_bits() as usize;
-        let (reg_offset, irq_en) = (nr / 32, 1 << (nr % 32));
-        self.plic.mie[reg_offset].modify(|r, w| w.bits(r.bits() | irq_en));
+        let (mie, irq_en) = self.index_mie(interrupt);
+        mie.modify(|r, w| w.bits(r.bits() | irq_en));
     }
 
     /// Disable an interrupt
     pub fn mask(&self, interrupt: Interrupt) {
-        let nr = interrupt.into_bits() as usize;
-        let (reg_offset, irq_en) = (nr / 32, 1 << (nr % 32));
-        self.plic.mie[reg_offset].modify(|r, w| unsafe { w.bits(r.bits() & !irq_en) });
+        let (mie, irq_en) = self.index_mie(interrupt);
+        mie.modify(|r, w| unsafe { w.bits(r.bits() | irq_en) });
     }
 
     /// Globally set priority for one interrupt
@@ -150,6 +148,12 @@ impl Plic {
         } else {
             Ok(())
         }
+    }
+
+    #[inline(always)]
+    fn index_mie(&self, interrupt: Interrupt) -> (&plic::MIE, u32) {
+        let nr = interrupt.into_bits() as usize;
+        (&self.plic.mie[nr / 32], 1 << (nr % 32))
     }
 }
 
