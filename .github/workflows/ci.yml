@@ -113,20 +113,20 @@ jobs:
   # (test-host forth3) - run miri tests
   test-host-miri:
     runs-on: ubuntu-latest
-    name: cargo miri test (host)
+    name: cargo miri test --package forth3 (host)
     needs: check
     # TODO(eliza): only run this if forth3 changed?
     # needs: changed_paths
     # if: needs.changed_paths.outputs.should_skip != 'true'
     steps:
-    - name: install rust toolchain and miri
+    - name: install Miri etc
       run: |
-        rustup toolchain install nightly --component miri
-        cargo +nightly miri setup
+        rustup component add miri
+        cargo miri setup
     - uses: actions/checkout@v3
     - name: cargo miri test (forth3)
       run: |
-        cargo +nightly miri test \
+        cargo miri test \
           --package forth3 \
           --all-features
 
