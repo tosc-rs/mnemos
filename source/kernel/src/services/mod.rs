@@ -25,3 +25,4 @@ pub mod keyboard;
 pub mod sdmmc;
 pub mod serial_mux;
 pub mod simple_serial;
+pub mod spi;
