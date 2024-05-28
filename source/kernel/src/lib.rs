@@ -78,6 +78,7 @@ pub mod comms;
 pub mod daemons;
 pub(crate) mod fmt;
 pub mod forth;
+pub mod gpio;
 pub mod isr;
 pub mod registry;
 pub mod retry;
