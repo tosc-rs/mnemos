@@ -1,20 +1,12 @@
 #!/bin/bash
 
+# TODO -euo pipefail isn't optimal but I haven't got the energy to improve further -Anatol
 set -euxo pipefail
 
+# the old filter removed crowtty and manganese, but manganese isn't in deps anymore
 defaultmembers=$( \
     cargo metadata --format-version 1 | \
-    jq .workspace_default_members | \
-    grep -E '  ".*' | \
-    # crowtty's dependencies can't easily be installed on netlify
-    grep -v 'crowtty' | \
-    # manganese depends on `libudev` (transitive dep via one of its' bindeps)
-    # which can't be installed on CI.
-    grep -v 'manganese' | \
-    cut -d" " -f3 | \
-    cut -d'"' -f2 | \
-    sed -E 's/(.*)/-p \1 /g' | \
-    tr -d '\n' \
+    jq -r '.workspace_default_members | del(.[] | select(contains("crowtty"))) | to_entries[] |"-p \(.value)"'
 )
 
 ./just docs --document-private-items $defaultmembers
