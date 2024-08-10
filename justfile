@@ -54,7 +54,7 @@ _d1_pkg := "mnemos-d1"
 
 _espbuddy_pkg := "mnemos-esp32c3-buddy"
 
-_x86_pkg := "mnemos-x86_64-bootloader"
+_x86_pkg := "mnemos-x86_64-core"
 _x86_bootloader_pkg := "mnemos-x86_64-bootloader"
 
 _mn_pkg := "manganese"
