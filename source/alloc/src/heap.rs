@@ -285,6 +285,7 @@ pub trait UnderlyingAllocator {
 ///
 /// This allocator MUST be initialized with a call to [SingleThreadedLinkedListAllocator::init()]
 /// before any allocations will succeed
+#[allow(dead_code)]
 pub struct SingleThreadedLinkedListAllocator {
     mlla: Mutex<Heap>,
 }
