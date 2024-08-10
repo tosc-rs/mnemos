@@ -2,6 +2,7 @@ use core::{
     ptr,
     sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
 };
+
 use hal_core::{interrupt, VAddr};
 pub use hal_x86_64::interrupt::*;
 use hal_x86_64::{
@@ -73,6 +74,7 @@ static TSS: sync::Lazy<task::StateSegment> = sync::Lazy::new(|| {
     let mut tss = task::StateSegment::empty();
     tss.interrupt_stacks[Idt::DOUBLE_FAULT_IST_OFFSET] = unsafe {
         // safety: asdf
+        #[allow(static_mut_refs)]
         VAddr::of(&DOUBLE_FAULT_STACK).offset(DOUBLE_FAULT_STACK_SIZE as i32)
     };
     tracing::debug!(?tss, "TSS initialized");
