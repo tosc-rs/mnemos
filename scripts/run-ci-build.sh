@@ -4,6 +4,8 @@
 set -euxo pipefail
 
 # the old filter removed crowtty and manganese, but manganese isn't in deps anymore
+# TODO crowtty is currently being filtered because of netlify; when we migrate off of them
+# the del part can be done away with.
 defaultmembers=$( \
     cargo metadata --format-version 1 | \
     jq -r '.workspace_default_members | del(.[] | select(contains("crowtty"))) | to_entries[] |"-p \(.value)"'
