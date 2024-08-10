@@ -97,10 +97,12 @@ codegen-units = 1 # better optimizations
 # See: https://github.com/esp-rs/esp-hal/pull/198
 opt-level = "s"
 rustflags = [
-    "-C", "link-arg=-Tlinkall.x",
+    "-C",
+    "link-arg=-Tlinkall.x",
     # Required to obtain backtraces (e.g. when using the "esp-backtrace" crate.)
     # NOTE: May negatively impact performance of produced code
-    "-C", "force-frame-pointers",
+    "-C",
+    "force-frame-pointers",
 ]
 
 [profile.dev.package.mnemos-esp32c3-buddy]
@@ -111,10 +113,12 @@ codegen-units = 1 # better optimizations
 opt-level = "s"
 # symbols are nice and they don't increase the size on Flash
 rustflags = [
-    "-C", "link-arg=-Tlinkall.x",
+    "-C",
+    "link-arg=-Tlinkall.x",
     # Required to obtain backtraces (e.g. when using the "esp-backtrace" crate.)
     # NOTE: May negatively impact performance of produced code
-    "-C", "force-frame-pointers",
+    "-C",
+    "force-frame-pointers",
 ]
 
 ## profile settings for x86_64 ##
@@ -161,6 +165,18 @@ git = "https://github.com/hawkw/mycelium.git"
 rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
 
 [patch.crates-io.cordyceps]
+git = "https://github.com/hawkw/mycelium.git"
+rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+
+[patch.crates-io.hal-core]
+git = "https://github.com/hawkw/mycelium.git"
+rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+
+[patch.crates-io.hal-x86_64]
+git = "https://github.com/hawkw/mycelium.git"
+rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+
+[patch.crates-io.mycelium-alloc]
 git = "https://github.com/hawkw/mycelium.git"
 rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
 
