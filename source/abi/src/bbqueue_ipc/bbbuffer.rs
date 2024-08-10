@@ -104,6 +104,12 @@ impl<'a> BBBuffer {
     }
 }
 
+impl Default for BBBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BBBuffer {
     /// Create a new constant inner portion of a `BBBuffer`.
     ///

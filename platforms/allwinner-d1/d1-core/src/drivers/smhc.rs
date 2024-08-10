@@ -16,7 +16,6 @@ use core::{
     task::{Poll, Waker},
 };
 
-use crate::ccu::Ccu;
 use d1_pac::{smhc, Interrupt, GPIO, SMHC0, SMHC1, SMHC2};
 use kernel::{
     mnemos_alloc::containers::FixedVec,
@@ -24,6 +23,8 @@ use kernel::{
     services::sdmmc::{self, SdmmcService},
     tracing, Kernel,
 };
+
+use crate::ccu::Ccu;
 
 pub struct Smhc {
     isr: &'static IsrData,
@@ -518,6 +519,8 @@ impl Smhc {
                 self.smhc.smhc_resp2.read().bits(),
                 self.smhc.smhc_resp3.read().bits(),
             ];
+            // TODO warning: transmute used without annotations
+            #[allow(clippy::missing_transmute_annotations)]
             Ok(sdmmc::Response::Long(unsafe { core::mem::transmute(rsp) }))
         } else {
             Ok(sdmmc::Response::Short {
@@ -715,8 +718,8 @@ impl SmhcData {
 
 /// Internal DMA controller
 mod idmac {
-    use core::mem;
-    use core::ptr::NonNull;
+    use core::{mem, ptr::NonNull};
+
     use mycelium_bitfield::bitfield;
 
     /// A descriptor that describes how memory needs to transfer data

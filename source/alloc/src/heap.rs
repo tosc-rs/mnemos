@@ -62,6 +62,12 @@ pub enum InitError {
 #[cfg(feature = "stats")]
 pub use self::stats::State;
 
+impl<U: UnderlyingAllocator> Default for MnemosAlloc<U> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<U: UnderlyingAllocator> MnemosAlloc<U> {
     const INITIALIZING: usize = usize::MAX;
 
