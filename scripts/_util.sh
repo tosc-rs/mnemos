@@ -38,7 +38,7 @@ status() {
 # Prompt the user to confirm an action
 #
 # Args:
-#    $1: message to display to the user along with the `[y/N]` prompt
+#    $1: message to display to the user along with the `[Y/n]` prompt
 #
 # Returns:
 #    0 if the user confirmed, 1 otherwise
@@ -46,14 +46,15 @@ confirm() {
     while read -r -p "$1 [Y/n] " input
     do
         case "$input" in
-            [yY][eE][sS]|[yY])
+            # empty string counts as 'yes'
+            [yY][eE][sS]|[yY]|""|" "|"\n")
                 return 0
                 ;;
             [nN][oO]|[nN])
                 return 1
                 ;;
             *)
-                err "invalid input $input"
+                err "invalid input '$input'"
                 ;;
         esac
     done
