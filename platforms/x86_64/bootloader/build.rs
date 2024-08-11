@@ -2,6 +2,13 @@ use anyhow::Context;
 use std::path::PathBuf;
 
 fn main() -> anyhow::Result<()> {
+    // I *hate* this stupid goddamn Clippy lint. On a new enough nightly, the
+    // compiler warns that `'static` lifetimes for constants will become
+    // mandatory in a future Rust edition, so the Clippy lint is actually
+    // telling you to do the opposite of what's compatible with future Rustc
+    // changes...
+    #![allow(clippy::redundant_static_lifetimes)]
+
     const PKG_NAME: &'static str = "mnemos-x86_64-core";
     const BIN_NAME: &'static str = "bootloader";
     const TARGET_TRIPLE: &'static str = "x86_64-unknown-none";
