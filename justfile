@@ -54,7 +54,7 @@ _d1_pkg := "mnemos-d1"
 
 _espbuddy_pkg := "mnemos-esp32c3-buddy"
 
-_x86_pkg := "mnemos-x86_64-bootloader"
+_x86_pkg := "mnemos-x86_64-core"
 _x86_bootloader_pkg := "mnemos-x86_64-bootloader"
 
 _mn_pkg := "manganese"
@@ -169,6 +169,12 @@ flash-c3 board *espflash-args: (_get-cargo-command "espflash" "cargo-espflash") 
 
 # build a bootable x86_64 disk image, using rust-osdev/bootloader.
 build-x86 *args='':
+    # run `cargo check` first because the actual binary will be built in a build
+    # script that that eats compiler output :(
+    {{ _cargo }} check --package {{ _x86_pkg }} \
+        --bin bootloader \
+        --target x86_64-unknown-none \
+        --features bootloader_api {{ args }}
     {{ _cargo }} build --package {{ _x86_bootloader_pkg }} {{ args }}
 
 # run an x86_64 MnemOS image in QEMU
