@@ -9,10 +9,19 @@ unset CARGO_TARGET_DIR
 # the old filter removed crowtty and manganese, but manganese isn't in deps anymore
 # TODO crowtty is currently being filtered because of netlify; when we migrate off of them
 # the del part can be done away with.
+# 
+# explanation of jq pipe:
+# 1. extract only contents of `workspace_default_members`
+# 2. remove entries containing the string "crowtty"
+# 3. split each element on " ", and keep the first element
+# 4. convert each element to a `{key: array_idx, value: elem_value}` dict 
+# 5. map these dicts to "-p elem_dict['value']"
+
 defaultmembers=$( \
     cargo metadata --format-version 1 | \
     jq -r '.workspace_default_members 
     | del(.[] | select(contains("crowtty")))
+    | [ .[] | split(" ")[0] ] 
     | to_entries[]
     |"-p \(.value)"'
 )
