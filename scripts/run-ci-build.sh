@@ -13,7 +13,7 @@ unset CARGO_TARGET_DIR
 # explanation of jq pipe:
 # 1. extract only contents of `workspace_default_members`
 # 2. remove entries containing the string "crowtty"
-# 3. split each element on " ", and keep the first element
+# 3. split each element on " ", and keep the first item of the split result
 # 4. convert each element to a `{key: array_idx, value: elem_value}` dict 
 # 5. map these dicts to "-p elem_dict['value']"
 
