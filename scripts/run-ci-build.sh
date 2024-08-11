@@ -9,8 +9,7 @@ set -euxo pipefail
 defaultmembers=$( \
     cargo metadata --format-version 1 | \
     jq -r '.workspace_default_members 
-    | del(.[]
-    | select(contains("crowtty")))
+    | del(.[] | select(contains("crowtty")))
     | to_entries[]
     |"-p \(.value)"'
 )
