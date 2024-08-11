@@ -3,6 +3,9 @@
 # TODO -euo pipefail isn't optimal but I haven't got the energy to improve further -Anatol
 set -euxo pipefail
 
+# ensure cargo builds in the default directory (./target)
+unset CARGO_TARGET_DIR
+
 # the old filter removed crowtty and manganese, but manganese isn't in deps anymore
 # TODO crowtty is currently being filtered because of netlify; when we migrate off of them
 # the del part can be done away with.
