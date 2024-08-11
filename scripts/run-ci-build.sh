@@ -8,7 +8,11 @@ set -euxo pipefail
 # the del part can be done away with.
 defaultmembers=$( \
     cargo metadata --format-version 1 | \
-    jq -r '.workspace_default_members | del(.[] | select(contains("crowtty"))) | to_entries[] |"-p \(.value)"'
+    jq -r '.workspace_default_members 
+    | del(.[]
+    | select(contains("crowtty")))
+    | to_entries[]
+    |"-p \(.value)"'
 )
 
 ./just docs --document-private-items $defaultmembers
