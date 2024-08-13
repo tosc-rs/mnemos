@@ -104,7 +104,7 @@ jobs:
         tool: cargo-nextest@0.9.61
     - uses: extractions/setup-just@v1
     - name: just test
-      run: COLORBT_SHOW_HIDDEN=1 RUST_BACKTRACE=full just test
+      run: just test
 
   # (test-host forth3) - run miri tests
   test-host-miri:
