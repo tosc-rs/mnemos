@@ -179,7 +179,9 @@ pub fn cell_array<const N: usize, T: Sized>() -> [Cell<T>; N] {
 }
 
 impl<T> Cell<T> {
-    // TODO https://rust-lang.github.io/rust-clippy/master/index.html#/declare_interior_mutable_const
+    // This constant is used in a static initializer, so the clippy lint does not apply.
+    // See the "Known Problems" heading here:
+    // https://rust-lang.github.io/rust-clippy/master/index.html#/declare_interior_mutable_const
     #[allow(clippy::declare_interior_mutable_const)]
     const SINGLE_CELL: Self = Self::new(0);
 
