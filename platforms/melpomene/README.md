@@ -8,14 +8,14 @@ Drivers to implement platform-specific behavior, such as serial ports, are provi
 
 ## Running the simulator
 
-### MacOS specific notes
-
-`embedded-graphics-simulator`, which melpomeme depends on, requires sdl2. If you installed sdl2 via homebrew,
-you probably need to add this to your shell environment:
-
-```sh
-export LIBRARY_PATH="$LIBRARY_PATH:$(brew --prefix)/lib"
-```
+> [!NOTE]
+>
+> **For MacOS users**: `embedded-graphics-simulator`, which melpomeme depends on, requires sdl2. If you installed sdl2 via homebrew,
+> you probably need to add this to your shell environment:
+>
+> ```sh
+> export LIBRARY_PATH="$LIBRARY_PATH:$(brew --prefix)/lib"
+> ```
 
 ### Using an alias
 

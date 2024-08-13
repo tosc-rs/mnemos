@@ -15,6 +15,7 @@ use crate::bbqueue_ipc::{
     framed::{FrameConsumer, FrameProducer},
     Error, Result,
 };
+
 #[derive(Debug)]
 #[repr(C)]
 /// A backing structure for a BBQueue. Can be used to create either
