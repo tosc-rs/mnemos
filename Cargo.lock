@@ -2455,6 +2455,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "escargot"
+version = "0.5.12"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c000f23e9d459aef148b7267e02b03b94a0aaacf4ec64c65612f67e02f525fb6"
+dependencies = [
+ "log",
+ "once_cell",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "esp-alloc"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5675,7 +5687,7 @@ dependencies = [
  "anyhow",
  "bootloader",
  "clap 4.5.15",
- "mnemos-x86_64-core",
+ "escargot",
  "ovmf-prebuilt",
 ]
 
