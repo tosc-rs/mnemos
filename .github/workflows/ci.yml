@@ -28,8 +28,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTUP_MAX_RETRIES: 10
   # don't emit giant backtraces in the CI logs.
-  RUST_BACKTRACE: full
-  COLORBT_SHOW_HIDDEN: 1
+  RUST_BACKTRACE: short
 
 jobs:
   # run `just check`
