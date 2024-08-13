@@ -519,9 +519,7 @@ impl Smhc {
                 self.smhc.smhc_resp2.read().bits(),
                 self.smhc.smhc_resp3.read().bits(),
             ];
-            // TODO warning: transmute used without annotations
-            #[allow(clippy::missing_transmute_annotations)]
-            Ok(sdmmc::Response::Long(unsafe { core::mem::transmute(rsp) }))
+            Ok(sdmmc::Response::Long(unsafe { core::mem::transmute::<[u32; 4], u128>(rsp) }))
         } else {
             Ok(sdmmc::Response::Short {
                 value: self.smhc.smhc_resp0.read().bits(),
