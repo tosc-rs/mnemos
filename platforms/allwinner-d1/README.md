@@ -133,7 +133,7 @@ building `xfel` from source for Linux, MacOS, and Windows can be found
 > using this, `xfel`'s udev rules must be added to the system's udev rules; see
 > [here][xfel-nix-udev] for an example.
 
-[just]: ./../../../justfile
+[just]: ./../../justfile
 [`mnemos-d1` crate]: ./src/
 [MangoPi MQ Pro]: https://github.com/mangopi-sbc/MQ-Pro
 [Sipeed Lichee RV]: https://wiki.sipeed.com/hardware/en/lichee/RV/RV.html
