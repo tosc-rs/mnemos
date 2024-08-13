@@ -94,6 +94,10 @@ xfel write 0x40000000 platforms/allwinner-d1/boards/target/riscv64imac-unknown-n
 xfel exec 0x40000000
 ```
 
+After flashing, you should be able to see the hello server outputting `hello\n`
+repeatedly on the UART port (which is not port used for FEL!).
+Note that mnemOS changes the baud rate to 115200.
+
 > [!NOTE]
 >
 > When flashing the MangoPi MQ Pro using `just flash-d1`, ensure that the USB
