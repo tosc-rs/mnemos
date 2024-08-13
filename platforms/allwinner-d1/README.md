@@ -99,8 +99,8 @@ xfel exec 0x40000000
 > When flashing the MangoPi MQ Pro using `just flash-d1`, ensure that the USB
 > cable is plugged in to the USB-C port on the board labeled as "OTG" on the
 > silkscreen, *not* the one labeled as "HOST".
->
-> For the Lichee RV, use the port next to the FEL button, and enter FEL mode by
+> 
+> For the Lichee RV, use the port next to the FEL button. Enter FEL mode by
 > holding down FEL, and then plugging in USB-C.
 > `lsusb` should show:
 > `Allwinner Technology sunxi SoC OTG connector in FEL/flashing mode`
