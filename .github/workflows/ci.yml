@@ -101,7 +101,7 @@ jobs:
     - name: install nextest
       uses: taiki-e/install-action@v2
       with:
-        tool: cargo-nextest@0.9.61
+        tool: cargo-nextest@0.9.72
     - uses: extractions/setup-just@v1
     - name: just test
       run: just test
