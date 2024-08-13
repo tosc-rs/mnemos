@@ -519,7 +519,9 @@ impl Smhc {
                 self.smhc.smhc_resp2.read().bits(),
                 self.smhc.smhc_resp3.read().bits(),
             ];
-            Ok(sdmmc::Response::Long(unsafe { core::mem::transmute::<[u32; 4], u128>(rsp) }))
+            Ok(sdmmc::Response::Long(unsafe {
+                core::mem::transmute::<[u32; 4], u128>(rsp)
+            }))
         } else {
             Ok(sdmmc::Response::Short {
                 value: self.smhc.smhc_resp0.read().bits(),
