@@ -1,5 +1,7 @@
 [toolchain]
-channel = "nightly-2023-08-08"
+# we can probably bump nightly to 2024-08-10 when it's out, see:
+# https://github.com/rust-lang/rust/pull/128827
+channel = "nightly-2024-07-30"
 profile = "minimal"
 components = [
     "clippy",

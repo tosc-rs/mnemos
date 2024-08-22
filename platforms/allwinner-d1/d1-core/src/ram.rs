@@ -5,6 +5,12 @@ pub struct Ram<const N: usize> {
 }
 
 unsafe impl<const N: usize> Sync for Ram<N> {}
+
+impl<const N: usize> Default for Ram<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 impl<const N: usize> Ram<N> {
     pub const fn new() -> Self {
         Self {

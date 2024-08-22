@@ -94,11 +94,20 @@ xfel write 0x40000000 platforms/allwinner-d1/boards/target/riscv64imac-unknown-n
 xfel exec 0x40000000
 ```
 
+After flashing you can connect using `just crowtty serial <UART-DEVICE>`
+(this is not the FEL device!). Alternatively any serial terminal will do - note
+that we use 115200 baud unlike the builtin bootloader which is at 9600.
+
 > [!NOTE]
 >
 > When flashing the MangoPi MQ Pro using `just flash-d1`, ensure that the USB
 > cable is plugged in to the USB-C port on the board labeled as "OTG" on the
 > silkscreen, *not* the one labeled as "HOST".
+> 
+> For the Lichee RV, use the port next to the FEL button. Enter FEL mode by
+> holding down FEL, and then plugging in USB-C.
+> `lsusb` should show:
+> `Allwinner Technology sunxi SoC OTG connector in FEL/flashing mode`
 
 Once a board has been successfully flashed, attempting to flash it again using
 `xfel` may fail. This can be fixed by unplugging the USB cable from the board
@@ -128,7 +137,7 @@ building `xfel` from source for Linux, MacOS, and Windows can be found
 > using this, `xfel`'s udev rules must be added to the system's udev rules; see
 > [here][xfel-nix-udev] for an example.
 
-[just]: ./../../../justfile
+[just]: ./../../justfile
 [`mnemos-d1` crate]: ./src/
 [MangoPi MQ Pro]: https://github.com/mangopi-sbc/MQ-Pro
 [Sipeed Lichee RV]: https://wiki.sipeed.com/hardware/en/lichee/RV/RV.html
