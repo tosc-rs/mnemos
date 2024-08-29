@@ -1,11 +1,12 @@
-use crate::{comms::bbq, services::serial_mux};
 use core::time::Duration;
+
 use mnemos_trace_proto::{HostRequest, TraceEvent};
 use portable_atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
-
 pub use tracing::*;
 use tracing::{metadata::LevelFilter, subscriber::Interest};
 use tracing_serde_structured::{AsSerde, SerializeRecordFields, SerializeSpanFields};
+
+use crate::{comms::bbq, services::serial_mux};
 
 pub struct SerialSubscriber {
     tx: bbq::SpscProducer,
@@ -159,6 +160,8 @@ impl SerialSubscriber {
         };
 
         let mut encode_buf = [0u8; 32];
+        // TODO see TODO(eliza) at bottom of second inner loop
+        #[allow(clippy::never_loop)]
         loop {
             'idle: loop {
                 let heartbeat = {

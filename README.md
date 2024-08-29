@@ -36,7 +36,7 @@ The project layout contains the following folders:
 [`book/`]: ./book/
 [`hardware/`]: ./hardware/
 [`source/`]: ./source/
-[`platforms/`]: .platforms/
+[`platforms/`]: ./platforms/
 [`tools/`]: ./tools/
 [`rfcs/`]: ./rfcs/
 

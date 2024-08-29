@@ -1,18 +1,12 @@
 // Note: We sometimes force a pass by ref mut to enforce exclusive access
 #![allow(clippy::needless_pass_by_ref_mut)]
 
-use d1_pac::{GPIO, UART0};
-
 use core::{
     ptr::{null_mut, NonNull},
     sync::atomic::{AtomicPtr, Ordering},
 };
 
-use crate::ccu::Ccu;
-use crate::dmac::{
-    descriptor::{BlockSize, DataWidth, Descriptor, DestDrqType},
-    ChannelMode, Dmac,
-};
+use d1_pac::{GPIO, UART0};
 use kernel::{
     comms::bbq::{new_bidi_channel, BidiHandle, Consumer, GrantW, SpscProducer},
     maitake::sync::WaitCell,
@@ -21,9 +15,17 @@ use kernel::{
     services::simple_serial::{Request, Response, SimpleSerialError, SimpleSerialService},
     Kernel,
 };
-
 use tracing::Level;
 
+use crate::{
+    ccu::Ccu,
+    dmac::{
+        descriptor::{BlockSize, DataWidth, Descriptor, DestDrqType},
+        ChannelMode, Dmac,
+    },
+};
+
+#[allow(dead_code)]
 struct GrantWriter {
     grant: GrantW,
     used: usize,

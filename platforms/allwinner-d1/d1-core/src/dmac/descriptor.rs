@@ -5,10 +5,12 @@
 // separate the bits by which field they represent, rather than by their byte.
 #![allow(clippy::unusual_byte_groupings)]
 
-use self::errors::*;
 use core::{cmp, mem, ptr::NonNull};
+
 use d1_pac::generic::{Reg, RegisterSpec};
 use mycelium_bitfield::{bitfield, enum_from_bits};
+
+use self::errors::*;
 
 #[derive(Clone, Debug)]
 #[repr(C, align(4))]
@@ -192,6 +194,12 @@ bitfield! {
         /// The highest two bits of the 34-bit destination address.
         const DEST_HIGH = 2;
 
+    }
+}
+
+impl Default for DescriptorBuilder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -557,8 +565,9 @@ impl Descriptor {
 }
 
 pub mod errors {
-    use super::*;
     use core::fmt;
+
+    use super::*;
 
     /// Errors returned by [`DescriptorBuilder::build`].
     #[derive(Clone, Debug, Eq, PartialEq)]
