@@ -1,5 +1,4 @@
 use esp32c3_hal::{peripherals::USB_DEVICE, prelude::*};
-
 use futures::FutureExt;
 use kernel::{
     comms::bbq::{new_bidi_channel, BidiHandle, GrantW},
@@ -12,6 +11,9 @@ use kernel::{
 pub struct UsbSerialServer {
     dev: USB_DEVICE,
 }
+
+// TODO warning: struct `GrantWriter` is never constructed
+#[allow(dead_code)]
 
 struct GrantWriter {
     grant: GrantW,

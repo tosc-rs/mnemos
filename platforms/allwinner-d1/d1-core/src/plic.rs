@@ -183,6 +183,7 @@ trait IntoBits: Sized + Copy {
     fn into_bits(self) -> u32;
 }
 
+#[allow(dead_code)]
 trait TryFromBits: Sized + Copy {
     type Error;
     fn try_from_bits(bits: u32) -> Result<Self, Self::Error>;

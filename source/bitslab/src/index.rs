@@ -28,6 +28,12 @@ macro_rules! make_index_allocs {
                     max_mask: $Int,
                 }
 
+                impl Default for $Name {
+                    fn default() -> Self {
+                        Self::new()
+                    }
+                }
+
                 impl $Name {
                     #[doc = concat!("Returns a new allocator for up to ", stringify!($cap), " unique indices.")]
                     #[must_use]
