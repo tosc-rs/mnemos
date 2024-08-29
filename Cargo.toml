@@ -164,6 +164,18 @@ rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
 git = "https://github.com/hawkw/mycelium.git"
 rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
 
+[patch.crates-io.hal-core]
+git = "https://github.com/hawkw/mycelium.git"
+rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+
+[patch.crates-io.hal-x86_64]
+git = "https://github.com/hawkw/mycelium.git"
+rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+
+[patch.crates-io.mycelium-alloc]
+git = "https://github.com/hawkw/mycelium.git"
+rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+
 [patch.crates-io.bbq10kbd]
 git = "https://github.com/hawkw/bbq10kbd"
 branch = "eliza/async"

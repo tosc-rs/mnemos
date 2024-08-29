@@ -1,7 +1,3 @@
-use crate::bbqueue_ipc::{
-    framed::{FrameConsumer, FrameProducer},
-    Error, Result,
-};
 use core::{
     cmp::min,
     marker::PhantomData,
@@ -14,6 +10,12 @@ use core::{
         Ordering::{AcqRel, Acquire, Relaxed, Release, SeqCst},
     },
 };
+
+use crate::bbqueue_ipc::{
+    framed::{FrameConsumer, FrameProducer},
+    Error, Result,
+};
+
 #[derive(Debug)]
 #[repr(C)]
 /// A backing structure for a BBQueue. Can be used to create either
@@ -100,6 +102,12 @@ impl<'a> BBBuffer {
                 pd: PhantomData,
             },
         }
+    }
+}
+
+impl Default for BBBuffer {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -442,7 +450,7 @@ impl<'a> Consumer<'a> {
 /// automatically be committed with `to_commit()`, then no bytes
 /// will be comitted for writing.
 ///
-/// If the `thumbv6` feature is selected, dropping the grant
+/// if the target doesn't have atomics, dropping the grant
 /// without committing it takes a short critical section,
 #[derive(Debug, PartialEq)]
 pub struct GrantW<'a> {
@@ -463,7 +471,7 @@ unsafe impl<'a> Send for GrantW<'a> {}
 /// as read.
 ///
 ///
-/// If the `thumbv6` feature is selected, dropping the grant
+/// if the target doesn't have atomics, dropping the grant
 /// without releasing it takes a short critical section,
 #[derive(Debug, PartialEq)]
 pub struct GrantR<'a> {
@@ -495,7 +503,7 @@ impl<'a> GrantW<'a> {
     /// If `used` is larger than the given grant, the maximum amount will
     /// be commited
     ///
-    /// NOTE:  If the `thumbv6` feature is selected, this function takes a short critical
+    /// NOTE: if the target doesn't have atomics, this function takes a short critical
     /// section while committing.
     pub fn commit(mut self, used: usize) {
         self.commit_inner(used);
@@ -588,7 +596,7 @@ impl<'a> GrantR<'a> {
     /// If `used` is larger than the given grant, the full grant will
     /// be released.
     ///
-    /// NOTE:  If the `thumbv6` feature is selected, this function takes a short critical
+    /// NOTE: if the target doesn't have atomics, this function takes a short critical
     /// section while releasing.
     pub fn release(mut self, used: usize) {
         // Saturate the grant release
@@ -666,7 +674,7 @@ impl<'a> SplitGrantR<'a> {
     /// If `used` is larger than the given grant, the full grant will
     /// be released.
     ///
-    /// NOTE:  If the `thumbv6` feature is selected, this function takes a short critical
+    /// NOTE: if the target doesn't have atomics, this function takes a short critical
     /// section while releasing.
     pub fn release(mut self, used: usize) {
         // Saturate the grant release
@@ -771,12 +779,13 @@ impl<'a> DerefMut for GrantR<'a> {
     }
 }
 
-#[cfg(feature = "thumbv6")]
+#[cfg(not(target_has_atomic))]
 mod atomic {
     use core::sync::atomic::{
         AtomicBool, AtomicUsize,
         Ordering::{self, Acquire, Release},
     };
+
     use cortex_m::interrupt::free;
 
     #[inline(always)]
@@ -807,7 +816,7 @@ mod atomic {
     }
 }
 
-#[cfg(not(feature = "thumbv6"))]
+#[cfg(target_has_atomic)]
 mod atomic {
     use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
