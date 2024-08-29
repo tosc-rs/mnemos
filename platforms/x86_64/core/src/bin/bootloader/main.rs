@@ -1,6 +1,5 @@
 #![no_std]
 #![no_main]
-#![feature(panic_info_message)]
 
 #[cfg(not(feature = "bootloader_api"))]
 compile_error!(
@@ -67,6 +66,7 @@ pub fn kernel_start(info: &'static mut bootloader_api::BootInfo) -> ! {
 #[allow(dead_code)]
 fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
     use core::fmt::Write;
+
     use embedded_graphics::{
         mono_font::MonoTextStyleBuilder,
         pixelcolor::{Rgb888, RgbColor as _},
@@ -116,13 +116,8 @@ fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
 
     // write the panic message
     let _ = writer.write_str("mnemOS panicked");
-    if let Some(message) = panic.message() {
-        let _ = writeln!(&mut writer, ":\n  {message}");
-    } else if let Some(payload) = panic.payload().downcast_ref::<&'static str>() {
-        let _ = writeln!(&mut writer, ":\n  {payload}");
-    } else if let Some(payload) = panic.payload().downcast_ref::<alloc::string::String>() {
-        let _ = writeln!(&mut writer, ":\n  {payload}");
-    }
+    let message = panic.message();
+    let _ = writeln!(&mut writer, ":\n  {message}");
 
     if let Some(location) = panic.location() {
         let _ = writeln!(&mut writer, "  at {location}");

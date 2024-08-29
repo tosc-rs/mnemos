@@ -26,6 +26,7 @@ acpi = "4.1.1"
 bootloader_api = { version = "0.11", optional = true }
 embedded-graphics = "0.7.1"
 profont = "0.6.1"
+spin = "0.9.8"
 
 # kernel
 [dependencies.mnemos]
@@ -39,17 +40,17 @@ features = ["attributes"]
 default-features = false
 
 [dependencies.hal-core]
-git = "https://github.com/hawkw/mycelium"
+version = "0.1.0"
 default-features = false
 
 [dependencies.hal-x86_64]
-git = "https://github.com/hawkw/mycelium"
+version = "0.1.0"
 
 [dependencies.mycelium-util]
-git = "https://github.com/hawkw/mycelium"
+version = "0.1.0"
 
 [dependencies.mycelium-alloc]
-git = "https://github.com/hawkw/mycelium"
+version = "0.1.0"
 features = ["buddy", "bump"]
 
 [dependencies.futures]

@@ -70,7 +70,6 @@
 #![cfg_attr(not(test), no_std)]
 #![allow(clippy::missing_safety_doc)]
 #![feature(impl_trait_in_assoc_type)]
-#![feature(async_fn_in_trait)] // needed for `embedded-hal-async`
 
 extern crate alloc;
 
@@ -88,12 +87,13 @@ pub mod services;
 #[cfg(test)]
 pub(crate) mod test_util;
 
+use core::{convert::identity, future::Future, ptr::NonNull};
+
 use abi::{
     bbqueue_ipc::BBBuffer,
     syscall::{KernelResponse, UserRequest},
 };
 use comms::kchannel::KChannel;
-use core::{convert::identity, future::Future, ptr::NonNull};
 pub use embedded_hal_async;
 pub use maitake;
 use maitake::{

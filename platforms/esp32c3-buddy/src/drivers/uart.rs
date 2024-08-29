@@ -8,7 +8,6 @@ use esp32c3_hal::{
     prelude::interrupt,
     uart::{Instance, Uart},
 };
-
 use kernel::{
     comms::bbq::{new_bidi_channel, BidiHandle, Consumer, GrantW, SpscProducer},
     maitake::sync::WaitCell,
@@ -18,6 +17,8 @@ use kernel::{
     Kernel,
 };
 
+// TODO warning: struct `GrantWriter` is never constructed
+#[allow(dead_code)]
 struct GrantWriter {
     grant: GrantW,
     used: usize,

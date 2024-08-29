@@ -62,6 +62,12 @@ pub enum InitError {
 #[cfg(feature = "stats")]
 pub use self::stats::State;
 
+impl<U: UnderlyingAllocator> Default for MnemosAlloc<U> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<U: UnderlyingAllocator> MnemosAlloc<U> {
     const INITIALIZING: usize = usize::MAX;
 
@@ -279,6 +285,7 @@ pub trait UnderlyingAllocator {
 ///
 /// This allocator MUST be initialized with a call to [SingleThreadedLinkedListAllocator::init()]
 /// before any allocations will succeed
+#[allow(dead_code)]
 pub struct SingleThreadedLinkedListAllocator {
     mlla: Mutex<Heap>,
 }

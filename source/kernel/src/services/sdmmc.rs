@@ -6,14 +6,15 @@
 //! while the platform driver will implement the device specific part
 //! (how to send and receive the data).
 #![warn(missing_docs)]
+use maitake::time::{self, Duration};
+use uuid::Uuid;
+
 use crate::{
     comms::oneshot::Reusable,
     mnemos_alloc::containers::FixedVec,
     registry::{self, known_uuids, Envelope, KernelHandle, RegisteredDriver},
     Kernel,
 };
-use maitake::time::{self, Duration};
-use uuid::Uuid;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Service Definition
@@ -244,6 +245,7 @@ pub struct CardStatus(u32);
 /// | Manufacturing date    | `[19:8]`    |
 /// | CRC7 checksum         | `[7:1]`     |
 /// | Not used, always 1    | `[0:0]`     |
+#[allow(dead_code)]
 pub struct CardIdentification(u128);
 
 /// Published RCA in R6 response format
