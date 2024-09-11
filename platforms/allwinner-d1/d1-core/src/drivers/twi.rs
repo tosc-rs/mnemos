@@ -53,6 +53,7 @@
 //! [linux-driver]: https://github.com/torvalds/linux/blob/995b406c7e972fab181a4bb57f3b95e59b8e5bf3/drivers/i2c/busses/i2c-mv64xxx.c
 use core::{
     cell::UnsafeCell,
+    future,
     ops::{Deref, DerefMut},
     task::{Poll, Waker},
 };
@@ -431,7 +432,7 @@ impl Drop for TwiDataGuard<'_> {
 impl TwiDataGuard<'_> {
     async fn wait_for_irq(&mut self) {
         let mut waiting = false;
-        futures::future::poll_fn(|cx| {
+        future::poll_fn(|cx| {
             if waiting {
                 self.twi.twi_cntr.modify(|_r, w| w.int_en().low());
                 return Poll::Ready(());
