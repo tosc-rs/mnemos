@@ -12,6 +12,7 @@
 //! the transfer and reception of large amounts of data to/from the device.
 use core::{
     cell::UnsafeCell,
+    future,
     ops::{Deref, DerefMut},
     task::{Poll, Waker},
 };
@@ -553,7 +554,7 @@ impl Drop for SmhcDataGuard<'_> {
 impl SmhcDataGuard<'_> {
     async fn wait_for_irq(&mut self) {
         let mut waiting = false;
-        futures::future::poll_fn(|cx| {
+        future::poll_fn(|cx| {
             if waiting {
                 self.smhc.smhc_ctrl.modify(|_, w| w.ine_enb().disable());
                 return Poll::Ready(());

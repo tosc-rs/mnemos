@@ -2,6 +2,7 @@
 #![warn(missing_docs)]
 use core::{
     fmt,
+    pin::pin,
     ptr::NonNull,
     sync::atomic::{fence, Ordering},
 };
@@ -261,8 +262,7 @@ impl Dmac {
 
         loop {
             // if no channel was available, register our waker and try again.
-            let wait = STATE.claim_wait.wait();
-            futures::pin_mut!(wait);
+            let mut wait = pin!(STATE.claim_wait.wait());
             // ensure the `WaitQueue` entry is registered before we actually
             // check the claim state.
             let _ = wait.as_mut().subscribe();

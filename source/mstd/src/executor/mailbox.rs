@@ -47,7 +47,6 @@ use abi::{
         UserRequestHeader,
     },
 };
-use futures_util::pin_mut;
 use maitake::sync::{
     wait_map::{self, WaitMap},
     WaitQueue,
@@ -143,8 +142,7 @@ impl MailBox {
         let nonce = self.nonce.fetch_add(1, Ordering::AcqRel);
 
         // Start listening for the response BEFORE we send the request
-        let rx: wait_map::Wait<u32, KernelResponseBody> = MAILBOX.recv_wait.wait(nonce);
-        pin_mut!(rx);
+        let mut rx = core::pin::pin!(MAILBOX.recv_wait.wait(nonce));
         rx.as_mut().enqueue().await.map_err(drop)?;
         self.send_inner(nonce, msg).await?;
 
