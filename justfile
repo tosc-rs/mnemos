@@ -54,8 +54,7 @@ _d1_pkg := "mnemos-d1"
 
 _espbuddy_pkg := "mnemos-esp32c3-buddy"
 
-_x86_pkg := "mnemos-x86_64-core"
-_x86_bootloader_pkg := "mnemos-x86_64-bootloader"
+_x86_pkg := "mnemos-x86_64"
 
 _mn_pkg := "manganese"
 
@@ -73,7 +72,7 @@ default:
     @just --list
 
 # check all crates, across workspaces
-check *ARGS: && (check-crate _d1_pkg ARGS) (check-crate _espbuddy_pkg ARGS) (check-crate _x86_pkg ARGS) (check-crate _x86_bootloader_pkg ARGS) (check-crate _pomelo_pkg ARGS) (check-crate _mn_pkg ARGS)
+check *ARGS: && (check-crate _d1_pkg ARGS) (check-crate _espbuddy_pkg ARGS) (check-crate _x86_pkg ARGS) (check-crate _pomelo_pkg ARGS) (check-crate _mn_pkg ARGS)
     #!/usr/bin/env bash
     set -euxo pipefail
     {{ _cargo }} check \
@@ -93,7 +92,7 @@ check-crate crate *ARGS:
         {{ _fmt_check_doc }}
 
 # run Clippy checks for all crates, across workspaces.
-clippy *ARGS: && (clippy-crate _d1_pkg ARGS) (clippy-crate _espbuddy_pkg ARGS) (clippy-crate _x86_pkg ARGS) (clippy-crate _x86_bootloader_pkg ARGS) (clippy-crate _mn_pkg ARGS) (clippy-crate _pomelo_pkg ARGS)
+clippy *ARGS: && (clippy-crate _d1_pkg ARGS) (clippy-crate _espbuddy_pkg ARGS) (clippy-crate _x86_pkg ARGS) (clippy-crate _mn_pkg ARGS) (clippy-crate _pomelo_pkg ARGS)
     #!/usr/bin/env bash
     set -euxo pipefail
     {{ _cargo }} clippy \
@@ -127,7 +126,6 @@ fmt:
     {{ _cargo }} fmt --package {{ _d1_pkg }}
     {{ _cargo }} fmt --package {{ _espbuddy_pkg }}
     {{ _cargo }} fmt --package {{ _x86_pkg }}
-    {{ _cargo }} fmt --package {{ _x86_bootloader_pkg }}
     {{ _cargo }} fmt --package {{ _mn_pkg }}
 
 # build a Mnemos binary for the Allwinner D1
@@ -168,18 +166,14 @@ flash-c3 board *espflash-args: (_get-cargo-command "espflash" "cargo-espflash") 
         {{ espflash-args }}
 
 # build a bootable x86_64 disk image, using rust-osdev/bootloader.
-build-x86 *args='':
-    # run `cargo check` first because the actual binary will be built in a build
-    # script that that eats compiler output :(
-    {{ _cargo }} check --package {{ _x86_pkg }} \
-        --bin bootloader \
-        --target x86_64-unknown-none \
-        --features bootloader_api {{ args }}
-    {{ _cargo }} build --package {{ _x86_bootloader_pkg }} {{ args }}
+build-x86 *args='': (run-x86 "build " + args)
 
 # run an x86_64 MnemOS image in QEMU
 run-x86 *args='':
-    {{ _cargo }} run -p {{ _x86_bootloader_pkg }} -- {{ args }}
+    {{ _cargo }} run --package {{ _x86_pkg }} \
+        --target=x86_64-unknown-none \
+        --features=bootloader_api \
+        -- {{ args }}
 
 # run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard)
 crowtty *FLAGS:
@@ -190,7 +184,7 @@ melpomene *FLAGS:
     {{ _cargo }} run --profile {{ profile }} --bin melpomene -- {{ FLAGS }}
 
 # build all RustDoc documentation
-all-docs *FLAGS: (docs FLAGS) (docs "-p " + _d1_pkg + FLAGS) (docs "-p " + _espbuddy_pkg + FLAGS) (docs "-p " + _x86_bootloader_pkg + FLAGS) ( docs "-p" + _mn_pkg + FLAGS) (docs "-p " + _pomelo_pkg + FLAGS)
+all-docs *FLAGS: (docs FLAGS) (docs "-p " + _d1_pkg + FLAGS) (docs "-p " + _espbuddy_pkg + FLAGS) ( docs "-p" + _mn_pkg + FLAGS) (docs "-p " + _pomelo_pkg + FLAGS)
 
 # serve Pomelo and open it in the browser
 pomelo *ARGS="--release --open": (trunk "serve " + ARGS + " " + _pomelo_index_path)

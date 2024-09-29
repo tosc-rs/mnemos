@@ -42,7 +42,7 @@ pub fn kernel_start(info: &'static mut bootloader_api::BootInfo) -> ! {
             // mapped" or "we don't know where the physical mem is mapped"?
             // check the bootloader docs...
             .unwrap_or(0);
-        mnemos_x86_64_core::PlatformConfig {
+        mnemos_x86_64::PlatformConfig {
             rsdp_addr: info.rsdp_addr.into_option().map(PAddr::from_u64),
             physical_mem_offset: VAddr::from_u64(phys_offset),
         }
@@ -52,13 +52,13 @@ pub fn kernel_start(info: &'static mut bootloader_api::BootInfo) -> ! {
     let subscriber = {
         let framebuf = (|| unsafe { framebuf::mk_framebuf() }) as fn() -> _;
         framebuf().fill(RgbColor::BLACK);
-        mnemos_x86_64_core::trace::TraceSubscriber::new(framebuf)
+        mnemos_x86_64::trace::TraceSubscriber::new(framebuf)
     };
     tracing::subscriber::set_global_default(subscriber)
         .expect("tracing subscriber should not have already been set!");
 
-    let k = mnemos_x86_64_core::init(&bootinfo, cfg);
-    mnemos_x86_64_core::run(&bootinfo, k)
+    let k = mnemos_x86_64::init(&bootinfo, cfg);
+    mnemos_x86_64::run(&bootinfo, k)
 }
 
 #[cold]
@@ -72,7 +72,7 @@ fn panic(panic: &core::panic::PanicInfo<'_>) -> ! {
         pixelcolor::{Rgb888, RgbColor as _},
         prelude::*,
     };
-    use mnemos_x86_64_core::drivers::framebuf::TextWriter;
+    use mnemos_x86_64::drivers::framebuf::TextWriter;
 
     // /!\ disable all interrupts, unlock everything to prevent deadlock /!\
     //

@@ -6,6 +6,12 @@ use std::fmt;
 #[derive(Debug, Parser)]
 #[clap(about, version, author = "Eliza Weisman <eliza@elizas.website>")]
 pub struct Options {
+    /// Which subcommand to run?
+    ///
+    /// If none is present, this defaults to 'qemu'.
+    #[clap(subcommand)]
+    pub cmd: Option<Subcommand>,
+
     /// The path to the kernel binary.
     #[clap(long, short = 'k', value_hint = ValueHint::FilePath)]
     pub kernel_bin: Utf8PathBuf,
@@ -42,10 +48,6 @@ pub struct Options {
     )]
     pub cargo_path: Utf8PathBuf,
 
-    /// If true, launch QEMU and run the kernel.
-    #[clap(long, short, global = true, alias = "qemu")]
-    pub run: bool,
-
     /// Configures the bootloader.
     #[clap(flatten)]
     pub bootloader: BootloaderOptions,
@@ -55,14 +57,14 @@ pub struct Options {
     pub qemu: QemuOptions,
 }
 
-#[derive(Debug, Parser)]
+#[derive(Debug, Clone, Parser)]
 pub enum Subcommand {
     /// Just build a mnemOS boot image, and do not run it.
-    ///
-    /// This is the default subcommand.
     Build,
     /// Build a mnemOS boot image (if needed) and launch a QEMU virtual
     /// machine to run it.
+    ///
+    /// This is the default subcommand.
     #[clap(alias = "run")]
     Qemu(QemuOptions),
 }
@@ -149,18 +151,38 @@ enum BootLogLevel {
     Trace,
 }
 
-#[derive(Debug, Parser, Default)]
+#[derive(Clone, Debug, Parser)]
 pub struct QemuOptions {
     /// Path to the QEMU x86_64 executable.
     ///
     /// Generally, this does not need to be overridden, unless the QEMU binary
     /// has a non-standard name or is not on the PATH.
-    #[clap(long, default_value = "qemu-system-x86_64", value_hint = ValueHint::FilePath)]
+    #[clap(
+        long,
+        default_value = Self::QEMU_SYSTEM_X86_64,
+        value_hint = ValueHint::FilePath,
+    )]
     qemu_path: Utf8PathBuf,
 
     /// Extra arguments passed directly to the QEMU command.
-    #[arg(last = true)]
+    #[arg(last = true, default_value = "-cpu qemu64 -smp cores=4")]
     qemu_args: Vec<String>,
+}
+
+impl Default for QemuOptions {
+    fn default() -> Self {
+        Self {
+            qemu_path: Utf8PathBuf::from(Self::QEMU_SYSTEM_X86_64),
+            qemu_args: Self::default_args(),
+        }
+    }
+}
+
+impl QemuOptions {
+    const QEMU_SYSTEM_X86_64: &'static str = "qemu-system-x86_64";
+    fn default_args() -> Vec<String> {
+        vec!["-cpu".to_string(), "qemu64".to_string(), "-smp".to_string(), "cores=4".to_string()]
+    }
 }
 
 impl fmt::Display for BootLogLevel {
@@ -223,29 +245,31 @@ impl Bootimager {
 
     pub fn run(self) -> anyhow::Result<()> {
         let bootimage_path = self.build_bootimage()?;
-        if self.opts.run {
-            self.run_qemu(bootimage_path)
-        } else {
-            Ok(())
+
+        match self.opts.cmd {
+            Some(Subcommand::Build) => Ok(()),
+            Some(Subcommand::Qemu(ref opts)) => self.run_qemu(bootimage_path, opts),
+            None => self.run_qemu(bootimage_path, &Default::default()),
         }
     }
 
-    pub fn run_qemu(&self, bootimage_path: Utf8PathBuf) -> anyhow::Result<()> {
-        let QemuOptions { ref qemu_path, ref qemu_args } = self.opts.qemu;
+    pub fn run_qemu(&self, bootimage_path: Utf8PathBuf, qemu_opts: &QemuOptions) -> anyhow::Result<()> {
+        let QemuOptions { qemu_path, qemu_args } = qemu_opts;
 
         let mut cmd = std::process::Command::new(qemu_path);
         if !qemu_args.is_empty() {
             cmd.args(qemu_args.iter());
         }
-        match self.opts.bootloader.mode {
-            BootMode::Uefi => {
-                tracing::info!("booting using UEFI: {bootimage_path}");
-                cmd.arg("-bios").arg(ovmf_prebuilt::ovmf_pure_efi());
-            }
-            BootMode::Bios => {
-                tracing::info!("booting using BIOS: {bootimage_path}");
-            }
+        let boot_mode = self.opts.bootloader.mode;
+        if let BootMode::Uefi = boot_mode {
+            cmd.arg("-bios").arg(ovmf_prebuilt::ovmf_pure_efi());
         }
+        tracing::info!(
+            ?qemu_args,
+            %qemu_path,
+            %boot_mode,
+            "booting in QEMU: {bootimage_path}"
+        );
         cmd.arg("-drive")
             .arg(format!("format=raw,file={bootimage_path}"));
         let mut qemu = cmd.spawn().context("failed to spawn QEMU child process")?;

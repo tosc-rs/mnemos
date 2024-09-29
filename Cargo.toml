@@ -120,12 +120,12 @@ rustflags = [
 
 ## profile settings for x86_64 ##
 
-[profile.release.package.mnemos-x86_64-core]
+[profile.release.package.mnemos-x86_64]
 codegen-units = 1 # better optimizations
 # faster optimizations --- we don't need to optimize for size on x86
 opt-level = 3
 
-[profile.dev.package.mnemos-x86_64-core]
+[profile.dev.package.mnemos-x86_64]
 # faster optimizations --- we don't need to optimize for size on x86
 opt-level = 3
 
