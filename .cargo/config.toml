@@ -12,6 +12,9 @@ rustflags = ["--cfg", "tokio_unstable"]
 [target.riscv32imac-unknown-none-elf]
 runner = "espflash flash --monitor"
 
+[target.x86_64-unknown-none]
+runner = "cargo run --package mnemos-x86_64-bootimager -- --kernel-bin"
+
 [unstable]
 # Enables Cargo artifact dependencies.
 #

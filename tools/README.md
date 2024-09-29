@@ -1,5 +1,7 @@
 # MnemOS Development Tools
 
+[![cow tools](../assets/cowtools.png)](https://en.wikipedia.org/wiki/Cow_tools)
+
 This directory contains tools to aid in MnemOS development. Unlike the sources
 in the [`source/`] and [`platforms/`] directories, these tools are not part of
 the MnemOS operating system. They are intended to run on a developer's machine
@@ -17,6 +19,8 @@ part of the MnemOS environment.
 * [`f3repl/`] - A Forth repl for [`forth3`].
 * [`manganese/`] - `mn`, the stupid mnemOS package manager. Manganese automates
   installing and running (some) of mnemOS' build-time dependencies.
+* [`x86_64-bootimager/`] - A thingy for building (and running) bootable mnemOS
+  disk image for x86_64 systems.
 
 [`source/`]: ../source/
 [`platforms/`]: ../platforms/
@@ -24,6 +28,7 @@ part of the MnemOS environment.
 [`dumbloader/`]: ./dumbloader/
 [`f3repl/`]: ./f3repl/
 [`manganese/`]: ./manganese/
+[`x86_64-bootimager/`]: ./x86_64-bootimager/
 
 [`sermux`]: https://mnemos.dev/doc/sermux_proto/
 [`mnemos-trace-proto`]: https://mnemos.dev/doc/mnemos_trace_proto/
