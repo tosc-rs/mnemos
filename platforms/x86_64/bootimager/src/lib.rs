@@ -4,7 +4,7 @@ use clap::{Args, Parser, ValueEnum, ValueHint};
 use std::fmt;
 
 #[derive(Debug, Parser)]
-#[command(next_help_heading = "Bootimage Builder Options")]
+#[command(next_help_heading = "Build Options")]
 pub struct Builder {
     /// The path to the kernel binary.
     #[clap(long, short = 'k', value_hint = ValueHint::FilePath)]
@@ -12,7 +12,6 @@ pub struct Builder {
 
     /// Overrides the directory in which to build the output image.
     #[clap(
-        short,
         long,
         env = "OUT_DIR",
         value_hint = ValueHint::DirPath,
@@ -22,7 +21,6 @@ pub struct Builder {
 
     /// Overrides the target directory for the kernel build.
     #[clap(
-        short,
         long,
         env = "CARGO_TARGET_DIR",
         value_hint = ValueHint::DirPath,
