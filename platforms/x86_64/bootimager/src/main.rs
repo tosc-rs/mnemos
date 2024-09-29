@@ -10,7 +10,7 @@ fn main() -> anyhow::Result<()> {
         output,
     } = App::parse();
     tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().witout_time().pretty())
+        .with(tracing_subscriber::fmt::layer().without_time().pretty())
         .with(output.trace_filter)
         .init();
 
