@@ -58,6 +58,7 @@ default-members = [
     "platforms/melpomene/melpo-config",
     "platforms/allwinner-d1/d1-config",
     "platforms/allwinner-d1/d1-core",
+    "platforms/x86_64/bootimager",
 ]
 # this isn't actually a crate
 exclude = ["source/notes"]

@@ -5681,6 +5681,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "mnemos-x86_64-bootimager"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bootloader",
+ "bootloader-boot-config",
+ "camino",
+ "clap 4.5.15",
+ "escargot",
+ "ovmf-prebuilt",
+ "tracing 0.1.40",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "mnemos-x86_64-bootloader"
 version = "0.1.0"
 dependencies = [
@@ -9214,7 +9229,7 @@ version = "1.6.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97fee6b57c6a41524a810daee9286c02d7752c4253064d0b05472833a438f675"
 dependencies = [
- "cfg-if 1.0.0",
+ "cfg-if 0.1.10",
  "static_assertions",
 ]
 
