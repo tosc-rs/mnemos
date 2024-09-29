@@ -252,7 +252,8 @@ impl Builder {
     pub fn build_bootimage(&self) -> anyhow::Result<Utf8PathBuf> {
         tracing::info!(
             boot_mode = ?self.bootloader.mode,
-            "Building boot image..."
+            kernel = %self.kernel_bin,
+            "Building boot image."
         );
 
         let canonical_kernel_bin: Utf8PathBuf = self
