@@ -274,7 +274,7 @@ impl Builder {
                 let mut builder = bootloader::UefiBoot::new(canonical_kernel_bin.as_ref());
                 builder.set_boot_config(&bootcfg);
                 builder
-                    .create_disk_image(&path.as_ref())
+                    .create_disk_image(path.as_ref())
                     .map_err(|error| anyhow::anyhow!("failed to build UEFI image: {error}"))?;
                 path
             }
@@ -283,7 +283,7 @@ impl Builder {
                 let mut builder = bootloader::BiosBoot::new(canonical_kernel_bin.as_ref());
                 builder.set_boot_config(&bootcfg);
                 builder
-                    .create_disk_image(&path.as_ref())
+                    .create_disk_image(path.as_ref())
                     .map_err(|error| anyhow::anyhow!("failed to build BIOS image: {error}"))?;
                 path
             }
