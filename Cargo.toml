@@ -52,13 +52,13 @@ default-members = [
     "tools/crowtty",
     "tools/dumbloader",
     "tools/f3repl",
+    "tools/x86_64-bootimager",
 
     # platforms
     "platforms/melpomene",
     "platforms/melpomene/melpo-config",
     "platforms/allwinner-d1/d1-config",
     "platforms/allwinner-d1/d1-core",
-    "platforms/x86_64/bootimager",
 ]
 # this isn't actually a crate
 exclude = ["source/notes"]
