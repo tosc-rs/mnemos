@@ -1,17 +1,11 @@
 use anyhow::Context;
-use camino::Utf8PathBuf;
+use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Args, Parser, ValueEnum, ValueHint};
 use std::fmt;
 
 #[derive(Debug, Parser)]
-#[clap(about, version, author = "Eliza Weisman <eliza@elizas.website>")]
-pub struct Options {
-    /// Which subcommand to run?
-    ///
-    /// If none is present, this defaults to 'qemu'.
-    #[clap(subcommand)]
-    pub cmd: Option<Subcommand>,
-
+#[command(next_help_heading = "Bootimage Builder Options")]
+pub struct Builder {
     /// The path to the kernel binary.
     #[clap(long, short = 'k', value_hint = ValueHint::FilePath)]
     pub kernel_bin: Utf8PathBuf,
@@ -51,22 +45,6 @@ pub struct Options {
     /// Configures the bootloader.
     #[clap(flatten)]
     pub bootloader: BootloaderOptions,
-
-    /// Configures QEMU
-    #[clap(flatten)]
-    pub qemu: QemuOptions,
-}
-
-#[derive(Debug, Clone, Parser)]
-pub enum Subcommand {
-    /// Just build a mnemOS boot image, and do not run it.
-    Build,
-    /// Build a mnemOS boot image (if needed) and launch a QEMU virtual
-    /// machine to run it.
-    ///
-    /// This is the default subcommand.
-    #[clap(alias = "run")]
-    Qemu(QemuOptions),
 }
 
 #[derive(Clone, Debug, Args)]
@@ -162,11 +140,11 @@ pub struct QemuOptions {
         default_value = Self::QEMU_SYSTEM_X86_64,
         value_hint = ValueHint::FilePath,
     )]
-    qemu_path: Utf8PathBuf,
+    pub qemu_path: Utf8PathBuf,
 
     /// Extra arguments passed directly to the QEMU command.
     #[arg(last = true, default_value = "-cpu qemu64 -smp cores=4")]
-    qemu_args: Vec<String>,
+    pub qemu_args: Vec<String>,
 }
 
 impl Default for QemuOptions {
@@ -181,7 +159,49 @@ impl Default for QemuOptions {
 impl QemuOptions {
     const QEMU_SYSTEM_X86_64: &'static str = "qemu-system-x86_64";
     fn default_args() -> Vec<String> {
-        vec!["-cpu".to_string(), "qemu64".to_string(), "-smp".to_string(), "cores=4".to_string()]
+        vec![
+            "-cpu".to_string(),
+            "qemu64".to_string(),
+            "-smp".to_string(),
+            "cores=4".to_string(),
+        ]
+    }
+
+    pub fn run_qemu(
+        &self,
+        bootimage_path: impl AsRef<Utf8Path>,
+        boot_mode: BootMode,
+    ) -> anyhow::Result<()> {
+        let bootimage_path = bootimage_path.as_ref();
+        let QemuOptions {
+            qemu_path,
+            qemu_args,
+        } = self;
+
+        let mut cmd = std::process::Command::new(qemu_path);
+        if !qemu_args.is_empty() {
+            cmd.args(qemu_args.iter());
+        }
+
+        if let BootMode::Uefi = boot_mode {
+            cmd.arg("-bios").arg(ovmf_prebuilt::ovmf_pure_efi());
+        }
+        tracing::info!(
+            ?qemu_args,
+            %qemu_path,
+            %boot_mode,
+            "booting in QEMU: {bootimage_path}"
+        );
+        cmd.arg("-drive")
+            .arg(format!("format=raw,file={bootimage_path}"));
+        let mut qemu = cmd.spawn().context("failed to spawn QEMU child process")?;
+        let status = qemu.wait().context("QEMU child process failed")?;
+
+        if !status.success() {
+            anyhow::bail!("QEMU exited with status: {}", status);
+        }
+
+        Ok(())
     }
 }
 
@@ -230,80 +250,27 @@ impl BootloaderOptions {
     }
 }
 
-pub struct Bootimager {
-    opts: Options,
-    // cargo_metadata: cargo_metadata::Metadata,
-}
-
-impl Bootimager {
-    pub fn from_options(opts: Options) -> anyhow::Result<Self> {
-        Ok(Self {
-            opts,
-            //  cargo_metadata
-        })
-    }
-
-    pub fn run(self) -> anyhow::Result<()> {
-        let bootimage_path = self.build_bootimage()?;
-
-        match self.opts.cmd {
-            Some(Subcommand::Build) => Ok(()),
-            Some(Subcommand::Qemu(ref opts)) => self.run_qemu(bootimage_path, opts),
-            None => self.run_qemu(bootimage_path, &Default::default()),
-        }
-    }
-
-    pub fn run_qemu(&self, bootimage_path: Utf8PathBuf, qemu_opts: &QemuOptions) -> anyhow::Result<()> {
-        let QemuOptions { qemu_path, qemu_args } = qemu_opts;
-
-        let mut cmd = std::process::Command::new(qemu_path);
-        if !qemu_args.is_empty() {
-            cmd.args(qemu_args.iter());
-        }
-        let boot_mode = self.opts.bootloader.mode;
-        if let BootMode::Uefi = boot_mode {
-            cmd.arg("-bios").arg(ovmf_prebuilt::ovmf_pure_efi());
-        }
-        tracing::info!(
-            ?qemu_args,
-            %qemu_path,
-            %boot_mode,
-            "booting in QEMU: {bootimage_path}"
-        );
-        cmd.arg("-drive")
-            .arg(format!("format=raw,file={bootimage_path}"));
-        let mut qemu = cmd.spawn().context("failed to spawn QEMU child process")?;
-        let status = qemu.wait().context("QEMU child process failed")?;
-
-        if !status.success() {
-            anyhow::bail!("QEMU exited with status: {}", status);
-        }
-
-        Ok(())
-    }
-
+impl Builder {
     pub fn build_bootimage(&self) -> anyhow::Result<Utf8PathBuf> {
         tracing::info!(
-            boot_mode = ?self.opts.bootloader.mode,
+            boot_mode = ?self.bootloader.mode,
             "Building boot image..."
         );
 
         let canonical_kernel_bin: Utf8PathBuf = self
-            .opts
             .kernel_bin
             .canonicalize()
             .context("failed to to canonicalize kernel bin path")?
             .try_into()
             .unwrap();
         let out_dir = self
-            .opts
             .out_dir
             .as_deref()
             .or_else(|| canonical_kernel_bin.parent())
             .ok_or_else(|| anyhow::anyhow!("can't determine OUT_DIR"))?;
 
-        let bootcfg = self.opts.bootloader.boot_config();
-        let path = match self.opts.bootloader.mode {
+        let bootcfg = self.bootloader.boot_config();
+        let path = match self.bootloader.mode {
             BootMode::Uefi => {
                 let path = out_dir.join("mnemos-x86_64-uefi.img");
                 let mut builder = bootloader::UefiBoot::new(canonical_kernel_bin.as_ref());
