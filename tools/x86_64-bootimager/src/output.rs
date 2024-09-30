@@ -1,15 +1,14 @@
 use clap::Args;
 use heck::ToTitleCase;
+use std::fmt;
 use tracing::{field::Field, Event, Level, Subscriber};
 use tracing_subscriber::{
     field::Visit,
     fmt::{format::Writer, FmtContext, FormatEvent, FormatFields, FormattedFields},
     registry::LookupSpan,
 };
-use std::fmt;
 
 pub use owo_colors::{style, OwoColorize, Style};
-
 
 #[derive(Clone, Debug, Args)]
 #[command(next_help_heading = "Output Options")]

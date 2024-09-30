@@ -1,5 +1,5 @@
 use clap::Parser;
-use mnemos_x86_64_bootimager::{Builder, QemuOptions, output};
+use mnemos_x86_64_bootimager::{output, Builder, QemuOptions};
 
 fn main() -> anyhow::Result<()> {
     let App {

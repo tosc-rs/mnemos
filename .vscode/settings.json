@@ -1,9 +1,8 @@
-{
+i{
     "rust-analyzer.check.invocationLocation": "workspace",
     "rust-analyzer.cargo.buildScripts.invocationLocation": "workspace",
     "rust-analyzer.cargo.buildScripts.overrideCommand": [
         "cargo",
-        "mn",
         "clippy",
         "--quiet",
         "--message-format=json",
@@ -11,7 +10,6 @@
     ],
     "rust-analyzer.check.overrideCommand": [
         "cargo",
-        "mn",
         "clippy",
         "--quiet",
         "--message-format=json",

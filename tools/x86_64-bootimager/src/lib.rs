@@ -188,7 +188,6 @@ impl QemuOptions {
         cmd.arg("-drive")
             .arg(format!("format=raw,file={bootimage_path}"));
 
-
         if let BootMode::Uefi = boot_mode {
             cmd.arg("-bios").arg(ovmf_prebuilt::ovmf_pure_efi());
         }
