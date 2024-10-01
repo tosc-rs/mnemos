@@ -5695,6 +5695,7 @@ dependencies = [
  "bootloader-boot-config",
  "camino",
  "clap 4.5.15",
+ "crowtty",
  "ovmf-prebuilt",
  "tracing 0.1.40",
  "tracing-subscriber",

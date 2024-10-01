@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 camino = "1"
+crowtty = { path = "../crowtty" }
 # cargo_metadata = "0.18.1"
 # used for UEFI booting in QEMU
 ovmf-prebuilt = "0.1.0-alpha.1"

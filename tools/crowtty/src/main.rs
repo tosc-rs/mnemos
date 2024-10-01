@@ -39,7 +39,7 @@ struct Args {
     trace_filter: tracing_subscriber::filter::Targets,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let Args {
         connect,
         settings,

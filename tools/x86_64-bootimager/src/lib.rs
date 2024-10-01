@@ -140,6 +140,22 @@ pub struct QemuOptions {
     )]
     pub qemu_path: Utf8PathBuf,
 
+    #[clap(long, short)]
+    pub crowtty: bool,
+
+    #[clap(flatten)]
+    pub crowtty_opts: crowtty::Settings,
+
+    /// Tracing filter to set when connecting Crowtty to the QEMU virtual serial port.
+    #[clap(
+        long = "serial-trace",
+        alias = "serial-log",
+        alias = "kernl-log",
+        env = "MNEMOS_LOG",
+        default_value_t = Self::default_serial_trace_filter(),
+    )]
+    trace_filter: tracing_subscriber::filter::Targets,
+
     /// Extra arguments passed directly to the QEMU command.
     #[arg(last = true, default_value = "-cpu qemu64 -smp cores=4")]
     pub qemu_args: Vec<String>,
@@ -150,12 +166,20 @@ impl Default for QemuOptions {
         Self {
             qemu_path: Utf8PathBuf::from(Self::QEMU_SYSTEM_X86_64),
             qemu_args: Self::default_args(),
+            crowtty: false,
+            crowtty_opts: Default::default(),
+            trace_filter: Self::default_serial_trace_filter(),
         }
     }
 }
 
 impl QemuOptions {
     const QEMU_SYSTEM_X86_64: &'static str = "qemu-system-x86_64";
+    fn default_serial_trace_filter() -> tracing_subscriber::filter::Targets {
+        tracing_subscriber::filter::Targets::new()
+            .with_default(tracing_subscriber::filter::LevelFilter::INFO)
+    }
+
     fn default_args() -> Vec<String> {
         vec![
             "-cpu".to_string(),
@@ -166,17 +190,23 @@ impl QemuOptions {
     }
 
     pub fn run_qemu(
-        &self,
+        self,
         bootimage_path: impl AsRef<Utf8Path>,
         boot_mode: BootMode,
     ) -> anyhow::Result<()> {
+        use std::io::{self, Read, Write};
+        use std::process::Stdio;
+
         let bootimage_path = bootimage_path.as_ref();
         let QemuOptions {
             qemu_path,
             qemu_args,
+            crowtty,
+            crowtty_opts,
+            trace_filter,
         } = self;
 
-        let mut cmd = std::process::Command::new(qemu_path);
+        let mut cmd = std::process::Command::new(&qemu_path);
         if !qemu_args.is_empty() {
             cmd.args(qemu_args.iter());
         }
@@ -188,15 +218,68 @@ impl QemuOptions {
             ?qemu_args,
             %qemu_path,
             %boot_mode,
+            crowtty,
             "booting in QEMU: {bootimage_path}"
         );
         cmd.arg("-drive")
             .arg(format!("format=raw,file={bootimage_path}"));
+
+        if crowtty {
+            cmd.arg("-serial")
+                .arg("stdio")
+                .stdout(Stdio::piped())
+                .stdin(Stdio::piped());
+        }
+
+        tracing::debug!(qemu = ?cmd);
+        struct QemuStdio {
+            stdin: std::process::ChildStdin,
+            stdout: std::process::ChildStdout,
+        }
+
+        impl Read for QemuStdio {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                self.stdout.read(buf)
+            }
+        }
+
+        impl Write for QemuStdio {
+            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+                self.stdin.write(buf)
+            }
+
+            fn flush(&mut self) -> io::Result<()> {
+                self.stdin.flush()
+            }
+        }
+
         let mut qemu = cmd.spawn().context("failed to spawn QEMU child process")?;
+        let crowtty_thread = if crowtty {
+            let stdin = qemu.stdin.take().expect("QEMU should have piped stdin");
+            let stdout = qemu.stdout.take().expect("QEMU should have piped stdout");
+            Some(
+                std::thread::Builder::new()
+                    .name("crowtty".to_string())
+                    .spawn(move || {
+                        crowtty::Crowtty::new(crowtty::LogTag::serial())
+                            .settings(crowtty_opts)
+                            .trace_filter(trace_filter)
+                            .run(QemuStdio { stdin, stdout })
+                    })
+                    .unwrap(),
+            )
+        } else {
+            None
+        };
+
         let status = qemu.wait().context("QEMU child process failed")?;
 
         if !status.success() {
             anyhow::bail!("QEMU exited with status: {}", status);
+        }
+
+        if let Some(crowtty) = crowtty_thread {
+            crowtty.join().unwrap().unwrap(); // TODO(eliza)
         }
 
         Ok(())

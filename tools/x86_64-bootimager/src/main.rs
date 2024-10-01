@@ -58,8 +58,8 @@ enum Subcommand {
 struct OutputOptions {
     /// Tracing filter for the bootimage builder.
     #[clap(
-        long = "trace",
-        alias = "log",
+        long = "build-trace",
+        alias = "build-log",
         env = "RUST_LOG",
         default_value = "info",
         global = true

@@ -22,7 +22,7 @@ pub struct Crowtty {
     tag: LogTag,
 }
 
-#[derive(Parser)]
+#[derive(Debug, Clone, Parser)]
 #[clap(next_help_heading = "Crowtty Options")]
 pub struct Settings {
     /// SerMux port for a pseudo-keyboard for the graphical Forth shell on the target.
@@ -82,7 +82,10 @@ impl Crowtty {
         }
     }
 
-    pub fn run(self, mut port: impl Read + Write) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn run(
+        self,
+        mut port: impl Read + Write,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let Self {
             settings:
                 Settings {
