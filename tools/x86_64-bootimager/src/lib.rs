@@ -63,7 +63,7 @@ pub struct BootloaderOptions {
     /// Log level for the bootloader.
     #[clap(
         long,
-        default_value_t = BootLogLevel::Info,
+        default_value_t = BootLogLevel::Debug,
         global = true,
     )]
     boot_log: BootLogLevel,
@@ -157,7 +157,7 @@ pub struct QemuOptions {
     trace_filter: tracing_subscriber::filter::Targets,
 
     /// Extra arguments passed directly to the QEMU command.
-    #[arg(last = true, default_value = "-cpu qemu64 -smp cores=4")]
+    #[arg(last = true)]
     pub qemu_args: Vec<String>,
 }
 
@@ -209,6 +209,8 @@ impl QemuOptions {
         let mut cmd = std::process::Command::new(&qemu_path);
         if !qemu_args.is_empty() {
             cmd.args(qemu_args.iter());
+        } else {
+            cmd.args(QemuOptions::default_args());
         }
 
         if let BootMode::Uefi = boot_mode {
@@ -261,6 +263,7 @@ impl QemuOptions {
                 std::thread::Builder::new()
                     .name("crowtty".to_string())
                     .spawn(move || {
+                        tracing::info!("Connecting crowtty...");
                         crowtty::Crowtty::new(crowtty::LogTag::serial())
                             .settings(crowtty_opts)
                             .trace_filter(trace_filter)
