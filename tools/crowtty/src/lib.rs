@@ -331,6 +331,10 @@ impl LogTag {
         Self::new(" TCP")
     }
 
+    pub fn named(self, name: &'static str) -> Self {
+        Self { conn: name, ..self }
+    }
+
     pub fn verbose(self, verbose: bool) -> Self {
         Self { verbose, ..self }
     }

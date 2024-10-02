@@ -202,7 +202,7 @@ impl QemuOptions {
         bootimage_path: impl AsRef<Utf8Path>,
         boot_mode: BootMode,
     ) -> miette::Result<()> {
-        use std::io::{self, Read, Write};
+        use std::io::{self, BufRead, BufReader, Read, Write};
         use std::process::Stdio;
 
         let bootimage_path = bootimage_path.as_ref();
@@ -238,6 +238,8 @@ impl QemuOptions {
                 .stdin(Stdio::piped());
         }
 
+        cmd.stderr(Stdio::piped());
+
         tracing::debug!(qemu = ?cmd);
         struct QemuStdio {
             stdin: std::process::ChildStdin,
@@ -266,6 +268,7 @@ impl QemuOptions {
             .spawn()
             .into_diagnostic()
             .context("failed to spawn QEMU child process")?;
+        let tag = crowtty::LogTag::serial().verbose(crowtty_verbose);
         let crowtty_thread = if crowtty {
             let stdin = qemu.stdin.take().expect("QEMU should have piped stdin");
             let stdout = qemu.stdout.take().expect("QEMU should have piped stdout");
@@ -274,7 +277,7 @@ impl QemuOptions {
                     .name("crowtty".to_string())
                     .spawn(move || {
                         tracing::info!("Connecting crowtty...");
-                        crowtty::Crowtty::new(crowtty::LogTag::serial().verbose(crowtty_verbose))
+                        crowtty::Crowtty::new(tag)
                             .settings(crowtty_opts)
                             .trace_filter(trace_filter)
                             .run(QemuStdio { stdin, stdout })
@@ -284,6 +287,21 @@ impl QemuOptions {
         } else {
             None
         };
+
+        let qemu_stderr = {
+            let stderr = qemu.stderr.take().expect("QEMU should have piped stderr");
+            BufReader::new(stderr)
+        };
+        let qemu_tag = tag.named("QEMU");
+        for line in qemu_stderr.lines() {
+            match line {
+                Ok(line) => eprintln!("{qemu_tag} {line}"),
+                Err(error) => {
+                    tracing::warn!(%error, "failed to read from QEMU stderr");
+                    break;
+                }
+            }
+        }
 
         let status = qemu
             .wait()
