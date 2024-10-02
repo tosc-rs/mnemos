@@ -1,4 +1,5 @@
 use clap::Parser;
+use miette::{Context, IntoDiagnostic};
 use owo_colors::{OwoColorize, Stream};
 use sermux_proto::{DecodeError, OwnedPortChunk, WellKnown};
 use std::{
@@ -82,10 +83,7 @@ impl Crowtty {
         }
     }
 
-    pub fn run(
-        self,
-        mut port: impl Read + Write,
-    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    pub fn run(self, mut port: impl Read + Write) -> miette::Result<()> {
         let Self {
             settings:
                 Settings {
@@ -152,9 +150,12 @@ impl Crowtty {
                 for skt in work.socket.incoming() {
                     let mut skt = match skt {
                         Ok(skt) => skt,
-                        Err(_) => {
-                            println!("AAAARGH");
-                            panic!()
+                        Err(e) => {
+                            panic!(
+                                "{tag} CONN failed to accept host connection to port {} (:{}): {e}",
+                                tcp_port_base + work.port,
+                                work.port
+                            );
                         }
                     };
 
@@ -250,7 +251,14 @@ impl Crowtty {
                     enc_msg.push(0);
                     tag.port(*port_idx)
                         .if_verbose(format_args!("{mux} {}B <- :{port_idx}", enc_msg.len()));
-                    port.write_all(&enc_msg)?;
+                    port.write_all(&enc_msg)
+                        .into_diagnostic()
+                        .with_context(|| {
+                            format!(
+                                "failed to write {} outbound bytes on port {port_idx}",
+                                msg.len()
+                            )
+                        })?;
                 }
             }
 
@@ -259,7 +267,7 @@ impl Crowtty {
                 Err(e) if e.kind() == ErrorKind::TimedOut => continue,
                 Ok(0) => continue,
                 Ok(used) => used,
-                Err(e) => panic!("{:?}", e),
+                Err(e) => return Err(e).into_diagnostic().context("inbound read failed"),
             };
             tag.if_verbose(format_args!("{mux} -> {used}B"));
             carry.extend_from_slice(&buf[..used]);
