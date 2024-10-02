@@ -1,5 +1,6 @@
 use clap::Parser;
 use crowtty::{connection::Connect, Crowtty};
+use miette::{Context, IntoDiagnostic};
 use tracing::level_filters::LevelFilter;
 
 #[derive(Parser)]
@@ -39,14 +40,17 @@ struct Args {
     trace_filter: tracing_subscriber::filter::Targets,
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+fn main() -> miette::Result<()> {
     let Args {
         connect,
         settings,
         verbose,
         trace_filter,
     } = Args::parse();
-    let conn = connect.connect()?;
+    let conn = connect
+        .connect()
+        .into_diagnostic()
+        .with_context(|| format!("failed to connect to {connect}"))?;
     Crowtty::new(conn.log_tag().verbose(verbose))
         .settings(settings)
         .trace_filter(trace_filter)

@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     io::{self, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
     path::PathBuf,
@@ -109,15 +110,15 @@ impl Connect {
         }
     }
 
-    pub fn connect(self) -> io::Result<Connection> {
-        match self {
+    pub fn connect(&self) -> io::Result<Connection> {
+        match *self {
             Self::Tcp { ip, port } => {
                 let addr = SocketAddr::from((ip, port));
                 let sock = TcpStream::connect(addr)?;
                 sock.set_read_timeout(Some(Self::READ_TIMEOUT))?;
                 Ok(Connection::Tcp(sock))
             }
-            Self::Serial { path, baud } => {
+            Self::Serial { ref path, baud } => {
                 let path = path.to_str().ok_or_else(|| {
                     // TODO(eliza): should probably just use `Utf8PathBuf` here...
                     io::Error::new(io::ErrorKind::InvalidInput, "path is not UTF-8")
@@ -125,6 +126,15 @@ impl Connect {
                 let port = serial::new(path, baud).timeout(Self::READ_TIMEOUT).open()?;
                 Ok(Connection::Serial(port))
             }
+        }
+    }
+}
+
+impl fmt::Display for Connect {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Tcp { ip, port } => write!(f, "{ip}:{port}"),
+            Self::Serial { path, baud } => write!(f, "{} (@ {baud})", path.display()),
         }
     }
 }
