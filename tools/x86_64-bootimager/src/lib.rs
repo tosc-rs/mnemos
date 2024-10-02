@@ -111,7 +111,7 @@ impl fmt::Display for BootMode {
 }
 
 /// Log levels for the `bootloader` crate.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum, PartialOrd, Ord)]
 #[repr(u8)]
 #[clap(rename_all = "lower")]
 enum BootLogLevel {
@@ -200,7 +200,7 @@ impl QemuOptions {
     pub fn run_qemu(
         self,
         bootimage_path: impl AsRef<Utf8Path>,
-        boot_mode: BootMode,
+        boot_opts: &BootloaderOptions,
     ) -> miette::Result<()> {
         use std::io::{self, BufRead, BufReader, Read, Write};
         use std::process::Stdio;
@@ -227,7 +227,7 @@ impl QemuOptions {
         cmd.arg("-drive")
             .arg(format!("format=raw,file={bootimage_path}"));
 
-        if let BootMode::Uefi = boot_mode {
+        if let BootMode::Uefi = boot_opts.mode {
             cmd.arg("-bios").arg(ovmf_prebuilt::ovmf_pure_efi());
         }
 
@@ -269,6 +269,7 @@ impl QemuOptions {
             .into_diagnostic()
             .context("failed to spawn QEMU child process")?;
         let tag = crowtty::LogTag::serial().verbose(crowtty_verbose);
+        let boot_log = boot_opts.boot_log;
         let crowtty_thread = if crowtty {
             let stdin = qemu.stdin.take().expect("QEMU should have piped stdin");
             let stdout = qemu.stdout.take().expect("QEMU should have piped stdout");
@@ -277,6 +278,45 @@ impl QemuOptions {
                     .name("crowtty".to_string())
                     .spawn(move || {
                         tracing::info!("Connecting crowtty...");
+                        // The bootloader will log a bunch of stuff to serial
+                        // that isn't formatted in mnemOS' trace proto.
+                        // Unfortunately, crowtty will just silently eat these
+                        // logs until it sees a 0 byte, which the kernel may not
+                        // send (e.g. if the serial port is disabled, or if the
+                        // kernel fails to come up). Therefore, before we
+                        // actually start crowtty, consume all the logs from the
+                        // bootloader before we see the line that indicates it's
+                        // jumped to the real life kernel.
+                        let stdout = if boot_log >= BootLogLevel::Info {
+                            let mut stdout = BufReader::new(stdout);
+                            for line in stdout.by_ref().lines() {
+                                match line {
+                                    Ok(line) => {
+                                        // OVMF thinks it's so smart for sending
+                                        // a bunch of escape codes as soon as it
+                                        // comes up. But we would really prefer
+                                        // not to clear the terminal etc.
+                                        let ovmf_garbage =
+                                            "\u{1b}[2J\u{1b}[01;01H\u{1b}[=3h\u{1b}[2J\u{1b}[01;01H";
+                                        let line =
+                                            line.trim_start_matches(ovmf_garbage);
+                                        eprintln!("{tag} BOOT {line}");
+                                        if line.contains("Jumping to kernel") {
+                                            break;
+                                        }
+                                    }
+
+                                    Err(error) => {
+                                        tracing::warn!(%error, "failed to read from QEMU stdout");
+                                        break;
+                                    }
+                                }
+                            }
+                            stdout.into_inner()
+                        } else {
+                            stdout
+                        };
+
                         crowtty::Crowtty::new(tag)
                             .settings(crowtty_opts)
                             .trace_filter(trace_filter)
