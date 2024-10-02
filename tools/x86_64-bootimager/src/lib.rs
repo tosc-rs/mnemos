@@ -3,6 +3,8 @@ use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Args, Parser, ValueEnum, ValueHint};
 use std::fmt;
 
+pub mod output;
+
 #[derive(Debug, Parser)]
 #[command(next_help_heading = "Build Options")]
 pub struct Builder {
@@ -206,23 +208,21 @@ impl QemuOptions {
             trace_filter,
         } = self;
 
-        let mut cmd = std::process::Command::new(&qemu_path);
+        tracing::info!(qemu = %qemu_path, args = ?qemu_args, "Booting mnemOS VM");
+
+        let mut cmd = std::process::Command::new(qemu_path);
         if !qemu_args.is_empty() {
             cmd.args(qemu_args.iter());
         } else {
             cmd.args(QemuOptions::default_args());
         }
 
+        cmd.arg("-drive")
+            .arg(format!("format=raw,file={bootimage_path}"));
+
         if let BootMode::Uefi = boot_mode {
             cmd.arg("-bios").arg(ovmf_prebuilt::ovmf_pure_efi());
         }
-        tracing::info!(
-            ?qemu_args,
-            %qemu_path,
-            %boot_mode,
-            crowtty,
-            "booting in QEMU: {bootimage_path}"
-        );
         cmd.arg("-drive")
             .arg(format!("format=raw,file={bootimage_path}"));
 
@@ -254,6 +254,8 @@ impl QemuOptions {
                 self.stdin.flush()
             }
         }
+
+        tracing::debug!("Running QEMU command: {cmd:?}");
 
         let mut qemu = cmd.spawn().context("failed to spawn QEMU child process")?;
         let crowtty_thread = if crowtty {
@@ -325,10 +327,10 @@ impl BootloaderOptions {
             bootcfg.frame_buffer.minimum_framebuffer_width = self.framebuffer_width;
         }
         tracing::debug!(
-            ?bootcfg.log_level,
-            bootcfg.frame_buffer_logging,
-            bootcfg.serial_logging,
-            ?bootcfg.frame_buffer
+            log.info = ?bootcfg.log_level,
+            log.framebuffer = bootcfg.frame_buffer_logging,
+            log.serial = bootcfg.serial_logging,
+            "Configuring bootloader",
         );
         bootcfg
     }
@@ -336,10 +338,11 @@ impl BootloaderOptions {
 
 impl Builder {
     pub fn build_bootimage(&self) -> anyhow::Result<Utf8PathBuf> {
+        let t0 = std::time::Instant::now();
         tracing::info!(
-            boot_mode = ?self.bootloader.mode,
+            boot_mode = %self.bootloader.mode,
             kernel = %self.kernel_bin,
-            "Building boot image."
+            "Building boot image"
         );
 
         let canonical_kernel_bin: Utf8PathBuf = self
@@ -376,7 +379,11 @@ impl Builder {
             }
         };
 
-        tracing::info!("Created bootable disk image ({path})",);
+        tracing::info!(
+            "Finished bootable disk image [{}] in {:.02?} ({path})",
+            self.bootloader.mode,
+            t0.elapsed(),
+        );
 
         Ok(path)
     }

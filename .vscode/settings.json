@@ -1,4 +1,4 @@
-{
+i{
     "rust-analyzer.check.invocationLocation": "workspace",
     "rust-analyzer.cargo.buildScripts.invocationLocation": "workspace",
     "rust-analyzer.cargo.buildScripts.overrideCommand": [
