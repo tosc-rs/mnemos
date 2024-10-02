@@ -142,8 +142,13 @@ pub struct QemuOptions {
     )]
     pub qemu_path: Utf8PathBuf,
 
+    /// Attach `crowtty` to the QEMU VM's COM1 serial port.
     #[clap(long, short)]
     pub crowtty: bool,
+
+    /// Enable verbose output from `crowtty`.
+    #[clap(long = "verbose", requires = "crowtty")]
+    pub crowtty_verbose: bool,
 
     #[clap(flatten)]
     pub crowtty_opts: crowtty::Settings,
@@ -169,6 +174,7 @@ impl Default for QemuOptions {
             qemu_path: Utf8PathBuf::from(Self::QEMU_SYSTEM_X86_64),
             qemu_args: Self::default_args(),
             crowtty: false,
+            crowtty_verbose: false,
             crowtty_opts: Default::default(),
             trace_filter: Self::default_serial_trace_filter(),
         }
@@ -205,6 +211,7 @@ impl QemuOptions {
             qemu_args,
             crowtty,
             crowtty_opts,
+            crowtty_verbose,
             trace_filter,
         } = self;
 
@@ -266,7 +273,7 @@ impl QemuOptions {
                     .name("crowtty".to_string())
                     .spawn(move || {
                         tracing::info!("Connecting crowtty...");
-                        crowtty::Crowtty::new(crowtty::LogTag::serial())
+                        crowtty::Crowtty::new(crowtty::LogTag::serial().verbose(crowtty_verbose))
                             .settings(crowtty_opts)
                             .trace_filter(trace_filter)
                             .run(QemuStdio { stdin, stdout })
