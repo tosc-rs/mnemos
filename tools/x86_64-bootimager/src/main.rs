@@ -1,18 +1,14 @@
-use clap::{Args, Parser};
-use mnemos_x86_64_bootimager::{Builder, QemuOptions};
+use clap::Parser;
+use mnemos_x86_64_bootimager::{output, Builder, QemuOptions};
 
 fn main() -> anyhow::Result<()> {
-    use tracing_subscriber::prelude::*;
-
     let App {
         cmd,
         builder,
         output,
     } = App::parse();
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().without_time().pretty())
-        .with(output.trace_filter)
-        .init();
+    output.init()?;
+    tracing::info!("Assuming direct control over the build!");
 
     let bootimage_path = builder.build_bootimage()?;
     let mode = builder.bootloader.mode;
@@ -38,7 +34,7 @@ struct App {
     builder: Builder,
 
     #[clap(flatten)]
-    output: OutputOptions,
+    output: output::Options,
 }
 
 #[derive(Debug, Clone, Parser)]
@@ -51,18 +47,4 @@ enum Subcommand {
     /// This is the default subcommand.
     #[clap(alias = "run")]
     Qemu(QemuOptions),
-}
-
-#[derive(Clone, Debug, Args)]
-#[command(next_help_heading = "Output Options")]
-struct OutputOptions {
-    /// Tracing filter for the bootimage builder.
-    #[clap(
-        long = "trace",
-        alias = "log",
-        env = "RUST_LOG",
-        default_value = "info",
-        global = true
-    )]
-    trace_filter: tracing_subscriber::filter::Targets,
 }
