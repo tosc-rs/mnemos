@@ -1637,6 +1637,7 @@ version = "0.1.0"
 dependencies = [
  "clap 4.5.15",
  "cobs",
+ "miette 7.2.0",
  "mnemos-trace-proto",
  "owo-colors 3.5.0",
  "postcard 1.0.8",
@@ -5697,6 +5698,7 @@ dependencies = [
  "clap 4.5.15",
  "crowtty",
  "heck 0.5.0",
+ "miette 7.2.0",
  "ovmf-prebuilt",
  "owo-colors 4.0.0",
  "supports-color 3.0.0",

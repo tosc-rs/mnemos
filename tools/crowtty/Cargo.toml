@@ -67,3 +67,6 @@ default-features = false
 version = "0.3.17"
 default-features = false
 features = ["std"]
+
+[dependencies.miette]
+workspace = true

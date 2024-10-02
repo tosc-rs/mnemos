@@ -1,6 +1,6 @@
-use anyhow::Context;
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Args, Parser, ValueEnum, ValueHint};
+use miette::{miette, Context, IntoDiagnostic};
 use std::fmt;
 
 pub mod output;
@@ -201,7 +201,7 @@ impl QemuOptions {
         self,
         bootimage_path: impl AsRef<Utf8Path>,
         boot_mode: BootMode,
-    ) -> anyhow::Result<()> {
+    ) -> miette::Result<()> {
         use std::io::{self, Read, Write};
         use std::process::Stdio;
 
@@ -264,7 +264,10 @@ impl QemuOptions {
 
         tracing::debug!("Running QEMU command: {cmd:?}");
 
-        let mut qemu = cmd.spawn().context("failed to spawn QEMU child process")?;
+        let mut qemu = cmd
+            .spawn()
+            .into_diagnostic()
+            .context("failed to spawn QEMU child process")?;
         let crowtty_thread = if crowtty {
             let stdin = qemu.stdin.take().expect("QEMU should have piped stdin");
             let stdout = qemu.stdout.take().expect("QEMU should have piped stdout");
@@ -284,10 +287,13 @@ impl QemuOptions {
             None
         };
 
-        let status = qemu.wait().context("QEMU child process failed")?;
+        let status = qemu
+            .wait()
+            .into_diagnostic()
+            .context("QEMU child process failed")?;
 
         if !status.success() {
-            anyhow::bail!("QEMU exited with status: {}", status);
+            return Err(miette::miette!("QEMU exited with {status}"));
         }
 
         if let Some(crowtty) = crowtty_thread {
@@ -344,7 +350,7 @@ impl BootloaderOptions {
 }
 
 impl Builder {
-    pub fn build_bootimage(&self) -> anyhow::Result<Utf8PathBuf> {
+    pub fn build_bootimage(&self) -> miette::Result<Utf8PathBuf> {
         let t0 = std::time::Instant::now();
         tracing::info!(
             boot_mode = %self.bootloader.mode,
@@ -355,6 +361,7 @@ impl Builder {
         let canonical_kernel_bin: Utf8PathBuf = self
             .kernel_bin
             .canonicalize()
+            .into_diagnostic()
             .context("failed to to canonicalize kernel bin path")?
             .try_into()
             .unwrap();
@@ -362,7 +369,7 @@ impl Builder {
             .out_dir
             .as_deref()
             .or_else(|| canonical_kernel_bin.parent())
-            .ok_or_else(|| anyhow::anyhow!("can't determine OUT_DIR"))?;
+            .ok_or_else(|| miette!("can't determine OUT_DIR"))?;
 
         let bootcfg = self.bootloader.boot_config();
         let path = match self.bootloader.mode {
@@ -372,7 +379,7 @@ impl Builder {
                 builder.set_boot_config(&bootcfg);
                 builder
                     .create_disk_image(path.as_ref())
-                    .map_err(|error| anyhow::anyhow!("failed to build UEFI image: {error}"))?;
+                    .map_err(|error| miette!("failed to build UEFI image: {error}"))?;
                 path
             }
             BootMode::Bios => {
@@ -381,7 +388,7 @@ impl Builder {
                 builder.set_boot_config(&bootcfg);
                 builder
                     .create_disk_image(path.as_ref())
-                    .map_err(|error| anyhow::anyhow!("failed to build BIOS image: {error}"))?;
+                    .map_err(|error| miette!("failed to build BIOS image: {error}"))?;
                 path
             }
         };

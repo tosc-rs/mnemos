@@ -69,6 +69,9 @@ repository = "https://github.com/tosc-rs/mnemos"
 homepage = "https://mnemos.dev"
 license = "MIT OR Apache-2.0"
 
+[workspace.dependencies]
+miette = "7.2"
+
 ### profile settings ###
 
 [profile.release]

@@ -1,7 +1,7 @@
 use clap::Parser;
 use mnemos_x86_64_bootimager::{output, Builder, QemuOptions};
 
-fn main() -> anyhow::Result<()> {
+fn main() -> miette::Result<()> {
     let App {
         cmd,
         builder,
