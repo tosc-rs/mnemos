@@ -17,6 +17,8 @@ pub struct Listener<D: RegisteredDriver> {
 /// A registration for a [`RegisteredDriver`]. This type is provided to
 /// [`Registry::register`] in order to add the driver to the registry.
 ///
+/// Call [`Listener::new`] to get a `Listener`/`Registration` pair.
+///
 /// [`Registry::register`]: crate::registry::Registry::register
 #[must_use = "a `Registration` does nothing if not registered with a `Registry`"]
 pub struct Registration<D: RegisteredDriver> {
