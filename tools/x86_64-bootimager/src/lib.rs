@@ -286,7 +286,7 @@ impl QemuOptions {
         let qemu_tag = tag.named("QEMU");
         for line in qemu_stderr.lines() {
             match line {
-                Ok(line) => eprintln!("{qemu_tag} {line}"),
+                Ok(line) => eprintln!("{qemu_tag} {line:?}"),
                 Err(error) => {
                     tracing::warn!(%error, "failed to read from QEMU stderr");
                     break;
@@ -437,7 +437,6 @@ fn run_crowtty(
     //
     // TODO(eliza): a nicer solution might be to make crowtty smarter about
     // handling random non-sermux ASCII characters when it's not inside of a
-    // sermux frame, but...I'll do that later.
     let stdout = if boot_log >= BootLogLevel::Info {
         let mut stdout = BufReader::new(stdout);
         for line in stdout.by_ref().lines() {
@@ -448,6 +447,11 @@ fn run_crowtty(
                     // not to clear the terminal etc.
                     let ovmf_garbage = "\u{1b}[2J\u{1b}[01;01H\u{1b}[=3h\u{1b}[2J\u{1b}[01;01H";
                     let line = line.trim_start_matches(ovmf_garbage);
+                    // Any remaining control characters must be inserted
+                    // directly into the trash can.
+                    let line = line
+                        .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
+                        .trim_end_matches(|c: char| !c.is_ascii_alphanumeric());
                     eprintln!("{tag} BOOT {line}");
                     if line.contains("Jumping to kernel") {
                         break;
