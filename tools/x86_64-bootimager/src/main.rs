@@ -1,5 +1,5 @@
 use clap::Parser;
-use mnemos_x86_64_bootimager::{output, Builder, QemuOptions};
+use mnemos_x86_64_bootimager::{output, qemu, Builder};
 
 fn main() -> miette::Result<()> {
     let App {
@@ -14,7 +14,7 @@ fn main() -> miette::Result<()> {
     match cmd {
         Some(Subcommand::Build) => Ok(()),
         Some(Subcommand::Qemu(opts)) => opts.run_qemu(bootimage_path, &builder.bootloader),
-        None => QemuOptions::default().run_qemu(bootimage_path, &builder.bootloader),
+        None => qemu::Options::default().run_qemu(bootimage_path, &builder.bootloader),
     }
 }
 
@@ -46,5 +46,5 @@ enum Subcommand {
     ///
     /// This is the default subcommand.
     #[clap(alias = "run")]
-    Qemu(QemuOptions),
+    Qemu(qemu::Options),
 }
