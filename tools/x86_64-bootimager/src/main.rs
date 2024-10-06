@@ -1,7 +1,7 @@
 use clap::Parser;
-use mnemos_x86_64_bootimager::{output, Builder, QemuOptions};
+use mnemos_x86_64_bootimager::{output, qemu, Builder};
 
-fn main() -> anyhow::Result<()> {
+fn main() -> miette::Result<()> {
     let App {
         cmd,
         builder,
@@ -11,11 +11,10 @@ fn main() -> anyhow::Result<()> {
     tracing::info!("Assuming direct control over the build!");
 
     let bootimage_path = builder.build_bootimage()?;
-    let mode = builder.bootloader.mode;
     match cmd {
         Some(Subcommand::Build) => Ok(()),
-        Some(Subcommand::Qemu(opts)) => opts.run_qemu(bootimage_path, mode),
-        None => QemuOptions::default().run_qemu(bootimage_path, mode),
+        Some(Subcommand::Qemu(opts)) => opts.run_qemu(bootimage_path, &builder.bootloader),
+        None => qemu::Options::default().run_qemu(bootimage_path, &builder.bootloader),
     }
 }
 
@@ -38,6 +37,7 @@ struct App {
 }
 
 #[derive(Debug, Clone, Parser)]
+#[allow(clippy::large_enum_variant)] // shut up clippy, no one cares...
 enum Subcommand {
     /// Just build a mnemOS boot image, and do not run it.
     Build,
@@ -46,5 +46,5 @@ enum Subcommand {
     ///
     /// This is the default subcommand.
     #[clap(alias = "run")]
-    Qemu(QemuOptions),
+    Qemu(qemu::Options),
 }
