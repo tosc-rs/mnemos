@@ -241,9 +241,9 @@ impl BootloaderOptions {
             bootcfg.frame_buffer.minimum_framebuffer_width = self.framebuffer_width;
         }
         tracing::debug!(
-            log.info = ?bootcfg.log_level,
-            log.framebuffer = bootcfg.frame_buffer_logging,
-            log.serial = bootcfg.serial_logging,
+            ?bootcfg.log_level,
+            bootcfg.frame_buffer_logging,
+            bootcfg.serial_logging,
             "Configuring bootloader",
         );
         bootcfg
