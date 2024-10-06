@@ -17,22 +17,27 @@ pub struct Options {
     )]
     pub qemu_path: Utf8PathBuf,
 
-    /// Attach `crowtty` to the QEMU VM's COM1 serial port.
+    /// If true, do not attach `crowtty` to the QEMU VM's COM1 serial port.
+    ///
+    /// Crowtty will also be disabled if the QEMU command line contains an
+    /// explicit `-serial` flag, indicating the user wants to do somethign else
+    /// with QEMU's virtual serial port.
     #[clap(long, short)]
-    pub crowtty: bool,
+    pub no_crowtty: bool,
 
     /// Enable verbose output from `crowtty`.
-    #[clap(long = "verbose", requires = "crowtty")]
+    #[clap(long = "verbose", conflicts_with = "no-crowtty")]
     pub crowtty_verbose: bool,
 
     #[clap(flatten)]
     pub crowtty_opts: crowtty::Settings,
 
-    /// Tracing filter to set when connecting Crowtty to the QEMU virtual serial port.
+    /// Tracing filter to set when connecting Crowtty to the QEMU virtual serial
+    /// port.
     #[clap(
         long = "serial-trace",
         alias = "serial-log",
-        alias = "kernl-log",
+        alias = "kernel-log",
         env = "MNEMOS_LOG",
         default_value_t = Self::default_serial_trace_filter(),
     )]
@@ -48,7 +53,7 @@ impl Default for Options {
         Self {
             qemu_path: Utf8PathBuf::from(Self::QEMU_SYSTEM_X86_64),
             qemu_args: Self::default_args(),
-            crowtty: false,
+            no_crowtty: false,
             crowtty_verbose: false,
             crowtty_opts: Default::default(),
             trace_filter: Self::default_serial_trace_filter(),
@@ -80,20 +85,12 @@ impl Options {
         use std::process::Stdio;
 
         let bootimage_path = bootimage_path.as_ref();
-        let Options {
-            qemu_path,
-            qemu_args,
-            crowtty,
-            crowtty_opts,
-            crowtty_verbose,
-            trace_filter,
-        } = self;
 
-        tracing::info!(qemu = %qemu_path, args = ?qemu_args, "Booting mnemOS VM");
+        tracing::info!(qemu = %self.qemu_path, args = ?self.qemu_args, "Booting mnemOS VM");
 
-        let mut cmd = std::process::Command::new(qemu_path);
-        if !qemu_args.is_empty() {
-            cmd.args(qemu_args.iter());
+        let mut cmd = std::process::Command::new(self.qemu_path);
+        if !self.qemu_args.is_empty() {
+            cmd.args(self.qemu_args.iter());
         } else {
             cmd.args(Options::default_args());
         }
@@ -105,7 +102,14 @@ impl Options {
             cmd.arg("-bios").arg(ovmf_prebuilt::ovmf_pure_efi());
         }
 
-        if crowtty {
+        let crowtty_enabled =
+            // Disable crowtty if the user explicitly asked for it to be disabled.
+            !self.no_crowtty &&
+            // Disable crowtty if the user is trying to do something else with the
+            // serial port.
+            self.qemu_args.iter().all(|arg| arg != "-serial");
+
+        if crowtty_enabled {
             cmd.arg("-serial")
                 .arg("stdio")
                 .stdout(Stdio::piped())
@@ -121,8 +125,8 @@ impl Options {
             .into_diagnostic()
             .context("failed to spawn QEMU child process")?;
 
-        let tag = crowtty::LogTag::serial().verbose(crowtty_verbose);
-        let crowtty_thread = if crowtty {
+        let tag = crowtty::LogTag::serial().verbose(self.crowtty_verbose);
+        let crowtty_thread = if crowtty_enabled {
             let stdin = qemu.stdin.take().expect("QEMU should have piped stdin");
             let stdout = qemu.stdout.take().expect("QEMU should have piped stdout");
             let boot_log = boot_opts.boot_log;
@@ -130,7 +134,14 @@ impl Options {
             let thread = std::thread::Builder::new()
                 .name("crowtty".to_string())
                 .spawn(move || {
-                    run_crowtty(tag, crowtty_opts, trace_filter, boot_log, stdin, stdout)
+                    run_crowtty(
+                        tag,
+                        self.crowtty_opts,
+                        self.trace_filter,
+                        boot_log,
+                        stdin,
+                        stdout,
+                    )
                 })
                 .unwrap();
             Some(thread)

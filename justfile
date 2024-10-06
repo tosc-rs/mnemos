@@ -169,7 +169,7 @@ flash-c3 board *espflash-args: (_get-cargo-command "espflash" "cargo-espflash") 
 build-x86 *args='': (_x86-bootimager "build" args)
 
 # run an x86_64 MnemOS image in QEMU
-run-x86 *args='--crowtty': (_x86-bootimager "run" args)
+run-x86 *args='': (_x86-bootimager "run" args)
 
 # helper recipe to invoke the x86 bootimage builder, used by both build-x86 and
 # run-x86.
