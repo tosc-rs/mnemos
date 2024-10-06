@@ -1,7 +1,10 @@
 use camino::{Utf8Path, Utf8PathBuf};
 use clap::{Args, Parser, ValueEnum, ValueHint};
 use miette::{miette, Context, IntoDiagnostic};
-use std::fmt;
+use std::{
+    fmt,
+    io::{self, BufRead, BufReader, Read, Write},
+};
 
 pub mod output;
 
@@ -129,6 +132,19 @@ enum BootLogLevel {
     Trace,
 }
 
+impl fmt::Display for BootLogLevel {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match self {
+            Self::Off => "off",
+            Self::Error => "error",
+            Self::Warn => "warn",
+            Self::Info => "info",
+            Self::Debug => "debug",
+            Self::Trace => "trace",
+        })
+    }
+}
+
 #[derive(Clone, Debug, Parser)]
 pub struct QemuOptions {
     /// Path to the QEMU x86_64 executable.
@@ -202,7 +218,6 @@ impl QemuOptions {
         bootimage_path: impl AsRef<Utf8Path>,
         boot_opts: &BootloaderOptions,
     ) -> miette::Result<()> {
-        use std::io::{self, BufRead, BufReader, Read, Write};
         use std::process::Stdio;
 
         let bootimage_path = bootimage_path.as_ref();
@@ -240,94 +255,26 @@ impl QemuOptions {
 
         cmd.stderr(Stdio::piped());
 
-        tracing::debug!(qemu = ?cmd);
-        struct QemuStdio {
-            stdin: std::process::ChildStdin,
-            stdout: std::process::ChildStdout,
-        }
-
-        impl Read for QemuStdio {
-            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-                self.stdout.read(buf)
-            }
-        }
-
-        impl Write for QemuStdio {
-            fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-                self.stdin.write(buf)
-            }
-
-            fn flush(&mut self) -> io::Result<()> {
-                self.stdin.flush()
-            }
-        }
-
         tracing::debug!("Running QEMU command: {cmd:?}");
 
         let mut qemu = cmd
             .spawn()
             .into_diagnostic()
             .context("failed to spawn QEMU child process")?;
+
         let tag = crowtty::LogTag::serial().verbose(crowtty_verbose);
-        let boot_log = boot_opts.boot_log;
         let crowtty_thread = if crowtty {
             let stdin = qemu.stdin.take().expect("QEMU should have piped stdin");
             let stdout = qemu.stdout.take().expect("QEMU should have piped stdout");
-            Some(
-                std::thread::Builder::new()
-                    .name("crowtty".to_string())
-                    .spawn(move || {
-                        tracing::info!("Connecting crowtty...");
-                        // The bootloader will log a bunch of stuff to serial
-                        // that isn't formatted in mnemOS' trace proto.
-                        // Unfortunately, crowtty will just silently eat these
-                        // logs until it sees a 0 byte, which the kernel may not
-                        // send (e.g. if the serial port is disabled, or if the
-                        // kernel fails to come up). Therefore, before we
-                        // actually start crowtty, consume all the logs from the
-                        // bootloader before we see the line that indicates it's
-                        // jumped to the real life kernel.
-                        // TODO(eliza): a nicer solution might be to make
-                        // crowtty smarter handling random non-sermux ASCII
-                        // characters when it's not inside of a sermux frame,
-                        // but...I'll do that later.
-                        let stdout = if boot_log >= BootLogLevel::Info {
-                            let mut stdout = BufReader::new(stdout);
-                            for line in stdout.by_ref().lines() {
-                                match line {
-                                    Ok(line) => {
-                                        // OVMF thinks it's so smart for sending
-                                        // a bunch of escape codes as soon as it
-                                        // comes up. But we would really prefer
-                                        // not to clear the terminal etc.
-                                        let ovmf_garbage =
-                                            "\u{1b}[2J\u{1b}[01;01H\u{1b}[=3h\u{1b}[2J\u{1b}[01;01H";
-                                        let line =
-                                            line.trim_start_matches(ovmf_garbage);
-                                        eprintln!("{tag} BOOT {line}");
-                                        if line.contains("Jumping to kernel") {
-                                            break;
-                                        }
-                                    }
+            let boot_log = boot_opts.boot_log;
 
-                                    Err(error) => {
-                                        tracing::warn!(%error, "failed to read from QEMU stdout");
-                                        break;
-                                    }
-                                }
-                            }
-                            stdout.into_inner()
-                        } else {
-                            stdout
-                        };
-
-                        crowtty::Crowtty::new(tag)
-                            .settings(crowtty_opts)
-                            .trace_filter(trace_filter)
-                            .run(QemuStdio { stdin, stdout })
-                    })
-                    .unwrap(),
-            )
+            let thread = std::thread::Builder::new()
+                .name("crowtty".to_string())
+                .spawn(move || {
+                    run_crowtty(tag, crowtty_opts, trace_filter, boot_log, stdin, stdout)
+                })
+                .unwrap();
+            Some(thread)
         } else {
             None
         };
@@ -357,23 +304,10 @@ impl QemuOptions {
         }
 
         if let Some(crowtty) = crowtty_thread {
-            crowtty.join().unwrap().unwrap(); // TODO(eliza)
+            crowtty.join().unwrap()?;
         }
 
         Ok(())
-    }
-}
-
-impl fmt::Display for BootLogLevel {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Self::Off => "off",
-            Self::Error => "error",
-            Self::Warn => "warn",
-            Self::Info => "info",
-            Self::Debug => "debug",
-            Self::Trace => "trace",
-        })
     }
 }
 
@@ -461,4 +395,78 @@ impl Builder {
 
         Ok(path)
     }
+}
+
+fn run_crowtty(
+    tag: crowtty::LogTag,
+    crowtty_opts: crowtty::Settings,
+    trace_filter: tracing_subscriber::filter::Targets,
+    boot_log: BootLogLevel,
+    stdin: std::process::ChildStdin,
+    stdout: std::process::ChildStdout,
+) -> miette::Result<()> {
+    struct QemuStdio {
+        stdin: std::process::ChildStdin,
+        stdout: std::process::ChildStdout,
+    }
+
+    impl Read for QemuStdio {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.stdout.read(buf)
+        }
+    }
+
+    impl Write for QemuStdio {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.stdin.write(buf)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.stdin.flush()
+        }
+    }
+
+    tracing::info!("Connecting crowtty...");
+    // The bootloader will log a bunch of stuff to serial that isn't formatted
+    // in mnemOS' trace proto. Unfortunately, crowtty will just silently eat
+    // these logs until it sees a 0 byte, which the kernel may not send (e.g. if
+    // the serial port is disabled, or if the kernel fails to come up).
+    // Therefore, before we actually start crowtty, consume all the logs from
+    // the bootloader before we see the line that indicates it's jumped to the
+    // real life kernel.
+    //
+    // TODO(eliza): a nicer solution might be to make crowtty smarter about
+    // handling random non-sermux ASCII characters when it's not inside of a
+    // sermux frame, but...I'll do that later.
+    let stdout = if boot_log >= BootLogLevel::Info {
+        let mut stdout = BufReader::new(stdout);
+        for line in stdout.by_ref().lines() {
+            match line {
+                Ok(line) => {
+                    // OVMF thinks it's so smart for sending a bunch of escape
+                    // codes as soon as it comes up. But we would really prefer
+                    // not to clear the terminal etc.
+                    let ovmf_garbage = "\u{1b}[2J\u{1b}[01;01H\u{1b}[=3h\u{1b}[2J\u{1b}[01;01H";
+                    let line = line.trim_start_matches(ovmf_garbage);
+                    eprintln!("{tag} BOOT {line}");
+                    if line.contains("Jumping to kernel") {
+                        break;
+                    }
+                }
+
+                Err(error) => {
+                    tracing::warn!(%error, "failed to read from QEMU stdout");
+                    break;
+                }
+            }
+        }
+        stdout.into_inner()
+    } else {
+        stdout
+    };
+
+    crowtty::Crowtty::new(tag)
+        .settings(crowtty_opts)
+        .trace_filter(trace_filter)
+        .run(QemuStdio { stdin, stdout })
 }
