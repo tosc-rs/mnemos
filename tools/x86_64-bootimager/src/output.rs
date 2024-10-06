@@ -1,5 +1,6 @@
 use clap::Args;
 use heck::ToTitleCase;
+use miette::IntoDiagnostic;
 use std::fmt;
 use tracing::{field::Field, Event, Level, Subscriber};
 use tracing_subscriber::{
@@ -51,7 +52,7 @@ enum ColorMode {
 // === impl OutputOptions ===
 
 impl Options {
-    pub fn init(&self) -> anyhow::Result<()> {
+    pub fn init(&self) -> miette::Result<()> {
         use tracing_subscriber::prelude::*;
         let fmt = tracing_subscriber::fmt::layer()
             .event_format(CargoFormatter {
@@ -62,7 +63,8 @@ impl Options {
         tracing_subscriber::registry()
             .with(fmt)
             .with(self.trace_filter.clone())
-            .try_init()?;
+            .try_init()
+            .into_diagnostic()?;
         Ok(())
     }
 }

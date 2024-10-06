@@ -1,9 +1,10 @@
-use anyhow::Context;
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8PathBuf;
 use clap::{Args, Parser, ValueEnum, ValueHint};
+use miette::{miette, Context, IntoDiagnostic};
 use std::fmt;
 
 pub mod output;
+pub mod qemu;
 
 #[derive(Debug, Parser)]
 #[command(next_help_heading = "Build Options")]
@@ -65,7 +66,7 @@ pub struct BootloaderOptions {
     /// Log level for the bootloader.
     #[clap(
         long,
-        default_value_t = BootLogLevel::Info,
+        default_value_t = BootLogLevel::Debug,
         global = true,
     )]
     boot_log: BootLogLevel,
@@ -111,10 +112,10 @@ impl fmt::Display for BootMode {
 }
 
 /// Log levels for the `bootloader` crate.
-#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, ValueEnum, PartialOrd, Ord)]
 #[repr(u8)]
 #[clap(rename_all = "lower")]
-enum BootLogLevel {
+pub(crate) enum BootLogLevel {
     /// A level lower than all log levels.
     Off,
     /// Corresponds to the `Error` log level.
@@ -127,82 +128,6 @@ enum BootLogLevel {
     Debug,
     /// Corresponds to the `Trace` log level.
     Trace,
-}
-
-#[derive(Clone, Debug, Parser)]
-pub struct QemuOptions {
-    /// Path to the QEMU x86_64 executable.
-    ///
-    /// Generally, this does not need to be overridden, unless the QEMU binary
-    /// has a non-standard name or is not on the PATH.
-    #[clap(
-        long,
-        default_value = Self::QEMU_SYSTEM_X86_64,
-        value_hint = ValueHint::FilePath,
-    )]
-    pub qemu_path: Utf8PathBuf,
-
-    /// Extra arguments passed directly to the QEMU command.
-    #[arg(last = true, default_value = "-cpu qemu64 -smp cores=4")]
-    pub qemu_args: Vec<String>,
-}
-
-impl Default for QemuOptions {
-    fn default() -> Self {
-        Self {
-            qemu_path: Utf8PathBuf::from(Self::QEMU_SYSTEM_X86_64),
-            qemu_args: Self::default_args(),
-        }
-    }
-}
-
-impl QemuOptions {
-    const QEMU_SYSTEM_X86_64: &'static str = "qemu-system-x86_64";
-    fn default_args() -> Vec<String> {
-        vec![
-            "-cpu".to_string(),
-            "qemu64".to_string(),
-            "-smp".to_string(),
-            "cores=4".to_string(),
-        ]
-    }
-
-    pub fn run_qemu(
-        &self,
-        bootimage_path: impl AsRef<Utf8Path>,
-        boot_mode: BootMode,
-    ) -> anyhow::Result<()> {
-        let bootimage_path = bootimage_path.as_ref();
-        let QemuOptions {
-            qemu_path,
-            qemu_args,
-        } = self;
-
-        tracing::info!(qemu = %qemu_path, args = ?qemu_args, "Booting mnemOS VM");
-
-        let mut cmd = std::process::Command::new(qemu_path);
-        if !qemu_args.is_empty() {
-            cmd.args(qemu_args.iter());
-        }
-
-        cmd.arg("-drive")
-            .arg(format!("format=raw,file={bootimage_path}"));
-
-        if let BootMode::Uefi = boot_mode {
-            cmd.arg("-bios").arg(ovmf_prebuilt::ovmf_pure_efi());
-        }
-
-        tracing::debug!("Running QEMU command: {cmd:?}");
-
-        let mut qemu = cmd.spawn().context("failed to spawn QEMU child process")?;
-        let status = qemu.wait().context("QEMU child process failed")?;
-
-        if !status.success() {
-            anyhow::bail!("QEMU exited with status: {}", status);
-        }
-
-        Ok(())
-    }
 }
 
 impl fmt::Display for BootLogLevel {
@@ -251,7 +176,7 @@ impl BootloaderOptions {
 }
 
 impl Builder {
-    pub fn build_bootimage(&self) -> anyhow::Result<Utf8PathBuf> {
+    pub fn build_bootimage(&self) -> miette::Result<Utf8PathBuf> {
         let t0 = std::time::Instant::now();
         tracing::info!(
             boot_mode = %self.bootloader.mode,
@@ -262,6 +187,7 @@ impl Builder {
         let canonical_kernel_bin: Utf8PathBuf = self
             .kernel_bin
             .canonicalize()
+            .into_diagnostic()
             .context("failed to to canonicalize kernel bin path")?
             .try_into()
             .unwrap();
@@ -269,7 +195,7 @@ impl Builder {
             .out_dir
             .as_deref()
             .or_else(|| canonical_kernel_bin.parent())
-            .ok_or_else(|| anyhow::anyhow!("can't determine OUT_DIR"))?;
+            .ok_or_else(|| miette!("can't determine OUT_DIR"))?;
 
         let bootcfg = self.bootloader.boot_config();
         let path = match self.bootloader.mode {
@@ -279,7 +205,7 @@ impl Builder {
                 builder.set_boot_config(&bootcfg);
                 builder
                     .create_disk_image(path.as_ref())
-                    .map_err(|error| anyhow::anyhow!("failed to build UEFI image: {error}"))?;
+                    .map_err(|error| miette!("failed to build UEFI image: {error}"))?;
                 path
             }
             BootMode::Bios => {
@@ -288,7 +214,7 @@ impl Builder {
                 builder.set_boot_config(&bootcfg);
                 builder
                     .create_disk_image(path.as_ref())
-                    .map_err(|error| anyhow::anyhow!("failed to build BIOS image: {error}"))?;
+                    .map_err(|error| miette!("failed to build BIOS image: {error}"))?;
                 path
             }
         };
