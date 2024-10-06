@@ -287,6 +287,10 @@ impl QemuOptions {
                         // actually start crowtty, consume all the logs from the
                         // bootloader before we see the line that indicates it's
                         // jumped to the real life kernel.
+                        // TODO(eliza): a nicer solution might be to make
+                        // crowtty smarter handling random non-sermux ASCII
+                        // characters when it's not inside of a sermux frame,
+                        // but...I'll do that later.
                         let stdout = if boot_log >= BootLogLevel::Info {
                             let mut stdout = BufReader::new(stdout);
                             for line in stdout.by_ref().lines() {
