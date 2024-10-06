@@ -26,7 +26,7 @@ pub struct Options {
     pub no_crowtty: bool,
 
     /// Enable verbose output from `crowtty`.
-    #[clap(long = "verbose", conflicts_with = "no-crowtty")]
+    #[clap(long = "verbose", conflicts_with = "no_crowtty")]
     pub crowtty_verbose: bool,
 
     #[clap(flatten)]
