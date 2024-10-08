@@ -13,7 +13,6 @@ use std::{
 };
 use tracing::level_filters::LevelFilter;
 
-pub mod connection;
 mod keyboard;
 mod trace;
 

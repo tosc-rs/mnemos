@@ -1,8 +1,9 @@
+use libcrowtty::LogTag;
+use std::path::PathBuf;
 use std::{
     fmt,
     io::{self, Read, Write},
     net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream},
-    path::PathBuf,
     time::Duration,
 };
 
@@ -78,10 +79,10 @@ impl Read for Connection {
 }
 
 impl Connection {
-    pub fn log_tag(&self) -> crate::LogTag {
+    pub fn log_tag(&self) -> LogTag {
         match self {
-            Self::Serial(_) => crate::LogTag::serial(),
-            Self::Tcp(_) => crate::LogTag::tcp(),
+            Self::Serial(_) => LogTag::serial(),
+            Self::Tcp(_) => LogTag::tcp(),
         }
     }
 }

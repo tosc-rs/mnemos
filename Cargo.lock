@@ -1636,17 +1636,11 @@ name = "crowtty"
 version = "0.1.0"
 dependencies = [
  "clap 4.5.15",
- "cobs",
+ "libcrowtty",
  "miette 7.2.0",
- "mnemos-trace-proto",
- "owo-colors 3.5.0",
- "postcard 1.0.8",
- "serde",
  "serialport 4.0.1",
  "serialport 4.5.0",
- "sermux-proto",
  "tracing 0.1.40",
- "tracing-serde-structured",
  "tracing-subscriber",
 ]
 
@@ -4926,6 +4920,23 @@ name = "libc"
 version = "0.2.155"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "97b3888a4aecf77e811145cadf6eef5901f4782c53886191b2f693f24761847c"
+
+[[package]]
+name = "libcrowtty"
+version = "0.1.0"
+dependencies = [
+ "clap 4.5.15",
+ "cobs",
+ "miette 7.2.0",
+ "mnemos-trace-proto",
+ "owo-colors 3.5.0",
+ "postcard 1.0.8",
+ "serde",
+ "sermux-proto",
+ "tracing 0.1.40",
+ "tracing-serde-structured",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "libgit2-sys"
