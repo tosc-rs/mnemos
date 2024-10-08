@@ -47,6 +47,7 @@ jobs:
     - check
     - clippy
     - build-bins
+    - build-x86_64
     - test
     - test-host-miri
     - docs

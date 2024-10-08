@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1"
 camino = "1"
-crowtty = { path = "../crowtty" }
+libcrowtty = { path = "../libcrowtty" }
 heck = "0.5"
 # cargo_metadata = "0.18.1"
 miette = { workspace = true, features = ["fancy"] }

@@ -14,6 +14,8 @@ part of the MnemOS environment.
   CrowTTY multiplexes and de-multiplexes [`sermux`] frames sent and recieved
   over a UART connection from a target, and decodes
   [`mnemos-trace-proto`]-formatted diagnostic data.
+* [`libcrowtty/] - The core of `crowtty`, factored out as a library so that it
+  can be included in other tools.
 * [`dumbloader/`] - An image loader type thing for Cortex-M, I think? We're not
   really using this thing anymore, and I'm not entirely sure what it does.
 * [`f3repl/`] - A Forth repl for [`forth3`].
@@ -25,6 +27,7 @@ part of the MnemOS environment.
 [`source/`]: ../source/
 [`platforms/`]: ../platforms/
 [`crowtty/`]: ./crowtty/
+[`libcrowtty/`]: ./libcrowtty/
 [`dumbloader/`]: ./dumbloader/
 [`f3repl/`]: ./f3repl/
 [`manganese/`]: ./manganese/

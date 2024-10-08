@@ -1,9 +1,11 @@
 cargo-features = ["per-package-target", "profile-rustflags"]
 
 [package]
-name = "crowtty"
+name = "libcrowtty"
 version = "0.1.0"
 description = """
+The library parts of crowtty.
+
 crowtty is a host tool, aimed at speaking the sermux protocol with a
 simulator or physical target. It allows for receiving tracing messages,
 as well as mapping multiplexed "ports" as TCP sockets on the host.
@@ -14,26 +16,37 @@ readme = "./README.md"
 license = "MIT OR Apache-2.0"
 edition = "2021"
 
-
-### See `connection::serial` comments for why these duplicate dependencies exit
-
-[dependencies.serialport_regular]
-package = "serialport"
-version = "4.0.1"
-
-[dependencies.serialport_macos_hack]
-package = "serialport"
-git = "https://github.com/metta-systems/serialport-rs"
-rev = "7fec572529ec35b82bd4e3636d897fe2f1c2233f"
-
-###
-
-[dependencies.libcrowtty]
-path = "../libcrowtty"
+[dependencies.cobs]
+version = "0.2"
 
 [dependencies.clap]
 version = "4.0"
 features = ["derive", "env"]
+
+[dependencies.serde]
+version = "1.0"
+features = ["derive"]
+
+[dependencies.postcard]
+version = "1"
+features = ["alloc"]
+
+[dependencies.owo-colors]
+version = "3.5"
+features = ["supports-colors"]
+
+[dependencies.tracing-serde-structured]
+git = "https://github.com/hawkw/tracing-serde-structured"
+branch = "eliza/span-fields"
+default-features = true
+
+[dependencies.sermux-proto]
+path = "../../source/sermux-proto"
+features = ["use-std"]
+
+[dependencies.mnemos-trace-proto]
+path = "../../source/trace-proto"
+features = ["std"]
 
 [dependencies.tracing]
 version = "0.1.37"

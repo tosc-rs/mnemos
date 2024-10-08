@@ -30,7 +30,7 @@ pub struct Options {
     pub crowtty_verbose: bool,
 
     #[clap(flatten)]
-    pub crowtty_opts: crowtty::Settings,
+    pub crowtty_opts: libcrowtty::Settings,
 
     /// Tracing filter to set when connecting Crowtty to the QEMU virtual serial
     /// port.
@@ -125,7 +125,7 @@ impl Options {
             .into_diagnostic()
             .context("failed to spawn QEMU child process")?;
 
-        let tag = crowtty::LogTag::serial().verbose(self.crowtty_verbose);
+        let tag = libcrowtty::LogTag::serial().verbose(self.crowtty_verbose);
         let crowtty_thread = if crowtty_enabled {
             let stdin = qemu.stdin.take().expect("QEMU should have piped stdin");
             let stdout = qemu.stdout.take().expect("QEMU should have piped stdout");
@@ -182,8 +182,8 @@ impl Options {
 }
 
 fn run_crowtty(
-    tag: crowtty::LogTag,
-    crowtty_opts: crowtty::Settings,
+    tag: libcrowtty::LogTag,
+    crowtty_opts: libcrowtty::Settings,
     trace_filter: tracing_subscriber::filter::Targets,
     boot_log: BootLogLevel,
     stdin: std::process::ChildStdin,
@@ -253,7 +253,7 @@ fn run_crowtty(
         stdout
     };
 
-    crowtty::Crowtty::new(tag)
+    libcrowtty::Crowtty::new(tag)
         .settings(crowtty_opts)
         .trace_filter(trace_filter)
         .run(QemuStdio { stdin, stdout })

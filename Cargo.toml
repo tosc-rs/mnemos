@@ -49,7 +49,7 @@ default-members = [
     # tools
     # note that this skips `manganese` by default, so that we don't build its
     # dependency features when running `cargo check --all-features` and similar.
-    "tools/crowtty",
+    "tools/libcrowtty",
     "tools/dumbloader",
     "tools/f3repl",
     "tools/x86_64-bootimager",

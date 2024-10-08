@@ -1,7 +1,9 @@
 use clap::Parser;
-use crowtty::{connection::Connect, Crowtty};
+use connection::Connect;
 use miette::{Context, IntoDiagnostic};
 use tracing::level_filters::LevelFilter;
+
+mod connection;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -14,7 +16,7 @@ struct Args {
     verbose: bool,
 
     #[clap(flatten)]
-    settings: crowtty::Settings,
+    settings: libcrowtty::Settings,
 
     /// a comma-separated list of `tracing` targets and levels to enable.
     ///
@@ -51,7 +53,7 @@ fn main() -> miette::Result<()> {
         .connect()
         .into_diagnostic()
         .with_context(|| format!("failed to connect to {connect}"))?;
-    Crowtty::new(conn.log_tag().verbose(verbose))
+    libcrowtty::Crowtty::new(conn.log_tag().verbose(verbose))
         .settings(settings)
         .trace_filter(trace_filter)
         .run(conn)
