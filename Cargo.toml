@@ -159,11 +159,11 @@ debug = "line-tables-only"
 
 [patch.crates-io.maitake]
 git = "https://github.com/hawkw/mycelium"
-rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+rev = "ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 
 [patch.crates-io.mycelium-alloc]
 git = "https://github.com/hawkw/mycelium"
-rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+rev = "ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 # Use the `mycelium-bitfield` crate from the Mycelium monorepo rather than
 # crates.io.
 # NOTE: this patch, unlike the patches for `maitake` and `mycelium-util`, (which
@@ -173,23 +173,23 @@ rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
 # having both a Git dep and a crates.io dep seems unfortunate.
 [patch.crates-io.mycelium-bitfield]
 git = "https://github.com/hawkw/mycelium"
-rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+rev = "ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 
 [patch.crates-io.mycelium-util]
 git = "https://github.com/hawkw/mycelium"
-rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+rev = "ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 
 [patch.crates-io.cordyceps]
 git = "https://github.com/hawkw/mycelium"
-rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+rev = "ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 
 [patch.crates-io.hal-core]
 git = "https://github.com/hawkw/mycelium"
-rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+rev = "ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 
 [patch.crates-io.hal-x86_64]
 git = "https://github.com/hawkw/mycelium"
-rev = "13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+rev = "ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 
 [patch.crates-io.bbq10kbd]
 git = "https://github.com/hawkw/bbq10kbd"

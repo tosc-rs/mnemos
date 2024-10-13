@@ -69,12 +69,7 @@ impl BootInfo for BootloaderApiBootInfo {
 
 impl BootloaderApiBootInfo {
     fn vm_offset(&self) -> VAddr {
-        VAddr::from_u64(
-            self.inner
-                .physical_memory_offset
-                .into_option()
-                .expect("haha wtf"),
-        )
+        VAddr::from_u64(self.inner.physical_memory_offset.into_option().unwrap_or(0))
     }
 
     pub(super) fn from_bootloader(inner: &'static mut info::BootInfo) -> Self {

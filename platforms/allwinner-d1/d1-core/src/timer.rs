@@ -2,10 +2,39 @@ pub use d1_pac::timer::tmr_ctrl::{
     TMR_CLK_PRES_A as TimerPrescaler, TMR_CLK_SRC_A as TimerSource, TMR_MODE_A as TimerMode,
 };
 use d1_pac::TIMER;
+use kernel::maitake::time::Clock;
 
 pub struct Timers {
     pub timer0: Timer0,
     pub timer1: Timer1,
+}
+
+impl Timer0 {
+    pub fn into_maitake_clock(mut self) -> Clock {
+        self.set_prescaler(TimerPrescaler::P8); // 24M / 8:  3.00M ticks/s
+        self.set_mode(TimerMode::PERIODIC);
+
+        let _ = self.get_and_clear_interrupt();
+
+        // TODO(eliza): if it's zero, handle that lol --- when the IRQ fires
+        // we need to increment some higher half counter and then reset the
+        // timer to u32::MAX?
+        self.start_counter(0xFFFF_FFFF);
+
+        Clock::new(core::time::Duration::from_nanos(333), || {
+            let timer0 = unsafe {
+                // Safety: we are just reading the current value and will not be
+                // concurrently mutating the timer.
+                Self::steal()
+            };
+            timer0.current_value() as u64
+        })
+        .named("CLOCK_D1_TIMER0")
+    }
+
+    unsafe fn steal() -> Self {
+        Self { _x: () }
+    }
 }
 
 mod sealed {

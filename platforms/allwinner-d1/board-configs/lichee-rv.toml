@@ -1,6 +1,5 @@
 [kernel]
 max_drivers = 16
-timer_granularity = { secs = 0, nanos = 333 }
 
 [services.spawnulator]
 enabled = true
