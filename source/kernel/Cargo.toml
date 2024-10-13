@@ -70,8 +70,7 @@ path = "../trace-proto"
 optional = true
 
 [dependencies.maitake]
-version = "0.1.0"
-default-features = false
+workspace = true
 features = ["alloc"]
 
 [dependencies.mycelium-util]

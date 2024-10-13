@@ -97,7 +97,8 @@ version = "0.4"
 # which is needed to support the Tokio Console while running in the simulator,
 # but is not needed by actual builds of mnemOS running on real hardware.
 [dependencies.maitake]
-version = "0.1.0"
+workspace = true
+default-features = true
 features = ["tracing-01"]
 
 [dependencies.forth3]

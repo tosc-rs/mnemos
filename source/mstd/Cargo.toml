@@ -23,12 +23,12 @@ version = "0.3"
 default-features = false
 
 [dependencies.cordyceps]
-version = "0.3"
+workspace = true
 default-features = false
 
 [dependencies.maitake]
-version = "0.1.0"
 default-features = false
+workspace = true
 
 [dependencies.abi]
 package = "mnemos-abi"
@@ -49,4 +49,3 @@ default-features = false
 
 [features]
 panic-handler = []
-
