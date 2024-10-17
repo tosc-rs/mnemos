@@ -163,7 +163,7 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
 
 pub struct D1 {
     pub kernel: &'static Kernel,
-    pub timer1: mnemos_d1_core::Timer1,
+    pub timer1: mnemos_d1_core::timer::Timer1,
     pub plic: Plic,
     pub dmac: Dmac,
     _uart: Uart,
@@ -192,11 +192,13 @@ impl D1 {
         kernel_settings: KernelSettings,
         service_settings: KernelServiceSettings,
     ) -> Self {
-        let timer0_clock = timer0_maitake_clock(timers.timer0);
+        let timer0_clock = timers.timer0.into_maitake_clock();
         let k = unsafe {
-            Box::into_raw(Kernel::new(kernel_settings, clock).expect("cannot initialize kernel"))
-                .as_ref()
-                .unwrap()
+            Box::into_raw(
+                Kernel::new(kernel_settings, timer0_clock).expect("cannot initialize kernel"),
+            )
+            .as_ref()
+            .unwrap()
         };
 
         k.initialize_default_services(service_settings);
@@ -294,7 +296,7 @@ impl D1 {
     pub fn run(self) -> ! {
         let Self {
             kernel: k,
-            timer1,
+            mut timer1,
             plic,
             dmac: _,
             _uart,
@@ -337,7 +339,6 @@ impl D1 {
 
         loop {
             // Tick the scheduler
-            let start = timer0.current_value();
             let tick = k.tick();
 
             // Timer is downcounting
@@ -346,8 +347,6 @@ impl D1 {
             // If there is nothing else scheduled, and we didn't just wake something up,
             // sleep for some amount of time
             if turn.expired == 0 && !tick.has_remaining {
-                let wfi_start = timer0.current_value();
-
                 // TODO(AJM): Sometimes there is no "next" in the timer wheel, even though there should
                 // be. Don't take lack of timer wheel presence as the ONLY heuristic of whether we
                 // should just wait for SOME interrupt to occur. For now, force a max sleep of 100ms
@@ -372,7 +371,6 @@ impl D1 {
                 timer1.stop();
 
                 // Account for time slept
-                let elapsed = wfi_start.wrapping_sub(timer0.current_value());
                 let _turn = k.timer().turn();
             }
         }
