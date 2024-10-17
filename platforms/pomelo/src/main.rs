@@ -180,9 +180,9 @@ async fn kernel_entry() {
             cmd.dispatch(kernel);
         }
     });
-    unsafe {
-        init_term(&eternal_cb);
-    }
+
+    init_term(&eternal_cb);
+
     eternal_cb.forget();
 
     let timer = kernel.timer();
