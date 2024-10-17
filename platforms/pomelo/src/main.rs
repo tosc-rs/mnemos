@@ -65,14 +65,21 @@ async fn run_pomelo() {
 
 #[tracing::instrument(name = "Kernel", level = "info")]
 async fn kernel_entry() {
-    let settings = KernelSettings {
-        max_drivers: 16,
-        // TODO(eliza): chosen totally arbitrarily
-        timer_granularity: maitake::time::Duration::from_micros(1),
-    };
+    let settings = KernelSettings { max_drivers: 16 };
 
+    let clock = {
+        maitake::time::Clock::new(
+            // TODO(eliza): timer granularity chosen totally arbitrarily
+            Duration::from_micros(1),
+            || {
+                // TODO(anatol) please fix this for me thanks :)
+                unimplemented!("FIGURE OUT HOW TO GET A NORMAL TIMESTAMP OUT OF WASM LOL")
+            },
+        )
+        .named("CLOCK_THIS_ONE_JUST_FUCKING_PANICS_LOL")
+    };
     let kernel = unsafe {
-        mnemos_alloc::containers::Box::into_raw(Kernel::new(settings).unwrap())
+        mnemos_alloc::containers::Box::into_raw(Kernel::new(settings, clock).unwrap())
             .as_ref()
             .unwrap()
     };
@@ -173,7 +180,9 @@ async fn kernel_entry() {
             cmd.dispatch(kernel);
         }
     });
-    init_term(&eternal_cb);
+    unsafe {
+        init_term(&eternal_cb);
+    }
     eternal_cb.forget();
 
     let timer = kernel.timer();
@@ -185,7 +194,7 @@ async fn kernel_entry() {
             .to_std()
             .unwrap();
         trace!("timer - before sleep: advance {dt:?}");
-        let next_turn = timer.force_advance(dt);
+        let next_turn = timer.turn();
 
         trace!("timer: before sleep: next turn in {next_turn:?}");
 
@@ -214,7 +223,7 @@ async fn kernel_entry() {
             let now = chrono::Local::now();
             let dt = now.signed_duration_since(then).to_std().unwrap();
             trace!("timer: slept for {dt:?}");
-            kernel.timer().force_advance(dt);
+            kernel.timer().turn();
         }
     }
 }
