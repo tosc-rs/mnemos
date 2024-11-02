@@ -71,7 +71,7 @@ async fn kernel_entry() {
         maitake::time::Clock::new(
             // TODO(eliza): timer granularity chosen totally arbitrarily
             // Anatol: the WASM app runs in a callback loop from request_animation_frame, whose
-            // max speed is capped at the display refresh rate -
+            // max speed is typically (:rolleyes:) capped at the display refresh rate -
             // I guess 1ms granularity should therefore be plenty?
             Duration::from_micros(1),
             || {
