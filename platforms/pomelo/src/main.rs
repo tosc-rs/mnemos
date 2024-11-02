@@ -71,12 +71,9 @@ async fn kernel_entry() {
         maitake::time::Clock::new(
             // TODO(eliza): timer granularity chosen totally arbitrarily
             Duration::from_micros(1),
-            || {
-                // TODO(anatol) please fix this for me thanks :)
-                unimplemented!("FIGURE OUT HOW TO GET A NORMAL TIMESTAMP OUT OF WASM LOL")
-            },
+            || chrono::Local::now().timestamp_micros().try_into().expect("could not convert i64 timestamp to u64"),
         )
-        .named("CLOCK_THIS_ONE_JUST_FUCKING_PANICS_LOL")
+        .named("chrono-wasm")
     };
     let kernel = unsafe {
         mnemos_alloc::containers::Box::into_raw(Kernel::new(settings, clock).unwrap())
