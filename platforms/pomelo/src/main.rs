@@ -71,7 +71,12 @@ async fn kernel_entry() {
         maitake::time::Clock::new(
             // TODO(eliza): timer granularity chosen totally arbitrarily
             Duration::from_micros(1),
-            || chrono::Local::now().timestamp_micros().try_into().expect("could not convert i64 timestamp to u64"),
+            || {
+                chrono::Utc::now()
+                    .timestamp_micros()
+                    .try_into()
+                    .expect("could not convert i64 timestamp to u64")
+            },
         )
         .named("chrono-wasm")
     };
@@ -184,9 +189,9 @@ async fn kernel_entry() {
 
     let timer = kernel.timer();
     loop {
-        let mut then = chrono::Local::now();
+        let mut then = chrono::Utc::now();
         let tick = kernel.tick();
-        let dt = chrono::Local::now()
+        let dt = chrono::Utc::now()
             .signed_duration_since(then)
             .to_std()
             .unwrap();
@@ -208,7 +213,7 @@ async fn kernel_entry() {
             )
             .fuse();
 
-            then = chrono::Local::now();
+            then = chrono::Utc::now();
             select! {
                 _ = irq_rx.dequeue_async().fuse() => {
                     trace!("timer: WAKE: \"irq\" {tick:?}");
@@ -217,7 +222,7 @@ async fn kernel_entry() {
                     trace!("timer: WAKE: timer {tick:?}");
                 }
             }
-            let now = chrono::Local::now();
+            let now = chrono::Utc::now();
             let dt = now.signed_duration_since(then).to_std().unwrap();
             trace!("timer: slept for {dt:?}");
             kernel.timer().turn();
