@@ -16,10 +16,12 @@ impl Timer0 {
 
         let _ = self.get_and_clear_interrupt();
 
+        // Start the timer counting down from 0xffff_ffff_ffff_ffff.
+
         // TODO(eliza): if it's zero, handle that lol --- when the IRQ fires
         // we need to increment some higher half counter and then reset the
         // timer to u32::MAX?
-        self.start_counter(0xFFFF_FFFF);
+        self.start_counter(u32::MAX);
 
         Clock::new(core::time::Duration::from_nanos(333), || {
             let timer0 = unsafe {
@@ -27,7 +29,10 @@ impl Timer0 {
                 // concurrently mutating the timer.
                 Self::steal()
             };
-            0xFFFF_FFFF - timer0.current_value() as u64
+            // Since timer 0 is counting *down*, we have to subtract its current
+            // value from the intial value to get an increasing timestamp for
+            // Maitake.
+            (u32::MAX - timer0.current_value()) as u64
         })
         .named("CLOCK_D1_TIMER0")
     }
