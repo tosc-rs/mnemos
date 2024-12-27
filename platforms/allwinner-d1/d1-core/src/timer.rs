@@ -27,7 +27,7 @@ impl Timer0 {
                 // concurrently mutating the timer.
                 Self::steal()
             };
-            timer0.current_value() as u64
+            0xFFFF_FFFF - timer0.current_value() as u64
         })
         .named("CLOCK_D1_TIMER0")
     }
