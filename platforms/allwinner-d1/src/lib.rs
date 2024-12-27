@@ -192,7 +192,7 @@ impl D1 {
         kernel_settings: KernelSettings,
         service_settings: KernelServiceSettings,
     ) -> Self {
-        let timer0_clock = timers.timer0.into_maitake_clock();
+        let timer0_clock = timers.timer0.into_maitake_clock(&plic);
         let k = unsafe {
             Box::into_raw(
                 Kernel::new(kernel_settings, timer0_clock).expect("cannot initialize kernel"),
