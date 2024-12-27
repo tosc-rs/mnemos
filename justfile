@@ -181,7 +181,7 @@ _x86-bootimager cmd *args='':
 
 # run crowtty (a host serial multiplexer, log viewer, and pseudo-keyboard)
 crowtty *FLAGS:
-    {{ _cargo }} run --profile {{ profile }} --bin crowtty -- {{ FLAGS }}
+    {{ _cargo }} run --package crowtty --profile {{ profile }} --bin crowtty -- {{ FLAGS }}
 
 # run the Melpomene simulator
 melpomene *FLAGS:
