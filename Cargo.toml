@@ -49,6 +49,10 @@ default-members = [
     # tools
     # note that this skips `manganese` by default, so that we don't build its
     # dependency features when running `cargo check --all-features` and similar.
+    #
+    # also, crowtty is excluded by default, as it depends on `libudev` on Linux,
+    # and we would like to be able to build documentation without having to
+    # install libudev on CI.
     "tools/libcrowtty",
     "tools/dumbloader",
     "tools/f3repl",

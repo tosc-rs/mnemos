@@ -1,5 +1,5 @@
 [alias]
-crowtty = "run --bin crowtty --release --"
+crowtty = "run --package crowtty --bin crowtty --release --"
 melpomene = "run --bin melpomene --release --"
 melpo = "melpomene"
 forth3 = "run --bin f3repl --release --"
@@ -23,7 +23,7 @@ runner = "cargo run --package mnemos-x86_64-bootimager -- --kernel-bin"
 # `rust-osdev/bootloader`, where a target crate depends on the kernel binary
 # artifact from the kernel core crate and links it with the bootloader binary in
 # a `build.rs` script.
-# 
+#
 # Artifact dependencies are also used by `manganese` to depend on binary crates
 # as normal Cargo.toml dependencies.
 #
