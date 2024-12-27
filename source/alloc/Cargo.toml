@@ -18,11 +18,11 @@ categories = [
 ]
 
 [dependencies.cordyceps]
-version = "0.3"
+workspace = true
 default-features = false
 
 [dependencies.maitake]
-version = "0.1"
+workspace = true
 default-features = false
 
 [dependencies.heapless]

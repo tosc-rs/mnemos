@@ -40,18 +40,16 @@ features = ["attributes"]
 default-features = false
 
 [dependencies.hal-core]
-version = "0.1.0"
-default-features = false
+workspace = true
 
 [dependencies.hal-x86_64]
 version = "0.1.0"
 
 [dependencies.mycelium-util]
-version = "0.1.0"
+workspace = true
 
 [dependencies.mycelium-alloc]
-version = "0.1.0"
-features = ["buddy", "bump"]
+workspace = true
 
 [dependencies.futures]
 version = "0.3.21"

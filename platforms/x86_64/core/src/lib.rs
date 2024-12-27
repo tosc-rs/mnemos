@@ -26,18 +26,22 @@ pub fn init(bootinfo: &impl BootInfo, cfg: PlatformConfig) -> &'static Kernel {
 
     let k = {
         let settings = KernelSettings {
-            max_drivers: 64, // we are a big x86 system with lots of RAM, this can probably be an even bigger number!
-            timer_granularity: interrupt::TIMER_INTERVAL,
+            // we are a big x86 system with lots of RAM,
+            // this can probably be an even bigger number!
+            max_drivers: 64,
         };
 
         unsafe {
-            Box::into_raw(Kernel::new(settings).expect("cannot initialize kernel"))
-                .as_ref()
-                .unwrap()
+            Box::into_raw(
+                Kernel::new(settings, interrupt::IDIOTIC_CLOCK).expect("cannot initialize kernel"),
+            )
+            .as_ref()
+            .unwrap()
         }
     };
+    tracing::info!("allocated kernel");
 
-    init_acpi(k, cfg.rsdp_addr);
+    init_acpi(cfg.rsdp_addr);
     // TODO: PCI?
 
     // init boot processor's core-local data
@@ -76,7 +80,7 @@ pub fn run(bootinfo: &impl BootInfo, kernel: &'static Kernel) -> ! {
 
         // turn the timer wheel if it wasn't turned recently and no one else is
         // holding a lock, ensuring any pending timer ticks are consumed.
-        let turn = kernel.timer().force_advance_ticks(0);
+        let turn = kernel.timer().turn();
 
         // if there are no woken tasks, wait for an interrupt. otherwise,
         // continue ticking.
@@ -84,17 +88,21 @@ pub fn run(bootinfo: &impl BootInfo, kernel: &'static Kernel) -> ! {
         if !has_remaining {
             interrupt::wait_for_interrupt();
         }
+
+        // turn the timer a second time to account for time spent in WFI.
+        kernel.timer().turn();
     }
 }
 
-fn init_acpi(k: &'static Kernel, rsdp_addr: Option<PAddr>) {
+fn init_acpi(rsdp_addr: Option<PAddr>) {
+    tracing::info!("init acpi");
     if let Some(rsdp) = rsdp_addr {
         let acpi = acpi::acpi_tables(rsdp);
         let platform_info = acpi.and_then(|acpi| acpi.platform_info());
         match platform_info {
             Ok(platform) => {
                 tracing::debug!("found ACPI platform info");
-                interrupt::enable_hardware_interrupts(Some(&platform.interrupt_model), k.timer());
+                interrupt::enable_hardware_interrupts(Some(&platform.interrupt_model));
                 acpi::bringup_smp(&platform)
                     .expect("failed to bring up application processors! this is bad news!");
                 return;
@@ -107,5 +115,5 @@ fn init_acpi(k: &'static Kernel, rsdp_addr: Option<PAddr>) {
     }
 
     // no ACPI
-    interrupt::enable_hardware_interrupts(None, k.timer())
+    interrupt::enable_hardware_interrupts(None)
 }

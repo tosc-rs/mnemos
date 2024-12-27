@@ -19,5 +19,5 @@ license = "MIT OR Apache-2.0"
 [dependencies]
 
 [dependencies.maitake]
-version = "0.1.0"
+workspace = true
 default-features = false

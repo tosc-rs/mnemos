@@ -120,7 +120,6 @@ pub struct Rings {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct KernelSettings {
     pub max_drivers: usize,
-    pub timer_granularity: Duration,
 }
 
 pub struct Message {
@@ -164,14 +163,23 @@ impl Kernel {
     ///
     /// The allocator MUST be initialized if required, and be ready to allocate
     /// data.
-    pub unsafe fn new(settings: KernelSettings) -> Result<Box<Self>, &'static str> {
+    // Always inline `Kernel::new`, since a platform implementation will only
+    // ever call it once, and it happens very early in initialization, when we
+    // may not have much stack space! The x86_64 platform implementation would
+    // boot-loop (hitting a page fault on the guard page) before this was made
+    // `inline(always)`, so this is actually Super Duper Ultra Load Bearing.
+    #[inline(always)]
+    pub unsafe fn new(
+        settings: KernelSettings,
+        clock: maitake::time::Clock,
+    ) -> Result<Box<Self>, &'static str> {
         let registry = registry::Registry::new(settings.max_drivers);
 
         let scheduler = LocalScheduler::new();
 
         let inner = KernelInner {
             scheduler,
-            timer: Timer::new(settings.timer_granularity),
+            timer: Timer::new(clock),
         };
 
         let new_kernel =

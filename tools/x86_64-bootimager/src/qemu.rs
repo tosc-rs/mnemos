@@ -74,6 +74,8 @@ impl Options {
             "qemu64".to_string(),
             "-smp".to_string(),
             "cores=4".to_string(),
+            // "-d guest_errors,cpu_reset".to_string(),
+            // "-no-reboot".to_string(),
         ]
     }
 
@@ -156,7 +158,7 @@ impl Options {
         let qemu_tag = tag.named("QEMU");
         for line in qemu_stderr.lines() {
             match line {
-                Ok(line) => eprintln!("{qemu_tag} {line:?}"),
+                Ok(line) => eprintln!("{qemu_tag} {line}"),
                 Err(error) => {
                     tracing::warn!(%error, "failed to read from QEMU stderr");
                     break;

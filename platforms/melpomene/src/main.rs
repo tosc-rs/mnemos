@@ -10,7 +10,7 @@ use melpomene::{
 use mnemos_alloc::heap::MnemosAlloc;
 use mnemos_kernel::{
     daemons::shells::{graphical_shell_mono, GraphicalShellSettings},
-    Kernel,
+    maitake, Kernel,
 };
 use tokio::{
     task,
@@ -63,8 +63,19 @@ async fn kernel_entry() {
         "Loaded settings",
     );
 
+    let clock = {
+        use std::time::{Duration, SystemTime};
+        maitake::time::Clock::new(Duration::from_micros(1), || {
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_micros() as u64
+        })
+        .named("CLOCK_SYSTEMTIME_NOW")
+    };
     let k = unsafe {
-        mnemos_alloc::containers::Box::into_raw(Kernel::new(config.kernel).unwrap())
+        let kernel = Kernel::new(config.kernel, clock).unwrap();
+        mnemos_alloc::containers::Box::into_raw(kernel)
             .as_ref()
             .unwrap()
     };
@@ -136,13 +147,11 @@ async fn kernel_entry() {
         .as_micros() as u64;
     loop {
         // Tick the scheduler
-        let t0 = tokio::time::Instant::now();
         let tick = k.tick();
 
         // advance the timer (don't take more than 500k years)
-        let ticks = t0.elapsed().as_micros() as u64;
-        let turn = k.timer().force_advance_ticks(ticks);
-        tracing::trace!("advanced timer by {ticks:?}");
+        let turn = k.timer().turn();
+        tracing::trace!(?turn, "turned the wheel");
 
         // If there is nothing else scheduled, and we didn't just wake something up,
         // sleep for some amount of time
@@ -158,16 +167,22 @@ async fn kernel_entry() {
             // wait for an "interrupt"
             futures::select! {
                 _ = irq.notified().fuse() => {
-                    tracing::trace!("...woken by I/O interrupt");
+                    tracing::trace!(
+                        slept_for = ?wfi_start.elapsed(),
+                        "...woken by I/O interrupt",
+                    );
                },
                _ = tokio::time::sleep(Duration::from_micros(amount)).fuse() => {
-                    tracing::trace!("woken by timer");
+                    tracing::trace!(
+                        slept_for = ?wfi_start.elapsed(),
+                        "woken by timer",
+                    );
                }
             }
 
             // Account for time slept
-            let elapsed = wfi_start.elapsed().as_micros() as u64;
-            let _turn = k.timer().force_advance_ticks(elapsed);
+            let turn = k.timer().turn();
+            tracing::trace!(?turn, "turned the wheel");
         } else {
             // let other tokio tasks (simulated hardware devices) run.
             tokio::task::yield_now().await;

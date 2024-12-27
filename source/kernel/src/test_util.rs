@@ -8,7 +8,7 @@ use std::{
         atomic::{AtomicBool, Ordering},
         Arc,
     },
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 #[global_allocator]
@@ -21,16 +21,25 @@ pub(crate) struct TestKernel {
 impl TestKernel {
     fn new() -> Self {
         trace_init();
+
+        // TODO(eliza): this clock implementation is also used in Melpomene, so
+        // it would be nice if we could share it with melpo...
+        let clock = {
+            maitake::time::Clock::new(Duration::from_micros(1), || {
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)
+                    .unwrap()
+                    .as_micros() as u64
+            })
+            .named("CLOCK_SYSTEMTIME_NOW")
+        };
+
         // XXX(eliza): the test kernel is gonna be leaked forever...maybe we
         // should do something about that, if we wanna have a lot of tests. but,
         // at least it means we never create a dangling pointer to it.
         let kernel = unsafe {
             NonNull::new(mnemos_alloc::containers::Box::into_raw(
-                Kernel::new(KernelSettings {
-                    max_drivers: 16,
-                    timer_granularity: Duration::from_millis(1),
-                })
-                .unwrap(),
+                Kernel::new(KernelSettings { max_drivers: 16 }, clock).unwrap(),
             ))
             .expect("newly-allocated kernel mustn't be null!")
         };

@@ -5,10 +5,13 @@ use core::{
     ops::{Deref, DerefMut},
 };
 use hal_x86_64::framebuffer::{self, Framebuffer};
-use mycelium_util::sync::{spin, InitOnce};
+use kernel::maitake::sync::{
+    blocking::{Mutex, MutexGuard},
+    spin::{InitOnce, Spinlock},
+};
 
 #[derive(Debug)]
-pub struct FramebufGuard(spin::MutexGuard<'static, info::FrameBuffer>);
+pub struct FramebufGuard(MutexGuard<'static, info::FrameBuffer, Spinlock>);
 pub type FramebufWriter = Framebuffer<'static, FramebufGuard>;
 
 /// Locks the framebuffer and returns a [`FramebufWriter`].
@@ -76,11 +79,11 @@ pub(super) fn init(bootinfo: &mut BootInfo) -> bool {
             x => unimplemented!("hahaha wtf, found a weird pixel format: {:?}", x),
         },
     };
-    FRAMEBUFFER.init((cfg, spin::Mutex::new(framebuffer)));
+    FRAMEBUFFER.init((cfg, Mutex::new_with_raw_mutex(framebuffer, Spinlock::new())));
     true
 }
 
-static FRAMEBUFFER: InitOnce<(framebuffer::Config, spin::Mutex<info::FrameBuffer>)> =
+static FRAMEBUFFER: InitOnce<(framebuffer::Config, Mutex<info::FrameBuffer, Spinlock>)> =
     InitOnce::uninitialized();
 
 impl Deref for FramebufGuard {

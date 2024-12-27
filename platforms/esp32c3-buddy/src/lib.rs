@@ -16,21 +16,25 @@ use esp32c3_hal::{
 use esp_backtrace as _;
 
 use core::{cell::RefCell, time::Duration};
-use kernel::{daemons, mnemos_alloc::containers::Box, services, Kernel, KernelSettings};
+use kernel::{daemons, maitake, mnemos_alloc::containers::Box, services, Kernel, KernelSettings};
 
 static ALARM1: Mutex<RefCell<Option<Alarm<Target, 1>>>> = Mutex::new(RefCell::new(None));
 
 pub fn init() -> &'static Kernel {
-    let k_settings = KernelSettings {
-        max_drivers: 16,
+    let k_settings = KernelSettings { max_drivers: 16 };
+    let clock = {
         // the system timer has a period of `SystemTimer::TICKS_PER_SECOND` ticks.
         // `TICKS_PER_SECOND` is 16_000_000, so the base granularity is
         // 62.5ns. let's multiply it by 2 so that we have a non-fractional
         // number of nanoseconds.
-        timer_granularity: Duration::from_nanos(125),
+        maitake::time::Clock::new(
+            Duration::from_nanos(125),
+            || SystemTimer::now() / 2u64, // well...that was easy!
+        )
+        .named("CLOCK_SYSTEM_TIMER_NOW")
     };
     unsafe {
-        Box::into_raw(Kernel::new(k_settings).expect("cannot initialize kernel"))
+        Box::into_raw(Kernel::new(k_settings, clock).expect("cannot initialize kernel"))
             .as_ref()
             .unwrap()
     }
@@ -90,20 +94,12 @@ pub fn run(k: &'static Kernel, alarm1: Alarm<Target, 1>) -> ! {
 
     loop {
         tracing::debug!("tick");
-        // Tick the scheduler
-        let start = SystemTimer::now();
         let tick = k.tick();
-
-        // Timer is downcounting
-        let elapsed = SystemTimer::now() - start;
-
-        let turn = k.timer().force_advance_ticks(elapsed / 2u64);
+        let turn = k.timer().turn();
 
         // If there is nothing else scheduled, and we didn't just wake something up,
         // sleep for some amount of time
         if turn.expired == 0 && !tick.has_remaining {
-            let wfi_start = SystemTimer::now();
-
             // TODO(AJM): Sometimes there is no "next" in the timer wheel, even though there should
             // be. Don't take lack of timer wheel presence as the ONLY heuristic of whether we
             // should just wait for SOME interrupt to occur. For now, force a max sleep of 100ms
@@ -132,9 +128,7 @@ pub fn run(k: &'static Kernel, alarm1: Alarm<Target, 1>) -> ! {
             });
 
             // Account for time slept
-            let elapsed = SystemTimer::now() - wfi_start;
-
-            let _turn = k.timer().force_advance_ticks(elapsed / 2u64);
+            let _turn = k.timer().turn();
         }
     }
 }
@@ -144,6 +138,7 @@ pub fn run(k: &'static Kernel, alarm1: Alarm<Target, 1>) -> ! {
 /// We don't actually do anything in the ALARM0 interrupt. It is only here to
 /// knock us out of WFI. Just disable the IRQ to prevent refires
 #[interrupt]
+#[allow(non_snake_case)]
 fn SYSTIMER_TARGET1() {
     critical_section::with(|cs| {
         ALARM1

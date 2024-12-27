@@ -1475,7 +1475,7 @@ checksum = "6245d59a3e82a7fc217c5828a6692dbc6dfb63a0c8c90495621f7b9d79704a0e"
 [[package]]
 name = "cordyceps"
 version = "0.3.2"
-source = "git+https://github.com/hawkw/mycelium.git?rev=13d0722429ef201f38e4ea47ea22d88f3f72c10e#13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+source = "git+https://github.com/hawkw/mycelium?rev=ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5#ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 dependencies = [
  "loom 0.7.2",
  "tracing 0.1.40",
@@ -4121,9 +4121,10 @@ dependencies = [
 [[package]]
 name = "hal-core"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=13d0722429ef201f38e4ea47ea22d88f3f72c10e#13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+source = "git+https://github.com/hawkw/mycelium?rev=ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5#ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 dependencies = [
  "embedded-graphics-core 0.3.3",
+ "maitake-sync",
  "mycelium-util",
  "tracing 0.2.0",
 ]
@@ -4131,10 +4132,11 @@ dependencies = [
 [[package]]
 name = "hal-x86_64"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=13d0722429ef201f38e4ea47ea22d88f3f72c10e#13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+source = "git+https://github.com/hawkw/mycelium?rev=ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5#ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 dependencies = [
  "acpi",
  "hal-core",
+ "maitake",
  "mycelium-trace",
  "mycelium-util",
  "mycotest",
@@ -5167,7 +5169,7 @@ dependencies = [
 [[package]]
 name = "maitake"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=13d0722429ef201f38e4ea47ea22d88f3f72c10e#13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+source = "git+https://github.com/hawkw/mycelium?rev=ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5#ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 dependencies = [
  "cordyceps",
  "maitake-sync",
@@ -5180,14 +5182,16 @@ dependencies = [
 
 [[package]]
 name = "maitake-sync"
-version = "0.1.1"
-source = "git+https://github.com/hawkw/mycelium.git?rev=13d0722429ef201f38e4ea47ea22d88f3f72c10e#13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+version = "0.1.2"
+source = "git+https://github.com/hawkw/mycelium?rev=ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5#ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 dependencies = [
  "cordyceps",
  "loom 0.7.2",
+ "mutex-traits",
  "mycelium-bitfield",
  "pin-project",
  "portable-atomic",
+ "tracing 0.1.40",
 ]
 
 [[package]]
@@ -5746,9 +5750,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "mutex-traits"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fd54cb762feb1788c74f5d3387983864d2365ca1819043d2addb76db80169102"
+
+[[package]]
 name = "mycelium-alloc"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=13d0722429ef201f38e4ea47ea22d88f3f72c10e#13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+source = "git+https://github.com/hawkw/mycelium?rev=ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5#ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 dependencies = [
  "hal-core",
  "mycelium-util",
@@ -5758,15 +5768,16 @@ dependencies = [
 [[package]]
 name = "mycelium-bitfield"
 version = "0.1.5"
-source = "git+https://github.com/hawkw/mycelium.git?rev=13d0722429ef201f38e4ea47ea22d88f3f72c10e#13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+source = "git+https://github.com/hawkw/mycelium?rev=ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5#ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 
 [[package]]
 name = "mycelium-trace"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=13d0722429ef201f38e4ea47ea22d88f3f72c10e#13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+source = "git+https://github.com/hawkw/mycelium?rev=ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5#ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 dependencies = [
  "embedded-graphics 0.7.1",
  "hal-core",
+ "maitake",
  "mycelium-util",
  "tracing 0.2.0",
  "tracing-core 0.2.0",
@@ -5775,7 +5786,7 @@ dependencies = [
 [[package]]
 name = "mycelium-util"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=13d0722429ef201f38e4ea47ea22d88f3f72c10e#13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+source = "git+https://github.com/hawkw/mycelium?rev=ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5#ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 dependencies = [
  "cordyceps",
  "loom 0.7.2",
@@ -5787,7 +5798,7 @@ dependencies = [
 [[package]]
 name = "mycotest"
 version = "0.1.0"
-source = "git+https://github.com/hawkw/mycelium.git?rev=13d0722429ef201f38e4ea47ea22d88f3f72c10e#13d0722429ef201f38e4ea47ea22d88f3f72c10e"
+source = "git+https://github.com/hawkw/mycelium?rev=ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5#ba56bb4d02f46fb59754b7b88bddc2e8ca99c1f5"
 dependencies = [
  "tracing 0.1.40",
 ]

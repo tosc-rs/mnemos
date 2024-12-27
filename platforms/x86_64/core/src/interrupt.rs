@@ -1,7 +1,4 @@
-use core::{
-    ptr,
-    sync::atomic::{AtomicPtr, AtomicUsize, Ordering},
-};
+use core::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 
 use hal_core::{interrupt, VAddr};
 pub use hal_x86_64::interrupt::*;
@@ -22,16 +19,8 @@ pub fn enable_exceptions() {
     tracing::info!("IDT initialized!");
 }
 
-#[tracing::instrument(skip(acpi, timer))]
-pub fn enable_hardware_interrupts(
-    acpi: Option<&acpi::InterruptModel>,
-    timer: &'static time::Timer,
-) {
-    // no way to have an atomic `*const` ptr lol :|
-    let timer = timer as *const _ as *mut _;
-    let _timer = TIMER.swap(timer, Ordering::Release);
-    debug_assert_eq!(_timer, ptr::null_mut());
-
+#[tracing::instrument(skip(acpi))]
+pub fn enable_hardware_interrupts(acpi: Option<&acpi::InterruptModel>) {
     let controller = Controller::enable_hardware_interrupts(acpi, &crate::allocator::HEAP);
     controller
         .start_periodic_timer(TIMER_INTERVAL)
@@ -84,8 +73,13 @@ static TSS: sync::Lazy<task::StateSegment> = sync::Lazy::new(|| {
 pub(crate) static GDT: sync::InitOnce<Gdt> = sync::InitOnce::uninitialized();
 
 pub const TIMER_INTERVAL: time::Duration = time::Duration::from_millis(10);
-static TIMER: AtomicPtr<time::Timer> = AtomicPtr::new(ptr::null_mut());
 
+pub const IDIOTIC_CLOCK: time::Clock = time::Clock::new(TIMER_INTERVAL, || {
+    IDIOTIC_CLOCK_TICKS.load(Ordering::Relaxed)
+})
+.named("CLOCK_IDIOTIC");
+
+static IDIOTIC_CLOCK_TICKS: AtomicU64 = AtomicU64::new(0);
 static TEST_INTERRUPT_WAS_FIRED: AtomicUsize = AtomicUsize::new(0);
 
 pub(crate) struct InterruptHandlers;
@@ -128,9 +122,7 @@ impl hal_core::interrupt::Handlers<Registers> for InterruptHandlers {
     }
 
     fn timer_tick() {
-        if let Some(timer) = ptr::NonNull::new(TIMER.load(Ordering::Acquire)) {
-            unsafe { timer.as_ref() }.advance_ticks(1);
-        }
+        IDIOTIC_CLOCK_TICKS.fetch_add(1, Ordering::Relaxed);
     }
 
     fn ps2_keyboard(scancode: u8) {

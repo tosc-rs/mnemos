@@ -65,14 +65,26 @@ async fn run_pomelo() {
 
 #[tracing::instrument(name = "Kernel", level = "info")]
 async fn kernel_entry() {
-    let settings = KernelSettings {
-        max_drivers: 16,
-        // TODO(eliza): chosen totally arbitrarily
-        timer_granularity: maitake::time::Duration::from_micros(1),
-    };
+    let settings = KernelSettings { max_drivers: 16 };
 
+    let clock = {
+        maitake::time::Clock::new(
+            // TODO(eliza): timer granularity chosen totally arbitrarily
+            // Anatol: the WASM app runs in a callback loop from request_animation_frame, whose
+            // max speed is typically (:rolleyes:) capped at the display refresh rate -
+            // I guess 1ms granularity should therefore be plenty?
+            Duration::from_micros(1),
+            || {
+                chrono::Utc::now()
+                    .timestamp_micros()
+                    .try_into()
+                    .expect("could not convert i64 timestamp to u64")
+            },
+        )
+        .named("chrono-wasm")
+    };
     let kernel = unsafe {
-        mnemos_alloc::containers::Box::into_raw(Kernel::new(settings).unwrap())
+        mnemos_alloc::containers::Box::into_raw(Kernel::new(settings, clock).unwrap())
             .as_ref()
             .unwrap()
     };
@@ -173,19 +185,21 @@ async fn kernel_entry() {
             cmd.dispatch(kernel);
         }
     });
+
     init_term(&eternal_cb);
+
     eternal_cb.forget();
 
     let timer = kernel.timer();
     loop {
-        let mut then = chrono::Local::now();
+        let mut then = chrono::Utc::now();
         let tick = kernel.tick();
-        let dt = chrono::Local::now()
+        let dt = chrono::Utc::now()
             .signed_duration_since(then)
             .to_std()
             .unwrap();
         trace!("timer - before sleep: advance {dt:?}");
-        let next_turn = timer.force_advance(dt);
+        let next_turn = timer.turn();
 
         trace!("timer: before sleep: next turn in {next_turn:?}");
 
@@ -202,7 +216,7 @@ async fn kernel_entry() {
             )
             .fuse();
 
-            then = chrono::Local::now();
+            then = chrono::Utc::now();
             select! {
                 _ = irq_rx.dequeue_async().fuse() => {
                     trace!("timer: WAKE: \"irq\" {tick:?}");
@@ -211,10 +225,10 @@ async fn kernel_entry() {
                     trace!("timer: WAKE: timer {tick:?}");
                 }
             }
-            let now = chrono::Local::now();
+            let now = chrono::Utc::now();
             let dt = now.signed_duration_since(then).to_std().unwrap();
             trace!("timer: slept for {dt:?}");
-            kernel.timer().force_advance(dt);
+            kernel.timer().turn();
         }
     }
 }

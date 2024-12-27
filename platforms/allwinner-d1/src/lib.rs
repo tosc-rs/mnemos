@@ -163,7 +163,7 @@ pub fn kernel_entry(config: mnemos_config::MnemosConfig<PlatformConfig>) -> ! {
 
 pub struct D1 {
     pub kernel: &'static Kernel,
-    pub timers: Timers,
+    pub timer1: mnemos_d1_core::timer::Timer1,
     pub plic: Plic,
     pub dmac: Dmac,
     _uart: Uart,
@@ -192,10 +192,13 @@ impl D1 {
         kernel_settings: KernelSettings,
         service_settings: KernelServiceSettings,
     ) -> Self {
+        let timer0_clock = timers.timer0.into_maitake_clock(&plic);
         let k = unsafe {
-            Box::into_raw(Kernel::new(kernel_settings).expect("cannot initialize kernel"))
-                .as_ref()
-                .unwrap()
+            Box::into_raw(
+                Kernel::new(kernel_settings, timer0_clock).expect("cannot initialize kernel"),
+            )
+            .as_ref()
+            .unwrap()
         };
 
         k.initialize_default_services(service_settings);
@@ -240,7 +243,7 @@ impl D1 {
             kernel: k,
             _uart: uart,
             _spim: spim,
-            timers,
+            timer1: timers.timer1,
             plic,
             dmac,
             i2c0_int,
@@ -293,7 +296,7 @@ impl D1 {
     pub fn run(self) -> ! {
         let Self {
             kernel: k,
-            timers,
+            mut timer1,
             plic,
             dmac: _,
             _uart,
@@ -308,19 +311,9 @@ impl D1 {
         //
         // In the future, we probably want to rework this to use the RTC timer for
         // both purposes, as this will likely play better with sleep power usage.
-        let Timers {
-            mut timer0,
-            mut timer1,
-        } = timers;
 
-        // NOTE: if you change the timer frequency, make sure you update
-        // initialize_kernel() below to correct the kernel timer wheel
-        // granularity setting!
-        timer0.set_prescaler(TimerPrescaler::P8); // 24M / 8:  3.00M ticks/s
         timer1.set_prescaler(TimerPrescaler::P8);
-        timer0.set_mode(TimerMode::PERIODIC);
         timer1.set_mode(TimerMode::SINGLE_COUNTING);
-        let _ = timer0.get_and_clear_interrupt();
         let _ = timer1.get_and_clear_interrupt();
 
         unsafe {
@@ -344,22 +337,16 @@ impl D1 {
             }
         }
 
-        timer0.start_counter(0xFFFF_FFFF);
-
         loop {
             // Tick the scheduler
-            let start = timer0.current_value();
             let tick = k.tick();
 
             // Timer is downcounting
-            let elapsed = start.wrapping_sub(timer0.current_value());
-            let turn = k.timer().force_advance_ticks(elapsed.into());
+            let turn = k.timer().turn();
 
             // If there is nothing else scheduled, and we didn't just wake something up,
             // sleep for some amount of time
             if turn.expired == 0 && !tick.has_remaining {
-                let wfi_start = timer0.current_value();
-
                 // TODO(AJM): Sometimes there is no "next" in the timer wheel, even though there should
                 // be. Don't take lack of timer wheel presence as the ONLY heuristic of whether we
                 // should just wait for SOME interrupt to occur. For now, force a max sleep of 100ms
@@ -384,8 +371,7 @@ impl D1 {
                 timer1.stop();
 
                 // Account for time slept
-                let elapsed = wfi_start.wrapping_sub(timer0.current_value());
-                let _turn = k.timer().force_advance_ticks(elapsed.into());
+                let _turn = k.timer().turn();
             }
         }
     }
