@@ -61,7 +61,7 @@ impl Plic {
     /// Disable an interrupt
     pub fn mask(&self, interrupt: Interrupt) {
         let (mie, irq_en) = self.index_mie(interrupt);
-        mie.modify(|r, w| unsafe { w.bits(r.bits() | irq_en) });
+        mie.modify(|r, w| unsafe { w.bits(r.bits() & !irq_en) });
     }
 
     /// Globally set priority for one interrupt
