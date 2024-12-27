@@ -46,3 +46,4 @@ features = ["std"]
 
 [dependencies.miette]
 workspace = true
+features = ["fancy"]
