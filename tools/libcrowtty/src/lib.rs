@@ -6,7 +6,7 @@ use std::{
     collections::HashMap,
     fmt,
     io::{ErrorKind, Read, Write},
-    net::TcpListener,
+    net::{Ipv4Addr, TcpListener},
     sync::mpsc::{channel, Receiver, Sender},
     thread::{sleep, spawn, JoinHandle},
     time::{Duration, Instant},
@@ -128,7 +128,13 @@ impl Crowtty {
         // # connect to port N - stdio
         // stty -icanon -echo && ncat 127.0.0.1 $PORT
         // ```
-        for i in [WellKnown::Loopback.into(), WellKnown::HelloWorld.into()].into_iter() {
+        for i in [
+            WellKnown::Loopback.into(),
+            WellKnown::HelloWorld.into(),
+            WellKnown::ForthShell0.into(),
+        ]
+        .into_iter()
+        {
             let (inp_send, inp_recv) = channel();
             let (out_send, out_recv) = channel();
 
@@ -398,4 +404,42 @@ struct TcpWorker {
     inp: Sender<Vec<u8>>,
     port: u16,
     socket: TcpListener,
+}
+
+pub struct Exec {
+    settings: Settings,
+}
+
+impl Exec {
+    pub fn new() -> Self {
+        Self {
+            settings: Settings::default(),
+        }
+    }
+
+    pub fn settings(self, settings: Settings) -> Self {
+        Self { settings }
+    }
+
+    pub fn run(self, cmd: Vec<u8>) -> Result<(), miette::Error> {
+        let port = self.settings.tcp_port_base + WellKnown::ForthShell0 as u16;
+        let mut stream =
+            std::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port)).into_diagnostic()?;
+        eprintln!("[stderr] connected to crowtty on {:?}", stream.peer_addr());
+
+        stream.write_all(&cmd).into_diagnostic()?;
+
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).into_diagnostic()?;
+
+        println!("{}", String::from_utf8_lossy(&response));
+
+        Ok(())
+    }
+}
+
+impl Default for Exec {
+    fn default() -> Self {
+        Self::new()
+    }
 }
