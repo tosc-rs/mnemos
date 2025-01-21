@@ -39,7 +39,7 @@ The following pages summarize various components of MnemOS:
 [book]: /mnemosprojectoverview/book/
 [project overview]: /mnemosprojectoverview/
 [dev blogs]: https://onevariable.com/blog/mnemos-moment-1/
-[pomelo]: https://anatol.versteht.es/mlem/
+[pomelo]: https://web.versteht.es/mlem/
 [#mnemos-dev:beeper.com]: https://matrix.to/#/#mnemos-dev:beeper.com
 [tosc-rs/mnemos]: https://github.com/tosc-rs/mnemos
 </div>

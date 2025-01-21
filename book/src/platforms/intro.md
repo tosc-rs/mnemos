@@ -32,7 +32,7 @@ the complete mnemOS operating system, with all core functionality implemented:
       running the mnemOS kernel locally
     - [Pomelo](https://mnemos.dev/pomelo/), a WebAssembly browser-based
       simulator. A hosted version of Pomelo is available at
-      <https://anatol.versteht.es/mlem/>
+      <https://web.versteht.es/mlem/>
 
 Other platform implementations are less complete, and undergoing active
 development:

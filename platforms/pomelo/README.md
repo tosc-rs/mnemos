@@ -4,7 +4,7 @@ A browser-based MnemOS ... Client? Emulator? Userspace? [Citrus tentacle](https:
 
 ## See it in action
 
-A prebuilt version is hosted [here](https://anatol.versteht.es/mlem/)
+A prebuilt version is hosted [here](https://web.versteht.es/mlem/)
 
 ## What can you do with it?
 

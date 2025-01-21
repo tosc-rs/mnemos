@@ -55,7 +55,7 @@ Melpomene can be run using the `just melpomene` [`just` recipe], or using
 
 [Pomelo] is a web-based simulator, which runs the MnemOS kernel in the browser
 using WebAssembly. A hosted version of Pomelo can be found at
-[https://anatol.versteht.es/mlem/][mlem].
+[https://web.versteht.es/mlem/][mlem].
 
 > [!NOTE]
 >
