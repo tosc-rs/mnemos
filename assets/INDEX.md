@@ -31,7 +31,7 @@ To get involved in MnemOS development, you can:
 
 The following pages summarize various components of MnemOS:
 
-[name]: /book/#where-does-the-name-come-fromhow-do-i-pronounce-it
+[name]: mnemosprojectoverview/book/what-is-mnemos#where-does-the-name-come-fromhow-do-i-pronounce-it
 [d1]: https://github.com/tosc-rs/mnemos/tree/main/platforms/allwinner-d1
 [x86]: https://github.com/tosc-rs/mnemos/tree/main/platforms/x86_64
 [Erlang]: https://en.wikipedia.org/wiki/Erlang_(programming_language)#Processes
