@@ -51,6 +51,7 @@ pub enum Connect {
         #[arg(default_value_t = Self::DEFAULT_BAUD_RATE)]
         baud: u32,
     },
+    Exec,
 }
 
 impl Write for Connection {
@@ -127,6 +128,7 @@ impl Connect {
                 let port = serial::new(path, baud).timeout(Self::READ_TIMEOUT).open()?;
                 Ok(Connection::Serial(port))
             }
+            Self::Exec => unreachable!("exec should not go up to here"),
         }
     }
 }
@@ -136,6 +138,7 @@ impl fmt::Display for Connect {
         match self {
             Self::Tcp { ip, port } => write!(f, "{ip}:{port}"),
             Self::Serial { path, baud } => write!(f, "{} (@ {baud})", path.display()),
+            Self::Exec => write!(f, "Exec"),
         }
     }
 }

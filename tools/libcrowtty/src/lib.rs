@@ -6,7 +6,7 @@ use std::{
     collections::HashMap,
     fmt,
     io::{ErrorKind, Read, Write},
-    net::TcpListener,
+    net::{Ipv4Addr, TcpListener},
     sync::mpsc::{channel, Receiver, Sender},
     thread::{sleep, spawn, JoinHandle},
     time::{Duration, Instant},
@@ -216,6 +216,93 @@ impl Crowtty {
             manager.workers.insert(i, handle);
         }
 
+        {
+            let i = WellKnown::ForthShell0.into();
+            let (inp_send, inp_recv) = channel();
+            let (out_send, out_recv) = channel();
+
+            let socket =
+                std::net::TcpListener::bind(dbg!(format!("127.0.0.1:{}", tcp_port_base + i)))
+                    .unwrap();
+
+            let work = TcpWorker {
+                out: out_recv,
+                inp: inp_send,
+                socket,
+                port: i,
+            };
+            let tag = tag.port(i);
+            let thread_hdl = spawn(move || {
+                let mux = " MUX".if_supports_color(Stream::Stdout, |s| s.cyan());
+                let dmux = "DMUX".if_supports_color(Stream::Stdout, |s| s.bright_purple());
+                let err = "ERR!".if_supports_color(Stream::Stdout, |err| err.red());
+                'incoming: for skt in work.socket.incoming() {
+                    let mut skt = match skt {
+                        Ok(skt) => skt,
+                        Err(e) => {
+                            panic!(
+                                "{tag} CONN failed to accept host connection to port {} (:{}): {e}",
+                                tcp_port_base + work.port,
+                                work.port
+                            );
+                        }
+                    };
+
+                    println!(
+                        "{tag} CONN host connected to port {} (:{})",
+                        tcp_port_base + work.port,
+                        work.port
+                    );
+
+                    skt.set_read_timeout(Some(Duration::from_millis(10))).ok();
+                    // skt.set_nonblocking(true).ok();
+                    // skt.set_nodelay(true).ok();
+
+                    // let mut last = Instant::now();
+
+                    let mut input = Vec::new();
+
+                    'inner: loop {
+                        let mut buf = [0u8; 128];
+                        match skt.read(&mut buf) {
+                            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {}
+                            Err(_) => {
+                                skt.shutdown(std::net::Shutdown::Both).ok();
+                                continue 'incoming;
+                            }
+                            Ok(0) => {
+                                break 'inner;
+                            }
+                            Ok(n) => {
+                                tag.if_verbose(format_args!("{mux} {n}B <- :{}", work.port));
+                                input.extend_from_slice(&buf[..n]);
+                            }
+                        }
+                    }
+
+                    work.inp.send(input).ok();
+
+                    if let Ok(msg) = work.out.recv_timeout(Duration::from_secs(1)) {
+                        match skt.write_all(&msg) {
+                            Ok(_) => {}
+                            Err(e) => {
+                                println!("{tag} {dmux} {err} write error: {e}");
+                            }
+                        }
+                        continue 'incoming;
+                    } else {
+                        continue 'incoming;
+                    }
+                }
+            });
+            let handle = WorkerHandle {
+                out: out_send,
+                inp: inp_recv,
+                _thread_hdl: thread_hdl,
+            };
+
+            manager.workers.insert(i, handle);
+        }
         // spawn tracing listener
         let trace_port = WellKnown::BinaryTracing as u16;
         let trace_handle = {
@@ -398,4 +485,43 @@ struct TcpWorker {
     inp: Sender<Vec<u8>>,
     port: u16,
     socket: TcpListener,
+}
+
+pub struct Exec {
+    settings: Settings,
+}
+
+impl Exec {
+    pub fn new() -> Self {
+        Self {
+            settings: Settings::default(),
+        }
+    }
+
+    pub fn settings(self, settings: Settings) -> Self {
+        Self { settings }
+    }
+
+    pub fn run(self, cmd: Vec<u8>) -> Result<(), miette::Error> {
+        let port = self.settings.tcp_port_base + WellKnown::ForthShell0 as u16;
+        let mut stream =
+            std::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port)).into_diagnostic()?;
+        eprintln!("[stderr] connected to crowtty on {:?}", stream.peer_addr());
+
+        stream.write_all(&cmd).into_diagnostic()?;
+        stream.shutdown(std::net::Shutdown::Write).unwrap();
+
+        let mut response = Vec::new();
+        stream.read_to_end(&mut response).into_diagnostic()?;
+
+        println!("{}", String::from_utf8_lossy(&response));
+
+        Ok(())
+    }
+}
+
+impl Default for Exec {
+    fn default() -> Self {
+        Self::new()
+    }
 }

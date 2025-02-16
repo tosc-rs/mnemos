@@ -1,3 +1,8 @@
+use std::{
+    io::{stdin, Read},
+    net::{Ipv4Addr, TcpStream},
+};
+
 use clap::Parser;
 use connection::Connect;
 use miette::{Context, IntoDiagnostic};
@@ -49,6 +54,13 @@ fn main() -> miette::Result<()> {
         verbose,
         trace_filter,
     } = Args::parse();
+
+    if let Connect::Exec = connect {
+        let mut cmd = Vec::new();
+        stdin().read_to_end(&mut cmd).into_diagnostic()?;
+        return libcrowtty::Exec::new().settings(settings).run(cmd);
+    }
+
     let conn = connect
         .connect()
         .into_diagnostic()

@@ -35,6 +35,9 @@ enabled = true
 # message = "hello\r\n"
 # interval =  { secs = 1, nanos = 0 }
 
+[services.sermux_shell]
+enabled = true
+
 [platform]
 # sleep_cap = { secs = 0, nanos = 100_000_000 } # 100ms
 

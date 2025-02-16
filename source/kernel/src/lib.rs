@@ -154,6 +154,7 @@ pub struct KernelServiceSettings {
     pub spawnulator: SpawnulatorSettings,
     pub sermux_loopback: daemons::sermux::LoopbackSettings,
     pub sermux_hello: daemons::sermux::HelloSettings,
+    pub sermux_shell: daemons::shells::SermuxShellSettings,
     #[cfg(feature = "serial-trace")]
     pub sermux_trace: serial_trace::SerialTraceSettings,
 }
@@ -334,6 +335,11 @@ impl Kernel {
 
             if settings.sermux_hello.enabled {
                 self.initialize(daemons::sermux::hello(self, settings.sermux_hello))
+                    .expect("failed to spawn SerMux hello world daemon");
+            }
+
+            if settings.sermux_shell.enabled {
+                self.initialize(daemons::shells::sermux_shell(self, settings.sermux_shell))
                     .expect("failed to spawn SerMux hello world daemon");
             }
         } else {

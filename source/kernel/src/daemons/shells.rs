@@ -27,32 +27,54 @@ use futures::FutureExt;
 use input_mgr::RingLine;
 use key_event::KeyEvent;
 use profont::PROFONT_12_POINT;
+use serde::{Deserialize, Serialize};
 
 use crate::forth::Forth;
 
 /// Settings for the [sermux_shell] daemon
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 #[non_exhaustive]
 pub struct SermuxShellSettings {
+    /// Should the shell be enabled?
+    ///
+    /// Defaults to false
+    #[serde(default)]
+    pub enabled: bool,
     /// Sermux port to serve the shell on
     ///
     /// Defaults to [WellKnown::ForthShell0]
+    #[serde(default = "SermuxShellSettings::default_port")]
     pub port: u16,
     /// Number of bytes used for the sermux buffer
     ///
     /// Defaults to 256
+    #[serde(default = "SermuxShellSettings::default_capacity")]
     pub capacity: usize,
     /// Forth parameters for the shell
     ///
     /// Uses the default value of [Params]
+    #[serde(default)]
     pub forth_settings: Params,
+}
+
+impl SermuxShellSettings {
+    const DEFAULT_PORT: u16 = WellKnown::ForthShell0 as u16;
+    const DEFAULT_CAPACITY: usize = 256;
+
+    const fn default_port() -> u16 {
+        Self::DEFAULT_PORT
+    }
+    const fn default_capacity() -> usize {
+        Self::DEFAULT_CAPACITY
+    }
 }
 
 impl Default for SermuxShellSettings {
     fn default() -> Self {
         Self {
-            port: WellKnown::ForthShell0.into(),
-            capacity: 256,
+            enabled: false,
+            port: Self::DEFAULT_PORT,
+            capacity: Self::DEFAULT_CAPACITY,
             forth_settings: Default::default(),
         }
     }
@@ -65,6 +87,7 @@ pub async fn sermux_shell(k: &'static Kernel, settings: SermuxShellSettings) {
         port,
         capacity,
         forth_settings,
+        ..
     } = settings;
     let port = PortHandle::open(k, port, capacity).await.unwrap();
     let (task, tid_io) = Forth::new(k, forth_settings)
